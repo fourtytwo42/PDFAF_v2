@@ -361,7 +361,9 @@ for round in 1..maxRounds:
     [newBuffer, stageApplied] = await executeStage(currentBuffer, stage)
     
     if stage.reanalyzeAfter:
-      currentAnalysis = await analyzePdf(newBuffer, filename, { profile: 'fast' })
+      // Always use the same authoritative analyze path as Phase 1 (no separate
+      // "fast" profile) — see docs/prd/learnings-from-v1-memory.md.
+      currentAnalysis = await analyzePdf(tempPathFromBuffer(newBuffer), filename)
       if currentAnalysis.score < stageBefore:
         // REGRESSION: revert this stage
         log("stage regressed, reverting")
@@ -386,7 +388,7 @@ for round in 1..maxRounds:
 return { before: initialAnalysis, after: currentAnalysis, remediatedBuffer: currentBuffer, ... }
 ```
 
-**Re-analysis profile:** Use `'fast'` profile for intermediate analyses (skips color contrast, reading order deep analysis). Only use `'full'` for the final `after` result.
+**Re-analysis:** Every post-mutation score uses **`analyzePdf`** exactly as Phase 1 (write buffer to temp file, full pdfjs + Python + scorer). If a future **`analysisProfile`** is added, intermediate remediation must not use a looser profile than production unless the API explicitly labels it non-authoritative.
 
 ### `src/services/remediation/planner.ts`
 

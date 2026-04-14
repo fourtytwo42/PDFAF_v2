@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 import { analyzeRouter } from './routes/analyze.js';
+import { remediateRouter } from './routes/remediate.js';
 import { healthRouter }  from './routes/health.js';
 
 export function createApp(): Express {
@@ -14,6 +15,7 @@ export function createApp(): Express {
   });
 
   app.use('/v1/analyze', analyzeRouter);
+  app.use('/v1/remediate', remediateRouter);
   app.use('/v1/health',  healthRouter);
 
   // 404 fallback

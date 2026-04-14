@@ -1,6 +1,25 @@
 import { spawn } from 'node:child_process';
-import { PYTHON_TIMEOUT_MS, PYTHON_SCRIPT_PATH } from '../config.js';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import {
+  PYTHON_TIMEOUT_MS,
+  PYTHON_SCRIPT_PATH,
+  PYTHON_MUTATION_TIMEOUT_MS,
+} from '../config.js';
 import type { PythonAnalysisResult } from '../types.js';
+
+export interface PythonMutation {
+  op: string;
+  params: Record<string, unknown>;
+}
+
+export interface BatchMutationResult {
+  success: boolean;
+  applied: string[];
+  failed: Array<{ op: string; error: string }>;
+}
 
 // Empty result returned on timeout or script failure.
 // Allows pdfjs data to still produce a partial score.
@@ -74,4 +93,113 @@ export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysis
       }
     });
   });
+}
+
+/**
+ * Apply pikepdf mutations via `pdf_analysis_helper.py --mutate <request.json>`.
+ * Writes a new output file atomically; on any hard failure returns the original buffer.
+ */
+export async function runPythonMutationBatch(
+  buffer: Buffer,
+  mutations: PythonMutation[],
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<{ buffer: Buffer; result: BatchMutationResult }> {
+  const empty: BatchMutationResult = { success: true, applied: [], failed: [] };
+  if (mutations.length === 0) {
+    return { buffer, result: empty };
+  }
+
+  const id = randomUUID();
+  const inputPath = join(tmpdir(), `pdfaf-mut-in-${id}.pdf`);
+  const outputPath = join(tmpdir(), `pdfaf-mut-out-${id}.pdf`);
+  const requestPath = join(tmpdir(), `pdfaf-mut-req-${id}.json`);
+  const timeoutMs = options?.timeoutMs ?? PYTHON_MUTATION_TIMEOUT_MS;
+
+  await writeFile(inputPath, buffer);
+  await writeFile(
+    requestPath,
+    JSON.stringify({
+      input_path: inputPath,
+      output_path: outputPath,
+      mutations,
+    }),
+  );
+
+  const result = await new Promise<BatchMutationResult>((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const done = (r: BatchMutationResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(r);
+    };
+
+    const proc = spawn('python3', [PYTHON_SCRIPT_PATH, '--mutate', requestPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    timer = setTimeout(() => {
+      if (!settled) {
+        proc.kill('SIGKILL');
+        done({ success: false, applied: [], failed: [{ op: '_batch', error: `timeout ${timeoutMs}ms` }] });
+      }
+    }, timeoutMs);
+
+    const onAbort = () => {
+      proc.kill('SIGKILL');
+      done({ success: false, applied: [], failed: [{ op: '_batch', error: 'aborted' }] });
+    };
+    if (options?.signal) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    proc.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
+    proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+
+    proc.on('error', () => {
+      done({ success: false, applied: [], failed: [{ op: '_batch', error: 'spawn failed' }] });
+    });
+
+    proc.on('close', () => {
+      if (stderr.trim()) {
+        stderr.trim().split('\n').forEach(line => console.warn(`[python-mutate] ${line}`));
+      }
+      if (!stdout.trim()) {
+        done({ success: false, applied: [], failed: [{ op: '_batch', error: 'no stdout' }] });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout) as BatchMutationResult;
+        done(parsed);
+      } catch {
+        done({ success: false, applied: [], failed: [{ op: '_batch', error: 'invalid JSON' }] });
+      }
+    });
+  });
+
+  const cleanup = async (): Promise<void> => {
+    await Promise.all([
+      unlink(inputPath).catch(() => {}),
+      unlink(requestPath).catch(() => {}),
+    ]);
+    if (!result.success) {
+      await unlink(outputPath).catch(() => {});
+    }
+  };
+
+  try {
+    if (!result.success) {
+      return { buffer, result };
+    }
+    const out = await readFile(outputPath);
+    await unlink(outputPath).catch(() => {});
+    return { buffer: out, result };
+  } finally {
+    await cleanup();
+  }
 }

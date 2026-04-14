@@ -73,6 +73,19 @@ def get_alt(obj) -> str | None:
     return None
 
 
+def object_ref_str(obj) -> str | None:
+    """Stable indirect reference 'num_gen' for mutation targeting; None if not indirect."""
+    try:
+        if isinstance(obj, pikepdf.Dictionary):
+            n, g = obj.objgen
+            if n == 0:
+                return None
+            return f"{n}_{g}"
+    except Exception:
+        pass
+    return None
+
+
 def get_page_number(obj, page_map: dict) -> int:
     """Best-effort page number (0-indexed) from an element's /Pg ref."""
     try:
@@ -226,28 +239,40 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                 level = normalize_heading_level(tag)
                 if level is not None and len(headings) < MAX_ITEMS:
                     text = _extract_text_from_elem(elem)
-                    headings.append({"level": level, "text": text, "page": page})
+                    ref = object_ref_str(elem)
+                    row = {"level": level, "text": text, "page": page}
+                    if ref:
+                        row["structRef"] = ref
+                    headings.append(row)
 
                 # Figures
                 elif tag == "Figure" and len(figures) < MAX_ITEMS:
                     alt = get_alt(elem)
                     is_artifact = _is_artifact(elem)
-                    figures.append({
+                    ref = object_ref_str(elem)
+                    row = {
                         "hasAlt": alt is not None and len(alt) > 0,
                         "altText": alt,
                         "isArtifact": is_artifact,
                         "page": page,
-                    })
+                    }
+                    if ref:
+                        row["structRef"] = ref
+                    figures.append(row)
 
                 # Tables
                 elif tag == "Table" and len(tables_out) < MAX_ITEMS:
                     th_count, td_count = _count_table_cells(elem)
-                    tables_out.append({
+                    ref = object_ref_str(elem)
+                    row = {
                         "hasHeaders": th_count > 0,
                         "headerCount": th_count,
                         "totalCells": th_count + td_count,
                         "page": page,
-                    })
+                    }
+                    if ref:
+                        row["structRef"] = ref
+                    tables_out.append(row)
 
                 # Form fields (tagged)
                 elif tag in ("Form", "Widget") and len(form_fields) < MAX_ITEMS:
@@ -566,5 +591,143 @@ def main():
     print(json.dumps(result, ensure_ascii=False))
 
 
+# ─── Mutation mode (Phase 2) ─────────────────────────────────────────────────
+# Usage: python3 pdf_analysis_helper.py --mutate <request.json>
+# request.json: { "input_path", "output_path", "mutations": [ { "op", "params" }, ... ] }
+
+
+def _resolve_ref(pdf: pikepdf.Pdf, ref: str):
+    num_s, gen_s = ref.split("_", 1)
+    return pdf.get((int(num_s), int(gen_s)))
+
+
+def _op_set_figure_alt_text(pdf: pikepdf.Pdf, params: dict) -> bool:
+    ref = params.get("structRef")
+    if not ref:
+        return False
+    elem = _resolve_ref(pdf, ref)
+    if elem is None:
+        return False
+    alt = params.get("altText", "Image")
+    elem["/Alt"] = pikepdf.String(str(alt))
+    return True
+
+
+def _op_mark_figure_decorative(pdf: pikepdf.Pdf, params: dict) -> bool:
+    ref = params.get("structRef")
+    if not ref:
+        return False
+    elem = _resolve_ref(pdf, ref)
+    if elem is None:
+        return False
+    elem["/S"] = pikepdf.Name.Artifact
+    return True
+
+
+def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    changed = False
+    root = pdf.Root
+    mi = root.get("/MarkInfo")
+    if mi is not None:
+        try:
+            if mi.get("/Marked") is not True:
+                mi["/Marked"] = True
+                changed = True
+        except Exception:
+            pass
+    else:
+        root["/MarkInfo"] = pikepdf.Dictionary(Marked=True, Suspects=False)
+        changed = True
+    return changed
+
+
+def _op_bootstrap_struct_tree(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    root = pdf.Root
+    if root.get("/StructTreeRoot") is not None:
+        return False
+    try:
+        doc_elem = pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Document"),
+        )
+        pt = pikepdf.Dictionary(Nums=pikepdf.Array([]))
+        str_root = pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructTreeRoot"),
+            K=pikepdf.Array([doc_elem]),
+            ParentTree=pt,
+        )
+        pdf.Root["/StructTreeRoot"] = str_root
+        return True
+    except Exception as e:
+        print(f"[warn] bootstrap_struct_tree failed: {e}", file=sys.stderr)
+        return False
+
+
+MUTATORS = {
+    "set_figure_alt_text": _op_set_figure_alt_text,
+    "mark_figure_decorative": _op_mark_figure_decorative,
+    "repair_structure_conformance": _op_repair_structure_conformance,
+    "bootstrap_struct_tree": _op_bootstrap_struct_tree,
+}
+
+
+def mutate_main(request_path: str) -> int:
+    try:
+        with open(request_path, encoding="utf-8") as f:
+            req = json.load(f)
+    except Exception as e:
+        print(json.dumps({"success": False, "applied": [], "failed": [{"op": "_request", "error": str(e)}]}, ensure_ascii=False))
+        return 0
+
+    input_path = req.get("input_path")
+    output_path = req.get("output_path")
+    mutations = req.get("mutations") or []
+    if not input_path or not output_path:
+        print(
+            json.dumps(
+                {"success": False, "applied": [], "failed": [{"op": "_request", "error": "missing input_path or output_path"}]},
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    applied = []
+    failed = []
+
+    try:
+        pdf = pikepdf.open(input_path, allow_overwriting_input=False)
+    except Exception as e:
+        print(json.dumps({"success": False, "applied": [], "failed": [{"op": "_open", "error": str(e)}]}, ensure_ascii=False))
+        return 0
+
+    try:
+        for m in mutations:
+            op = m.get("op")
+            params = m.get("params") or {}
+            fn = MUTATORS.get(op)
+            if not fn:
+                failed.append({"op": op or "", "error": "unknown_op"})
+                continue
+            try:
+                ok = bool(fn(pdf, params))
+                if ok:
+                    applied.append(op)
+                # no-op (False) is not a batch failure — caller treats empty `applied` as no_effect
+            except Exception as ex:
+                failed.append({"op": op, "error": str(ex)})
+        pdf.save(output_path)
+    finally:
+        try:
+            pdf.close()
+        except Exception:
+            pass
+
+    # Exit 0; Node reads stdout JSON `success` (true only if no hard failures).
+    print(json.dumps({"success": len(failed) == 0, "applied": applied, "failed": failed}, ensure_ascii=False))
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--mutate":
+        raise SystemExit(mutate_main(sys.argv[2]))
     main()

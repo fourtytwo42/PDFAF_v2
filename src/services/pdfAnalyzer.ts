@@ -31,23 +31,24 @@ function releaseSemaphore(): void {
 
 interface CacheEntry {
   result: AnalysisResult;
+  snapshot: DocumentSnapshot;
   expiresAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 
-function getCached(hash: string): AnalysisResult | null {
+function getCached(hash: string): CacheEntry | null {
   const entry = cache.get(hash);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
     cache.delete(hash);
     return null;
   }
-  return entry.result;
+  return entry;
 }
 
-function setCached(hash: string, result: AnalysisResult): void {
-  cache.set(hash, { result, expiresAt: Date.now() + ANALYSIS_CACHE_TTL_MS });
+function setCached(hash: string, result: AnalysisResult, snapshot: DocumentSnapshot): void {
+  cache.set(hash, { result, snapshot, expiresAt: Date.now() + ANALYSIS_CACHE_TTL_MS });
 }
 
 async function hashFile(filePath: string): Promise<string> {
@@ -62,7 +63,12 @@ async function hashFile(filePath: string): Promise<string> {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-export async function analyzePdf(pdfPath: string, filename: string): Promise<AnalysisResult> {
+export interface AnalyzePdfOutcome {
+  result: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}
+
+export async function analyzePdf(pdfPath: string, filename: string): Promise<AnalyzePdfOutcome> {
   if (!acquireSemaphore()) {
     throw Object.assign(new Error('Too many concurrent analyses'), { statusCode: 429 });
   }
@@ -74,7 +80,10 @@ export async function analyzePdf(pdfPath: string, filename: string): Promise<Ana
     const fileHash = await hashFile(pdfPath);
     const cached = getCached(fileHash);
     if (cached) {
-      return { ...cached, analysisDurationMs: Date.now() - startMs };
+      return {
+        result: { ...cached.result, analysisDurationMs: Date.now() - startMs },
+        snapshot: cached.snapshot,
+      };
     }
 
     // Run pdfjs and pikepdf structural analysis in parallel
@@ -100,10 +109,10 @@ export async function analyzePdf(pdfPath: string, filename: string): Promise<Ana
       analysisDurationMs: Date.now() - startMs,
     });
 
-    setCached(fileHash, analysisResult);
+    setCached(fileHash, analysisResult, snap);
     persistResult(analysisResult);
 
-    return analysisResult;
+    return { result: analysisResult, snapshot: snap };
 
   } finally {
     releaseSemaphore();

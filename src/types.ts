@@ -49,18 +49,22 @@ export interface DocumentSnapshot {
     level: number;                  // 1–6 (H1–H6; H maps to 1)
     text: string;
     page: number;
+    /** Indirect object `num_gen` for pikepdf mutations; absent for inline/unregistered nodes */
+    structRef?: string;
   }>;
   figures: Array<{
     hasAlt: boolean;
     altText?: string;
     isArtifact: boolean;
     page: number;
+    structRef?: string;
   }>;
   tables: Array<{
     hasHeaders: boolean;
     headerCount: number;
     totalCells: number;
     page: number;
+    structRef?: string;
   }>;
   fonts: Array<{
     name: string;
@@ -147,4 +151,52 @@ export interface PythonAnalysisResult {
   bookmarks: DocumentSnapshot['bookmarks'];
   formFields: DocumentSnapshot['formFields'];
   structureTree: StructNode | null;
+}
+
+// ─── Phase 2 — remediation ────────────────────────────────────────────────────
+
+export type RemediationToolOutcome = 'applied' | 'no_effect' | 'rejected' | 'failed';
+
+export interface PlannedRemediationTool {
+  toolName: string;
+  params: Record<string, unknown>;
+  rationale: string;
+}
+
+export interface RemediationStagePlan {
+  stageNumber: number;
+  tools: PlannedRemediationTool[];
+  reanalyzeAfter: boolean;
+}
+
+export interface RemediationPlan {
+  stages: RemediationStagePlan[];
+}
+
+export interface AppliedRemediationTool {
+  toolName: string;
+  stage: number;
+  round: number;
+  scoreBefore: number;
+  scoreAfter: number;
+  delta: number;
+  outcome: RemediationToolOutcome;
+  details?: string;
+}
+
+export interface RemediationRoundSummary {
+  round: number;
+  scoreAfter: number;
+  improved: boolean;
+}
+
+export interface RemediationResult {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  remediatedPdfBase64: string | null;
+  remediatedPdfTooLarge: boolean;
+  appliedTools: AppliedRemediationTool[];
+  rounds: RemediationRoundSummary[];
+  remediationDurationMs: number;
+  improved: boolean;
 }

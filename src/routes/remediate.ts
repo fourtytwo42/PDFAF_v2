@@ -1,13 +1,13 @@
 import { Router, type IRouter } from 'express';
 import multer from 'multer';
-import { unlink } from 'node:fs/promises';
+import { unlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MAX_FILE_SIZE_MB } from '../config.js';
 import { analyzePdf } from '../services/pdfAnalyzer.js';
+import { remediatePdf } from '../services/remediation/orchestrator.js';
 
-export const analyzeRouter: IRouter = Router();
+export const remediateRouter: IRouter = Router();
 
 const upload = multer({
   dest: tmpdir(),
@@ -21,7 +21,7 @@ const upload = multer({
   },
 });
 
-analyzeRouter.post('/', upload.single('file'), async (req, res) => {
+remediateRouter.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'No file uploaded. Send a PDF as multipart field "file".' });
     return;
@@ -31,17 +31,19 @@ analyzeRouter.post('/', upload.single('file'), async (req, res) => {
   const filename = req.file.originalname || `upload-${randomUUID()}.pdf`;
 
   try {
-    const { result } = await analyzePdf(tempPath, filename);
-    res.json(result);
+    const { result, snapshot } = await analyzePdf(tempPath, filename);
+    const buffer = await readFile(tempPath);
+    const remediation = await remediatePdf(buffer, filename, result, snapshot);
+    res.json(remediation);
   } catch (err: unknown) {
     const e = err as Error & { statusCode?: number };
     if (e.statusCode === 429) {
       res.status(429).json({ error: 'Server is at capacity. Try again shortly.' });
       return;
     }
-    console.error(`[analyze] error for ${filename}:`, e.message);
-    res.status(500).json({ error: 'Analysis failed. Check server logs.' });
+    console.error(`[remediate] error for ${filename}:`, e.message);
+    res.status(500).json({ error: 'Remediation failed. Check server logs.' });
   } finally {
-    unlink(tempPath).catch(() => { /* temp file cleanup, ignore errors */ });
+    unlink(tempPath).catch(() => { /* temp file cleanup */ });
   }
 });
