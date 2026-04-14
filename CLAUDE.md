@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 PDFAF v2 is a REST API (port **6200**) that grades and remediates PDFs for WCAG 2.1 AA / ADA Title II compliance. It is a ground-up rewrite of PDFAF v1, designed to be 10x leaner (~20 tools vs. 81, ~500-line orchestrator vs. 8100 lines).
 
-The codebase is **not yet built** — only the PRD documentation exists. Implementation follows a 5-phase plan in `docs/prd/`.
+**Phase 1 is implemented** (`POST /v1/analyze`, `GET /v1/health`, scorer, pdfjs + Python analysis). Later phases follow `docs/prd/`. **PDFAF v1** lives outside this repo (e.g. sibling `pdfaf/`); mine it for behavior and regressions when specs are unclear.
 
 ## Commands
 
@@ -32,8 +32,8 @@ pnpm vitest run tests/scorer.test.ts
 ```
 POST /v1/analyze → routes/analyze.ts
   → pdfAnalyzer.ts (orchestrator)
-      → pdfjsService.ts  ─┐ parallel
-      → qpdfService.ts   ─┘
+      → pdfjsService.ts    ─┐ parallel
+      → structureService.ts ─┘ → python/bridge.ts → pdf_analysis_helper.py (pikepdf)
   → scorer.ts (pure function, no I/O)
   → AnalysisResult JSON
 
@@ -49,14 +49,14 @@ POST /v1/remediate → routes/remediate.ts (Phase 2+)
 
 - **`src/config.ts`** is the single source of truth for all constants — no inline magic numbers anywhere else. Scoring weights are here and must sum to 1.0.
 - **`src/services/scorer/scorer.ts`** is a pure function with zero I/O and no async. Given a `DocumentSnapshot`, it returns scored categories and a grade.
-- **`src/python/bridge.ts`** wraps Python subprocess calls. The Python script (`python/pdf_structure_helper.py`) uses pikepdf for tag tree surgery — this is the only reliable option for PDF structure mutations.
-- **pdfjs + qpdf run in parallel** via `Promise.all` in `pdfAnalyzer.ts`. pdfjs handles text/metadata extraction; qpdf handles structural analysis (structure tree, headings, fonts, figures).
+- **`src/python/bridge.ts`** wraps Python subprocess calls. The script **`python/pdf_analysis_helper.py`** uses pikepdf for structural **analysis** (Phase 1) and will gain **mutations** (Phase 2+). **`qpdf`** is probed in `/v1/health` only; it is not the primary structural parser in the analyzer.
+- **pdfjs + Python (pikepdf) run in parallel** via `Promise.all` in `pdfAnalyzer.ts`. pdfjs handles text/metadata/links/widgets; Python returns structure tree, headings, figures, tables, bookmarks, tags/marked/lang, etc.
 - Remediation runs in **3 deterministic stages** + 1 optional LLM pass. Each stage commits atomically (commit-or-rollback). The loop stops when grade A is reached or no improvement is seen — max 3 rounds.
 - **Concurrency** is capped via an in-module semaphore in `pdfAnalyzer.ts` (`MAX_CONCURRENT_ANALYSES = 5`).
 
 ### PDF Classification
 
-PDFs are classified as `native_tagged`, `native_untagged`, `scanned`, or `mixed` based on the combination of `qpdf.isTagged` and pdfjs image vs. text ratio per page. The `pdfClass` field affects which remediation tools are applicable.
+PDFs are classified as `native_tagged`, `native_untagged`, `scanned`, or `mixed` based on **pikepdf `isTagged`** (and related structure signals) plus **pdfjs** text vs. image-heavy page heuristics. The `pdfClass` field affects which remediation tools are applicable.
 
 ### Scoring
 
@@ -73,7 +73,7 @@ Uses an OpenAI-compatible endpoint, configured entirely via environment variable
 ## System Dependencies
 
 - **`qpdf`** binary — required (`apt install qpdf`)
-- **Python 3** + `pip install pikepdf fonttools` — required for structure mutations
+- **Python 3** + `pip install pikepdf fonttools` — required for structural analysis (Phase 1) and tag mutations (Phase 2+)
 - **`tesseract`** — optional, for scanned PDFs (`apt install tesseract-ocr`)
 
 ## Environment Variables

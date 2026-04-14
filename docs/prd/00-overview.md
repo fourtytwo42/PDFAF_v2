@@ -11,6 +11,17 @@ This is a ground-up rewrite distilling lessons from PDFAF v1. It is API-only (no
 
 **Production target:** Port **6200** (separate from PDFAF v1 at 6103).
 
+### PDFAF v1 (reference codebase — not this repo)
+
+The original implementation is maintained **outside `PDFAF_v2`** (for example a sibling directory `pdfaf/` on the same machine, or your internal monorepo path). Use it as the **living textbook** for what worked and what hurt:
+
+- **Scoring and findings:** Match user expectations from v1 (explainable categories, stable weights).
+- **Performance:** Avoid v1’s heaviest paths as defaults (e.g. full pixel contrast stacks where unnecessary).
+- **Remediation breadth vs depth:** v1’s very large tool count taught us to prefer **fewer, composable tools** with **measurable** grade deltas.
+- **Visual fidelity:** Prefer **tag/metadata/annotation** fixes that preserve appearance; reserve layout-changing or re-rasterizing tools for explicit cases and document them in tool outcomes.
+
+Whenever v2 behavior is ambiguous, **reproduce on v1**, compare outcomes, and update this PRD or `CLAUDE.md` so both codebases don’t drift silently.
+
 ---
 
 ## Why v2
@@ -72,9 +83,11 @@ PDFAF v1 works but carries significant complexity:
 | Runtime | Node.js 22, TypeScript | Same as v1, proven |
 | Package manager | pnpm | Same as v1 |
 | HTTP server | Express 4 | Minimal, well-known |
-| PDF parsing | pdfjs-dist + qpdf binary | Best combo for text + structure |
-| PDF mutation | pdf-lib + @pdf-lib/fontkit | Pure JS, reliable |
-| Structure mutation | Python 3 + pikepdf + fonttools (subprocess) | Only reliable option for tag tree surgery |
+| Text / links / page heuristics | pdfjs-dist (legacy build + worker in Node) | Fast extraction without a browser |
+| Structure / tags / figures / tables | Python 3 + **pikepdf** (subprocess, JSON) | Same stack as Phase 2 mutations; reliable struct tree access |
+| Ops / sanity | **qpdf** binary | Health check and optional future use; not the primary struct parser in Phase 1 |
+| PDF mutation (Phase 2+) | pdf-lib where appropriate; pikepdf for tag tree | Pure JS for simple edits; Python for structure |
+| Structure mutation (Phase 2+) | Extend `python/pdf_analysis_helper.py` | One script path for analyze + repair |
 | Database | better-sqlite3 | Lightweight, no server |
 | LLM | OpenAI-compatible endpoint (env-configured) | Works with Claude, GPT-4, local Gemma, etc. |
 | Testing | Vitest | Same as v1 |
@@ -132,84 +145,60 @@ Each phase produces a working, testable system. Phase N+1 builds on Phase N with
 
 ---
 
-## Repository Structure (Final State)
+## Repository structure (Phase 1 shipped; later phases additive)
 
 ```
 PDFAF_v2/
 ├── src/
-│   ├── index.ts                    # Express entry point, port 6200
-│   ├── config.ts                   # All constants (weights, thresholds, ports)
-│   ├── types.ts                    # Shared TypeScript types
+│   ├── server.ts                   # Entry: listen, DB init
+│   ├── app.ts                      # Express factory
+│   ├── config.ts                   # Constants (weights, thresholds, paths)
+│   ├── types.ts
 │   ├── routes/
-│   │   ├── analyze.ts
-│   │   ├── remediate.ts
-│   │   └── health.ts
+│   │   ├── analyze.ts              # POST /v1/analyze
+│   │   └── health.ts               # GET /v1/health
 │   ├── services/
-│   │   ├── analyzer/
-│   │   │   ├── pdfjsService.ts
-│   │   │   ├── qpdfService.ts
-│   │   │   └── pdfAnalyzer.ts
-│   │   ├── scorer/
-│   │   │   └── scorer.ts
-│   │   ├── remediation/
-│   │   │   ├── orchestrator.ts
-│   │   │   ├── planner.ts
-│   │   │   └── tools/
-│   │   │       ├── metadata.ts
-│   │   │       ├── structure.ts
-│   │   │       ├── fonts.ts
-│   │   │       ├── figures.ts
-│   │   │       ├── headings.ts
-│   │   │       ├── tables.ts
-│   │   │       ├── links.ts
-│   │   │       ├── bookmarks.ts
-│   │   │       └── ocr.ts
-│   │   ├── semantic/
-│   │   │   ├── semanticService.ts
-│   │   │   └── domainDetector.ts
-│   │   ├── layout/
-│   │   │   └── layoutAnalyzer.ts
-│   │   └── learning/
-│   │       ├── playbookStore.ts
-│   │       └── toolOutcomes.ts
-│   ├── db/
-│   │   └── schema.ts
-│   └── python/
-│       └── bridge.ts               # Subprocess wrapper
+│   │   ├── pdfAnalyzer.ts          # Orchestrator
+│   │   ├── pdfjsService.ts
+│   │   ├── pdfjsWorker.ts
+│   │   ├── pdfjsWorkerBootstrap.mjs
+│   │   ├── structureService.ts     # → Python read-only JSON
+│   │   └── scorer/ …
+│   ├── python/
+│   │   └── bridge.ts               # Subprocess wrapper
+│   └── db/
+│       ├── schema.ts
+│       └── client.ts
 ├── python/
-│   └── pdf_structure_helper.py     # pikepdf mutations
-├── docs/
-│   ├── prd/                        # This folder
-│   ├── api.md
-│   ├── scoring.md
-│   └── architecture.md
+│   └── pdf_analysis_helper.py      # pikepdf: Phase 1 analysis; Phase 2 + mutations
+├── docs/prd/                       # This folder
 ├── tests/
-│   ├── fixtures/
-│   └── *.test.ts
-├── openapi.yaml
-├── README.md
+│   ├── scorer.test.ts
+│   └── integration/analyze.test.ts
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
-└── .gitignore
+└── …
 ```
+
+**Phase 2+** adds `routes/remediate.ts`, `services/remediation/**`, semantic/learning modules, etc., without breaking Phase 1 tests. See `02-phase2-deterministic-remediation.md`.
 
 ---
 
 ## External Dependencies Summary
 
-### Required Binaries
-- `qpdf` — PDF structure analysis
-- `python3` + `pip install pikepdf fonttools` — PDF tag tree mutations
+### Required binaries
+- `qpdf` — probed in `/v1/health`; all dependencies **ok** is required for HTTP 200 (install on any serious deployment)
+- `python3` + `pip install pikepdf fonttools` — structural analysis (Phase 1) and tag mutations (Phase 2+)
 
-### Optional Binaries
-- `tesseract` — OCR for scanned PDFs
+### Optional binaries
+- `tesseract` — OCR for scanned PDFs (remediation / later phases)
 
-### Required npm Packages
-- `express`, `multer`, `helmet`, `cors`
-- `pdfjs-dist`, `pdf-lib`, `@pdf-lib/fontkit`
-- `better-sqlite3`
-- `dotenv`
+### Required npm packages (Phase 1)
+- `express`, `multer`, `pdfjs-dist`, `better-sqlite3`, `zod` (see `package.json` for authoritative list)
+
+### Phase 2+ npm (planned / as needed)
+- `pdf-lib`, `@pdf-lib/fontkit` — deterministic repairs where pure-JS is enough
 
 ### Optional npm Packages
 - `openai` or any OpenAI-compat client — for semantic LLM pass

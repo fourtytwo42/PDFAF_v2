@@ -1,15 +1,19 @@
 # Phase 2 — Deterministic Remediation
 ## Rule-Based Repair Pipeline
 
-**Prerequisite:** Phase 1 complete and passing.
+**Prerequisite:** Phase 1 complete and passing (`docs/prd/01-phase1-foundation.md`).
 
 **Goal:** `POST /v1/remediate` accepts a PDF and returns a remediated PDF with an improved grade, using only deterministic (rule-based) tools — no LLM required. This handles the majority of fixable accessibility issues.
 
-**Completion criteria:** At least 60% of F/D PDFs in the ICJIA fixture set improve by at least one letter grade without LLM enabled.
+**Visual fidelity (default):** Prefer **metadata, tags, annotations, and structure-tree** edits that do **not** change how the page renders. Defer or explicitly flag any tool that rewrites content streams, reflows text, or rasterizes pages. Learn from **PDFAF v1** (`pdfaf/` sibling repo): measure grade delta per tool and avoid “fix at all costs” that shifts layout.
+
+**Completion criteria:** At least 60% of F/D PDFs in the ICJIA fixture set improve by at least one letter grade without LLM enabled (run locally where corpus exists).
 
 ---
 
-## What Gets Built
+## What gets built (incremental on Phase 1)
+
+Phase 1 already ships `src/python/bridge.ts` and `python/pdf_analysis_helper.py` (**read-only** analysis). Phase 2 **extends** the bridge and Python script with **mutation batches** (new stdin protocol or sibling CLI mode — design at implementation time). Do **not** introduce a second Python entrypoint unless there is a strong reason; one script keeps ops simple.
 
 ```
 src/
@@ -29,9 +33,9 @@ src/
 │   │       ├── bookmarks.ts      # NEW
 │   │       └── ocr.ts            # NEW (conditional, needs tesseract)
 │   └── python/
-│       └── bridge.ts             # NEW — pikepdf subprocess wrapper
+│       └── bridge.ts             # EXTEND — mutation batch API
 python/
-└── pdf_structure_helper.py       # NEW — all pikepdf mutations
+└── pdf_analysis_helper.py        # EXTEND — pikepdf mutations (+ existing read-only mode)
 tests/
 ├── remediate.route.test.ts       # NEW
 ├── orchestrator.test.ts          # NEW
@@ -112,11 +116,11 @@ Stage 5 — Content & Navigation
 
 ---
 
-## File Specs
+## File specs
 
-### `src/services/python/bridge.ts`
+### `src/python/bridge.ts` (extend)
 
-The Python bridge is the foundation of all structural mutations. Every tool that touches the PDF tag tree goes through here.
+The Python bridge is the foundation of all structural mutations. Every tool that touches the PDF tag tree goes through here. **Path in repo:** `src/python/bridge.ts` (not under `services/`).
 
 ```typescript
 export interface PythonMutation {
@@ -170,7 +174,7 @@ export async function runPythonMutationBatch(
 **Implementation:**
 - Write input PDF to temp file
 - Serialize mutations as JSON to stdin
-- Spawn `python3 python/pdf_structure_helper.py`
+- Spawn `python3 python/pdf_analysis_helper.py` (or dedicated mutation module if split later)
 - Pass input/output paths + mutations JSON via stdin
 - Parse stdout JSON result
 - Read output file into buffer
@@ -183,9 +187,9 @@ export async function runPythonMutationBatch(
 - Only after Python exits successfully does bridge.ts return the new buffer
 - If anything fails, original buffer is returned unchanged
 
-### `python/pdf_structure_helper.py`
+### `python/pdf_analysis_helper.py` (extend)
 
-Accepts JSON from stdin: `{ "input_path": "...", "output_path": "...", "mutations": [...] }`
+Phase 1: analysis mode (PDF path argv, JSON to stdout). Phase 2 adds mutation mode, e.g. JSON from stdin: `{ "input_path": "...", "output_path": "...", "mutations": [...] }`
 
 Applies each mutation sequentially using pikepdf. Outputs result JSON to stdout.
 
