@@ -3,7 +3,9 @@
 
 **Prerequisite:** Phase 3 complete and passing.
 
-**Goal:** The system learns from successful remediations. When a PDF with a known failure signature is submitted, it replays the previously successful tool sequence instead of running the full discovery loop. This dramatically speeds up repeated remediation of similar documents (e.g. the entire ICJIA corpus of government PDFs).
+**Goal:** The system learns from successful remediations. When a PDF with a **matching abstract failure signature** is submitted, it replays the previously successful tool sequence instead of running the full discovery loop. This speeds up **any** recurring document pattern (same template, same authoring tool chain) — ICJIA is one validation corpus, not a hardcoded customer in code.
+
+**Generalization:** Playbook keys must **never** be publication ids, file paths, or customer names. Only **deterministic hashes** of portable fields (see `FailureSignature` below). Same rules as Phase 2 (`docs/prd/02-phase2-deterministic-remediation.md` — Generalization section).
 
 **Completion criteria:** Second submission of a previously-remediated document type completes in < 5s. `GET /v1/playbooks` returns the learned catalog.
 

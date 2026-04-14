@@ -82,6 +82,12 @@ v1 **learned** (via `MEMORY.md`) that **running (2) before heavy (5)** on **larg
 
 ---
 
+## v2 general planner (not corpus-specific)
+
+v1’s **residual families** and batch **lanes** were productivity tools for one large deployment. In v2, the **remediation core** should stay **criterion-only**: inputs = `AnalysisResult` / `DocumentSnapshot` + config; ordering = category weights and tool applicability; playbooks = abstract signature hashes (Phase 4). See **`docs/prd/02-phase2-deterministic-remediation.md`** section *Generalization — not tied to specific PDFs or “families”*.
+
+---
+
 ## What v2 should copy vs simplify
 
 **Copy**

@@ -91,6 +91,8 @@ Example convergence order from v1 mixed structure/figure work:
 
 See **`docs/prd/v1-remediation-implementation-survey.md`** — `remediatePdfWithAgent` vs legacy `remediatePdf`, planner stages, Python `pdf_structure_helper.py`, and `executeRemediationTool` dispatch.
 
+**v2 design:** keep the engine **criterion-driven** and independent of corpus — **`docs/prd/02-phase2-deterministic-remediation.md`** (*Generalization* section).
+
 ---
 
 *Last distilled from `pdfaf/MEMORY.md` structure and grep cross-check (2026-04-14). The v1 file changes daily; treat this doc as guidance, not a mirror.*

@@ -7,7 +7,44 @@
 
 **Visual fidelity (default):** Prefer **metadata, tags, annotations, and structure-tree** edits that do **not** change how the page renders. Defer or explicitly flag any tool that rewrites content streams, reflows text, or rasterizes pages. Learn from **PDFAF v1** (`pdfaf/` sibling repo): measure grade delta per tool and avoid “fix at all costs” that shifts layout.
 
-**Completion criteria:** At least 60% of F/D PDFs in the ICJIA fixture set improve by at least one letter grade without LLM enabled (run locally where corpus exists).
+**Completion criteria:** At least 60% of F/D PDFs in the ICJIA fixture set improve by at least one letter grade without LLM enabled (run locally where corpus exists). The **engine** itself must not depend on that corpus; see **Generalization** below.
+
+---
+
+## Generalization — not tied to specific PDFs or “families”
+
+Remediation must work for **any customer and any PDF**, not only ICJIA rows or v1-style **residual family** labels. The following rules keep the design portable.
+
+### 1. Inputs are only machine-readable analysis
+
+The planner and tools consume **only** Phase 1 outputs: `AnalysisResult` / `DocumentSnapshot` — category scores, `applicable` flags, `pdfClass`, `pageCount`, structured `findings` (with **stable, repo-owned** codes such as `title.missing`, not customer-specific IDs).
+
+**Forbidden in core planner code:** publication IDs, filenames as routing keys, hardcoded “family” enums copied from one corpus, or imports of batch manifests.
+
+### 2. Criterion-anchored planning (already the default)
+
+Use a static **category → tool list** map plus **`appliesWhen(snapshot)`** per tool (see **Core Concept** below). Ordering and tie-breaking use **weights, thresholds, and dependency rules** (e.g. structure bootstrap before heavy figure work when there is no tree) — all derivable from `config.ts` and the snapshot, not from document identity.
+
+### 3. Optional priority without “families”
+
+If v1-style **families** were useful for “what to fix first,” replace them in v2 with **priority derived from data**, for example:
+
+- failing categories sorted by **redistributed weight × severity**, or  
+- explicit **dependency graph** (structure before alt when untagged).
+
+Same formula for every PDF.
+
+### 4. Verification and risk flags are universal
+
+After each batch: **re-run the same `analyzePdf`** on output bytes. Optional gates (pixel delta, size limits) are **global config**, not per-document exceptions in code. Expose **`visual_risk`** / **`human_review_recommended`** on the API when a tool is known to affect appearance — not a parallel classification system keyed to one org.
+
+### 5. Corpus and campaigns stay outside the library
+
+ICJIA manifests, agency batch runners, and promotion workflows live in **scripts or a separate ops repo**; they call **`POST /v1/remediate`** with a file. The remediation **service** remains a pure function of **PDF bytes + environment config**.
+
+### 6. Playbooks (Phase 4) remain abstract
+
+Playbook keys are **hashes of abstract failure shapes** (e.g. `pdfClass` + sorted failing category keys + coarse page bucket + major flags) — see `04-phase4-learning-playbooks.md`. Never key playbooks on file path, customer id, or internal queue row id.
 
 ---
 
@@ -77,6 +114,8 @@ Planner selects tools by:
 2. Looking up tools for those categories
 3. Filtering tools by: not already attempted, not in exclusion list, applicable to PDF class
 4. Returning ordered list (metadata → structure → fonts → content → navigation)
+
+**Generalization check:** every step above must be expressible using **only** fields present on `AnalysisResult` / `DocumentSnapshot` and **config**. If a rule needs a specific PDF id or corpus label, it does not belong in the planner.
 
 ---
 

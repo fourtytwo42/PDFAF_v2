@@ -55,6 +55,7 @@ PDFAF v1 works but carries significant complexity:
 
 ### Remediation
 - Deterministic repairs first (metadata, structure, fonts, links, tables)
+- **General-purpose:** planner driven only by **analysis + config** — no publication IDs, corpus names, or v1-style “family” labels in core code (see Phase 2 PRD *Generalization*)
 - Optional semantic pass (LLM-assisted alt text and heading proposals)
 - Re-grades after each stage; stops when grade A reached or no improvement
 - Returns: remediated PDF, before/after scores, applied tool log, HTML report
