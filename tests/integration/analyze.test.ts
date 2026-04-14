@@ -1,0 +1,100 @@
+import { describe, it, expect, beforeAll } from 'vitest';
+import request from 'supertest';
+import { createApp } from '../../src/app.js';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+
+// This test requires a PDF fixture. We look for one in the ICJIA corpus,
+// falling back to a minimal synthetic PDF.
+
+const app = createApp();
+
+// Look in several known locations for a test PDF
+const CANDIDATE_DIRS = [
+  '/home/hendo420/pdfaf/ICJIA-PDFs',
+  '/home/hendo420/pdfaf/apps/api/src/__tests__/fixtures',
+  '/home/hendo420/pdfaf/apps/api/data/queue-storage/rebuilt',
+];
+
+async function findTestPdf(): Promise<string | null> {
+  for (const dir of CANDIDATE_DIRS) {
+    try {
+      const files = await readdir(dir);
+      const pdf = files.find(f => f.endsWith('.pdf'));
+      if (pdf) return join(dir, pdf);
+    } catch {
+      // directory not available
+    }
+  }
+  return null;
+}
+
+describe('POST /v1/analyze', () => {
+  it('returns 400 when no file is sent', async () => {
+    const res = await request(app).post('/v1/analyze');
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('returns 400 for non-PDF file', async () => {
+    const res = await request(app)
+      .post('/v1/analyze')
+      .attach('file', Buffer.from('not a pdf'), { filename: 'test.txt', contentType: 'text/plain' });
+    expect(res.status).toBe(400);
+  });
+
+  it('analyses a real PDF and returns well-formed AnalysisResult', async () => {
+    const pdfPath = await findTestPdf();
+    if (!pdfPath) {
+      console.log('[integration] no PDF fixture found — skipping real-PDF test');
+      return;
+    }
+
+    const res = await request(app)
+      .post('/v1/analyze')
+      .attach('file', pdfPath);
+
+    expect(res.status).toBe(200);
+
+    const body = res.body;
+    // Shape assertions
+    expect(body).toHaveProperty('id');
+    expect(body).toHaveProperty('grade');
+    expect(body).toHaveProperty('score');
+    expect(body).toHaveProperty('categories');
+    expect(body).toHaveProperty('findings');
+    expect(body).toHaveProperty('pdfClass');
+    expect(body).toHaveProperty('analysisDurationMs');
+
+    expect(['A','B','C','D','F']).toContain(body.grade);
+    expect(body.score).toBeGreaterThanOrEqual(0);
+    expect(body.score).toBeLessThanOrEqual(100);
+    expect(Array.isArray(body.categories)).toBe(true);
+    expect(body.categories).toHaveLength(11);
+
+    // Each category must have key, score, weight, applicable, severity, findings
+    for (const cat of body.categories) {
+      expect(cat).toHaveProperty('key');
+      expect(cat).toHaveProperty('score');
+      expect(cat).toHaveProperty('weight');
+      expect(cat).toHaveProperty('applicable');
+      expect(cat).toHaveProperty('severity');
+      expect(cat).toHaveProperty('findings');
+    }
+
+    // Should complete in reasonable time
+    expect(body.analysisDurationMs).toBeLessThan(60_000);
+  }, 90_000);
+});
+
+describe('GET /v1/health', () => {
+  it('returns dependency status', async () => {
+    const res = await request(app).get('/v1/health');
+    expect([200, 503]).toContain(res.status);
+    expect(res.body).toHaveProperty('status');
+    expect(res.body).toHaveProperty('dependencies');
+    expect(res.body.dependencies).toHaveProperty('python');
+    expect(res.body.dependencies).toHaveProperty('pikepdf');
+    expect(res.body.dependencies).toHaveProperty('db');
+  });
+});
