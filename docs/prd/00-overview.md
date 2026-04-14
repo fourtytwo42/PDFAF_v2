@@ -22,6 +22,8 @@ The original implementation is maintained **outside `PDFAF_v2`** (for example a 
 
 Whenever v2 behavior is ambiguous, **reproduce on v1**, compare outcomes, and update this PRD or `CLAUDE.md` so both codebases don’t drift silently.
 
+**Distilled lessons** from v1’s long operational log (`pdfaf/MEMORY.md`): see **`docs/prd/learnings-from-v1-memory.md`** in this repo (authoritative analysis on final bytes, structure-before-figures on large PDFs, skip already-passing work, visual holds, bounded retries, tool ordering).
+
 ---
 
 ## Why v2
