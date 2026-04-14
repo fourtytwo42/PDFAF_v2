@@ -22,7 +22,7 @@ The original implementation is maintained **outside `PDFAF_v2`** (for example a 
 
 Whenever v2 behavior is ambiguous, **reproduce on v1**, compare outcomes, and update this PRD or `CLAUDE.md` so both codebases don’t drift silently.
 
-**Distilled lessons** from v1’s long operational log (`pdfaf/MEMORY.md`): **`docs/prd/learnings-from-v1-memory.md`**. **How v1’s code actually fixes PDFs** (agent loop, Python helper, planner stages): **`docs/prd/v1-remediation-implementation-survey.md`**.
+**Distilled lessons** from v1’s long operational log (`pdfaf/MEMORY.md`): **`docs/prd/learnings-from-v1-memory.md`**. **How v1’s code actually fixes PDFs** (agent loop, Python helper, planner stages): **`docs/prd/v1-remediation-implementation-survey.md`**. **Prioritized backlog** (faster / more effective / efficient): **`docs/prd/v2-opportunities-from-v1.md`**.
 
 ---
 
