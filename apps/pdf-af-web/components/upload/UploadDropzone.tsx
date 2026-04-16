@@ -42,7 +42,7 @@ export function UploadDropzone() {
   return (
     <SectionCard
       title="Input"
-      description="Add PDFs to the local queue. Files stay in this browser."
+      description="Add PDFs to the queue."
       action={<StatusPill label={`${jobs.length} Local Files`} tone="accent" />}
     >
       <div
@@ -79,10 +79,6 @@ export function UploadDropzone() {
             <p className="text-sm font-bold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
               Queue Intake
             </p>
-            <p className="mt-2 max-w-3xl text-xs leading-5 text-[var(--muted)]">
-              Drag files here or choose them manually. Originals are stored in IndexedDB and
-              never uploaded until you run grade or remediate.
-            </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 variant="primary"
@@ -103,9 +99,6 @@ export function UploadDropzone() {
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
                   Auto-remediate on add
                 </p>
-                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                  Off = stage only. On = queue remediation immediately.
-                </p>
               </div>
               <label className="relative inline-flex items-center">
                 <input
@@ -118,9 +111,6 @@ export function UploadDropzone() {
                 <span className="absolute left-[2px] top-[2px] h-4 w-4 bg-[var(--muted)] transition peer-checked:translate-x-5 peer-checked:bg-[var(--accent)]" />
               </label>
             </div>
-            <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
-              Default: Off
-            </p>
           </div>
         </div>
 

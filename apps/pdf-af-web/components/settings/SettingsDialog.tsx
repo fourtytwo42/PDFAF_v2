@@ -66,17 +66,9 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
       <div className="surface w-full max-w-2xl p-4">
         <div className="flex items-start justify-between gap-3 border-b border-[color:var(--surface-border)] pb-2">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
-              Api Settings
-            </p>
             <h2 className="mt-1 text-sm font-bold uppercase tracking-[0.12em] text-[var(--accent-strong)]">
-              Configure Upstream
+              API URL
             </h2>
-            <p className="mt-1 max-w-xl text-xs leading-5 text-[var(--muted)]">
-              The saved value is stored only in this browser. For deployment, set
-              <span className="mx-1 font-bold text-[var(--foreground)]">PDFAF_API_BASE_URL</span>
-              on the web app and it will become the default upstream automatically.
-            </p>
           </div>
           <Button variant="ghost" onClick={() => void closeSettings()}>
             Close

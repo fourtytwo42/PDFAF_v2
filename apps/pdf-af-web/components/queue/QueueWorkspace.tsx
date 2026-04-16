@@ -30,10 +30,7 @@ export function QueueWorkspace() {
 
   if (!hydrated || storageState === 'loading') {
     return (
-      <SectionCard
-        title="Workspace"
-        description="Preparing the browser-local queue and restoring any previously added files."
-      >
+      <SectionCard title="Workspace" description="Loading queue.">
         <div className="border border-[color:var(--surface-border)] bg-[var(--surface-strong)] px-3 py-6">
           <p className="text-xs leading-5 text-[var(--muted)]">Loading local queue...</p>
         </div>
@@ -51,12 +48,7 @@ export function QueueWorkspace() {
           <div className="grid gap-4">
             <StorageStateMessage />
             <div className="surface-strong p-3">
-              <ul className="space-y-1 text-xs leading-5 text-[var(--muted)]">
-                <li>add pdfs above to create local queue rows</li>
-                <li>run grade or remediate from the queue toolbar</li>
-                <li>click details for findings, tools, and before/after results</li>
-                <li>original and remediated files stay in this browser until removed</li>
-              </ul>
+              <p className="text-xs leading-5 text-[var(--muted)]">Add PDFs to begin.</p>
             </div>
           </div>
         </SectionCard>

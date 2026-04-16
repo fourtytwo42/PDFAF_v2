@@ -67,7 +67,7 @@ export function QueueTable() {
   return (
     <SectionCard
       title="Local Queue"
-      description="Dense queue view. Click details for the full record."
+      description="Queue"
       action={<StatusPill label={`${jobs.length} Files`} tone="accent" />}
     >
       <div className="space-y-2">
