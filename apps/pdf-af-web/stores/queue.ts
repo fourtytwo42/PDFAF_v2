@@ -138,9 +138,17 @@ function saveQueuePreferences(preferences: QueuePreferences) {
   localStorage.setItem(LOCAL_STORAGE_KEYS.queuePreferences, JSON.stringify(preferences));
 }
 
+function createUuid(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `pdfaf-${Date.now()}-${Math.random().toString(16).slice(2, 12)}`;
+}
+
 function buildValidationMessage(fileName: string, message: string): FileValidationMessage {
   return {
-    id: crypto.randomUUID(),
+    id: createUuid(),
     fileName,
     message,
   };
@@ -351,7 +359,7 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
       }
 
       if (remediation.remediatedPdfBase64) {
-        nextRemediatedBlobKey = crypto.randomUUID();
+        nextRemediatedBlobKey = createUuid();
         const remediatedBlob = decodeBase64ToBlob(
           remediation.remediatedPdfBase64,
           job.mimeType || 'application/pdf',
@@ -493,8 +501,8 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
       }
 
       const timestamp = nowIso();
-      const jobId = crypto.randomUUID();
-      const originalBlobKey = crypto.randomUUID();
+      const jobId = createUuid();
+      const originalBlobKey = createUuid();
       const jobRecord: JobRecord = {
         id: jobId,
         fileName: file.name,
