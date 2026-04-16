@@ -1,6 +1,9 @@
 node_modules/
 dist/
 data/
+# Embedded llama may briefly download to repo root on older runs
+*.gguf
+*.gguf.json
 *.db
 *.db-shm
 *.db-wal

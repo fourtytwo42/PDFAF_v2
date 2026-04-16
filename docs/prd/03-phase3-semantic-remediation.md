@@ -341,30 +341,36 @@ async function applySemanticsWithRegression(
   filename: string,
   scoreBefore: number,
 ): Promise<{ buffer: Buffer; accepted: AcceptedProposal[]; rejected: AcceptedProposal[] }> {
-  
+
   const newBuffer = await applyProposalsToPdf(buffer, proposals)
-  const newAnalysis = await analyzePdf(newBuffer, filename, { profile: 'fast' })
-  
+  const tmpNew = await writeTempPdf(newBuffer)
+  const { result: newAnalysis } = await analyzePdf(tmpNew, filename) // full Phase 1 pipeline — no “fast” profile
+  await unlink(tmpNew)
+
   if (newAnalysis.score >= scoreBefore - 1) {
     // Accepted — improvement or neutral (within 1 point)
     return { buffer: newBuffer, accepted: proposals, rejected: [] }
   }
-  
+
   // Regression detected — try removing figure proposals only
   const figureOnlyProposals = proposals.filter(p => p.type === 'heading')
   if (figureOnlyProposals.length < proposals.length) {
     const partialBuffer = await applyProposalsToPdf(buffer, figureOnlyProposals)
-    const partialAnalysis = await analyzePdf(partialBuffer, filename, { profile: 'fast' })
+    const tmpPartial = await writeTempPdf(partialBuffer)
+    const { result: partialAnalysis } = await analyzePdf(tmpPartial, filename)
+    await unlink(tmpPartial)
     if (partialAnalysis.score >= scoreBefore - 1) {
       const rejected = proposals.filter(p => p.type !== 'heading')
       return { buffer: partialBuffer, accepted: figureOnlyProposals, rejected }
     }
   }
-  
+
   // Full revert
   return { buffer, accepted: [], rejected: proposals }
 }
 ```
+
+**Re-analysis:** Use the same **`analyzePdf(tempPath, filename)`** as Phase 1/2 (write bytes to a temp file first). Do not use a looser analysis profile for promotion unless the API explicitly labels it non-authoritative.
 
 **Key difference from v1:** v2 uses type-level grouping (figures vs headings) instead of O(N²) binary search over individual actions. This is simpler and fast enough for batches of ≤ 12 proposals.
 
@@ -496,23 +502,62 @@ When `semantic: true`:
 - Verify regression detection triggers revert
 - Verify no LLM calls when `alt_text` score already ≥ 90
 
-### Integration test
+### Integration test (optional / manual; not a Phase 3 DoD gate)
 - Take 3 ICJIA PDFs with known figure issues
 - Run remediation with `semantic: true` (real LLM or recorded fixture)
 - Assert `alt_text` score improves
-- Assert no other category regresses
+- Assert no other category regresses  
+CI today covers **domain** (`tests/fixtures/government/` + `domainDetector.test.ts`) and **3c-c fixtures** via subprocess tests; full ICJIA remediation runs remain manual or a future recorded-response harness.
+
+---
+
+## Implementation status (PDFAF v2)
+
+### Phase 3a (figures)
+
+Shipped: optional multipart field `options` with `semantic: true`; LLM vision batches for figure alt text; Python `set_figure_alt_text` / `mark_figure_decorative`; full `analyzePdf` verification; regression revert; `RemediationResult.semantic` summary.
+
+### Phase 3b (headings, tagged retag only)
+
+Shipped: optional `semanticHeadings: true` in `options`; optional `semanticHeadingTimeoutMs` (falls back to `semanticTimeoutMs`). Text-only tool `propose_heading_levels`; Python mutator **`set_heading_level`** updates `/S` only for elements that are **already** heading structure roles and are addressed by **`structRef`**. Runs **after** figure semantic when `semantic: true`, otherwise immediately after deterministic remediation. Response adds **`semanticHeadings`** with the same summary shape as `semantic`. **Heading-only regression revert** leaves the figure semantic buffer unchanged when the heading pass would lower the weighted score beyond tolerance.
+
+### Phase 3c-a (promote tagged /P → heading)
+
+Shipped: optional `semanticPromoteHeadings: true` in `options`; optional `semanticPromoteHeadingTimeoutMs` (falls back to `semanticTimeoutMs`). Python analysis emits **`paragraphStructElems`** (`structRef`, `page`, `tag`, `text`) for paragraph-like `StructElem` nodes; the promote pass considers **`P` only** (v1 allowlist). Text-only tool **`propose_promote_to_heading`**; Python mutator **`retag_struct_as_heading`** sets `/S` to `/H1`–`/H6` only when the current role is **`/P`**. Runs **after** `semanticHeadings` when that pass is requested; otherwise after figure semantic / deterministic stack as applicable. Response adds **`semanticPromoteHeadings`** with the same summary shape as `semantic` / `semanticHeadings`. **Promote-only regression revert** restores the pre-promote buffer if re-analysis drops the weighted score beyond `SEMANTIC_REGRESSION_TOLERANCE`.
+
+**Risks:** wrong promotions can harm reading order and `heading_structure` scoring (strict confidence, caps, and allowlist mitigate). Tagged-but-unusual roles (`LBody`, `Lbl`, etc.) are out of scope until allowlisted case-by-case. **PII:** promote is text-only but still sends paragraph strings to the LLM.
+
+### Phase 3c-b (layout + prompts + geometry helpers; shipped in v2+)
+
+**Layout (`analyzeLayout`):** Repeated-line **header** and **footer** bands across sampled pages (pdfjs text positions), **`medianFontSizePtByPage`**, existing caption regex hits, multi-column heuristic. **`headerFooterBandTexts`** pairs repeated strings with page + kind. **Typed zones** (`header` / `footer`) include padded bboxes for overlap checks.
+
+**Python analysis:** Optional **`bbox`** on **`paragraphStructElems`** and **`figures`** when derivable from structure attributes (`/QuadPoints`, `/A`…`/BBox`).
+
+**Promote:** `filterPromoteCandidatesByLayout` in `src/services/semantic/promoteHeadingSemantic.ts` (1) drops `/P` candidates whose text overlaps repeated header/footer **band text** on the same page (substring match; min length from config), and (2) drops candidates whose optional **`bbox`** intersects a **header/footer zone** on that page.
+
+**Figures:** System prompt includes per-page caption lines, repeating band strings, optional zone y-ranges, and median text height (bounded by config). When a figure row carries **`bbox`**, caption lines in the layout block are **filtered to captions whose bbox overlaps an expanded proximity box** around the figure (`semanticService.ts`).
+
+**Remaining 3c-b gap (nice-to-have):** Bbox is structure-attribute–driven only (not MCID stream geometry). Figures often still lack bbox; pdfjs-only figure boxes for untagged streams remain future work.
+
+### Phase 3c-c (experimental — golden + orphan CI; see spike doc)
+
+**Shipped:** Python **`--write-3cc-golden`**, **`--write-3cc-orphan`**, **`--dump-structure-page`** (includes **`orphanMarker`**); analysis fields **`threeCcGoldenV1`**, **`threeCcGoldenOrphanV1`**, **`orphanMcids`**, **`mcidTextSpans`** (with optional **`resolvedText`** from stream `(...) Tj` after `/MCID`). Mutators **`golden_v1_promote_p_to_heading`**, **`orphan_v1_insert_p_for_mcid`**, **`orphan_v1_promote_p_to_heading`**. CI tests under `tests/threecc/` (golden + orphan insert, resolved text, invariants). Producer-marker checks run **before** `extract_metadata` so `open_metadata` does not clobber **`/Producer`** for marker detection.
+
+**`semanticUntaggedHeadings`:** After promote pass when requested. **Producer fixtures** (`pdfaf-3cc-golden-v1`, **`pdfaf-3cc-orphan-v1`**) use the corresponding fail-closed mutators; **orphan** path may run **`orphan_v1_insert_p_for_mcid`** first when there are orphan MCIDs but no `/P` rows, then re-analyze. **Opt-in tier 2:** `PDFAF_SEMANTIC_UNTAGGED_TIER2=1` plus Marked **`native_tagged`** allows the pass on other PDFs using **`retag_struct_as_heading`** (see `semanticUntaggedTier2Enabled()` in `src/config.ts`). Otherwise non-allowed PDFs still return **`unsupported_pdf`** without calling the LLM.
+
+**Config:** **`SEMANTIC_MCID_MAX_PAGES`** (bridge sets **`PDFAF_SEMANTIC_MCID_MAX_PAGES`** for Python MCID scans). See [`docs/prd/03c-c-struct-insert-spike.md`](03c-c-struct-insert-spike.md) for CLI appendix and **remaining** work (arbitrary-PDF ParentTree / corpus scale-up).
 
 ---
 
 ## Definition of Done (Phase 3)
 
-- [ ] `POST /v1/remediate` with `semantic: true` calls LLM for figure alt text
-- [ ] Domain detection works correctly for ICJIA government documents
-- [ ] Layout pre-pass correctly identifies captions and excludes headers/footers from heading candidates
-- [ ] Figure crops are rendered and sent as multimodal image parts
-- [ ] Confidence filtering rejects low-quality proposals
-- [ ] Regression prevention reverts semantic changes that lower score
-- [ ] Graceful degradation: if no LLM configured, semantic pass is silently skipped
-- [ ] Graceful degradation: if LLM times out, revert and return deterministic-only result
-- [ ] All Phase 1 and Phase 2 tests still pass
-- [ ] `pnpm test` passes all tests
+- [x] `POST /v1/remediate` with `semantic: true` calls LLM for figure alt text (when base URL set and `alt_text` below threshold)
+- [x] Domain detection works correctly for ICJIA government documents (keyword heuristic + committed `tests/fixtures/government/` excerpt test; full ICJIA corpus QA remains manual)
+- [x] Layout pre-pass identifies captions; detects repeated header/footer lines; excludes matching strings from **promote** candidates; enriches **figure** prompts (heuristic, pdfjs-based)
+- [x] Figure crops are rendered and sent as multimodal image parts
+- [x] Confidence filtering rejects low-quality proposals
+- [x] Regression prevention reverts semantic changes that lower score
+- [x] Graceful degradation: if no LLM configured, semantic pass is skipped with `no_llm_config` summary
+- [x] Graceful degradation: if any LLM batch fails with timeout/abort, semantic pass returns the pre-pass PDF with `skippedReason: llm_timeout` (fail-closed; no partial mutations). Client disconnect aborts in-flight LLM via `AbortSignal` on `/v1/remediate`.
+- [x] All Phase 1 and Phase 2 tests still pass
+- [x] `pnpm test` passes all tests

@@ -1,36 +1,39 @@
-import { PDFBool, PDFName } from 'pdf-lib';
-import { PDFDocument } from 'pdf-lib';
+import { runPythonMutationBatch } from '../../../python/bridge.js';
 
 export async function setDocumentTitle(buffer: Buffer, title: string): Promise<Buffer> {
-  const doc = await PDFDocument.load(buffer, { ignoreEncryption: true, updateMetadata: false });
   const t = title.trim();
   if (!t) return buffer;
-  doc.setTitle(t, { showInWindowTitleBar: true });
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  const { buffer: out, result } = await runPythonMutationBatch(buffer, [
+    { op: 'set_document_title', params: { title: t } },
+  ]);
+  if (!result.success || result.applied.length === 0) {
+    return buffer;
+  }
+  return out;
 }
 
 export async function setDocumentLanguage(buffer: Buffer, language: string): Promise<Buffer> {
-  const doc = await PDFDocument.load(buffer, { ignoreEncryption: true, updateMetadata: false });
   const lang = language.trim();
   if (!lang) return buffer;
-  doc.setLanguage(lang);
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  const { buffer: out, result } = await runPythonMutationBatch(buffer, [
+    { op: 'set_document_language', params: { language: lang } },
+  ]);
+  if (!result.success || result.applied.length === 0) {
+    return buffer;
+  }
+  return out;
 }
 
 /**
- * Best-effort PDF/UA markers: /MarkInfo/Marked, /Lang via pdf-lib catalog.
+ * PDF/UA identification via pikepdf (single round-trip): /MarkInfo/Marked, /Lang when empty, XMP pdfuaid.
  */
 export async function setPdfUaIdentification(buffer: Buffer, language: string): Promise<Buffer> {
-  const doc = await PDFDocument.load(buffer, { ignoreEncryption: true, updateMetadata: false });
   const lang = language.trim() || 'en-US';
-  doc.setLanguage(lang);
-
-  const catalog = doc.catalog;
-  const markInfo = doc.context.obj({
-    Marked: PDFBool.True,
-    Suspects: PDFBool.False,
-  });
-  catalog.set(PDFName.of('MarkInfo'), markInfo);
-
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  const { buffer: out, result } = await runPythonMutationBatch(buffer, [
+    { op: 'set_pdfua_identification', params: { language: lang } },
+  ]);
+  if (!result.success || result.applied.length === 0) {
+    return buffer;
+  }
+  return out;
 }

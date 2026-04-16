@@ -1,0 +1,12 @@
+{
+  "_comment": "Max failed-file count per Adobe anchor (aggregate from pnpm adobe:ingest-reports). CI fails if exceeded.",
+  "TaggedCont": 20,
+  "OtherAltText": 20,
+  "FigAltText": 20,
+  "TaggedAnnots": 10,
+  "CharEnc": 10,
+  "NestedAltText": 10,
+  "Bookmarks": 10,
+  "TableHeaders": 10,
+  "AltTextNoContent": 10
+}

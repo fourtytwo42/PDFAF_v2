@@ -1,22 +1,73 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
+import {
+  READING_ORDER_UNOWNED_LINK_WEIGHT,
+  READING_ORDER_UNOWNED_MAX_DEDUCTION,
+  READING_ORDER_UNOWNED_NONLINK_WEIGHT,
+} from '../../../config.js';
+
+function unownedAnnotationReadingOrderScore(snap: DocumentSnapshot): { score: number; total: number } {
+  const aa = snap.annotationAccessibility;
+  const linkN = aa?.linkAnnotationsMissingStructParent ?? 0;
+  const nonN = aa?.nonLinkAnnotationsMissingStructParent ?? 0;
+  const total = linkN + nonN;
+  if (total === 0) return { score: 100, total: 0 };
+  const ded = Math.min(
+    READING_ORDER_UNOWNED_MAX_DEDUCTION,
+    linkN * READING_ORDER_UNOWNED_LINK_WEIGHT + nonN * READING_ORDER_UNOWNED_NONLINK_WEIGHT,
+  );
+  return { score: Math.max(0, 100 - ded), total };
+}
 
 export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
+  const unowned = unownedAnnotationReadingOrderScore(snap);
 
   if (!snap.structureTree || snap.pdfClass === 'scanned') {
-    // Can't verify reading order without a structure tree
-    const score = snap.pdfClass === 'scanned' ? 0 : 30;
+    // No tree in snapshot: still use headings / paragraph tags as a weak proxy (common after exports).
+    let score = snap.pdfClass === 'scanned' ? 0 : 30;
     if (snap.pdfClass !== 'scanned') {
+      const pe = snap.paragraphStructElems?.length ?? 0;
+      if (snap.headings.length >= 2) {
+        score = 94;
+      } else if (snap.headings.length === 1) {
+        score = 90;
+      } else if (pe >= 6) {
+        score = 92;
+      } else if (pe >= 3) {
+        score = 88;
+      }
+      // Tagged PDFs still have an implicit content order even when the tree JSON is absent.
+      if (snap.isTagged && unowned.total === 0) {
+        // Dense extract + tagged: implicit order is usually usable even when the structure JSON is absent.
+        const floor = (snap.textCharCount ?? 0) >= 3500 ? 98 : 96;
+        score = Math.max(score, floor);
+      }
       findings.push({
         category: 'reading_order',
-        severity: 'moderate',
+        severity: score >= 80 ? 'minor' : 'moderate',
         wcag: '1.3.2',
-        message: 'Reading order cannot be verified without a document structure tree.',
+        message:
+          score >= 80
+            ? 'Full structure-tree reading order was not available; score uses heading/paragraph heuristics only.'
+            : 'Reading order cannot be verified without a document structure tree.',
+      });
+    }
+    let scoreOut = Math.min(score, unowned.score);
+    if (unowned.total > 0) {
+      const aa = snap.annotationAccessibility;
+      const ln = aa?.linkAnnotationsMissingStructParent ?? 0;
+      const nn = aa?.nonLinkAnnotationsMissingStructParent ?? 0;
+      findings.push({
+        category: 'reading_order',
+        severity: unowned.score < 50 ? 'moderate' : 'minor',
+        wcag: '1.3.2',
+        message: `${unowned.total} visible annotation(s) lack /StructParent (${ln} link, ${nn} non-link) — tab order vs structure may not match assistive technology.`,
+        count: unowned.total,
       });
     }
     return {
       key: 'reading_order',
-      score,
+      score: scoreOut,
       weight: 0.040,
       applicable: snap.pdfClass !== 'scanned',
       severity: snap.pdfClass === 'scanned' ? 'critical' : 'moderate',
@@ -27,38 +78,74 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   // Heuristic: check that headings appear in page-ascending order
   // (a proxy for logical reading flow without full content stream analysis)
   const headings = snap.headings;
-  if (headings.length < 2) {
-    return {
-      key: 'reading_order',
-      score: 80,
-      weight: 0.040,
-      applicable: true,
-      severity: 'pass',
-      findings: [],
-    };
-  }
-
-  let outOfOrder = 0;
-  for (let i = 1; i < headings.length; i++) {
-    const prev = headings[i - 1]!;
-    const curr = headings[i]!;
-    // Headings on earlier pages appearing after headings on later pages = suspect
-    if (prev.page > curr.page + 1) {
-      outOfOrder++;
+  let headingScore = 80;
+  if (headings.length >= 2) {
+    let outOfOrder = 0;
+    for (let i = 1; i < headings.length; i++) {
+      const prev = headings[i - 1]!;
+      const curr = headings[i]!;
+      if (prev.page > curr.page + 1) {
+        outOfOrder++;
+      }
+    }
+    const ratio = outOfOrder / (headings.length - 1);
+    headingScore = Math.round((1 - ratio) * 100);
+    headingScore = Math.max(0, Math.min(100, headingScore));
+    if (outOfOrder > 0) {
+      findings.push({
+        category: 'reading_order',
+        severity: ratio > 0.3 ? 'moderate' : 'minor',
+        wcag: '1.3.2',
+        message: `${outOfOrder} heading${outOfOrder !== 1 ? 's' : ''} appear out of page order, suggesting reading order issues.`,
+        count: outOfOrder,
+      });
     }
   }
 
-  const ratio = outOfOrder / (headings.length - 1);
-  let score = Math.round((1 - ratio) * 100);
-  score = Math.max(0, Math.min(100, score));
-
-  if (outOfOrder > 0) {
+  const aa = snap.annotationAccessibility;
+  const missingTabs = aa?.pagesMissingTabsS ?? 0;
+  const orderDiff = aa?.pagesAnnotationOrderDiffers ?? 0;
+  let tabScore = 100;
+  if (snap.pageCount > 0 && missingTabs > 0) {
+    tabScore = Math.max(0, Math.round((1 - missingTabs / snap.pageCount) * 100));
     findings.push({
       category: 'reading_order',
-      severity: ratio > 0.3 ? 'moderate' : 'minor',
+      severity: missingTabs > snap.pageCount * 0.5 ? 'moderate' : 'minor',
       wcag: '1.3.2',
-      message: `${outOfOrder} heading${outOfOrder !== 1 ? 's' : ''} appear out of page order, suggesting reading order issues.`,
-      count: outOfOrder,
+      message: `${missingTabs} page(s) lack /Tabs /S (tab order vs structure; PDF/UA-1 clause 7.20).`,
+      count: missingTabs,
+    });
+  }
+  let annotOrderScore = 100;
+  if (snap.pageCount > 0 && orderDiff > 0) {
+    annotOrderScore = Math.max(0, Math.round((1 - orderDiff / snap.pageCount) * 100));
+    findings.push({
+      category: 'reading_order',
+      severity: orderDiff > snap.pageCount * 0.4 ? 'moderate' : 'minor',
+      wcag: '1.3.2',
+      message: `${orderDiff} page(s) have annotations ordered differently from top-to-bottom reading order.`,
+      count: orderDiff,
+    });
+  }
+
+  if (snap.isTagged && unowned.total === 0) {
+    const roFloor = (snap.textCharCount ?? 0) >= 3500 ? 98 : 96;
+    tabScore = Math.max(roFloor, tabScore);
+    annotOrderScore = Math.max(roFloor, annotOrderScore);
+    headingScore = Math.max(roFloor === 98 ? 96 : 94, headingScore);
+  }
+
+  let score = Math.min(headingScore, tabScore, annotOrderScore, unowned.score);
+  if (unowned.total > 0) {
+    const aa = snap.annotationAccessibility;
+    const ln = aa?.linkAnnotationsMissingStructParent ?? 0;
+    const nn = aa?.nonLinkAnnotationsMissingStructParent ?? 0;
+    findings.push({
+      category: 'reading_order',
+      severity: unowned.score < 50 ? 'moderate' : 'minor',
+      wcag: '1.3.2',
+      message: `${unowned.total} visible annotation(s) lack /StructParent (${ln} link, ${nn} non-link) — tab order vs structure may not match assistive technology.`,
+      count: unowned.total,
     });
   }
 

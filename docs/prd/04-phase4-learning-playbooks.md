@@ -419,11 +419,11 @@ async function executePlaybook(
 
 ## Definition of Done (Phase 4)
 
-- [ ] Second run of previously-remediated document type uses playbook fast path
-- [ ] Playbook fast path completes in < 5s for a 20-page PDF
-- [ ] `GET /v1/playbooks` returns catalog with success rates
-- [ ] Low-reliability tools are filtered out by planner after 10+ attempts
-- [ ] Playbooks are persisted across server restarts (SQLite)
-- [ ] Playbook status lifecycle works (candidate → active → retired)
-- [ ] All Phase 1, 2, 3 tests still pass
-- [ ] `pnpm test` passes all tests
+- [x] Second run of previously-remediated document type uses playbook fast path
+- [x] Playbook fast path completes in < 5s for a 20-page PDF
+- [x] `GET /v1/playbooks` returns catalog with success rates
+- [x] Low-reliability tools are filtered out by planner after 10+ attempts
+- [x] Playbooks are persisted across server restarts (SQLite)
+- [x] Playbook status lifecycle works (candidate → active → retired)
+- [x] All Phase 1, 2, 3 tests still pass
+- [x] `pnpm test` passes all tests

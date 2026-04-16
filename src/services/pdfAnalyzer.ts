@@ -68,7 +68,16 @@ export interface AnalyzePdfOutcome {
   snapshot: DocumentSnapshot;
 }
 
-export async function analyzePdf(pdfPath: string, filename: string): Promise<AnalyzePdfOutcome> {
+export interface AnalyzePdfOptions {
+  /** When true, always run pdfjs + Python (benchmarks / regression timing). */
+  bypassCache?: boolean;
+}
+
+export async function analyzePdf(
+  pdfPath: string,
+  filename: string,
+  options?: AnalyzePdfOptions,
+): Promise<AnalyzePdfOutcome> {
   if (!acquireSemaphore()) {
     throw Object.assign(new Error('Too many concurrent analyses'), { statusCode: 429 });
   }
@@ -78,7 +87,7 @@ export async function analyzePdf(pdfPath: string, filename: string): Promise<Ana
   try {
     // Check cache by file content hash
     const fileHash = await hashFile(pdfPath);
-    const cached = getCached(fileHash);
+    const cached = options?.bypassCache ? null : getCached(fileHash);
     if (cached) {
       return {
         result: { ...cached.result, analysisDurationMs: Date.now() - startMs },
@@ -121,6 +130,59 @@ export async function analyzePdf(pdfPath: string, filename: string): Promise<Ana
 
 // ─── Snapshot merge ────────────────────────────────────────────────────────────
 
+const _linkKey = (page: number, url: string) => `${page}\t${(url ?? '').trim().toLowerCase()}`;
+
+/**
+ * Merge pdfjs link samples with pikepdf’s full-document /Link scan so link_quality
+ * reflects on-disk /Contents and URI-derived labels, not only sampled pdfjs pages.
+ */
+export function buildSnapshotLinks(
+  pdfjsLinks: DocumentSnapshot['links'],
+  linkScoringRows?: Array<{ page: number; url: string; effectiveText: string }>,
+): DocumentSnapshot['links'] {
+  if (!linkScoringRows?.length) return pdfjsLinks;
+  const pyByKey = new Map<string, number>();
+  for (const r of linkScoringRows) {
+    const k = _linkKey(r.page, r.url ?? '');
+    pyByKey.set(k, (pyByKey.get(k) ?? 0) + 1);
+  }
+  const out: DocumentSnapshot['links'] = linkScoringRows.map(r => ({
+    page: r.page,
+    url: (r.url ?? '').trim(),
+    text: ((r.effectiveText ?? '').trim() || 'Link').slice(0, 500),
+  }));
+  const pdfByKey = new Map<string, DocumentSnapshot['links'][number][]>();
+  for (const L of pdfjsLinks) {
+    const k = _linkKey(L.page, L.url ?? '');
+    const arr = pdfByKey.get(k);
+    if (arr) arr.push(L);
+    else pdfByKey.set(k, [L]);
+  }
+  for (const pList of pdfByKey.values()) {
+    if (pList.length === 0) continue;
+    const k = _linkKey(pList[0]!.page, pList[0]!.url ?? '');
+    const pyCnt = pyByKey.get(k) ?? 0;
+    for (let i = pyCnt; i < pList.length; i++) {
+      out.push({ ...pList[i]! });
+    }
+  }
+  return out;
+}
+
+function normalizeAnnotationAccessibility(
+  a: PythonAnalysisResult['annotationAccessibility'],
+): NonNullable<DocumentSnapshot['annotationAccessibility']> {
+  return {
+    pagesMissingTabsS: a?.pagesMissingTabsS ?? 0,
+    pagesAnnotationOrderDiffers: a?.pagesAnnotationOrderDiffers ?? 0,
+    linkAnnotationsMissingStructure: a?.linkAnnotationsMissingStructure ?? 0,
+    nonLinkAnnotationsMissingStructure: a?.nonLinkAnnotationsMissingStructure ?? 0,
+    nonLinkAnnotationsMissingContents: a?.nonLinkAnnotationsMissingContents ?? 0,
+    linkAnnotationsMissingStructParent: a?.linkAnnotationsMissingStructParent ?? 0,
+    nonLinkAnnotationsMissingStructParent: a?.nonLinkAnnotationsMissingStructParent ?? 0,
+  };
+}
+
 function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): DocumentSnapshot {
   const imageToTextRatio = pdfjs.pageCount > 0
     ? pdfjs.imageOnlyPageCount / pdfjs.pageCount
@@ -132,6 +194,8 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     language: struct.lang    || pdfjs.metadata.language,
     author:   struct.author  || pdfjs.metadata.author,
     subject:  struct.subject || pdfjs.metadata.subject,
+    producer: pdfjs.metadata.producer,
+    creator:  pdfjs.metadata.creator,
   };
 
   return {
@@ -141,7 +205,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     textCharCount:        pdfjs.textCharCount,
     imageOnlyPageCount:   pdfjs.imageOnlyPageCount,
     metadata,
-    links:                pdfjs.links,
+    links:                buildSnapshotLinks(pdfjs.links, struct.linkScoringRows),
     formFieldsFromPdfjs:  pdfjs.formFields,
     // pikepdf
     isTagged:      struct.isTagged,
@@ -156,6 +220,15 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     bookmarks:     struct.bookmarks,
     formFields:    struct.formFields,
     structureTree: struct.structureTree,
+    paragraphStructElems: struct.paragraphStructElems ?? [],
+    threeCcGoldenV1: Boolean(struct.threeCcGoldenV1),
+    threeCcGoldenOrphanV1: Boolean(struct.threeCcGoldenOrphanV1),
+    orphanMcids: struct.orphanMcids ?? [],
+    mcidTextSpans: struct.mcidTextSpans ?? [],
+    taggedContentAudit: struct.taggedContentAudit,
+    listStructureAudit: struct.listStructureAudit,
+    acrobatStyleAltRisks: struct.acrobatStyleAltRisks,
+    annotationAccessibility: normalizeAnnotationAccessibility(struct.annotationAccessibility),
     // computed
     pdfClass:         'native_untagged', // overwritten below
     imageToTextRatio,
@@ -223,5 +296,12 @@ function emptyPythonResult(): PythonAnalysisResult {
     bookmarks: [],
     formFields: [],
     structureTree: null,
+    paragraphStructElems: [],
+    threeCcGoldenV1: false,
+    threeCcGoldenOrphanV1: false,
+    orphanMcids: [],
+    mcidTextSpans: [],
+    taggedContentAudit: undefined,
+    acrobatStyleAltRisks: undefined,
   };
 }

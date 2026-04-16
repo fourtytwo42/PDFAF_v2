@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { score, SCORING_WEIGHTS } from '../src/services/scorer/scorer.js';
+import { SCORE_TAGGED_MARKED_NO_EXTRACTABLE_TEXT } from '../src/config.js';
 import type { DocumentSnapshot } from '../src/types.js';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -154,6 +155,69 @@ describe('textExtractability', () => {
     const cat = result.categories.find(c => c.key === 'text_extractability')!;
     expect(cat.score).toBe(100);
   });
+
+  it('adds OCR finding when Producer suggests OCRmyPDF; score stays 100 with default cap', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 5000,
+      metadata: {
+        title: 'Test Doc',
+        language: 'en-US',
+        author: 'Author',
+        subject: 'Test',
+        producer: 'OCRmyPDF 17.0',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(100);
+    expect(cat.findings.some(f => f.message.includes('OCR'))).toBe(true);
+  });
+
+  it('returns capped score for tagged Marked native_tagged when pdf.js extracts no text', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 0,
+      textByPage: Array(20).fill(''),
+      headings: [],
+      bookmarks: [],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(SCORE_TAGGED_MARKED_NO_EXTRACTABLE_TEXT);
+  });
+
+  it('penalises native_tagged when fonts have encodingRisk (Acrobat Character encoding proxy)', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 5000,
+      fonts: [
+        { name: 'Arial', isEmbedded: false, hasUnicode: false, encodingRisk: true },
+        { name: 'Times', isEmbedded: false, hasUnicode: false, encodingRisk: true },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => /Character encoding|encoding/i.test(f.message))).toBe(true);
+  });
+
+  it('applies full encoding penalty when text layer is sparse (relax thresholds not met)', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      pageCount: 40,
+      textByPage: Array(40).fill('short'),
+      textCharCount: 2000,
+      fonts: [
+        { name: 'Arial', isEmbedded: false, hasUnicode: false, encodingRisk: true },
+        { name: 'Times', isEmbedded: false, hasUnicode: false, encodingRisk: true },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBeLessThanOrEqual(90);
+    expect(cat.severity).toBe('moderate');
+  });
 });
 
 describe('titleLanguage', () => {
@@ -180,16 +244,69 @@ describe('titleLanguage', () => {
 });
 
 describe('headingStructure', () => {
-  it('scores 0 for multi-page doc with no headings', () => {
-    const snap = makeSnap({ headings: [], pageCount: 10 });
+  it('scores 0 for multi-page doc with no headings and sparse paragraph structure', () => {
+    const snap = makeSnap({
+      headings: [],
+      pageCount: 10,
+      paragraphStructElems: [{ tag: 'P', text: 'x', page: 0, structRef: '1_0' }],
+      textCharCount: 80,
+      textByPage: Array(10).fill('short'),
+    });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'heading_structure')!;
     expect(cat.score).toBe(0);
     expect(cat.severity).toBe('critical');
   });
 
+  it('scores 100 when tagged Marked multi-page doc has no H tags but many P-structure elements', () => {
+    const elems = Array.from({ length: 6 }, (_, i) => ({
+      tag: 'P' as const,
+      text: `Section ${i}`,
+      page: Math.floor(i / 3),
+      structRef: `${i}_0`,
+    }));
+    const snap = makeSnap({ headings: [], pageCount: 10, paragraphStructElems: elems });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBe(100);
+    expect(cat.severity).toBe('pass');
+  });
+
+  it('scores 100 for native_tagged multi-page with no H tags but substantial text (no P-struct list)', () => {
+    const snap = makeSnap({
+      headings: [],
+      pageCount: 10,
+      paragraphStructElems: [],
+      textCharCount: 5000,
+      textByPage: Array(10).fill('x'.repeat(500)),
+      pdfClass: 'native_tagged',
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBe(100);
+  });
+
+  it('scores 100 for tagged Marked multi-page with no H tags and pdf.js text length 0', () => {
+    const snap = makeSnap({
+      headings: [],
+      pageCount: 12,
+      paragraphStructElems: [],
+      textCharCount: 0,
+      textByPage: Array(12).fill(''),
+      pdfClass: 'native_tagged',
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBe(100);
+  });
+
   it('penalises skipped levels', () => {
     const snap = makeSnap({
+      pdfClass: 'native_untagged',
+      isTagged: false,
+      pageCount: 8,
+      textByPage: Array(8).fill('Some text content here'),
+      textCharCount: 8 * 22,
       headings: [
         { level: 1, text: 'A', page: 0 },
         { level: 3, text: 'B', page: 1 }, // skipped H2
@@ -199,6 +316,11 @@ describe('headingStructure', () => {
     const catSkip = withSkip.categories.find(c => c.key === 'heading_structure')!;
 
     const snap2 = makeSnap({
+      pdfClass: 'native_untagged',
+      isTagged: false,
+      pageCount: 8,
+      textByPage: Array(8).fill('Some text content here'),
+      textCharCount: 8 * 22,
       headings: [
         { level: 1, text: 'A', page: 0 },
         { level: 2, text: 'B', page: 1 },
@@ -231,7 +353,22 @@ describe('altText', () => {
     expect(cat.score).toBe(100);
   });
 
-  it('scores 0 when no figures have alt text', () => {
+  it('scores 0 when no figures have alt text (untagged class; small native_tagged floor is separate)', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_untagged',
+      isTagged: false,
+      markInfo: null,
+      figures: [
+        { hasAlt: false, isArtifact: false, page: 1 },
+        { hasAlt: false, isArtifact: false, page: 2 },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'alt_text')!;
+    expect(cat.score).toBe(0);
+  });
+
+  it('does not inflate alt_text for native_tagged figures with no alt (Acrobat FigAltText alignment)', () => {
     const snap = makeSnap({
       figures: [
         { hasAlt: false, isArtifact: false, page: 1 },
@@ -246,13 +383,224 @@ describe('altText', () => {
   it('ignores artifact figures', () => {
     const snap = makeSnap({
       figures: [
-        { hasAlt: true, altText: 'Logo', isArtifact: false, page: 1 },
+        { hasAlt: true, altText: 'Acme brand mark on title page', isArtifact: false, page: 1 },
         { hasAlt: false, isArtifact: true, page: 2 },   // decorative, don't penalise
       ],
     });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'alt_text')!;
     expect(cat.score).toBe(100);
+  });
+
+  it('penalises generic alternate text on figures (Tier A)', () => {
+    const snap = makeSnap({
+      figures: [
+        { hasAlt: true, altText: 'image', isArtifact: false, page: 1 },
+        { hasAlt: true, altText: 'A bar chart', isArtifact: false, page: 2 },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'alt_text')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('generic'))).toBe(true);
+  });
+
+  it('scores non-link annotations missing /Contents when there are no figures', () => {
+    const snap = makeSnap({
+      figures: [],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 3,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'alt_text')!;
+    expect(cat.applicable).toBe(true);
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('non-link'))).toBe(true);
+  });
+});
+
+describe('annotationAccessibility signals', () => {
+  it('penalises pdf_ua when many visible annotations lack structure association', () => {
+    const snap = makeSnap({
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 13,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'pdf_ua_compliance')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('annotation'))).toBe(true);
+  });
+
+  it('penalises reading_order when many pages lack /Tabs /S', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_untagged',
+      isTagged: false,
+      markInfo: null,
+      pageCount: 20,
+      textByPage: Array(20).fill('Some text content here'),
+      annotationAccessibility: {
+        pagesMissingTabsS: 10,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBeLessThanOrEqual(50);
+    expect(cat.findings.some(f => f.message.includes('/Tabs'))).toBe(true);
+  });
+
+  it('penalises pdf_ua for tagged-content audit orphan MCIDs (Acrobat TaggedCont proxy)', () => {
+    const snap = makeSnap({
+      taggedContentAudit: {
+        orphanMcidCount: 2,
+        mcidTextSpanCount: 6,
+        suspectedPathPaintOutsideMc: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'pdf_ua_compliance')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('orphan'))).toBe(true);
+  });
+
+  it('penalises pdf_ua for path paint outside marked-content (heuristic)', () => {
+    const snap = makeSnap({
+      taggedContentAudit: {
+        orphanMcidCount: 0,
+        mcidTextSpanCount: 4,
+        suspectedPathPaintOutsideMc: 50,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'pdf_ua_compliance')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('path paint'))).toBe(true);
+  });
+
+  it('penalises link_quality for link annotations missing structure', () => {
+    const snap = makeSnap({
+      links: [{ text: 'Good label', url: 'https://example.com', page: 0 }],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 2,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'link_quality')!;
+    expect(cat.score).toBe(95);
+    expect(cat.findings.some(f => f.message.includes('structure tree'))).toBe(true);
+  });
+
+  it('scores link_quality from structure issues when pdfjs extracted no links', () => {
+    const snap = makeSnap({
+      links: [],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 1,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'link_quality')!;
+    expect(cat.applicable).toBe(true);
+    expect(cat.score).toBeLessThan(100);
+  });
+
+  it('penalises reading_order when link annotations lack /StructParent (Tier A)', () => {
+    const snap = makeSnap({
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 5,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('StructParent'))).toBe(true);
+  });
+
+  it('penalises link_quality for /Link missing /StructParent (distinct from ParentTree)', () => {
+    const snap = makeSnap({
+      links: [{ text: 'Good label', url: 'https://example.com', page: 0 }],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 4,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'link_quality')!;
+    expect(cat.score).toBeLessThan(100);
+    expect(cat.findings.some(f => f.message.includes('/StructParent'))).toBe(true);
+  });
+
+  it('flags pdfaf-style generic link phrase (find out more)', () => {
+    const snap = makeSnap({
+      links: [{ text: 'Find out more', url: 'https://example.com', page: 0 }],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'link_quality')!;
+    expect(cat.findings.some(f => f.message.includes('non-descriptive'))).toBe(true);
+  });
+
+  it('applies advisory table regularity when row pattern matches pdfaf heuristic', () => {
+    const snap = makeSnap({
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 1,
+          totalCells: 18,
+          page: 1,
+          rowCount: 5,
+          cellsMisplacedCount: 0,
+          irregularRows: 4,
+          rowCellCounts: [2, 4, 4, 4, 4],
+          dominantColumnCount: 4,
+          maxRowSpan: 1,
+          maxColSpan: 1,
+        },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'table_markup')!;
+    expect(cat.findings.some(f => f.message.includes('advisory'))).toBe(true);
   });
 });
 
@@ -264,11 +612,68 @@ describe('bookmarks', () => {
     expect(cat.applicable).toBe(false);
   });
 
-  it('scores 0 for a 20-page doc with no bookmarks', () => {
+  it('scores 88 for a 20-page doc with no bookmarks and sparse headings (long-doc floor)', () => {
+    const snap = makeSnap({
+      bookmarks: [],
+      headings: [{ level: 1, text: 'Only', page: 0 }],
+      markInfo: null,
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'bookmarks')!;
+    expect(cat.score).toBe(88);
+  });
+
+  it('scores partial credit for tagged Marked long doc with no outlines and a single heading', () => {
+    const snap = makeSnap({
+      bookmarks: [],
+      headings: [{ level: 1, text: 'Only', page: 0 }],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'bookmarks')!;
+    expect(cat.score).toBe(94);
+  });
+
+  it('gives partial credit when there are no outlines but many tagged headings', () => {
     const snap = makeSnap({ bookmarks: [] });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'bookmarks')!;
-    expect(cat.score).toBe(0);
+    expect(cat.score).toBe(92);
+  });
+
+  it('gives 88 when there are no outlines but only two headings', () => {
+    const snap = makeSnap({
+      bookmarks: [],
+      headings: [
+        { level: 1, text: 'A', page: 0 },
+        { level: 2, text: 'B', page: 1 },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'bookmarks')!;
+    expect(cat.score).toBe(88);
+  });
+
+  it('scores 97 when bookmarks exist without headings but paragraph tagging is rich', () => {
+    const paras = Array.from({ length: 25 }, (_, i) => ({
+      tag: 'P' as const,
+      text: `p${i}`,
+      page: i % 20,
+      structRef: `${i}_0`,
+    }));
+    const snap = makeSnap({
+      pageCount: 20,
+      bookmarks: [
+        { title: 'Ch1', level: 1 },
+        { title: 'Ch2', level: 1 },
+      ],
+      headings: [],
+      paragraphStructElems: paras,
+      textByPage: Array(20).fill('word '.repeat(50)),
+      textCharCount: 20_000,
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'bookmarks')!;
+    expect(cat.score).toBe(97);
   });
 });
 

@@ -1,10 +1,14 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
+import {
+  PDF_UA_LIST_VIOLATION_FAIL_THRESHOLD,
+  PDF_UA_ORPHAN_MCID_FAIL_THRESHOLD,
+  PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD,
+} from '../../../config.js';
 
 export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
 
-  // Five markers, 20 points each
-  const checks = [
+  const checks: { pass: boolean; wcag: string; msg: string }[] = [
     {
       pass: snap.isTagged,
       wcag: '4.1.1',
@@ -26,16 +30,68 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
       msg: 'XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).',
     },
     {
-      pass: snap.structureTree !== null,
+      pass:
+        snap.structureTree !== null ||
+        (snap.isTagged && snap.headings.length > 0),
       wcag: '1.3.1',
       msg: 'Structure tree (/StructTreeRoot) is absent.',
     },
   ];
 
+  const aa = snap.annotationAccessibility;
+  if (snap.structureTree !== null && aa) {
+    const n =
+      (aa.linkAnnotationsMissingStructure ?? 0) + (aa.nonLinkAnnotationsMissingStructure ?? 0);
+    // Ignore tiny residue (Acrobat vs pikepdf noise); tighten toward Acrobat "Tagged annotations".
+    if (n > 4) {
+      checks.push({
+        pass: false,
+        wcag: '1.3.1',
+        msg: `${n} visible annotation(s) are not correctly associated with the structure tree (tagged annotations).`,
+      });
+    }
+  }
+
+  const lsa = snap.listStructureAudit;
+  if (snap.isTagged && snap.structureTree !== null && lsa) {
+    const violations =
+      (lsa.listItemMisplacedCount ?? 0) +
+      (lsa.lblBodyMisplacedCount ?? 0) +
+      (lsa.listsWithoutItems ?? 0);
+    if (violations >= PDF_UA_LIST_VIOLATION_FAIL_THRESHOLD) {
+      checks.push({
+        pass: false,
+        wcag: '1.3.1',
+        msg: `List structure audit reports ${violations} Acrobat-style list issue(s) (misplaced list items / Lbl+LBody / lists without items; counts: LI↔L=${lsa.listItemMisplacedCount ?? 0}, Lbl+LBody=${lsa.lblBodyMisplacedCount ?? 0}, L without LI=${lsa.listsWithoutItems ?? 0}).`,
+      });
+    }
+  }
+
+  const tca = snap.taggedContentAudit;
+  if (snap.structureTree !== null && tca) {
+    const orphans = tca.orphanMcidCount ?? 0;
+    if (orphans >= PDF_UA_ORPHAN_MCID_FAIL_THRESHOLD) {
+      checks.push({
+        pass: false,
+        wcag: '1.3.1',
+        msg: `${orphans} marked-content MCID(s) appear outside the structure tree (Acrobat "Tagged content" / orphan MCIDs).`,
+      });
+    }
+    const paths = tca.suspectedPathPaintOutsideMc ?? 0;
+    if (paths > PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD) {
+      checks.push({
+        pass: false,
+        wcag: '1.3.1',
+        msg: `Tagged content audit suggests ${paths} path paint operator(s) outside marked-content blocks (heuristic; Acrobat may flag untagged content).`,
+      });
+    }
+  }
+
   let score = 0;
+  const per = 100 / checks.length;
   for (const check of checks) {
     if (check.pass) {
-      score += 20;
+      score += per;
     } else {
       findings.push({
         category: 'pdf_ua_compliance',
@@ -45,6 +101,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
       });
     }
   }
+  score = Math.round(score);
 
   return {
     key: 'pdf_ua_compliance',

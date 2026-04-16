@@ -4,7 +4,7 @@ export function scoreTitleLanguage(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
 
   const hasTitle = !!(snap.metadata.title?.trim() || snap.structTitle?.trim());
-  const hasLang  = !!(snap.lang?.trim() || snap.metadata.language?.trim());
+  const hasLang = !!(snap.lang?.trim() || snap.metadata.language?.trim());
 
   let score: number;
 

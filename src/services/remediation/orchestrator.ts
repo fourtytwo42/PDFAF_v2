@@ -3,25 +3,40 @@ import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
+  BOOKMARKS_PAGE_THRESHOLD,
+  PLAYBOOK_LEARN_MIN_SCORE_DELTA,
   REMEDIATION_IMPLEMENTED_TOOLS,
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_MAX_ROUNDS,
   REMEDIATION_MIN_ROUND_IMPROVEMENT,
   REMEDIATION_TARGET_SCORE,
 } from '../../config.js';
+import { getDb } from '../../db/client.js';
+import { buildFailureSignature } from '../learning/failureSignature.js';
+import { createPlaybookStore, type PlaybookStore } from '../learning/playbookStore.js';
+import { createToolOutcomeStore, type ToolOutcomeStore } from '../learning/toolOutcomes.js';
 import type {
   AnalysisResult,
   AppliedRemediationTool,
   DocumentSnapshot,
+  OcrPipelineSummary,
   PlannedRemediationTool,
+  Playbook,
   RemediationPlan,
   RemediationResult,
   RemediationRoundSummary,
+  RemediationStagePlan,
+  RemediatePdfOutcome,
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
-import { planForRemediation } from './planner.js';
+import { buildDefaultParams, planForRemediation } from './planner.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import * as metadataTools from './tools/metadata.js';
+import { applyPostRemediationAltRepair } from './altStructureRepair.js';
+import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.js';
+
+export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
 const implemented = new Set<string>(REMEDIATION_IMPLEMENTED_TOOLS);
 
@@ -36,11 +51,37 @@ function filterPlan(plan: RemediationPlan): RemediationPlan {
   };
 }
 
+/** OCR can lower the aggregate score while still adding a needed text layer — do not revert that stage. */
+function keepOcrStageDespiteScoreDrop(
+  stage: RemediationStagePlan,
+  stageApplied: AppliedRemediationTool[],
+): boolean {
+  if (stage.tools.length !== 1 || stage.tools[0]!.toolName !== 'ocr_scanned_pdf') return false;
+  const ocr = stageApplied[0];
+  return ocr?.toolName === 'ocr_scanned_pdf' && ocr.outcome === 'applied';
+}
+
+function buildOcrPipelineSummary(tools: AppliedRemediationTool[]): OcrPipelineSummary | undefined {
+  const ocrRows = tools.filter(t => t.toolName === 'ocr_scanned_pdf');
+  if (ocrRows.length === 0) return undefined;
+  const applied = ocrRows.some(t => t.outcome === 'applied');
+  const guidanceApplied =
+    'OCR (searchable text) was added via OCRmyPDF/Tesseract. Headline scores here do not measure OCR accuracy, visual fidelity, or Adobe/PAC PDF/UA conformance — schedule human review before publication.';
+  const guidanceIncomplete =
+    'OCR was attempted but not completed as an applied pass (failed, reverted, or no-op). Text may still be partially image-based; verify with assistive technology.';
+  return {
+    applied,
+    attempted: true,
+    humanReviewRecommended: true,
+    guidance: applied ? guidanceApplied : guidanceIncomplete,
+  };
+}
+
 async function bufferSha256(buf: Buffer): Promise<string> {
   return createHash('sha256').update(buf).digest('hex');
 }
 
-async function runSingleTool(
+export async function runSingleTool(
   buffer: Buffer,
   tool: PlannedRemediationTool,
   _snapshot: DocumentSnapshot,
@@ -64,13 +105,50 @@ async function runSingleTool(
       }
       case 'set_pdfua_identification': {
         const lang = String(params['language'] ?? 'en-US').trim();
-        const next = await metadataTools.setPdfUaIdentification(buffer, lang);
-        return { buffer: next, outcome: (await bufferSha256(next)) !== beforeHash ? 'applied' : 'no_effect' };
+        const { buffer: next, result } = await runPythonMutationBatch(buffer, [
+          { op: 'set_pdfua_identification', params: { language: lang } },
+        ]);
+        if (!result.success) {
+          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed) };
+        }
+        if (result.applied.length === 0) {
+          return { buffer, outcome: 'no_effect' };
+        }
+        return { buffer: next, outcome: 'applied' };
+      }
+      case 'ocr_scanned_pdf': {
+        const mutations: PythonMutation[] = [{ op: toolName, params }];
+        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
+        if (!result.success) {
+          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed) };
+        }
+        if (result.applied.length === 0) {
+          return { buffer, outcome: 'no_effect' };
+        }
+        return { buffer: next, outcome: 'applied' };
       }
       case 'bootstrap_struct_tree':
       case 'repair_structure_conformance':
+      case 'wrap_singleton_orphan_mcid':
+      case 'remap_orphan_mcids_as_artifacts':
+      case 'mark_untagged_content_as_artifact':
+      case 'tag_ocr_text_blocks':
+      case 'tag_native_text_blocks':
+      case 'tag_unowned_annotations':
+      case 'set_link_annotation_contents':
+      case 'repair_native_link_structure':
+      case 'normalize_annotation_tab_order':
+      case 'normalize_heading_hierarchy':
+      case 'repair_annotation_alt_text':
       case 'set_figure_alt_text':
-      case 'mark_figure_decorative': {
+      case 'mark_figure_decorative':
+      case 'repair_alt_text_structure':
+      case 'replace_bookmarks_from_headings':
+      case 'add_page_outline_bookmarks':
+      case 'set_table_header_cells':
+      case 'repair_list_li_wrong_parent':
+      case 'fill_form_field_tooltips':
+      case 'repair_native_table_headers': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
         const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
         if (!result.success) {
@@ -89,10 +167,467 @@ async function runSingleTool(
   }
 }
 
+function groupPlaybookStepsByStage(playbook: Playbook): RemediationPlan['stages'] {
+  const byStage = new Map<number, PlannedRemediationTool[]>();
+  for (const step of playbook.toolSequence) {
+    if (!implemented.has(step.toolName)) continue;
+    const list = byStage.get(step.stage) ?? [];
+    list.push({
+      toolName: step.toolName,
+      params: step.params,
+      rationale: 'Replayed from learned playbook.',
+    });
+    byStage.set(step.stage, list);
+  }
+  const stageNumbers = [...byStage.keys()].sort((a, b) => a - b);
+  return stageNumbers.map(stageNumber => ({
+    stageNumber,
+    tools: byStage.get(stageNumber)!,
+    reanalyzeAfter: true,
+  }));
+}
+
+function recordToolOutcomes(
+  store: ToolOutcomeStore,
+  pdfClass: AnalysisResult['pdfClass'],
+  tools: AppliedRemediationTool[],
+): void {
+  for (const t of tools) {
+    store.record({
+      toolName: t.toolName,
+      pdfClass,
+      outcome: t.outcome,
+      scoreBefore: t.scoreBefore,
+      scoreAfter: t.scoreAfter,
+    });
+  }
+}
+
+/** StructTreeRoot + native/OCR text MCID tagging — run before alt repair and PAC-style checks. */
+async function applyAccessibilityStructureEnsure(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
+  const { filename, signal, round } = args;
+
+  const reanalyzeFinal = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
+    const tmpPath = join(tmpdir(), `pdfaf-struct-${randomUUID()}.pdf`);
+    await writeFile(tmpPath, buf);
+    try {
+      return await analyzePdf(tmpPath, filename);
+    } finally {
+      await unlink(tmpPath).catch(() => {});
+    }
+  };
+
+  const scoreBeforeFin = currentAnalysis.score;
+  const { buffer: fb, result: fr } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: 'ensure_accessibility_tagging', params: { pdfClass: currentSnapshot.pdfClass } }],
+    { signal },
+  );
+  if (fr.success && fr.applied.length > 0) {
+    currentBuffer = fb;
+    const an = await reanalyzeFinal(currentBuffer);
+    currentAnalysis = an.result;
+    currentSnapshot = an.snapshot;
+    appliedTools.push({
+      toolName: 'ensure_accessibility_tagging',
+      stage: 11,
+      round,
+      scoreBefore: scoreBeforeFin,
+      scoreAfter: currentAnalysis.score,
+      delta: currentAnalysis.score - scoreBeforeFin,
+      outcome: 'applied',
+      details: 'post_pass_icija_structure',
+    });
+  }
+
+  return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
+}
+
+/** Metadata, bookmarks, optional font embed — shared by main remediate and playbook replay. */
+async function applyIcjiaDocumentFinalization(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
+  const { filename, signal, round } = args;
+
+  const reanalyzeFinal = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
+    const tmpPath = join(tmpdir(), `pdfaf-fin-${randomUUID()}.pdf`);
+    await writeFile(tmpPath, buf);
+    try {
+      return await analyzePdf(tmpPath, filename);
+    } finally {
+      await unlink(tmpPath).catch(() => {});
+    }
+  };
+
+  if (!currentSnapshot.metadata.title?.trim()) {
+    const title = filename.replace(/\.pdf$/i, '').slice(0, 500);
+    const scoreBeforeT = currentAnalysis.score;
+    const next = await metadataTools.setDocumentTitle(currentBuffer, title);
+    if (!next.equals(currentBuffer)) {
+      currentBuffer = next;
+      const an = await reanalyzeFinal(currentBuffer);
+      currentAnalysis = an.result;
+      currentSnapshot = an.snapshot;
+      appliedTools.push({
+        toolName: 'set_document_title',
+        stage: 11,
+        round,
+        scoreBefore: scoreBeforeT,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBeforeT,
+        outcome: 'applied',
+        details: 'post_pass_missing_metadata_title',
+      });
+    }
+  }
+
+  if (
+    currentSnapshot.pdfClass !== 'scanned' &&
+    currentSnapshot.pageCount >= BOOKMARKS_PAGE_THRESHOLD &&
+    currentSnapshot.bookmarks.length === 0
+  ) {
+    const scoreBeforeBm = currentAnalysis.score;
+    const br1 = await runPythonMutationBatch(
+      currentBuffer,
+      [{ op: 'replace_bookmarks_from_headings', params: { force: true } }],
+      { signal },
+    );
+    let bmBuf = currentBuffer;
+    let bmApplied = false;
+    if (br1.result.success && br1.result.applied.includes('replace_bookmarks_from_headings')) {
+      bmBuf = br1.buffer;
+      bmApplied = true;
+    } else {
+      const br2 = await runPythonMutationBatch(
+        currentBuffer,
+        [{ op: 'add_page_outline_bookmarks', params: { maxPages: BOOKMARKS_PAGE_OUTLINE_MAX_PAGES } }],
+        { signal },
+      );
+      if (br2.result.success && br2.result.applied.includes('add_page_outline_bookmarks')) {
+        bmBuf = br2.buffer;
+        bmApplied = true;
+      }
+    }
+    if (bmApplied) {
+      currentBuffer = bmBuf;
+      const an = await reanalyzeFinal(currentBuffer);
+      currentAnalysis = an.result;
+      currentSnapshot = an.snapshot;
+      appliedTools.push({
+        toolName: 'post_pass_bookmarks',
+        stage: 11,
+        round,
+        scoreBefore: scoreBeforeBm,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBeforeBm,
+        outcome: 'applied',
+        details: 'outline_or_headings_bookmarks',
+      });
+    }
+  }
+
+  if (shouldTryUrwType1Embed(currentSnapshot)) {
+    const scoreBeforeUrw = currentAnalysis.score;
+    const urw = await runPythonMutationBatch(
+      currentBuffer,
+      [{ op: 'embed_urw_type1_substitutes', params: {} }],
+      { signal },
+    );
+    if (urw.result.success && urw.result.applied.includes('embed_urw_type1_substitutes')) {
+      currentBuffer = urw.buffer;
+      const an = await reanalyzeFinal(currentBuffer);
+      currentAnalysis = an.result;
+      currentSnapshot = an.snapshot;
+      appliedTools.push({
+        toolName: 'embed_urw_type1_substitutes',
+        stage: 11,
+        round,
+        scoreBefore: scoreBeforeUrw,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBeforeUrw,
+        outcome: 'applied',
+        details: 'urw_base35_embed_legacy_type1',
+      });
+    }
+  }
+
+  const gsBuf = await embedFontsWithGhostscript(currentBuffer, currentSnapshot);
+  if (gsBuf && !gsBuf.equals(currentBuffer)) {
+    const scoreBeforeGs = currentAnalysis.score;
+    currentBuffer = gsBuf;
+    const an = await reanalyzeFinal(currentBuffer);
+    currentAnalysis = an.result;
+    currentSnapshot = an.snapshot;
+    appliedTools.push({
+      toolName: 'embed_fonts_ghostscript',
+      stage: 12,
+      round,
+      scoreBefore: scoreBeforeGs,
+      scoreAfter: currentAnalysis.score,
+      delta: currentAnalysis.score - scoreBeforeGs,
+      outcome: 'applied',
+      details: 'optional_gs_font_embed',
+    });
+  }
+
+  return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
+}
+
+/**
+ * Replays a stored playbook using the same per-tool execution and stage reanalyze / regression rules as the main loop.
+ */
+export async function executePlaybook(
+  buffer: Buffer,
+  filename: string,
+  initialAnalysis: AnalysisResult,
+  initialSnapshot: DocumentSnapshot,
+  playbook: Playbook,
+): Promise<RemediatePdfOutcome> {
+  const started = Date.now();
+  const before = initialAnalysis;
+  let currentBuffer = buffer;
+  let currentAnalysis = initialAnalysis;
+  let currentSnapshot = initialSnapshot;
+  const appliedTools: AppliedRemediationTool[] = [];
+  const stages = groupPlaybookStepsByStage(playbook);
+  if (stages.length === 0) {
+    const st0 = await applyAccessibilityStructureEnsure({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+    });
+    currentBuffer = st0.buffer;
+    currentAnalysis = st0.analysis;
+    currentSnapshot = st0.snapshot;
+    const scoreBefore0 = currentAnalysis.score;
+    const alt0 = await applyPostRemediationAltRepair(
+      currentBuffer,
+      filename,
+      currentAnalysis,
+      currentSnapshot,
+    );
+    if (!alt0.buffer.equals(currentBuffer)) {
+      currentBuffer = alt0.buffer;
+      currentAnalysis = alt0.analysis;
+      currentSnapshot = alt0.snapshot;
+      appliedTools.push({
+        toolName: 'repair_alt_text_structure',
+        stage: 9,
+        round: 1,
+        scoreBefore: scoreBefore0,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBefore0,
+        outcome: 'applied',
+        details: 'nested_alt_cleanup',
+      });
+    }
+    const fin0 = await applyIcjiaDocumentFinalization({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+    });
+    currentBuffer = fin0.buffer;
+    currentAnalysis = fin0.analysis;
+    currentSnapshot = fin0.snapshot;
+    const maxBytes = REMEDIATION_MAX_BASE64_MB * 1024 * 1024;
+    const tooLarge = currentBuffer.length > maxBytes;
+    const ocrPipeline = buildOcrPipelineSummary(appliedTools);
+    const remediation: RemediationResult = {
+      before,
+      after: currentAnalysis,
+      remediatedPdfBase64: tooLarge ? null : currentBuffer.toString('base64'),
+      remediatedPdfTooLarge: tooLarge,
+      appliedTools,
+      rounds: [
+        {
+          round: 1,
+          scoreAfter: currentAnalysis.score,
+          improved: false,
+          source: 'playbook',
+        },
+      ],
+      remediationDurationMs: Date.now() - started,
+      improved: false,
+      ...(ocrPipeline ? { ocrPipeline } : {}),
+    };
+    return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };
+  }
+
+  for (const stage of stages) {
+    const stageStartBuffer = currentBuffer;
+    const stageStartScore = currentAnalysis.score;
+    const stageApplied: AppliedRemediationTool[] = [];
+
+    let buf = currentBuffer;
+    for (const step of stage.tools) {
+      const params = {
+        ...buildDefaultParams(step.toolName, currentAnalysis, currentSnapshot),
+        ...step.params,
+      };
+      const tool: PlannedRemediationTool = { ...step, params };
+      const { buffer: next, outcome, details } = await runSingleTool(buf, tool, currentSnapshot);
+      buf = next;
+      stageApplied.push({
+        toolName: tool.toolName,
+        stage: stage.stageNumber,
+        round: 1,
+        scoreBefore: stageStartScore,
+        scoreAfter: stageStartScore,
+        delta: 0,
+        outcome,
+        details,
+      });
+    }
+
+    const tmp = join(tmpdir(), `pdfaf-pb-${randomUUID()}.pdf`);
+    await writeFile(tmp, buf);
+    let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
+    try {
+      analyzed = await analyzePdf(tmp, filename);
+    } finally {
+      await unlink(tmp).catch(() => {});
+    }
+
+    if (analyzed.result.score < stageStartScore && !keepOcrStageDespiteScoreDrop(stage, stageApplied)) {
+      currentBuffer = stageStartBuffer;
+      const regressedScore = analyzed.result.score;
+      const restorePath = join(tmpdir(), `pdfaf-pb-restore-${randomUUID()}.pdf`);
+      await writeFile(restorePath, stageStartBuffer);
+      try {
+        const restored = await analyzePdf(restorePath, filename);
+        currentAnalysis = restored.result;
+        currentSnapshot = restored.snapshot;
+      } finally {
+        await unlink(restorePath).catch(() => {});
+      }
+      for (const a of stageApplied) {
+        a.outcome = 'rejected';
+        a.details = `stage_regressed_score(${regressedScore})`;
+        a.scoreAfter = currentAnalysis.score;
+        a.delta = currentAnalysis.score - stageStartScore;
+      }
+    } else {
+      currentBuffer = buf;
+      currentAnalysis = analyzed.result;
+      currentSnapshot = analyzed.snapshot;
+      for (const a of stageApplied) {
+        a.scoreAfter = analyzed.result.score;
+        a.delta = analyzed.result.score - stageStartScore;
+      }
+    }
+    appliedTools.push(...stageApplied);
+  }
+
+  {
+    const st = await applyAccessibilityStructureEnsure({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+    });
+    currentBuffer = st.buffer;
+    currentAnalysis = st.analysis;
+    currentSnapshot = st.snapshot;
+  }
+
+  {
+    const scoreBefore = currentAnalysis.score;
+    const alt = await applyPostRemediationAltRepair(currentBuffer, filename, currentAnalysis, currentSnapshot);
+    if (!alt.buffer.equals(currentBuffer)) {
+      currentBuffer = alt.buffer;
+      currentAnalysis = alt.analysis;
+      currentSnapshot = alt.snapshot;
+      appliedTools.push({
+        toolName: 'repair_alt_text_structure',
+        stage: 9,
+        round: 1,
+        scoreBefore,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBefore,
+        outcome: 'applied',
+        details: 'nested_alt_cleanup',
+      });
+    }
+  }
+
+  const finPb = await applyIcjiaDocumentFinalization({
+    filename,
+    round: 1,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    appliedTools,
+  });
+  currentBuffer = finPb.buffer;
+  currentAnalysis = finPb.analysis;
+  currentSnapshot = finPb.snapshot;
+
+  const improved = currentAnalysis.score > before.score;
+  const roundDelta = currentAnalysis.score - before.score;
+  const rounds: RemediationRoundSummary[] = [
+    {
+      round: 1,
+      scoreAfter: currentAnalysis.score,
+      improved: roundDelta >= REMEDIATION_MIN_ROUND_IMPROVEMENT,
+      source: 'playbook',
+    },
+  ];
+
+  const maxBytes = REMEDIATION_MAX_BASE64_MB * 1024 * 1024;
+  let remediatedPdfBase64: string | null = null;
+  let remediatedPdfTooLarge = false;
+  if (currentBuffer.length <= maxBytes) {
+    remediatedPdfBase64 = currentBuffer.toString('base64');
+  } else {
+    remediatedPdfTooLarge = true;
+  }
+
+  const ocrPb = buildOcrPipelineSummary(appliedTools);
+  const remediation: RemediationResult = {
+    before,
+    after: currentAnalysis,
+    remediatedPdfBase64,
+    remediatedPdfTooLarge,
+    appliedTools,
+    rounds,
+    remediationDurationMs: Date.now() - started,
+    improved,
+    ...(ocrPb ? { ocrPipeline: ocrPb } : {}),
+  };
+
+  return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };
+}
+
 export interface RemediatePdfOptions {
   targetScore?: number;
   maxRounds?: number;
   signal?: AbortSignal;
+  playbookStore?: PlaybookStore;
+  toolOutcomeStore?: ToolOutcomeStore;
 }
 
 export async function remediatePdf(
@@ -101,10 +636,13 @@ export async function remediatePdf(
   initialAnalysis: AnalysisResult,
   initialSnapshot: DocumentSnapshot,
   options?: RemediatePdfOptions,
-): Promise<RemediationResult> {
+): Promise<RemediatePdfOutcome> {
   const started = Date.now();
   const targetScore = options?.targetScore ?? REMEDIATION_TARGET_SCORE;
   const maxRounds = options?.maxRounds ?? REMEDIATION_MAX_ROUNDS;
+
+  const playbookStore = options?.playbookStore ?? createPlaybookStore(getDb());
+  const toolOutcomeStore = options?.toolOutcomeStore ?? createToolOutcomeStore(getDb());
 
   const before = initialAnalysis;
   let currentBuffer = buffer;
@@ -113,11 +651,33 @@ export async function remediatePdf(
   const appliedTools: AppliedRemediationTool[] = [];
   const rounds: RemediationRoundSummary[] = [];
 
+  const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
+  const activePlaybook = playbookStore.findActive(signature);
+  if (activePlaybook) {
+    const pb = await executePlaybook(
+      buffer,
+      filename,
+      initialAnalysis,
+      initialSnapshot,
+      activePlaybook,
+    );
+    recordToolOutcomes(toolOutcomeStore, before.pdfClass, pb.remediation.appliedTools);
+    if (pb.remediation.improved) {
+      playbookStore.recordResult(
+        activePlaybook.id,
+        true,
+        pb.remediation.after.score - before.score,
+      );
+      return pb;
+    }
+    playbookStore.recordResult(activePlaybook.id, false, 0);
+  }
+
   for (let round = 1; round <= maxRounds; round++) {
     if (currentAnalysis.score >= targetScore) break;
 
     const roundStartScore = currentAnalysis.score;
-    let rawPlan = planForRemediation(currentAnalysis, currentSnapshot, appliedTools);
+    let rawPlan = planForRemediation(currentAnalysis, currentSnapshot, appliedTools, toolOutcomeStore);
     const plan = filterPlan(rawPlan);
     if (plan.stages.length === 0) break;
 
@@ -151,7 +711,7 @@ export async function remediatePdf(
         await unlink(tmp).catch(() => {});
       }
 
-      if (analyzed.result.score < stageStartScore) {
+      if (analyzed.result.score < stageStartScore && !keepOcrStageDespiteScoreDrop(stage, stageApplied)) {
         currentBuffer = stageStartBuffer;
         const regressedScore = analyzed.result.score;
         const restorePath = join(tmpdir(), `pdfaf-rem-restore-${randomUUID()}.pdf`);
@@ -179,20 +739,163 @@ export async function remediatePdf(
         }
       }
       appliedTools.push(...stageApplied);
+      recordToolOutcomes(toolOutcomeStore, before.pdfClass, stageApplied);
     }
 
     const roundDelta = currentAnalysis.score - roundStartScore;
-    const improvedThisRound = roundDelta >= REMEDIATION_MIN_ROUND_IMPROVEMENT;
+    // Any strictly positive weighted gain keeps the loop alive (integer scores can move +1 after many tools).
+    const improvedThisRound = roundDelta > 0;
     rounds.push({
       round,
       scoreAfter: currentAnalysis.score,
       improved: improvedThisRound,
+      source: 'planner',
     });
 
     if (currentAnalysis.score >= targetScore) break;
     if (!improvedThisRound) {
       break;
     }
+  }
+
+  {
+    const st = await applyAccessibilityStructureEnsure({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+    });
+    currentBuffer = st.buffer;
+    currentAnalysis = st.analysis;
+    currentSnapshot = st.snapshot;
+  }
+
+  // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
+  // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
+  if (currentSnapshot.isTagged || currentSnapshot.structureTree !== null) {
+    const scoreBefore = currentAnalysis.score;
+    const alt = await applyPostRemediationAltRepair(
+      currentBuffer,
+      filename,
+      currentAnalysis,
+      currentSnapshot,
+      { signal: options?.signal },
+    );
+    if (!alt.buffer.equals(currentBuffer)) {
+      currentBuffer = alt.buffer;
+      currentAnalysis = alt.analysis;
+      currentSnapshot = alt.snapshot;
+      appliedTools.push({
+        toolName: 'repair_alt_text_structure',
+        stage: 9,
+        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+        scoreBefore,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBefore,
+        outcome: 'applied',
+        details: 'nested_alt_cleanup',
+      });
+    }
+  }
+
+  // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
+  // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
+  if (currentSnapshot.isTagged) {
+    const reanalyzeAfterBuffer = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
+      const tmpPath = join(tmpdir(), `pdfaf-post-${randomUUID()}.pdf`);
+      await writeFile(tmpPath, buf);
+      try {
+        return await analyzePdf(tmpPath, filename);
+      } finally {
+        await unlink(tmpPath).catch(() => {});
+      }
+    };
+
+    // OCRmyPDF often preserves PDF/UA XMP but strips /ViewerPreferences; Acrobat then fails DocTitle.
+    // Re-run identification whenever UA metadata is missing *or* OCR rewrote the file.
+    const ocrRewrotePdf = appliedTools.some(
+      t => t.toolName === 'ocr_scanned_pdf' && t.outcome === 'applied',
+    );
+    if (!(currentSnapshot.pdfUaVersion ?? '').trim() || ocrRewrotePdf) {
+      const lang = String(
+        currentSnapshot.lang || currentSnapshot.metadata.language || 'en-US',
+      ).slice(0, 32);
+      const { buffer: stamped, result: uaRes } = await runPythonMutationBatch(
+        currentBuffer,
+        [{ op: 'set_pdfua_identification', params: { language: lang } }],
+        { signal: options?.signal },
+      );
+      if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
+        const scoreBeforeUa = currentAnalysis.score;
+        currentBuffer = stamped;
+        const uaAn = await reanalyzeAfterBuffer(currentBuffer);
+        currentAnalysis = uaAn.result;
+        currentSnapshot = uaAn.snapshot;
+        appliedTools.push({
+          toolName: 'set_pdfua_identification',
+          stage: 10,
+          round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+          scoreBefore: scoreBeforeUa,
+          scoreAfter: currentAnalysis.score,
+          delta: currentAnalysis.score - scoreBeforeUa,
+          outcome: 'applied',
+          details: 'post_pass_pdfua_xmp',
+        });
+      }
+    }
+
+    for (let pass = 0; pass < 8; pass++) {
+      const orphanN = currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+      if (!orphanN) break;
+      const { buffer: drained, result: drRes } = await runPythonMutationBatch(
+        currentBuffer,
+        [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
+        { signal: options?.signal },
+      );
+      if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
+      const scoreBeforeDr = currentAnalysis.score;
+      currentBuffer = drained;
+      const drAn = await reanalyzeAfterBuffer(currentBuffer);
+      currentAnalysis = drAn.result;
+      currentSnapshot = drAn.snapshot;
+      appliedTools.push({
+        toolName: 'remap_orphan_mcids_as_artifacts',
+        stage: 10,
+        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+        scoreBefore: scoreBeforeDr,
+        scoreAfter: currentAnalysis.score,
+        delta: currentAnalysis.score - scoreBeforeDr,
+        outcome: 'applied',
+        details: `post_pass_orphan_drain_${pass + 1}`,
+      });
+    }
+  }
+
+  {
+    const finRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
+    const fin = await applyIcjiaDocumentFinalization({
+      filename,
+      signal: options?.signal,
+      round: finRound,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+    });
+    currentBuffer = fin.buffer;
+    currentAnalysis = fin.analysis;
+    currentSnapshot = fin.snapshot;
+  }
+
+  const scoreDelta = currentAnalysis.score - before.score;
+  if (
+    currentAnalysis.score > before.score &&
+    scoreDelta >= PLAYBOOK_LEARN_MIN_SCORE_DELTA
+  ) {
+    playbookStore.learnFromSuccess(before, initialSnapshot, appliedTools, scoreDelta);
   }
 
   const maxBytes = REMEDIATION_MAX_BASE64_MB * 1024 * 1024;
@@ -204,7 +907,8 @@ export async function remediatePdf(
     remediatedPdfTooLarge = true;
   }
 
-  return {
+  const ocrMain = buildOcrPipelineSummary(appliedTools);
+  const remediation: RemediationResult = {
     before,
     after: currentAnalysis,
     remediatedPdfBase64,
@@ -213,5 +917,8 @@ export async function remediatePdf(
     rounds,
     remediationDurationMs: Date.now() - started,
     improved: currentAnalysis.score > before.score,
+    ...(ocrMain ? { ocrPipeline: ocrMain } : {}),
   };
+
+  return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };
 }

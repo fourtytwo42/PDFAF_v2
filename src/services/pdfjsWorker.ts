@@ -70,6 +70,8 @@ async function run(pdfPath: string): Promise<PdfjsResult> {
     if (info['Language']) metadata.language = String(info['Language']);
     if (info['Author'])   metadata.author   = String(info['Author']);
     if (info['Subject'])  metadata.subject  = String(info['Subject']);
+    if (info['Producer']) metadata.producer = String(info['Producer']).slice(0, 500);
+    if (info['Creator'])  metadata.creator  = String(info['Creator']).slice(0, 500);
   }
 
   await pdf.destroy();

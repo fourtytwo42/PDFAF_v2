@@ -94,7 +94,10 @@ describe('GET /v1/health', () => {
     expect(res.body).toHaveProperty('status');
     expect(res.body).toHaveProperty('dependencies');
     expect(res.body.dependencies).toHaveProperty('python');
-    expect(res.body.dependencies).toHaveProperty('pikepdf');
-    expect(res.body.dependencies).toHaveProperty('db');
+    expect(res.body.dependencies).toHaveProperty('tesseract');
+    expect(res.body.dependencies).toHaveProperty('ocrmypdf');
+    expect(res.body.dependencies).toHaveProperty('database');
+    expect(res.body).toHaveProperty('version');
+    expect(res.body).toHaveProperty('performance');
   });
 });

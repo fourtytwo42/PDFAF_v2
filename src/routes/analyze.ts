@@ -2,9 +2,10 @@ import { Router, type IRouter } from 'express';
 import multer from 'multer';
 import { unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MAX_FILE_SIZE_MB } from '../config.js';
+import { sendApiError } from '../apiError.js';
+import { logError } from '../logging.js';
 import { analyzePdf } from '../services/pdfAnalyzer.js';
 
 export const analyzeRouter: IRouter = Router();
@@ -23,7 +24,12 @@ const upload = multer({
 
 analyzeRouter.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) {
-    res.status(400).json({ error: 'No file uploaded. Send a PDF as multipart field "file".' });
+    sendApiError(
+      res,
+      400,
+      'BAD_REQUEST',
+      'No file uploaded. Send a PDF as multipart field "file".',
+    );
     return;
   }
 
@@ -36,11 +42,21 @@ analyzeRouter.post('/', upload.single('file'), async (req, res) => {
   } catch (err: unknown) {
     const e = err as Error & { statusCode?: number };
     if (e.statusCode === 429) {
-      res.status(429).json({ error: 'Server is at capacity. Try again shortly.' });
+      sendApiError(
+        res,
+        429,
+        'SERVER_AT_CAPACITY',
+        'Server is at capacity. Try again shortly.',
+      );
       return;
     }
-    console.error(`[analyze] error for ${filename}:`, e.message);
-    res.status(500).json({ error: 'Analysis failed. Check server logs.' });
+    logError({
+      message: 'analyze_failed',
+      requestId: res.locals.requestId,
+      filename,
+      error: e.message,
+    });
+    sendApiError(res, 500, 'INTERNAL_ERROR', 'Analysis failed. Check server logs.');
   } finally {
     unlink(tempPath).catch(() => { /* temp file cleanup, ignore errors */ });
   }

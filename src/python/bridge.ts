@@ -7,6 +7,8 @@ import {
   PYTHON_TIMEOUT_MS,
   PYTHON_SCRIPT_PATH,
   PYTHON_MUTATION_TIMEOUT_MS,
+  OCR_MUTATION_TIMEOUT_MS,
+  SEMANTIC_MCID_MAX_PAGES,
 } from '../config.js';
 import type { PythonAnalysisResult } from '../types.js';
 
@@ -35,6 +37,28 @@ const EMPTY_RESULT: PythonAnalysisResult = {
   bookmarks:     [],
   formFields:    [],
   structureTree: null,
+  paragraphStructElems: [],
+  threeCcGoldenV1: false,
+  threeCcGoldenOrphanV1: false,
+  orphanMcids: [],
+  mcidTextSpans: [],
+  acrobatStyleAltRisks: {
+    nonFigureWithAltCount: 0,
+    nestedFigureAltCount: 0,
+    orphanedAltEmptyElementCount: 0,
+    sampleOwnershipModes: [],
+  },
+  annotationAccessibility: {
+    pagesMissingTabsS: 0,
+    pagesAnnotationOrderDiffers: 0,
+    linkAnnotationsMissingStructure: 0,
+    nonLinkAnnotationsMissingStructure: 0,
+    nonLinkAnnotationsMissingContents: 0,
+    linkAnnotationsMissingStructParent: 0,
+    nonLinkAnnotationsMissingStructParent: 0,
+  },
+  linkScoringRows: [],
+  listStructureAudit: undefined,
 };
 
 export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysisResult> {
@@ -52,6 +76,10 @@ export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysis
 
     const proc = spawn('python3', [PYTHON_SCRIPT_PATH, pdfPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        PDFAF_SEMANTIC_MCID_MAX_PAGES: String(SEMANTIC_MCID_MAX_PAGES),
+      },
     });
 
     const timer = setTimeout(() => {
@@ -113,7 +141,11 @@ export async function runPythonMutationBatch(
   const inputPath = join(tmpdir(), `pdfaf-mut-in-${id}.pdf`);
   const outputPath = join(tmpdir(), `pdfaf-mut-out-${id}.pdf`);
   const requestPath = join(tmpdir(), `pdfaf-mut-req-${id}.json`);
-  const timeoutMs = options?.timeoutMs ?? PYTHON_MUTATION_TIMEOUT_MS;
+  const defaultTimeout =
+    mutations.length === 1 && mutations[0]?.op === 'ocr_scanned_pdf'
+      ? OCR_MUTATION_TIMEOUT_MS
+      : PYTHON_MUTATION_TIMEOUT_MS;
+  const timeoutMs = options?.timeoutMs ?? defaultTimeout;
 
   await writeFile(inputPath, buffer);
   await writeFile(

@@ -1,0 +1,66 @@
+# Full stack: PDFAF API + Gemma 4 E2B Q4 (llama-server) sidecar.
+# Models cache in volume `llm-hf-cache` (~4+ GiB first pull).
+#
+# Local hybrid: run only the LLM container, then native API:
+#   docker compose up llm -d
+#   PDFAF_RUN_LOCAL_LLM= OPENAI_COMPAT_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_COMPAT_MODEL_AUTO=1 pnpm dev
+
+services:
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    restart: unless-stopped
+    command:
+      - '-hf'
+      - '${GEMMA4_HF_REPO:-unsloth/gemma-4-E2B-it-GGUF}'
+      - '-m'
+      - '${GEMMA4_GGUF_FILE:-gemma-4-E2B-it-Q4_K_M.gguf}'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '8080'
+      - '--reasoning-budget'
+      - '0'
+      - '--chat-template-kwargs'
+      - '{"enable_thinking": false}'
+      - '--reasoning-format'
+      - 'deepseek'
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - llm-hf-cache:/root/.cache
+    ports:
+      - '127.0.0.1:1234:8080'
+    healthcheck:
+      test: ['CMD', 'curl', '-sf', 'http://127.0.0.1:8080/health']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 600s
+
+  pdfaf:
+    build: .
+    depends_on:
+      llm:
+        condition: service_healthy
+    ports:
+      - '6200:6200'
+    environment:
+      PORT: '6200'
+      DB_PATH: /data/pdfaf.db
+      PDFAF_RUN_LOCAL_LLM: '0'
+      OPENAI_COMPAT_BASE_URL: http://llm:8080/v1
+      OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-local}
+      OPENAI_COMPAT_MODEL_AUTO: '1'
+    volumes:
+      - pdfaf-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-sf', 'http://127.0.0.1:6200/v1/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  pdfaf-data:
+  llm-hf-cache:

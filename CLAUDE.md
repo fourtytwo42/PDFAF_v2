@@ -25,6 +25,12 @@ Run a single test file:
 pnpm vitest run tests/scorer.test.ts
 ```
 
+Corpus baseline (20 PDFs under `Input/corpus_from_pdfaf_v1/`): deterministic + optional `--semantic` (requires `OPENAI_COMPAT_*`). All scores ≥80 with `--semantic` when an LLM is reachable.
+```bash
+pnpm exec tsx scripts/baseline-corpus-batch.ts [inputDir] [outputDir] --no-pdfs
+pnpm exec tsx scripts/baseline-corpus-batch.ts [inputDir] [outputDir] --semantic --no-pdfs
+```
+
 ## Architecture
 
 ### Request Flow
@@ -37,13 +43,17 @@ POST /v1/analyze → routes/analyze.ts
   → scorer.ts (pure function, no I/O)
   → AnalysisResult JSON
 
-POST /v1/remediate → routes/remediate.ts (Phase 2+)
-  → remediation/orchestrator.ts
-      → planner.ts (selects tools based on failing categories)
-      → tools/*.ts (deterministic repairs via pdf-lib + Python subprocess)
-      → semantic/semanticService.ts (optional LLM pass, Phase 3+)
-  → re-analyze → return remediated PDF
+POST /v1/remediate → routes/remediate.ts (Phase 2 + optional Phase 3)
+  → analyzePdf → remediation/orchestrator.ts (deterministic rounds)
+      → planner.ts → tools/*.ts + python bridge mutations
+  → optional `semantic: true` / `semanticHeadings: true` / `semanticPromoteHeadings: true` / `semanticUntaggedHeadings: true` (3c-c golden-only experimental) in multipart field `options` (JSON)
+      → semantic/semanticService.ts (figures), headingSemantic.ts (existing heading levels), promoteHeadingSemantic.ts (promote /P → Hn)
+      → layout/layoutAnalyzer.ts (pdfjs: captions, repeated header/footer bands, median font height) feeds figure prompts and promote filtering
+      → LLM batches: on timeout/abort any batch, pass returns original buffer with `skippedReason: llm_timeout` (fail-closed). `req` close aborts in-flight LLM via `AbortSignal`.
+  → JSON + base64 PDF (semantic summaries when requested)
 ```
+
+**OCR / scoring transparency:** When `ocr_scanned_pdf` runs, `RemediationResult` includes **`ocrPipeline`** (`applied`, `humanReviewRecommended`, `guidance`). If PDF **Producer/Creator** indicates OCRmyPDF/Tesseract, **`text_extractability`** adds a **moderate finding**; optionally **cap** the numeric score via `PDFAF_OCR_METADATA_TEXT_EXTRACTABILITY_CAP` (default **100** = finding only, no penalty; set e.g. **88** for stricter internal grading). HTML reports with `htmlReport: true` show an **OCR notice** section when applicable.
 
 ### Key Architectural Constraints
 
@@ -68,13 +78,13 @@ Phase 1 has a single `queue_items` table. Phases 2+ add `playbooks` and `tool_ou
 
 ### LLM Integration (Phase 3+)
 
-Uses an OpenAI-compatible endpoint, configured entirely via environment variables (`OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_MODEL`). Works with Claude, GPT-4, or local models.
+Uses OpenAI-compatible `/v1/chat/completions` (`getOpenAiCompatBaseUrl()` etc. read `process.env` at call time). **Embedded mode:** set `PDFAF_RUN_LOCAL_LLM=1` and leave `OPENAI_COMPAT_BASE_URL` unset — `src/server.ts` starts `llama-server` (see `src/llm/embedLocalLlama.ts`, defaults: `unsloth/gemma-4-E2B-it-GGUF` + `gemma-4-E2B-it-Q4_K_M.gguf`, same weights family as `google/gemma-4-E2B-it`). **Sidecar / Docker:** `docker-compose.yml` runs `ghcr.io/ggml-org/llama.cpp:server` plus `pdfaf`; set `OPENAI_COMPAT_BASE_URL` + `OPENAI_COMPAT_MODEL_AUTO=1` so `src/llm/syncRemoteOpenAiModel.ts` picks the model id from `GET /v1/models`. Default model id when env is empty is `google/gemma-4-E2B-it` (external servers); embedded startup always sets `OPENAI_COMPAT_MODEL` from `GET /v1/models` to match the GGUF id llama-server exposes.
 
 ## System Dependencies
 
 - **`qpdf`** binary — required (`apt install qpdf`)
 - **Python 3** + `pip install pikepdf fonttools` — required for structural analysis (Phase 1) and tag mutations (Phase 2+)
-- **`tesseract`** — optional, for scanned PDFs (`apt install tesseract-ocr`)
+- **`ocrmypdf`** + **`tesseract-ocr`** + **`ghostscript`** — optional, for `ocr_scanned_pdf` remediation on scanned / mixed PDFs (`apt install ocrmypdf tesseract-ocr-eng ghostscript`; add `tesseract-ocr-<lang>` as needed)
 
 ## Environment Variables
 
@@ -85,13 +95,16 @@ MAX_FILE_SIZE_MB=100
 MAX_CONCURRENT_ANALYSES=5
 QPDF_TIMEOUT_MS=60000
 
-# Phase 3+ LLM (optional)
+# Phase 3+ LLM (optional) — default model google/gemma-4-E2B-it; see .env.example for Gemma 4 E2B GGUF / llama-server notes
 OPENAI_COMPAT_BASE_URL=
 OPENAI_COMPAT_API_KEY=
-OPENAI_COMPAT_MODEL=gpt-4o
+OPENAI_COMPAT_MODEL=google/gemma-4-E2B-it
 OPENAI_COMPAT_FALLBACK_BASE_URL=
 OPENAI_COMPAT_FALLBACK_API_KEY=
-OPENAI_COMPAT_FALLBACK_MODEL=
+OPENAI_COMPAT_FALLBACK_MODEL=google/gemma-4-E2B-it
+
+# Phase 3 layout / prompts (optional tuning; see .env.example for full list)
+# SEMANTIC_LAYOUT_* , SEMANTIC_PROMOTE_LAYOUT_TEXT_MIN_LEN , SEMANTIC_FIGURE_PROMPT_MAX_* 
 ```
 
 ## Build Phases

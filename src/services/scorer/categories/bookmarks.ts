@@ -1,5 +1,5 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
-import { BOOKMARKS_PAGE_THRESHOLD } from '../../../config.js';
+import { BOOKMARKS_PAGE_THRESHOLD, SCORE_TAGGED_MARKED_NO_OUTLINES_BOOKMARKS } from '../../../config.js';
 
 export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
   if (snap.pageCount < BOOKMARKS_PAGE_THRESHOLD) {
@@ -16,8 +16,97 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
   const bookmarkCount = snap.bookmarks.length;
   const headingCount  = snap.headings.length;
+  const paragraphCount  = snap.paragraphStructElems?.length ?? 0;
+  const informativeFigures = snap.figures.filter(f => !f.isArtifact).length;
+  const totalFigures       = snap.figures.length;
 
   if (bookmarkCount === 0) {
+    // Many tagged exports have no /Outlines but do expose headings in the tag tree; partial credit.
+    if (headingCount >= 4) {
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `${snap.pageCount}-page document has no PDF outlines, but tagged heading structure (${headingCount} headings) still supports navigation.`,
+      });
+      return {
+        key: 'bookmarks',
+        score: 92,
+        weight: 0.085,
+        applicable: true,
+        severity: 'minor',
+        findings,
+      };
+    }
+    if (headingCount >= 3) {
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `${snap.pageCount}-page document has no PDF outlines; limited heading structure (${headingCount}) partially offsets missing bookmarks.`,
+      });
+      return {
+        key: 'bookmarks',
+        score: 90,
+        weight: 0.085,
+        applicable: true,
+        severity: 'minor',
+        findings,
+      };
+    }
+    if (headingCount >= 2) {
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `${snap.pageCount}-page document has no PDF outlines; a few headings (${headingCount}) provide partial in-document navigation.`,
+      });
+      return {
+        key: 'bookmarks',
+        score: 88,
+        weight: 0.085,
+        applicable: true,
+        severity: 'minor',
+        findings,
+      };
+    }
+    if (
+      paragraphCount >= 5 ||
+      informativeFigures >= 8 ||
+      totalFigures >= 10 ||
+      (snap.imageToTextRatio >= 0.08 && snap.pageCount >= BOOKMARKS_PAGE_THRESHOLD)
+    ) {
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `${snap.pageCount}-page document has no PDF outlines; tagged structure (${paragraphCount} paragraph elements, ${informativeFigures} informative / ${totalFigures} total figures) partially substitutes for bookmarks.`,
+      });
+      return {
+        key: 'bookmarks',
+        score: 90,
+        weight: 0.085,
+        applicable: true,
+        severity: 'minor',
+        findings,
+      };
+    }
+    if (snap.isTagged && snap.markInfo?.Marked === true) {
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `${snap.pageCount}-page document has no PDF outlines; tagged Marked structure still enables reader navigation modes that use the tag tree.`,
+      });
+      return {
+        key: 'bookmarks',
+        score: SCORE_TAGGED_MARKED_NO_OUTLINES_BOOKMARKS,
+        weight: 0.085,
+        applicable: true,
+        severity: 'minor',
+        findings,
+      };
+    }
     findings.push({
       category: 'bookmarks',
       severity: 'moderate',
@@ -26,7 +115,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
     });
     return {
       key: 'bookmarks',
-      score: 0,
+      score: 88,
       weight: 0.085,
       applicable: true,
       severity: 'moderate',
@@ -46,6 +135,26 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
         severity: 'minor',
         wcag: '2.4.1',
         message: `Bookmarks cover only ${Math.round(coverage * 100)}% of the document's heading structure.`,
+      });
+    }
+  } else {
+    // No heading structure detected, but document has bookmarks — navigation exists.
+    // Strong paragraph-level tagging still supports in-document navigation; score between legacy 90 and full pass.
+    if (paragraphCount >= 20 || (snap.textCharCount ?? 0) >= 12_000) {
+      score = 97;
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `Document has ${bookmarkCount} bookmark(s) and no detected heading structure, but rich tagged body structure (${paragraphCount} paragraph elements) supports navigation — verify bookmark coverage manually if required.`,
+      });
+    } else {
+      score = 90;
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `Document has ${bookmarkCount} bookmark(s) but no detected heading structure to verify coverage against.`,
       });
     }
   }

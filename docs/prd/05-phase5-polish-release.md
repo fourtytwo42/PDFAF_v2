@@ -452,18 +452,18 @@ The `GET /v1/health` endpoint becomes comprehensive:
 
 ## Definition of Done (Phase 5 — Full Release)
 
-- [ ] `README.md` enables a new developer to go from zero to first API call in < 30 minutes
-- [ ] `openapi.yaml` is valid OpenAPI 3.1 (passes `swagger-cli validate`)
-- [ ] `Dockerfile` builds successfully and `GET /v1/health` returns `ok` in container
-- [ ] `docker-compose up` starts a fully functional instance
-- [ ] GitHub Actions CI passes on every push to main
-- [ ] HTML report generates correctly for remediated PDFs
-- [ ] `GET /v1/health` returns all dependency status including LLM reachability
-- [ ] All environment variables documented in README and `.env.example`
-- [ ] `docs/scoring.md`, `docs/architecture.md`, `docs/api.md` complete
-- [ ] Performance benchmarks established and documented
-- [ ] All phases 1–4 tests pass
-- [ ] Zero TypeScript errors (`pnpm lint`)
+- [x] `README.md` enables a new developer to go from zero to first API call in < 30 minutes
+- [x] `openapi.yaml` is valid OpenAPI 3.1 (passes `swagger-cli validate`)
+- [x] `Dockerfile` builds successfully and `GET /v1/health` returns `ok` in container
+- [x] `docker-compose up` starts a fully functional instance
+- [x] GitHub Actions CI passes on every push to main
+- [x] HTML report generates correctly for remediated PDFs
+- [x] `GET /v1/health` returns all dependency status including LLM reachability
+- [x] All environment variables documented in README and `.env.example`
+- [x] `docs/scoring.md`, `docs/architecture.md`, `docs/api.md` complete
+- [x] Performance benchmarks established and documented
+- [x] All phases 1–4 tests pass
+- [x] Zero TypeScript errors (`pnpm lint`)
 - [ ] GitHub repository created as `PDFAF_v2`
 
 ---

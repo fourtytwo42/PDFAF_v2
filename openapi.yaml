@@ -1,0 +1,210 @@
+openapi: 3.1.0
+info:
+  title: PDFAF v2 — PDF Accessibility API
+  version: 2.0.0
+  description: |
+    Grade and remediate PDFs for WCAG 2.1 AA / ADA Title II-style accessibility checks.
+    Multipart field `file` is required for analyze and remediate. Optional `options` on remediate is a JSON string.
+  contact:
+    name: PDFAF v2
+
+servers:
+  - url: http://localhost:6200
+    description: Local development
+
+paths:
+  /v1/analyze:
+    post:
+      summary: Grade a PDF
+      operationId: analyzePdf
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/remediate:
+    post:
+      summary: Remediate a PDF
+      operationId: remediatePdf
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                options:
+                  type: string
+                  description: |
+                    JSON object (strict). Fields include semantic, semanticHeadings, targetScore, maxRounds,
+                    htmlReport, htmlReportIncludeBeforeAfter, htmlReportIncludeFindingsDetail, htmlReportIncludeAppliedTools, etc.
+                  example: '{"targetScore":90,"maxRounds":3,"htmlReport":true}'
+      responses:
+        '200':
+          description: Remediation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemediationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/health:
+    get:
+      summary: Health and dependency status
+      operationId: health
+      responses:
+        '200':
+          description: OK or degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service down (e.g. database unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/playbooks:
+    get:
+      summary: List learned playbooks and tool reliability
+      operationId: listPlaybooks
+      responses:
+        '200':
+          description: Catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybooksCatalogResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: Uploaded file too large
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Rate limit or server capacity
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    GatewayTimeout:
+      description: Request timed out
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          examples: [BAD_REQUEST, INTERNAL_ERROR, TOO_MANY_REQUESTS]
+        requestId:
+          type: string
+        details: {}
+
+    AnalysisResult:
+      type: object
+      description: Full graded analysis (see TypeScript `AnalysisResult` in the repository).
+      additionalProperties: true
+
+    RemediationResult:
+      type: object
+      description: Remediation outcome (see TypeScript `RemediationResult`).
+      additionalProperties: true
+      properties:
+        before:
+          $ref: '#/components/schemas/AnalysisResult'
+        after:
+          $ref: '#/components/schemas/AnalysisResult'
+        remediatedPdfBase64:
+          type: [string, 'null']
+        remediatedPdfTooLarge:
+          type: boolean
+        remediationDurationMs:
+          type: number
+        improved:
+          type: boolean
+        htmlReport:
+          type: [string, 'null']
+          description: Present when options.htmlReport was true; null if report exceeded size cap.
+
+    HealthResponse:
+      type: object
+      additionalProperties: true
+
+    PlaybooksCatalogResponse:
+      type: object
+      required: [playbooks, toolReliability]
+      properties:
+        playbooks:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        toolReliability:
+          type: array
+          items:
+            type: object
+            additionalProperties: true

@@ -15,18 +15,19 @@ export function scoreColorContrast(snap: DocumentSnapshot): ScoredCategory {
     };
   }
 
-  // Default heuristic: assume moderate compliance (70) until Phase 3 sampling
+  // Phase 1: we do not sample pixels — contrast cannot be inferred from PDF structure alone.
+  // Treat as N/A (weight redistributes) so the weighted total is not capped by a placeholder 70.
   return {
     key: 'color_contrast',
-    score: 70,
+    score: 100,
     weight: 0.045,
-    applicable: true,
-    severity: 'minor',
+    applicable: false,
+    severity: 'pass',
     findings: [{
       category: 'color_contrast',
       severity: 'minor',
       wcag: '1.4.3',
-      message: 'Color contrast has not been verified (Phase 1 heuristic). Manual review or Phase 3 analysis recommended.',
+      message: 'Color contrast was not evaluated (no pixel sampling in this build).',
     }],
   };
 }

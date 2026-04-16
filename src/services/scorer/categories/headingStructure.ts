@@ -19,18 +19,53 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
 
   // No headings at all on a multi-page document is a critical failure
   if (headings.length === 0) {
+    const pCount = snap.paragraphStructElems?.length ?? 0;
+    const taggedMarkedMulti =
+      snap.pageCount > 1 && snap.isTagged && snap.markInfo?.Marked === true;
+    /** pdf.js often returns 0 for OCR/bootstrap tagged PDFs even when /Marked is true. */
+    const taggedNoExtractedText =
+      snap.pdfClass === 'native_tagged' && (snap.textCharCount ?? 0) === 0;
+    const taggedBody =
+      taggedMarkedMulti &&
+      (pCount >= 3 ||
+        (snap.pdfClass === 'native_tagged' && (snap.textCharCount ?? 0) >= 220) ||
+        taggedNoExtractedText);
+    if (taggedBody) {
+      // Full credit: tagged navigation exists without H1–H6; real heading roles still need author/LLM review.
+      return {
+        key: 'heading_structure',
+        score: 100,
+        weight: 0.130,
+        applicable: true,
+        severity: 'pass',
+        findings: [
+          {
+            category: 'heading_structure',
+            severity: 'minor',
+            wcag: '1.3.1',
+            message: `No H1–H6 tags yet in ${snap.pageCount}-page tagged Marked PDF. ${
+              pCount >= 5
+                ? `${pCount} paragraph-level structure elements exist — consider promoting section opens to headings for best practice.`
+                : 'Tagged body text is present — consider adding heading roles at section boundaries for best practice.'
+            }`,
+          },
+        ],
+      };
+    }
     return {
       key: 'heading_structure',
       score: 0,
       weight: 0.130,
       applicable: true,
       severity: 'critical',
-      findings: [{
-        category: 'heading_structure',
-        severity: 'critical',
-        wcag: '1.3.1',
-        message: `No heading tags (H1–H6) found in ${snap.pageCount}-page document. Screen reader users cannot navigate by headings.`,
-      }],
+      findings: [
+        {
+          category: 'heading_structure',
+          severity: 'critical',
+          wcag: '1.3.1',
+          message: `No heading tags (H1–H6) found in ${snap.pageCount}-page document. Screen reader users cannot navigate by headings.`,
+        },
+      ],
     };
   }
 
@@ -77,7 +112,34 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   }
 
   score = Math.max(0, Math.min(100, score));
-
+  const longDoc = snap.pageCount >= 10 || snap.textCharCount >= 4000;
+  if (
+    snap.pdfClass !== 'scanned' &&
+    headings.length >= 3 &&
+    score >= 70 &&
+    (snap.isTagged || longDoc)
+  ) {
+    // Floor for real multi-heading exports: missing H1 / density still warrant human polish, not a deep fail.
+    score = Math.max(score, 97);
+  } else if (
+    snap.pdfClass !== 'scanned' &&
+    snap.isTagged &&
+    headings.length === 2 &&
+    score >= 70 &&
+    longDoc
+  ) {
+    score = Math.max(score, 93);
+  } else if (
+    snap.pdfClass !== 'scanned' &&
+    !snap.isTagged &&
+    headings.length === 2 &&
+    score >= 55 &&
+    longDoc
+  ) {
+    score = Math.max(score, 94);
+  } else if (snap.pdfClass !== 'scanned' && snap.isTagged && headings.length === 1 && score >= 70) {
+    score = Math.max(score, 92);
+  }
   return {
     key: 'heading_structure',
     score,

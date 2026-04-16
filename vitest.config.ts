@@ -6,5 +6,8 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 60_000,
     include: ['tests/**/*.test.ts'],
+    env: {
+      PDFAF_DISABLE_RATE_LIMIT: '1',
+    },
   },
 });

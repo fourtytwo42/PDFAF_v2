@@ -1,20 +1,46 @@
 import { createApp } from './app.js';
 import { PORT } from './config.js';
 import { getDb } from './db/client.js';
+import { startEmbeddedLlmIfEnabled, stopEmbeddedLlm } from './llm/embedLocalLlama.js';
+import { bootstrapOpenAiModelFromServer } from './llm/syncRemoteOpenAiModel.js';
+import { logError, logInfo } from './logging.js';
 
-const app = createApp();
+async function main(): Promise<void> {
+  await startEmbeddedLlmIfEnabled();
+  await bootstrapOpenAiModelFromServer();
 
-// Eagerly initialise DB so schema errors surface at startup, not first request
-try {
-  getDb();
-  console.log('[server] database ready');
-} catch (err) {
-  console.error('[server] database init failed:', err);
-  process.exit(1);
+  const app = createApp();
+
+  try {
+    getDb();
+    logInfo({ message: 'database_ready' });
+  } catch (err) {
+    logError({ message: 'database_init_failed', error: String(err) });
+    stopEmbeddedLlm();
+    process.exit(1);
+  }
+
+  const server = app.listen(PORT, () => {
+    logInfo({
+      message: 'server_listen',
+      details: {
+        port: PORT,
+        analyze: `http://localhost:${PORT}/v1/analyze`,
+        health: `http://localhost:${PORT}/v1/health`,
+      },
+    });
+  });
+
+  const shutdown = () => {
+    stopEmbeddedLlm();
+    server.close(() => process.exit(0));
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
-app.listen(PORT, () => {
-  console.log(`[server] PDFAF v2 listening on port ${PORT}`);
-  console.log(`[server] POST http://localhost:${PORT}/v1/analyze`);
-  console.log(`[server] GET  http://localhost:${PORT}/v1/health`);
+void main().catch(err => {
+  logError({ message: 'server_boot_failed', error: String(err) });
+  stopEmbeddedLlm();
+  process.exit(1);
 });
