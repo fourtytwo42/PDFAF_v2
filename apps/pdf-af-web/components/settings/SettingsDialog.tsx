@@ -73,8 +73,9 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
               Configure the PDFAF API endpoint
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--muted)]">
-              The saved value is stored only in this browser. Future milestones can replace
-              this with same-origin proxy routes for the Docker deployment.
+              The saved value is stored only in this browser. For deployment, set
+              <span className="mx-1 font-semibold text-[var(--foreground)]">PDFAF_API_BASE_URL</span>
+              on the web app and it will become the default upstream automatically.
             </p>
           </div>
           <Button variant="ghost" onClick={() => void closeSettings()}>
@@ -128,10 +129,9 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
         </div>
 
         <p className="mt-4 text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-          Default from environment: {defaultApiBaseUrl}
+          Server default: {defaultApiBaseUrl}
         </p>
       </div>
     </div>
   );
 }
-

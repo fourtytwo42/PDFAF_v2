@@ -1,13 +1,22 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 const BASE_URL_HEADER = 'x-pdfaf-base-url';
+const FALLBACK_API_BASE_URL = 'http://localhost:6200';
 
 function badRequest(message: string): NextResponse {
   return NextResponse.json({ error: message, code: 'BAD_REQUEST' }, { status: 400 });
 }
 
+function configuredApiBaseUrl(): string | null {
+  return (
+    process.env.PDFAF_API_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_PDFAF_API_BASE_URL?.trim() ||
+    FALLBACK_API_BASE_URL
+  );
+}
+
 export function resolveUpstreamBaseUrl(request: NextRequest): string | NextResponse {
-  const baseUrl = request.headers.get(BASE_URL_HEADER)?.trim();
+  const baseUrl = request.headers.get(BASE_URL_HEADER)?.trim() || configuredApiBaseUrl();
   if (!baseUrl) {
     return badRequest('Missing PDFAF API base URL.');
   }
