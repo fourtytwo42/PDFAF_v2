@@ -50,7 +50,7 @@ export function QueueWorkspace() {
         >
           <div className="grid gap-4">
             <StorageStateMessage />
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <article className="surface-strong rounded-3xl p-5">
                 <p className="text-sm leading-6 text-[var(--foreground)]">
                   Add one file or a batch and see each PDF appear immediately as its own local
@@ -67,6 +67,12 @@ export function QueueWorkspace() {
                 <p className="text-sm leading-6 text-[var(--foreground)]">
                   Analyze results will appear here with score, grade, PDF class, and linked
                   findings once you grade files.
+                </p>
+              </article>
+              <article className="surface-strong rounded-3xl p-5">
+                <p className="text-sm leading-6 text-[var(--foreground)]">
+                  Auto-remediate can queue new files immediately when you want a faster
+                  batch-processing flow.
                 </p>
               </article>
             </div>

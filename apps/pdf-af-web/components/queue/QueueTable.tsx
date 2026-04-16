@@ -138,7 +138,14 @@ export function QueueTable() {
                         {formatFileSize(job.fileSize)}
                       </td>
                       <td className="px-4 py-4">
-                        <StatusPill label={job.status} tone={getStatusTone(job)} />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusPill label={job.status} tone={getStatusTone(job)} />
+                          {job.status === 'queued_analyze' || job.status === 'queued_remediate' ? (
+                            <span className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
+                              Awaiting scheduler
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-4 py-4 text-sm text-[var(--foreground)]">
                         <div className="flex flex-col gap-1">

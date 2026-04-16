@@ -28,6 +28,7 @@ export function QueueDetailDrawer() {
   const closeDetail = useQueueStore((state) => state.closeDetail);
   const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
   const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
+  const retryJob = useQueueStore((state) => state.retryJob);
 
   const job = jobs.find((candidate) => candidate.id === detailJobId);
 
@@ -141,6 +142,11 @@ export function QueueDetailDrawer() {
                 {job.remediatedBlobKey ? (
                   <Button variant="secondary" onClick={() => void downloadRemediated(job.id)}>
                     Download Remediated
+                  </Button>
+                ) : null}
+                {job.status === 'failed' && (job.mode === 'grade' || job.mode === 'remediate') ? (
+                  <Button variant="secondary" onClick={() => void retryJob(job.id)}>
+                    Retry
                   </Button>
                 ) : null}
               </div>

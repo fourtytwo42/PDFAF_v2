@@ -11,5 +11,5 @@ export function getFrontendConfig(): FrontendConfig {
 
 export const LOCAL_STORAGE_KEYS = {
   settings: 'pdf-af-settings',
+  queuePreferences: 'pdf-af-queue-preferences',
 } as const;
-

@@ -2,6 +2,7 @@
 
 import { create, type StateCreator } from 'zustand';
 import { analyzePdf, remediatePdf } from '../lib/api/pdfafClient';
+import { LOCAL_STORAGE_KEYS } from '../lib/constants/config';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
 import {
   createJobWithOriginalBlob,
@@ -14,6 +15,7 @@ import {
   putJobRecord,
   putJobRecords,
 } from '../lib/storage/pdfafDb';
+import { downloadSelectedRemediatedZip as downloadRemediatedZipArchive } from '../lib/zip/downloadZip';
 import { useAppSettingsStore } from './settings';
 import type { AnalyzeSummary, NormalizedFinding } from '../types/analyze';
 import type { RemediationSummary } from '../types/remediation';
@@ -25,7 +27,15 @@ import type {
   QueueStorageState,
 } from '../types/queue';
 
-const QUEUE_CONCURRENCY = 2;
+const DEFAULT_QUEUE_CONCURRENCY = 2;
+const MIN_QUEUE_CONCURRENCY = 1;
+const MAX_QUEUE_CONCURRENCY = 3;
+
+interface QueuePreferences {
+  autoRemediateOnAdd: boolean;
+  preferredQueueConcurrency: number;
+  queuePaused: boolean;
+}
 
 interface QueueStoreState {
   jobs: JobRecord[];
@@ -35,6 +45,8 @@ interface QueueStoreState {
   storageState: QueueStorageState;
   hydrated: boolean;
   isAddingFiles: boolean;
+  autoRemediateOnAdd: boolean;
+  preferredQueueConcurrency: number;
   queuePaused: boolean;
   detailJobId: string | null;
   hydrateFromStorage: () => Promise<void>;
@@ -48,8 +60,15 @@ interface QueueStoreState {
   downloadRemediated: (jobId: string) => Promise<void>;
   enqueueAnalyze: (jobIds?: string[]) => Promise<void>;
   enqueueRemediate: (jobIds?: string[]) => Promise<void>;
+  setAutoRemediateOnAdd: (enabled: boolean) => void;
+  setPreferredQueueConcurrency: (value: number) => void;
+  pauseQueue: () => void;
+  resumeQueue: () => void;
   runScheduler: () => Promise<void>;
   retryJob: (jobId: string) => Promise<void>;
+  retryFailed: (jobIds?: string[]) => Promise<void>;
+  clearCompleted: () => Promise<void>;
+  downloadSelectedRemediatedZip: (jobIds?: string[]) => Promise<void>;
   openDetail: (jobId: string) => void;
   closeDetail: () => void;
 }
@@ -63,6 +82,60 @@ function toStorageErrorMessage(error: unknown): string {
   }
 
   return 'Browser storage is unavailable right now. Check private browsing or storage quota settings.';
+}
+
+function canUseLocalStorage(): boolean {
+  return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+}
+
+function clampQueueConcurrency(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_QUEUE_CONCURRENCY;
+  return Math.min(MAX_QUEUE_CONCURRENCY, Math.max(MIN_QUEUE_CONCURRENCY, Math.round(value)));
+}
+
+function loadQueuePreferences(): QueuePreferences {
+  if (!canUseLocalStorage()) {
+    return {
+      autoRemediateOnAdd: false,
+      preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
+      queuePaused: false,
+    };
+  }
+
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEYS.queuePreferences);
+    if (!raw) {
+      return {
+        autoRemediateOnAdd: false,
+        preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
+        queuePaused: false,
+      };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<QueuePreferences>;
+
+    return {
+      autoRemediateOnAdd: parsed.autoRemediateOnAdd === true,
+      preferredQueueConcurrency: clampQueueConcurrency(
+        typeof parsed.preferredQueueConcurrency === 'number'
+          ? parsed.preferredQueueConcurrency
+          : DEFAULT_QUEUE_CONCURRENCY,
+      ),
+      queuePaused: parsed.queuePaused === true,
+    };
+  } catch {
+    return {
+      autoRemediateOnAdd: false,
+      preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
+      queuePaused: false,
+    };
+  }
+}
+
+function saveQueuePreferences(preferences: QueuePreferences) {
+  if (!canUseLocalStorage()) return;
+
+  localStorage.setItem(LOCAL_STORAGE_KEYS.queuePreferences, JSON.stringify(preferences));
 }
 
 function buildValidationMessage(fileName: string, message: string): FileValidationMessage {
@@ -173,6 +246,15 @@ function buildFailureJob(job: JobRecord, message: string): JobRecord {
     errorMessage: message,
     updatedAt: nowIso(),
   };
+}
+
+function retryableFailedJobs(jobs: JobRecord[], selectedIds: string[]): JobRecord[] {
+  return jobs.filter(
+    (job) =>
+      selectedIds.includes(job.id) &&
+      job.status === 'failed' &&
+      (job.mode === 'grade' || job.mode === 'remediate'),
+  );
 }
 
 async function persistFailure(
@@ -324,6 +406,8 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
   storageState: 'loading',
   hydrated: false,
   isAddingFiles: false,
+  autoRemediateOnAdd: false,
+  preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
   queuePaused: false,
   detailJobId: null,
 
@@ -356,12 +440,17 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
         await putJobRecords(staleJobs);
       }
 
+      const preferences = loadQueuePreferences();
+
       set({
         jobs: normalizedJobs,
         hydrated: true,
         selectedJobIds: [],
         activeJobIds: [],
         storageState: 'ready',
+        autoRemediateOnAdd: preferences.autoRemediateOnAdd,
+        preferredQueueConcurrency: preferences.preferredQueueConcurrency,
+        queuePaused: preferences.queuePaused,
       });
 
       if (
@@ -394,6 +483,7 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
 
     const nextMessages: FileValidationMessage[] = [];
     const createdJobs: JobRecord[] = [];
+    const autoRemediateOnAdd = get().autoRemediateOnAdd;
 
     for (const file of files) {
       const validationError = validateFile(file);
@@ -412,8 +502,8 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
         mimeType: file.type || 'application/pdf',
         createdAt: timestamp,
         updatedAt: timestamp,
-        status: 'idle',
-        mode: null,
+        status: autoRemediateOnAdd ? 'queued_remediate' : 'idle',
+        mode: autoRemediateOnAdd ? 'remediate' : null,
         originalBlobKey,
       };
 
@@ -448,6 +538,10 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
           hasStorageFailure && state.storageState !== 'unavailable' ? 'error' : state.storageState,
       };
     });
+
+    if (autoRemediateOnAdd) {
+      await get().runScheduler();
+    }
   },
 
   removeJob: async (jobId) => {
@@ -559,6 +653,28 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     }
   },
 
+  setAutoRemediateOnAdd: (enabled) => {
+    const nextPreferences = {
+      autoRemediateOnAdd: enabled,
+      preferredQueueConcurrency: get().preferredQueueConcurrency,
+      queuePaused: get().queuePaused,
+    };
+    saveQueuePreferences(nextPreferences);
+    set({ autoRemediateOnAdd: enabled });
+  },
+
+  setPreferredQueueConcurrency: (value) => {
+    const preferredQueueConcurrency = clampQueueConcurrency(value);
+    const nextPreferences = {
+      autoRemediateOnAdd: get().autoRemediateOnAdd,
+      preferredQueueConcurrency,
+      queuePaused: get().queuePaused,
+    };
+    saveQueuePreferences(nextPreferences);
+    set({ preferredQueueConcurrency });
+    void get().runScheduler();
+  },
+
   enqueueAnalyze: async (jobIds) => {
     const selectedIds = jobIds ?? get().selectedJobIds;
     if (selectedIds.length === 0) return;
@@ -650,11 +766,32 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     }
   },
 
+  pauseQueue: () => {
+    const nextPreferences = {
+      autoRemediateOnAdd: get().autoRemediateOnAdd,
+      preferredQueueConcurrency: get().preferredQueueConcurrency,
+      queuePaused: true,
+    };
+    saveQueuePreferences(nextPreferences);
+    set({ queuePaused: true });
+  },
+
+  resumeQueue: () => {
+    const nextPreferences = {
+      autoRemediateOnAdd: get().autoRemediateOnAdd,
+      preferredQueueConcurrency: get().preferredQueueConcurrency,
+      queuePaused: false,
+    };
+    saveQueuePreferences(nextPreferences);
+    set({ queuePaused: false });
+    void get().runScheduler();
+  },
+
   runScheduler: async () => {
     const state = get();
     if (state.queuePaused || state.storageState !== 'ready') return;
 
-    const availableSlots = QUEUE_CONCURRENCY - state.activeJobIds.length;
+    const availableSlots = state.preferredQueueConcurrency - state.activeJobIds.length;
     if (availableSlots <= 0) return;
 
     const queuedJobs = state.jobs.filter(
@@ -685,6 +822,62 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     }
 
     await get().enqueueAnalyze([jobId]);
+  },
+
+  retryFailed: async (jobIds) => {
+    const selectedIds = jobIds ?? get().selectedJobIds;
+    const failedJobs = retryableFailedJobs(get().jobs, selectedIds);
+    const analyzeIds = failedJobs
+      .filter((job) => job.mode === 'grade')
+      .map((job) => job.id);
+    const remediateIds = failedJobs
+      .filter((job) => job.mode === 'remediate')
+      .map((job) => job.id);
+
+    if (analyzeIds.length > 0) {
+      await get().enqueueAnalyze(analyzeIds);
+    }
+
+    if (remediateIds.length > 0) {
+      await get().enqueueRemediate(remediateIds);
+    }
+  },
+
+  clearCompleted: async () => {
+    const completedIds = get()
+      .jobs.filter((job) => job.status === 'done')
+      .map((job) => job.id);
+
+    for (const jobId of completedIds) {
+      await get().removeJob(jobId);
+    }
+  },
+
+  downloadSelectedRemediatedZip: async (jobIds) => {
+    const selectedIds = jobIds ?? get().selectedJobIds;
+    const selectedJobs = get().jobs.filter((job) => selectedIds.includes(job.id));
+
+    try {
+      const includedCount = await downloadRemediatedZipArchive(selectedJobs);
+      if (includedCount === 0) {
+        set((state) => ({
+          validationMessages: [
+            buildValidationMessage(
+              'ZIP download',
+              'Select at least one row with a remediated PDF before downloading a ZIP.',
+            ),
+            ...state.validationMessages,
+          ].slice(0, 8),
+        }));
+      }
+    } catch (error) {
+      set((state) => ({
+        validationMessages: [
+          buildValidationMessage('ZIP download', toStorageErrorMessage(error)),
+          ...state.validationMessages,
+        ].slice(0, 8),
+      }));
+    }
   },
 
   openDetail: (jobId) => set({ detailJobId: jobId }),

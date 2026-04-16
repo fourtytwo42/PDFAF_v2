@@ -17,7 +17,9 @@ export function UploadDropzone() {
   const [isDragging, setIsDragging] = useState(false);
 
   const addFiles = useQueueStore((state) => state.addFiles);
+  const autoRemediateOnAdd = useQueueStore((state) => state.autoRemediateOnAdd);
   const isAddingFiles = useQueueStore((state) => state.isAddingFiles);
+  const setAutoRemediateOnAdd = useQueueStore((state) => state.setAutoRemediateOnAdd);
   const validationMessages = useQueueStore((state) => state.validationMessages);
   const jobs = useQueueStore((state) => state.jobs);
 
@@ -80,7 +82,7 @@ export function UploadDropzone() {
             <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--muted)] md:text-base">
               Drag PDFs into the workspace or pick files manually. Originals stay in
               IndexedDB so they survive refresh without touching the server, and selected
-              files can now be graded from the queue.
+              files can be graded or remediated from the queue.
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <Button
@@ -103,18 +105,23 @@ export function UploadDropzone() {
                   Auto-remediate on add
                 </p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  Visible now so the flow stays familiar later, but queue automation starts
-                  in Milestone 5.
+                  Off keeps files staged locally until you choose an action. On sends newly
+                  added files straight into the remediation queue.
                 </p>
               </div>
-              <label className="relative inline-flex cursor-not-allowed items-center opacity-60">
-                <input type="checkbox" disabled className="peer sr-only" />
+              <label className="relative inline-flex items-center">
+                <input
+                  type="checkbox"
+                  checked={autoRemediateOnAdd}
+                  onChange={(event) => setAutoRemediateOnAdd(event.target.checked)}
+                  className="peer sr-only"
+                />
                 <span className="h-7 w-12 rounded-full bg-black/10 transition peer-checked:bg-[var(--accent)]" />
                 <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition peer-checked:translate-x-5" />
               </label>
             </div>
             <p className="mt-5 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
-              Coming in Milestone 5
+              Default: Off
             </p>
           </div>
         </div>
