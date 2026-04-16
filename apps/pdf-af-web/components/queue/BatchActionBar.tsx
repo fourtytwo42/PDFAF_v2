@@ -10,11 +10,17 @@ export function BatchActionBar() {
   const clearSelection = useQueueStore((state) => state.clearSelection);
   const removeSelected = useQueueStore((state) => state.removeSelected);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
+  const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const toggleSelectAllVisible = useQueueStore((state) => state.toggleSelectAllVisible);
 
   const hasJobs = jobs.length > 0;
   const allVisibleSelected = hasJobs && selectedJobIds.length === jobs.length;
   const hasGradeableSelection = jobs.some(
+    (job) =>
+      selectedJobIds.includes(job.id) &&
+      (job.status === 'idle' || job.status === 'failed' || job.status === 'done'),
+  );
+  const hasRemediatableSelection = jobs.some(
     (job) =>
       selectedJobIds.includes(job.id) &&
       (job.status === 'idle' || job.status === 'failed' || job.status === 'done'),
@@ -25,7 +31,7 @@ export function BatchActionBar() {
       <div className="flex flex-wrap items-center gap-3">
         <StatusPill label={`${selectedJobIds.length} Selected`} tone="accent" />
         <p className="text-sm leading-6 text-[var(--muted)]">
-          Analyze selected files from this local queue. Remediation and ZIP actions arrive in later milestones.
+          Analyze or remediate selected files from this local queue. ZIP actions arrive in later milestones.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -38,6 +44,13 @@ export function BatchActionBar() {
           disabled={!hasGradeableSelection}
         >
           Grade Selected
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => void enqueueRemediate()}
+          disabled={!hasRemediatableSelection}
+        >
+          Remediate Selected
         </Button>
         <Button
           variant="ghost"

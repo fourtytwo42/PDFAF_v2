@@ -93,6 +93,11 @@ export async function putJobRecords(jobs: JobRecord[]): Promise<void> {
   await tx.done;
 }
 
+export async function putBlobRecord(blobRecord: FileBlobRecord): Promise<void> {
+  const db = await getDb();
+  await db.put(FILE_BLOBS_STORE, blobRecord);
+}
+
 export async function deleteJobAndBlobs(jobId: string): Promise<void> {
   const db = await getDb();
   const tx = db.transaction([JOB_RECORDS_STORE, FILE_BLOBS_STORE], 'readwrite');
@@ -116,4 +121,18 @@ export async function getOriginalBlob(jobId: string): Promise<FileBlobRecord | u
   const blobs = await index.getAll(jobId);
 
   return blobs.find((blob) => blob.kind === 'original');
+}
+
+export async function getRemediatedBlob(jobId: string): Promise<FileBlobRecord | undefined> {
+  const db = await getDb();
+  const tx = db.transaction(FILE_BLOBS_STORE, 'readonly');
+  const index = tx.store.index('jobId');
+  const blobs = await index.getAll(jobId);
+
+  return blobs.find((blob) => blob.kind === 'remediated');
+}
+
+export async function deleteBlobByKey(blobKey: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(FILE_BLOBS_STORE, blobKey);
 }

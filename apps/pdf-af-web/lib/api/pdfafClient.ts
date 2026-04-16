@@ -1,5 +1,6 @@
-import { normalizeAnalyzeResponse } from '../findings/normalize';
+import { normalizeAnalyzePayload, normalizeAnalyzeResponse } from '../findings/normalize';
 import type { AnalyzeSummary, RawAnalyzeResponse } from '../../types/analyze';
+import type { RawRemediationResponse, RemediationSummary } from '../../types/remediation';
 import type { ApiErrorShape, HealthSummary, RawHealthResponse } from '../../types/health';
 
 function trimTrailingSlash(value: string): string {
@@ -108,6 +109,112 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
   );
 }
 
+function isAppliedToolArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((tool) => {
+      if (!tool || typeof tool !== 'object') return false;
+      const record = tool as Record<string, unknown>;
+      return (
+        typeof record.toolName === 'string' &&
+        typeof record.stage === 'number' &&
+        typeof record.round === 'number' &&
+        typeof record.scoreBefore === 'number' &&
+        typeof record.scoreAfter === 'number' &&
+        typeof record.delta === 'number' &&
+        (record.outcome === 'applied' ||
+          record.outcome === 'no_effect' ||
+          record.outcome === 'rejected' ||
+          record.outcome === 'failed') &&
+        (record.details === undefined || typeof record.details === 'string')
+      );
+    })
+  );
+}
+
+function isRoundsArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((round) => {
+      if (!round || typeof round !== 'object') return false;
+      const record = round as Record<string, unknown>;
+      return (
+        typeof record.round === 'number' &&
+        typeof record.scoreAfter === 'number' &&
+        typeof record.improved === 'boolean' &&
+        (record.source === undefined || record.source === 'planner' || record.source === 'playbook')
+      );
+    })
+  );
+}
+
+function isSemanticSummary(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.skippedReason === 'string' &&
+    typeof record.durationMs === 'number' &&
+    typeof record.proposalsAccepted === 'number' &&
+    typeof record.proposalsRejected === 'number' &&
+    typeof record.scoreBefore === 'number' &&
+    typeof record.scoreAfter === 'number' &&
+    Array.isArray(record.batches)
+  );
+}
+
+function isOcrPipelineSummary(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.applied === 'boolean' &&
+    typeof record.attempted === 'boolean' &&
+    typeof record.humanReviewRecommended === 'boolean' &&
+    typeof record.guidance === 'string'
+  );
+}
+
+function isRawRemediationResponse(payload: unknown): payload is RawRemediationResponse {
+  if (!payload || typeof payload !== 'object') return false;
+  const record = payload as Record<string, unknown>;
+
+  return (
+    isRawAnalyzeResponse(record.before) &&
+    isRawAnalyzeResponse(record.after) &&
+    (record.remediatedPdfBase64 === null || typeof record.remediatedPdfBase64 === 'string') &&
+    typeof record.remediatedPdfTooLarge === 'boolean' &&
+    isAppliedToolArray(record.appliedTools) &&
+    isRoundsArray(record.rounds) &&
+    typeof record.remediationDurationMs === 'number' &&
+    typeof record.improved === 'boolean' &&
+    (record.semantic === undefined || isSemanticSummary(record.semantic)) &&
+    (record.semanticHeadings === undefined || isSemanticSummary(record.semanticHeadings)) &&
+    (record.semanticPromoteHeadings === undefined || isSemanticSummary(record.semanticPromoteHeadings)) &&
+    (record.semanticUntaggedHeadings === undefined || isSemanticSummary(record.semanticUntaggedHeadings)) &&
+    (record.ocrPipeline === undefined || isOcrPipelineSummary(record.ocrPipeline))
+  );
+}
+
+function normalizeRemediationResponse(payload: RawRemediationResponse): RemediationSummary {
+  return {
+    before: normalizeAnalyzePayload(payload.before as RawAnalyzeResponse),
+    after: normalizeAnalyzePayload(payload.after as RawAnalyzeResponse),
+    improved: payload.improved,
+    appliedTools: payload.appliedTools,
+    rounds: payload.rounds,
+    remediationDurationMs: payload.remediationDurationMs,
+    remediatedPdfTooLarge: payload.remediatedPdfTooLarge,
+    ...(payload.semantic ? { semantic: payload.semantic } : {}),
+    ...(payload.semanticHeadings ? { semanticHeadings: payload.semanticHeadings } : {}),
+    ...(payload.semanticPromoteHeadings
+      ? { semanticPromoteHeadings: payload.semanticPromoteHeadings }
+      : {}),
+    ...(payload.semanticUntaggedHeadings
+      ? { semanticUntaggedHeadings: payload.semanticUntaggedHeadings }
+      : {}),
+    ...(payload.ocrPipeline ? { ocrPipeline: payload.ocrPipeline } : {}),
+  };
+}
+
 export async function fetchHealthSummary(baseUrl: string): Promise<HealthSummary> {
   const normalizedBaseUrl = trimTrailingSlash(baseUrl);
 
@@ -197,4 +304,53 @@ export async function analyzePdf(
   }
 
   return normalizeAnalyzeResponse(payload);
+}
+
+export async function remediatePdf(
+  baseUrl: string,
+  file: File | Blob,
+  fileName: string,
+): Promise<{ summary: RemediationSummary; remediatedPdfBase64: string | null }> {
+  const normalizedBaseUrl = trimTrailingSlash(baseUrl);
+  const formData = new FormData();
+  formData.append('file', file, fileName);
+
+  let response: Response;
+  try {
+    response = await fetch(`${normalizedBaseUrl}/v1/remediate`, {
+      method: 'POST',
+      body: formData,
+      cache: 'no-store',
+    });
+  } catch {
+    throw {
+      message: 'Unable to reach the PDFAF API for remediation. Check the URL and server availability.',
+    } satisfies ApiErrorShape;
+  }
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw {
+      message: 'The API returned an invalid remediation response.',
+      httpStatus: response.status,
+    } satisfies ApiErrorShape;
+  }
+
+  if (!isRawRemediationResponse(payload)) {
+    throw {
+      message: 'The API returned a malformed remediation payload.',
+      httpStatus: response.status,
+    } satisfies ApiErrorShape;
+  }
+
+  return {
+    summary: normalizeRemediationResponse(payload),
+    remediatedPdfBase64: payload.remediatedPdfBase64,
+  };
 }

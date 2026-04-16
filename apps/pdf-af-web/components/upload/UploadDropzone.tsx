@@ -104,7 +104,7 @@ export function UploadDropzone() {
                 </p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
                   Visible now so the flow stays familiar later, but queue automation starts
-                  in Milestone 4.
+                  in Milestone 5.
                 </p>
               </div>
               <label className="relative inline-flex cursor-not-allowed items-center opacity-60">
@@ -114,7 +114,7 @@ export function UploadDropzone() {
               </label>
             </div>
             <p className="mt-5 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
-              Coming in Milestone 4
+              Coming in Milestone 5
             </p>
           </div>
         </div>

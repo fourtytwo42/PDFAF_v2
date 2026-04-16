@@ -3,7 +3,12 @@
 import { Button } from '../common/Button';
 import { SectionCard } from '../common/SectionCard';
 import { StatusPill } from '../common/StatusPill';
-import { formatFileSize, formatJobTimestamp, formatPdfClass } from '../../lib/format/formatters';
+import {
+  formatFileSize,
+  formatJobTimestamp,
+  formatPdfClass,
+  formatScoreGrade,
+} from '../../lib/format/formatters';
 import { useQueueStore } from '../../stores/queue';
 import type { JobRecord } from '../../types/queue';
 import { BatchActionBar } from './BatchActionBar';
@@ -15,6 +20,16 @@ function getStatusTone(job: JobRecord): 'accent' | 'danger' | 'success' {
 }
 
 function formatResultSummary(job: JobRecord): string {
+  if (job.remediationResult) {
+    return `${formatScoreGrade(
+      job.remediationResult.before.score,
+      job.remediationResult.before.grade,
+    )} -> ${formatScoreGrade(
+      job.remediationResult.after.score,
+      job.remediationResult.after.grade,
+    )}`;
+  }
+
   if (!job.findingSummaries || job.findingSummaries.length === 0) {
     return job.analyzeResult ? 'No actionable findings surfaced in the stored summary.' : 'Not analyzed yet.';
   }
@@ -22,11 +37,17 @@ function formatResultSummary(job: JobRecord): string {
   return job.findingSummaries.map((finding) => finding.title).join(' · ');
 }
 
+function getDisplaySummary(job: JobRecord) {
+  return job.remediationResult?.after ?? job.analyzeResult;
+}
+
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
   const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
+  const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
+  const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const openDetail = useQueueStore((state) => state.openDetail);
   const removeJob = useQueueStore((state) => state.removeJob);
   const retryJob = useQueueStore((state) => state.retryJob);
@@ -87,6 +108,7 @@ export function QueueTable() {
               <tbody>
                 {jobs.map((job) => {
                   const isSelected = selectedJobIds.includes(job.id);
+                  const displaySummary = getDisplaySummary(job);
 
                   return (
                     <tr
@@ -119,10 +141,15 @@ export function QueueTable() {
                         <StatusPill label={job.status} tone={getStatusTone(job)} />
                       </td>
                       <td className="px-4 py-4 text-sm text-[var(--foreground)]">
-                        {job.analyzeResult ? `${job.analyzeResult.score} / ${job.analyzeResult.grade}` : 'Not analyzed'}
+                        <div className="flex flex-col gap-1">
+                          <span>{formatResultSummary(job)}</span>
+                          {job.remediationResult?.improved ? (
+                            <StatusPill label="Improved" tone="success" />
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-4 py-4 text-sm text-[var(--foreground)]">
-                        {job.analyzeResult ? formatPdfClass(job.analyzeResult.pdfClass) : 'Not analyzed'}
+                        {displaySummary ? formatPdfClass(displaySummary.pdfClass) : 'Not analyzed'}
                       </td>
                       <td className="max-w-sm px-4 py-4 text-sm leading-6 text-[var(--foreground)]">
                         {formatResultSummary(job)}
@@ -141,6 +168,13 @@ export function QueueTable() {
                           >
                             Grade
                           </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => void enqueueRemediate([job.id])}
+                            disabled={!['idle', 'failed', 'done'].includes(job.status)}
+                          >
+                            Remediate
+                          </Button>
                           {job.status === 'failed' ? (
                             <Button
                               variant="ghost"
@@ -149,7 +183,7 @@ export function QueueTable() {
                               Retry
                             </Button>
                           ) : null}
-                          {job.analyzeResult ? (
+                          {job.analyzeResult || job.remediationResult ? (
                             <Button
                               variant="ghost"
                               onClick={() => openDetail(job.id)}
@@ -163,10 +197,22 @@ export function QueueTable() {
                           >
                             Download Original
                           </Button>
+                          {job.remediatedBlobKey ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() => void downloadRemediated(job.id)}
+                            >
+                              Download Remediated
+                            </Button>
+                          ) : null}
                           <Button
                             variant="secondary"
                             onClick={() => void removeJob(job.id)}
-                            disabled={job.status === 'uploading' || job.status === 'analyzing'}
+                            disabled={
+                              job.status === 'uploading' ||
+                              job.status === 'analyzing' ||
+                              job.status === 'remediating'
+                            }
                           >
                             Remove
                           </Button>

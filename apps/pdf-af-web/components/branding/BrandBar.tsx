@@ -12,9 +12,9 @@ export function BrandBar() {
       <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
         <div className="max-w-3xl">
           <div className="mb-4 flex items-center gap-3">
-            <StatusPill label="Milestone 3" tone="accent" />
+            <StatusPill label="Milestone 4" tone="accent" />
             <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
-              Batch grading and linked finding review
+              Remediation flow and before-after review
             </span>
           </div>
           <h1 className="text-4xl font-semibold tracking-tight text-[var(--foreground)] md:text-6xl">
@@ -22,7 +22,7 @@ export function BrandBar() {
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--muted)] md:text-lg">
             Grade PDFs. Fix PDFs. Download results. The app now supports a persistent
-            browser-local queue plus analyze flow with readable results and linked findings.
+            browser-local queue plus remediation flow with before-after results and remediated downloads.
           </p>
         </div>
         <div className="flex items-center gap-3">

@@ -1,10 +1,13 @@
 import type { AnalyzeSummary, NormalizedFinding } from './analyze';
+import type { RemediationSummary } from './remediation';
 
 export type JobStatus =
   | 'idle'
   | 'queued_analyze'
+  | 'queued_remediate'
   | 'uploading'
   | 'analyzing'
+  | 'remediating'
   | 'done'
   | 'failed';
 
@@ -21,15 +24,16 @@ export interface JobRecord {
   mode: JobMode;
   errorMessage?: string;
   originalBlobKey: string;
+  remediatedBlobKey?: string;
   analyzeResult?: AnalyzeSummary;
-  remediationResult?: unknown;
+  remediationResult?: RemediationSummary;
   findingSummaries?: NormalizedFinding[];
 }
 
 export interface FileBlobRecord {
   blobKey: string;
   jobId: string;
-  kind: 'original';
+  kind: 'original' | 'remediated';
   fileName: string;
   mimeType: string;
   blob: Blob;

@@ -59,3 +59,7 @@ export function formatDurationMs(value: number): string {
 
   return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} s`;
 }
+
+export function formatScoreGrade(score: number, grade: string): string {
+  return `${score} / ${grade}`;
+}

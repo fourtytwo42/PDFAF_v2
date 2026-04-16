@@ -203,7 +203,7 @@ function actionableFindings(findings: RawAnalyzeFinding[]): RawAnalyzeFinding[] 
     .sort((left, right) => severityRank[left.severity] - severityRank[right.severity]);
 }
 
-export function normalizeAnalyzeResponse(payload: RawAnalyzeResponse): AnalyzeSummary {
+export function normalizeAnalyzePayload(payload: RawAnalyzeResponse): AnalyzeSummary {
   const categories: AnalyzeCategorySummary[] = payload.categories.map((category) => ({
     key: category.key,
     label: formatCategoryLabel(category.key),
@@ -227,4 +227,8 @@ export function normalizeAnalyzeResponse(payload: RawAnalyzeResponse): AnalyzeSu
     findings,
     topFindings: findings.slice(0, MAX_ROW_FINDINGS),
   };
+}
+
+export function normalizeAnalyzeResponse(payload: RawAnalyzeResponse): AnalyzeSummary {
+  return normalizeAnalyzePayload(payload);
 }

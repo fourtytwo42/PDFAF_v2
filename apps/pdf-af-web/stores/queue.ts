@@ -1,24 +1,31 @@
 'use client';
 
 import { create, type StateCreator } from 'zustand';
-import { analyzePdf } from '../lib/api/pdfafClient';
+import { analyzePdf, remediatePdf } from '../lib/api/pdfafClient';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
 import {
   createJobWithOriginalBlob,
+  deleteBlobByKey,
   deleteJobAndBlobs,
   getOriginalBlob,
+  getRemediatedBlob,
   listJobRecords,
+  putBlobRecord,
   putJobRecord,
   putJobRecords,
 } from '../lib/storage/pdfafDb';
 import { useAppSettingsStore } from './settings';
+import type { AnalyzeSummary, NormalizedFinding } from '../types/analyze';
+import type { RemediationSummary } from '../types/remediation';
 import type {
   FileValidationMessage,
+  JobMode,
   JobRecord,
+  JobStatus,
   QueueStorageState,
 } from '../types/queue';
 
-const ANALYZE_CONCURRENCY = 2;
+const QUEUE_CONCURRENCY = 2;
 
 interface QueueStoreState {
   jobs: JobRecord[];
@@ -38,7 +45,9 @@ interface QueueStoreState {
   toggleSelectAllVisible: () => void;
   clearSelection: () => void;
   downloadOriginal: (jobId: string) => Promise<void>;
+  downloadRemediated: (jobId: string) => Promise<void>;
   enqueueAnalyze: (jobIds?: string[]) => Promise<void>;
+  enqueueRemediate: (jobIds?: string[]) => Promise<void>;
   runScheduler: () => Promise<void>;
   retryJob: (jobId: string) => Promise<void>;
   openDetail: (jobId: string) => void;
@@ -106,6 +115,10 @@ function isStorageFailureMessage(message: string): boolean {
   return /storage|indexeddb|browser/i.test(message);
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
 function updateJobCollection(jobs: JobRecord[], nextJob: JobRecord): JobRecord[] {
   return jobs
     .map((job) => (job.id === nextJob.id ? nextJob : job))
@@ -116,14 +129,89 @@ function eligibleForAnalyze(job: JobRecord): boolean {
   return job.status === 'idle' || job.status === 'failed' || job.status === 'done';
 }
 
-function nowIso(): string {
-  return new Date().toISOString();
+function eligibleForRemediate(job: JobRecord): boolean {
+  return job.status === 'idle' || job.status === 'failed' || job.status === 'done';
 }
 
-async function processAnalyzeJob(jobId: string, set: QueueSet, get: QueueGet) {
+function getProcessingStatus(mode: JobMode): JobStatus {
+  return mode === 'remediate' ? 'remediating' : 'analyzing';
+}
+
+function getQueuedStatus(mode: JobMode): JobStatus {
+  return mode === 'remediate' ? 'queued_remediate' : 'queued_analyze';
+}
+
+function buildRemediatedFileName(fileName: string): string {
+  return fileName.toLowerCase().endsWith('.pdf')
+    ? `${fileName.slice(0, -4)}-remediated.pdf`
+    : `${fileName}-remediated.pdf`;
+}
+
+function decodeBase64ToBlob(base64: string, mimeType: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mimeType });
+}
+
+function getDisplayedSummary(job: JobRecord): AnalyzeSummary | undefined {
+  return job.remediationResult?.after ?? job.analyzeResult;
+}
+
+function getDisplayedFindings(job: JobRecord): NormalizedFinding[] | undefined {
+  return job.findingSummaries;
+}
+
+function buildFailureJob(job: JobRecord, message: string): JobRecord {
+  return {
+    ...job,
+    status: 'failed',
+    errorMessage: message,
+    updatedAt: nowIso(),
+  };
+}
+
+async function persistFailure(
+  job: JobRecord,
+  message: string,
+  set: QueueSet,
+  state: QueueStoreState,
+) {
+  const failedJob = buildFailureJob(job, message);
+
+  set((current) => ({
+    jobs: updateJobCollection(current.jobs, failedJob),
+    storageState:
+      isStorageFailureMessage(message) && current.storageState !== 'unavailable'
+        ? 'error'
+        : current.storageState,
+    validationMessages: [
+      buildValidationMessage(job.fileName, message),
+      ...current.validationMessages,
+    ].slice(0, 8),
+  }));
+
+  try {
+    await putJobRecord(failedJob);
+  } catch (persistError) {
+    set((current) => ({
+      storageState: 'error',
+      validationMessages: [
+        buildValidationMessage(job.fileName, toStorageErrorMessage(persistError)),
+        ...current.validationMessages,
+      ].slice(0, 8),
+    }));
+  }
+}
+
+async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
   const queuedJob = get().jobs.find((job) => job.id === jobId);
-  if (!queuedJob) {
-    set((state: QueueStoreState) => ({
+  if (!queuedJob || !queuedJob.mode) {
+    set((state) => ({
       activeJobIds: state.activeJobIds.filter((activeId) => activeId !== jobId),
     }));
     return;
@@ -136,80 +224,92 @@ async function processAnalyzeJob(jobId: string, set: QueueSet, get: QueueGet) {
     errorMessage: undefined,
   };
 
-  set((state: QueueStoreState) => ({
-    jobs: updateJobCollection(state.jobs, job),
-  }));
+  set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
 
   try {
     await putJobRecord(job);
 
-    const blobRecord = await getOriginalBlob(jobId);
-    if (!blobRecord) {
+    const originalBlob = await getOriginalBlob(jobId);
+    if (!originalBlob) {
       throw new Error('Original PDF is no longer available in browser storage.');
     }
 
     job = {
       ...job,
-      status: 'analyzing',
+      status: getProcessingStatus(job.mode),
       updatedAt: nowIso(),
     };
 
-    set((state: QueueStoreState) => ({
-      jobs: updateJobCollection(state.jobs, job),
-    }));
+    set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
     await putJobRecord(job);
 
     const apiBaseUrl = useAppSettingsStore.getState().apiBaseUrl;
-    const analyzeResult = await analyzePdf(apiBaseUrl, blobRecord.blob, job.fileName);
 
-    job = {
-      ...job,
-      status: 'done',
-      mode: 'grade',
-      analyzeResult,
-      findingSummaries: analyzeResult.topFindings,
-      updatedAt: nowIso(),
-      errorMessage: undefined,
-    };
+    if (job.mode === 'grade') {
+      const analyzeResult = await analyzePdf(apiBaseUrl, originalBlob.blob, job.fileName);
+      job = {
+        ...job,
+        status: 'done',
+        analyzeResult,
+        findingSummaries:
+          job.remediationResult?.after.topFindings ?? analyzeResult.topFindings,
+        updatedAt: nowIso(),
+        errorMessage: undefined,
+      };
 
-    set((state: QueueStoreState) => ({
-      jobs: updateJobCollection(state.jobs, job),
-    }));
-    await putJobRecord(job);
+      set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
+      await putJobRecord(job);
+    } else {
+      const remediation = await remediatePdf(apiBaseUrl, originalBlob.blob, job.fileName);
+      let nextRemediatedBlobKey = job.remediatedBlobKey;
+
+      if (job.remediatedBlobKey) {
+        await deleteBlobByKey(job.remediatedBlobKey);
+        nextRemediatedBlobKey = undefined;
+      }
+
+      if (remediation.remediatedPdfBase64) {
+        nextRemediatedBlobKey = crypto.randomUUID();
+        const remediatedBlob = decodeBase64ToBlob(
+          remediation.remediatedPdfBase64,
+          job.mimeType || 'application/pdf',
+        );
+
+        await putBlobRecord({
+          blobKey: nextRemediatedBlobKey,
+          jobId: job.id,
+          kind: 'remediated',
+          fileName: buildRemediatedFileName(job.fileName),
+          mimeType: job.mimeType || 'application/pdf',
+          blob: remediatedBlob,
+        });
+      }
+
+      const remediationMessage =
+        remediation.summary.remediatedPdfTooLarge
+          ? 'Remediation completed, but the repaired PDF was too large for inline download.'
+          : undefined;
+
+      job = {
+        ...job,
+        status: 'done',
+        mode: 'remediate',
+        analyzeResult: remediation.summary.after,
+        remediationResult: remediation.summary,
+        remediatedBlobKey: nextRemediatedBlobKey,
+        findingSummaries: remediation.summary.after.topFindings,
+        updatedAt: nowIso(),
+        errorMessage: remediationMessage,
+      };
+
+      set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
+      await putJobRecord(job);
+    }
   } catch (error) {
     const message = toStorageErrorMessage(error);
-    job = {
-      ...job,
-      status: 'failed',
-      errorMessage: message,
-      updatedAt: nowIso(),
-    };
-
-    set((state: QueueStoreState) => ({
-      jobs: updateJobCollection(state.jobs, job),
-      storageState:
-        isStorageFailureMessage(message) && state.storageState !== 'unavailable'
-          ? 'error'
-          : state.storageState,
-      validationMessages: [
-        buildValidationMessage(job.fileName, message),
-        ...state.validationMessages,
-      ].slice(0, 8),
-    }));
-
-    try {
-      await putJobRecord(job);
-    } catch (persistError) {
-      set((state: QueueStoreState) => ({
-        storageState: 'error',
-        validationMessages: [
-          buildValidationMessage(job.fileName, toStorageErrorMessage(persistError)),
-          ...state.validationMessages,
-        ].slice(0, 8),
-      }));
-    }
+    await persistFailure(job, message, set, get());
   } finally {
-    set((state: QueueStoreState) => ({
+    set((state) => ({
       activeJobIds: state.activeJobIds.filter((activeId) => activeId !== jobId),
     }));
     void get().runScheduler();
@@ -235,7 +335,11 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     try {
       const storedJobs = await listJobRecords();
       const normalizedJobs = storedJobs.map((job) => {
-        if (job.status !== 'uploading' && job.status !== 'analyzing') {
+        if (
+          job.status !== 'uploading' &&
+          job.status !== 'analyzing' &&
+          job.status !== 'remediating'
+        ) {
           return job;
         }
 
@@ -243,15 +347,11 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
           ...job,
           status: 'failed' as const,
           updatedAt: nowIso(),
-          errorMessage: 'Previous browser session ended before analysis completed.',
+          errorMessage: 'Previous browser session ended before processing completed.',
         };
       });
 
-      const staleJobs = normalizedJobs.filter(
-        (job, index) =>
-          job !== storedJobs[index],
-      );
-
+      const staleJobs = normalizedJobs.filter((job, index) => job !== storedJobs[index]);
       if (staleJobs.length > 0) {
         await putJobRecords(staleJobs);
       }
@@ -264,7 +364,11 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
         storageState: 'ready',
       });
 
-      if (normalizedJobs.some((job) => job.status === 'queued_analyze')) {
+      if (
+        normalizedJobs.some(
+          (job) => job.status === 'queued_analyze' || job.status === 'queued_remediate',
+        )
+      ) {
         void get().runScheduler();
       }
     } catch (error) {
@@ -298,7 +402,7 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
         continue;
       }
 
-      const timestamp = new Date().toISOString();
+      const timestamp = nowIso();
       const jobId = crypto.randomUUID();
       const originalBlobKey = crypto.randomUUID();
       const jobRecord: JobRecord = {
@@ -348,10 +452,18 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
 
   removeJob: async (jobId) => {
     const target = get().jobs.find((job) => job.id === jobId);
-    if (target && (target.status === 'uploading' || target.status === 'analyzing')) {
+    if (
+      target &&
+      (target.status === 'uploading' ||
+        target.status === 'analyzing' ||
+        target.status === 'remediating')
+    ) {
       set((state) => ({
         validationMessages: [
-          buildValidationMessage(target.fileName, 'Wait for analysis to finish before removing this row.'),
+          buildValidationMessage(
+            target.fileName,
+            'Wait for processing to finish before removing this row.',
+          ),
           ...state.validationMessages,
         ].slice(0, 8),
       }));
@@ -425,6 +537,28 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     }
   },
 
+  downloadRemediated: async (jobId) => {
+    const job = get().jobs.find((candidate) => candidate.id === jobId);
+    if (!job) return;
+
+    try {
+      const blobRecord = await getRemediatedBlob(jobId);
+      if (!blobRecord) {
+        throw new Error('Remediated PDF is not available for this row.');
+      }
+
+      startBrowserDownload(blobRecord.blob, blobRecord.fileName);
+    } catch (error) {
+      set((state) => ({
+        storageState: 'error',
+        validationMessages: [
+          buildValidationMessage(job.fileName, toStorageErrorMessage(error)),
+          ...state.validationMessages,
+        ].slice(0, 8),
+      }));
+    }
+  },
+
   enqueueAnalyze: async (jobIds) => {
     const selectedIds = jobIds ?? get().selectedJobIds;
     if (selectedIds.length === 0) return;
@@ -444,8 +578,10 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
           status: 'queued_analyze',
           errorMessage: undefined,
           analyzeResult: undefined,
-          findingSummaries: undefined,
           updatedAt: queuedAt,
+          ...(job.remediationResult
+            ? {}
+            : { findingSummaries: undefined }),
         };
       });
 
@@ -470,15 +606,61 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     }
   },
 
+  enqueueRemediate: async (jobIds) => {
+    const selectedIds = jobIds ?? get().selectedJobIds;
+    if (selectedIds.length === 0) return;
+
+    const queuedAt = nowIso();
+    let updatedJobs: JobRecord[] = [];
+
+    set((state) => {
+      updatedJobs = state.jobs.map((job) => {
+        if (!selectedIds.includes(job.id) || !eligibleForRemediate(job)) {
+          return job;
+        }
+
+        return {
+          ...job,
+          mode: 'remediate',
+          status: 'queued_remediate',
+          errorMessage: undefined,
+          remediationResult: undefined,
+          updatedAt: queuedAt,
+        };
+      });
+
+      return { jobs: updatedJobs };
+    });
+
+    const changedJobs = updatedJobs.filter(
+      (job) => selectedIds.includes(job.id) && job.status === 'queued_remediate',
+    );
+
+    try {
+      await putJobRecords(changedJobs);
+      await get().runScheduler();
+    } catch (error) {
+      set((state) => ({
+        storageState: 'error',
+        validationMessages: [
+          buildValidationMessage('Remediation queue', toStorageErrorMessage(error)),
+          ...state.validationMessages,
+        ].slice(0, 8),
+      }));
+    }
+  },
+
   runScheduler: async () => {
     const state = get();
     if (state.queuePaused || state.storageState !== 'ready') return;
 
-    const availableSlots = ANALYZE_CONCURRENCY - state.activeJobIds.length;
+    const availableSlots = QUEUE_CONCURRENCY - state.activeJobIds.length;
     if (availableSlots <= 0) return;
 
     const queuedJobs = state.jobs.filter(
-      (job) => job.status === 'queued_analyze' && !state.activeJobIds.includes(job.id),
+      (job) =>
+        (job.status === 'queued_analyze' || job.status === 'queued_remediate') &&
+        !state.activeJobIds.includes(job.id),
     );
 
     const nextJobs = queuedJobs.slice(0, availableSlots);
@@ -489,11 +671,19 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     }));
 
     for (const job of nextJobs) {
-      void processAnalyzeJob(job.id, set, get);
+      void processJob(job.id, set, get);
     }
   },
 
   retryJob: async (jobId) => {
+    const job = get().jobs.find((candidate) => candidate.id === jobId);
+    if (!job) return;
+
+    if (job.mode === 'remediate') {
+      await get().enqueueRemediate([jobId]);
+      return;
+    }
+
     await get().enqueueAnalyze([jobId]);
   },
 
