@@ -7,6 +7,12 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+function buildProxyHeaders(baseUrl: string): HeadersInit {
+  return {
+    'X-PDFAF-Base-Url': trimTrailingSlash(baseUrl),
+  };
+}
+
 function mapHealthResponse(payload: RawHealthResponse): HealthSummary {
   return {
     status: payload.status,
@@ -216,12 +222,13 @@ function normalizeRemediationResponse(payload: RawRemediationResponse): Remediat
 }
 
 export async function fetchHealthSummary(baseUrl: string): Promise<HealthSummary> {
-  const normalizedBaseUrl = trimTrailingSlash(baseUrl);
-
   let response: Response;
   try {
-    response = await fetch(`${normalizedBaseUrl}/v1/health`, {
-      headers: { Accept: 'application/json' },
+    response = await fetch('/api/pdfaf/health', {
+      headers: {
+        Accept: 'application/json',
+        ...buildProxyHeaders(baseUrl),
+      },
       cache: 'no-store',
     });
   } catch {
@@ -265,15 +272,15 @@ export async function analyzePdf(
   file: File | Blob,
   fileName: string,
 ): Promise<AnalyzeSummary> {
-  const normalizedBaseUrl = trimTrailingSlash(baseUrl);
   const formData = new FormData();
   formData.append('file', file, fileName);
 
   let response: Response;
   try {
-    response = await fetch(`${normalizedBaseUrl}/v1/analyze`, {
+    response = await fetch('/api/pdfaf/analyze', {
       method: 'POST',
       body: formData,
+      headers: buildProxyHeaders(baseUrl),
       cache: 'no-store',
     });
   } catch {
@@ -311,15 +318,15 @@ export async function remediatePdf(
   file: File | Blob,
   fileName: string,
 ): Promise<{ summary: RemediationSummary; remediatedPdfBase64: string | null }> {
-  const normalizedBaseUrl = trimTrailingSlash(baseUrl);
   const formData = new FormData();
   formData.append('file', file, fileName);
 
   let response: Response;
   try {
-    response = await fetch(`${normalizedBaseUrl}/v1/remediate`, {
+    response = await fetch('/api/pdfaf/remediate', {
       method: 'POST',
       body: formData,
+      headers: buildProxyHeaders(baseUrl),
       cache: 'no-store',
     });
   } catch {
