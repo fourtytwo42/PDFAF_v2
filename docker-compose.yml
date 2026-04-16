@@ -1,6 +1,6 @@
-# Full stack: PDFAF API + Gemma 4 E2B Q4 (llama-server) sidecar.
-# The `llm` image is built from `docker/llm/Dockerfile` and embeds the default GGUF (~4 GiB) at build time
-# (no first-boot Hugging Face download). Rebuild to change weights: `docker compose build llm --no-cache`.
+# Single-container PDFAF deployment: the `pdfaf` image contains the API plus embedded `llama-server`
+# and bakes the default GGUF + multimodal projector at image build time (no first-boot HF download).
+# Rebuild to change weights: `docker compose build --no-cache`.
 #
 # Data disk: keep Docker Engine data-root on the large volume (e.g. /etc/docker/daemon.json:
 #   { "data-root": "/mnt/docker-data/docker" }
@@ -18,65 +18,28 @@
 #   sudo cp "$HOME/.docker/cli-plugins/docker-compose" /root/.docker/cli-plugins/docker-compose
 #   sudo chmod +x /root/.docker/cli-plugins/docker-compose
 #
-# Local hybrid: run only the LLM container, then native API:
-#   docker compose up llm -d
-#   PDFAF_RUN_LOCAL_LLM= OPENAI_COMPAT_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_COMPAT_MODEL_AUTO=1 pnpm dev
+# Local native dev still exists: set `PDFAF_RUN_LOCAL_LLM=1` to let the API spawn `llama-server`.
 
 services:
-  llm:
+  pdfaf:
     build:
-      context: ./docker/llm
-      dockerfile: Dockerfile
+      context: .
       args:
         HF_REPO: ${GEMMA4_HF_REPO:-unsloth/gemma-4-E2B-it-GGUF}
         GGUF_FILE: ${GEMMA4_GGUF_FILE:-gemma-4-E2B-it-Q4_K_M.gguf}
         MMPROJ_FILE: ${GEMMA4_MMPROJ_FILE:-mmproj-F16.gguf}
-    image: pdfaf-llm:local
-    restart: unless-stopped
-    command:
-      - '-m'
-      - '/models/llama-default.gguf'
-      - '--mmproj'
-      - '/models/llama-default-mmproj.gguf'
-      - '--host'
-      - '0.0.0.0'
-      - '--port'
-      - '8080'
-      - '--reasoning-budget'
-      - '0'
-      - '--chat-template-kwargs'
-      - '{"enable_thinking": false}'
-      - '--reasoning-format'
-      - 'deepseek'
-    ports:
-      # If 1234 is busy (e.g. old llm container or native llama-server), set LLM_HOST_PORT=1235 in .env
-      - '127.0.0.1:${LLM_HOST_PORT:-1234}:8080'
-    healthcheck:
-      test: ['CMD', 'curl', '-sf', 'http://127.0.0.1:8080/health']
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 120s
-
-  pdfaf:
-    build: .
-    depends_on:
-      llm:
-        condition: service_healthy
+    image: pdfaf-v2:local
     ports:
       - '6200:6200'
     environment:
       PORT: '6200'
       DB_PATH: /data/pdfaf.db
       TMPDIR: /data/tmp
-      PDFAF_RUN_LOCAL_LLM: '0'
-      OPENAI_COMPAT_BASE_URL: http://llm:8080/v1
-      OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-local}
-      OPENAI_COMPAT_MODEL_AUTO: '1'
-      # LLM-assisted passes unless the client sends explicit `false` in multipart `options` JSON.
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC: '1'
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS: '1'
-      # Optional: set to 1 for promote / untagged heading experiments (slower).
+      PDFAF_RUN_LOCAL_LLM: '1'
+      LLAMA_SERVER_BIN: /opt/llama/llama-server
+      PDFAF_LLAMA_WORKDIR: /app/data/llama-work
       # PDFAF_REMEDIATE_DEFAULT_SEMANTIC_PROMOTE: '0'
       # PDFAF_REMEDIATE_DEFAULT_SEMANTIC_UNTAGGED: '0'
     volumes:

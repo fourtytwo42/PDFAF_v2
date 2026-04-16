@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   GEMMA4_GGUF_FILE,
   GEMMA4_HF_REPO,
+  GEMMA4_MMPROJ_FILE,
   LLAMA_SERVER_BIN,
   PDFAF_LLAMA_PORT,
   PDFAF_LLAMA_READY_TIMEOUT_MS,
@@ -16,6 +17,19 @@ let llamaChild: ChildProcess | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function preferWorkdirFile(filename: string): string {
+  const rootFile = join(process.cwd(), filename);
+  const workFile = join(PDFAF_LLAMA_WORKDIR, filename);
+  if (existsSync(rootFile) && !existsSync(workFile)) {
+    try {
+      renameSync(rootFile, workFile);
+    } catch {
+      /* ignore — may be same file or permission */
+    }
+  }
+  return workFile;
 }
 
 async function waitForModelsJson(baseV1: string, apiKey: string): Promise<{ firstModelId: string | null }> {
@@ -62,15 +76,8 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
   const port = PDFAF_LLAMA_PORT;
   mkdirSync(PDFAF_LLAMA_WORKDIR, { recursive: true });
 
-  const rootGguf = join(process.cwd(), GEMMA4_GGUF_FILE);
-  const workGguf = join(PDFAF_LLAMA_WORKDIR, GEMMA4_GGUF_FILE);
-  if (existsSync(rootGguf) && !existsSync(workGguf)) {
-    try {
-      renameSync(rootGguf, workGguf);
-    } catch {
-      /* ignore — may be same file or permission */
-    }
-  }
+  const workGguf = preferWorkdirFile(GEMMA4_GGUF_FILE);
+  const workMmproj = preferWorkdirFile(GEMMA4_MMPROJ_FILE);
   const rootJson = join(process.cwd(), `${GEMMA4_GGUF_FILE}.json`);
   const workJson = join(PDFAF_LLAMA_WORKDIR, `${GEMMA4_GGUF_FILE}.json`);
   if (existsSync(rootJson) && !existsSync(workJson)) {
@@ -91,22 +98,40 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
     }
   }
 
-  const args = [
-    '-hf',
-    GEMMA4_HF_REPO,
-    '-m',
-    GEMMA4_GGUF_FILE,
-    '--host',
-    host,
-    '--port',
-    String(port),
-    '--reasoning-budget',
-    '0',
-    '--chat-template-kwargs',
-    '{"enable_thinking": false}',
-    '--reasoning-format',
-    'deepseek',
-  ];
+  const localModelReady = existsSync(workGguf) && existsSync(workMmproj);
+  const args = localModelReady
+    ? [
+        '-m',
+        workGguf,
+        '--mmproj',
+        workMmproj,
+        '--host',
+        host,
+        '--port',
+        String(port),
+        '--reasoning-budget',
+        '0',
+        '--chat-template-kwargs',
+        '{"enable_thinking": false}',
+        '--reasoning-format',
+        'deepseek',
+      ]
+    : [
+        '-hf',
+        GEMMA4_HF_REPO,
+        '-m',
+        GEMMA4_GGUF_FILE,
+        '--host',
+        host,
+        '--port',
+        String(port),
+        '--reasoning-budget',
+        '0',
+        '--chat-template-kwargs',
+        '{"enable_thinking": false}',
+        '--reasoning-format',
+        'deepseek',
+      ];
 
   logInfo({
     message: 'embed_llm_spawn',
@@ -114,6 +139,8 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
       bin: LLAMA_SERVER_BIN,
       repo: GEMMA4_HF_REPO,
       gguf: GEMMA4_GGUF_FILE,
+      mmproj: localModelReady ? GEMMA4_MMPROJ_FILE : '(auto)',
+      localModelReady,
       port,
       cwd: PDFAF_LLAMA_WORKDIR,
     },

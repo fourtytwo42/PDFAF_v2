@@ -24,12 +24,12 @@ else
   DC=(docker-compose)
 fi
 
-# Build llm (baked GGUF) + API image; pdfaf depends_on llm.
-"${DC[@]}" -f "$ROOT/docker-compose.yml" build llm pdfaf
+# Build the single combined image (API + embedded llama-server + baked GGUF/mmproj).
+"${DC[@]}" -f "$ROOT/docker-compose.yml" build pdfaf
 
 "${DC[@]}" -f "$ROOT/docker-compose.yml" up -d
 
-echo "[docker-smoke] Waiting for API health (LLM weights are baked into the llm image; cold start is server load only)…"
+echo "[docker-smoke] Waiting for API health (combined image starts embedded llama-server on boot)…"
 for i in $(seq 1 180); do
   if curl -sf "http://127.0.0.1:6200/v1/health" >/dev/null; then
     echo "[docker-smoke] API is up."

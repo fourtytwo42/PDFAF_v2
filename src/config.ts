@@ -408,6 +408,9 @@ export const GEMMA4_HF_REPO =
 /** GGUF filename inside that repo (`Q4_K_M` is the default balanced quant). */
 export const GEMMA4_GGUF_FILE = process.env['GEMMA4_GGUF_FILE']?.trim() || 'gemma-4-E2B-it-Q4_K_M.gguf';
 
+/** Multimodal projector filename inside that repo (required for image-based semantic passes). */
+export const GEMMA4_MMPROJ_FILE = process.env['GEMMA4_MMPROJ_FILE']?.trim() || 'mmproj-F16.gguf';
+
 /** Path or name of `llama-server` binary. */
 export const LLAMA_SERVER_BIN = process.env['LLAMA_SERVER_BIN']?.trim() || 'llama-server';
 

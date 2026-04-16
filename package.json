@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "web:dev": "pnpm --filter pdf-af-web dev",
+    "web:build": "pnpm --filter pdf-af-web build",
+    "web:start": "pnpm --filter pdf-af-web start",
     "build": "tsc --noEmit && tsc",
     "start": "node dist/server.js",
     "test": "vitest run",

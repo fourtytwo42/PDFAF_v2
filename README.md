@@ -14,7 +14,7 @@
 
 OpenAPI: [`openapi.yaml`](openapi.yaml) · `pnpm openapi:validate`
 
-Deeper docs: [`docs/api.md`](docs/api.md), [`docs/scoring.md`](docs/scoring.md), [`docs/architecture.md`](docs/architecture.md)
+Deeper docs: [`docs/api.md`](docs/api.md), [`docs/scoring.md`](docs/scoring.md), [`docs/architecture.md`](docs/architecture.md), [`docs/single-container-deployment.md`](docs/single-container-deployment.md)
 
 ---
 
@@ -58,28 +58,32 @@ curl -sS http://localhost:6200/v1/playbooks | jq '{ n: (.playbooks|length) }'
 
 ---
 
-## Quick start (Docker — API + Gemma Q4 sidecar)
+## Quick start (Docker — single container)
 
-Compose runs **two** services: `llm` is built from `docker/llm/Dockerfile` on top of [`ghcr.io/ggml-org/llama.cpp:server`](https://github.com/ggml-org/llama.cpp/blob/master/docs/docker.md) and **embeds** the default **Unsloth** `gemma-4-E2B-it-Q4_K_M.gguf` at **image build** time (~4 GiB layer; **no `HF_TOKEN`** for that public file). First `docker compose up` only starts the server—no weight download. Rebuild with `docker compose build llm` (optionally `--no-cache`) after changing `GEMMA4_HF_REPO` / `GEMMA4_GGUF_FILE` build-args in `.env`. The `pdfaf` service talks to `llm` over the internal network (`OPENAI_COMPAT_MODEL_AUTO=1` picks the model id from `/v1/models`).
+The published Docker image runs the API and embedded multimodal LLM in **one container**. The image already includes the default **Gemma 4 E2B Q4_K_M** GGUF plus `mmproj`, so there is no model download at container start.
 
 ```bash
-docker compose up --build
+docker pull hendo420/pdfaf-v2:latest
+docker run -d \
+  --name pdfaf-v2 \
+  -p 6200:6200 \
+  -v pdfaf-data:/data \
+  hendo420/pdfaf-v2:latest
 curl -sS http://localhost:6200/v1/health
 ```
 
-- API: `http://localhost:6200` · LLM (host): `http://127.0.0.1:1234` (maps container `8080`).
-- SQLite and playbooks: volume `pdfaf-data` (`DB_PATH=/data/pdfaf.db`).
-- Optional: set `HF_TOKEN` only if you point `GEMMA4_HF_REPO` / `GEMMA4_GGUF_FILE` at a **gated** Hugging Face model; the default Gemma GGUF does not need it.
+- Public API: `http://localhost:6200`
+- Persistent data: volume `pdfaf-data` mounted at `/data` (`DB_PATH=/data/pdfaf.db`)
+- Embedded LLM listens only inside the container and is used by the API automatically
+- Full deployment details: [`docs/single-container-deployment.md`](docs/single-container-deployment.md)
 
-### Run the LLM in Docker, API natively (good for local dev)
+### Build locally from this repo
 
 ```bash
-pnpm docker:llm
-# wait until: curl -sS http://127.0.0.1:1234/v1/models | head
-PDFAF_RUN_LOCAL_LLM= OPENAI_COMPAT_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_COMPAT_MODEL_AUTO=1 pnpm dev
+docker compose up --build
 ```
 
-Unset `PDFAF_RUN_LOCAL_LLM` so the app does not spawn a second `llama-server`.
+This repo’s `docker-compose.yml` now runs the same single-container shape locally.
 
 ---
 
@@ -92,8 +96,7 @@ Unset `PDFAF_RUN_LOCAL_LLM` so the app does not spawn a second `llama-server`.
 | `pnpm start` | Run compiled `dist/server.js` |
 | `pnpm test` | Vitest |
 | `pnpm lint` | `tsc --noEmit` |
-| `pnpm docker:up` | `docker compose up --build` (API + `llm`) |
-| `pnpm docker:llm` | `docker compose up llm -d --build` (sidecar only) |
+| `pnpm docker:up` | `docker compose up --build` (single container) |
 | `pnpm openapi:validate` | Validate `openapi.yaml` |
 
 ---
