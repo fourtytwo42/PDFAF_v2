@@ -4,6 +4,7 @@ import { unlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import {
+  getDefaultRemediateSemanticOptions,
   getOpenAiCompatBaseUrl,
   MAX_FILE_SIZE_MB,
   REMEDIATION_MAX_BASE64_MB,
@@ -121,6 +122,11 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     parsedOptions = parsed.data;
   }
 
+  parsedOptions = {
+    ...getDefaultRemediateSemanticOptions(),
+    ...parsedOptions,
+  };
+
   const semanticAbort = new AbortController();
   const onClientClose = () => semanticAbort.abort();
   req.on('close', onClientClose);
@@ -128,6 +134,21 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
   const routeStarted = Date.now();
 
   try {
+    logInfo({
+      message: 'remediate_request_received',
+      requestId: res.locals.requestId,
+      filename,
+      details: {
+        semantic: Boolean(parsedOptions.semantic),
+        semanticHeadings: Boolean(parsedOptions.semanticHeadings),
+        semanticPromoteHeadings: Boolean(parsedOptions.semanticPromoteHeadings),
+        semanticUntaggedHeadings: Boolean(parsedOptions.semanticUntaggedHeadings),
+        targetScore: parsedOptions.targetScore ?? null,
+        maxRounds: parsedOptions.maxRounds ?? null,
+        llmConfigured: Boolean(getOpenAiCompatBaseUrl()),
+      },
+    });
+
     const { result, snapshot } = await analyzePdf(tempPath, filename);
     const buffer = await readFile(tempPath);
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
@@ -337,6 +358,51 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         ? { semanticUntaggedHeadings: semanticUntaggedHeadingsSummary }
         : {}),
     };
+
+    logInfo({
+      message: 'remediate_path_summary',
+      requestId: res.locals.requestId,
+      filename,
+      score: outAfter.score,
+      grade: outAfter.grade,
+      details: {
+        beforeScore: remediation.before.score,
+        deterministicScoreAfter: remediation.after.score,
+        finalScoreAfter: outAfter.score,
+        semantic: semanticSummary
+          ? {
+              skippedReason: semanticSummary.skippedReason,
+              proposalsAccepted: semanticSummary.proposalsAccepted,
+              proposalsRejected: semanticSummary.proposalsRejected,
+              batches: semanticSummary.batches.length,
+            }
+          : null,
+        semanticHeadings: semanticHeadingsSummary
+          ? {
+              skippedReason: semanticHeadingsSummary.skippedReason,
+              proposalsAccepted: semanticHeadingsSummary.proposalsAccepted,
+              proposalsRejected: semanticHeadingsSummary.proposalsRejected,
+              batches: semanticHeadingsSummary.batches.length,
+            }
+          : null,
+        semanticPromoteHeadings: semanticPromoteHeadingsSummary
+          ? {
+              skippedReason: semanticPromoteHeadingsSummary.skippedReason,
+              proposalsAccepted: semanticPromoteHeadingsSummary.proposalsAccepted,
+              proposalsRejected: semanticPromoteHeadingsSummary.proposalsRejected,
+              batches: semanticPromoteHeadingsSummary.batches.length,
+            }
+          : null,
+        semanticUntaggedHeadings: semanticUntaggedHeadingsSummary
+          ? {
+              skippedReason: semanticUntaggedHeadingsSummary.skippedReason,
+              proposalsAccepted: semanticUntaggedHeadingsSummary.proposalsAccepted,
+              proposalsRejected: semanticUntaggedHeadingsSummary.proposalsRejected,
+              batches: semanticUntaggedHeadingsSummary.batches.length,
+            }
+          : null,
+      },
+    });
 
     if (parsedOptions.htmlReport) {
       const html = generateHtmlReport(

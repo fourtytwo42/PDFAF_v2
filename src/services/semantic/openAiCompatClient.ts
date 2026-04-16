@@ -8,6 +8,7 @@ import {
   getOpenAiCompatModel,
   SEMANTIC_REQUEST_TIMEOUT_MS,
 } from '../../config.js';
+import { logInfo, logWarn } from '../../logging.js';
 
 export interface LlmEndpoint {
   baseUrl: string;
@@ -45,6 +46,8 @@ export interface ChatCompletionArgs {
   toolChoice?: unknown;
   timeoutMs?: number;
   signal?: AbortSignal;
+  operation?: string;
+  traceId?: string;
 }
 
 export interface ToolCallPayload {
@@ -79,6 +82,20 @@ export async function chatCompletionToolCall(
     }
 
     try {
+      logInfo({
+        message: 'llm_chat_completion_start',
+        details: {
+          operation: args.operation ?? 'semantic_unknown',
+          traceId: args.traceId,
+          endpoint: ep.label,
+          model: ep.model,
+          url,
+          hasTools: Boolean(args.tools?.length),
+          timeoutMs,
+          messageCount: args.messages.length,
+        },
+      });
+
       const body: Record<string, unknown> = {
         model: ep.model,
         messages: args.messages,
@@ -103,6 +120,17 @@ export async function chatCompletionToolCall(
 
       if (!res.ok) {
         lastErr = `http_${res.status}`;
+        logWarn({
+          message: 'llm_chat_completion_http_error',
+          details: {
+            operation: args.operation ?? 'semantic_unknown',
+            traceId: args.traceId,
+            endpoint: ep.label,
+            model: ep.model,
+            url,
+            status: res.status,
+          },
+        });
         continue;
       }
 
@@ -124,8 +152,29 @@ export async function chatCompletionToolCall(
             parsed = JSON.parse(fn.arguments) as Record<string, unknown>;
           } catch {
             lastErr = 'bad_tool_json';
+            logWarn({
+              message: 'llm_chat_completion_bad_tool_json',
+              details: {
+                operation: args.operation ?? 'semantic_unknown',
+                traceId: args.traceId,
+                endpoint: ep.label,
+                model: ep.model,
+                toolName: fn.name,
+              },
+            });
             continue;
           }
+          logInfo({
+            message: 'llm_chat_completion_success',
+            details: {
+              operation: args.operation ?? 'semantic_unknown',
+              traceId: args.traceId,
+              endpoint: ep.label,
+              model: ep.model,
+              responseType: 'tool_call',
+              toolName: fn.name,
+            },
+          });
           return { endpoint: ep, payload: { name: fn.name, arguments: parsed } };
         }
       }
@@ -134,17 +183,55 @@ export async function chatCompletionToolCall(
       if (typeof content === 'string' && content.trim()) {
         try {
           const parsed = JSON.parse(content) as Record<string, unknown>;
+          logInfo({
+            message: 'llm_chat_completion_success',
+            details: {
+              operation: args.operation ?? 'semantic_unknown',
+              traceId: args.traceId,
+              endpoint: ep.label,
+              model: ep.model,
+              responseType: 'inline_json',
+            },
+          });
           return { endpoint: ep, payload: { name: 'inline_json', arguments: parsed } };
         } catch {
           lastErr = 'no_tool_calls';
+          logWarn({
+            message: 'llm_chat_completion_unparseable_content',
+            details: {
+              operation: args.operation ?? 'semantic_unknown',
+              traceId: args.traceId,
+              endpoint: ep.label,
+              model: ep.model,
+            },
+          });
           continue;
         }
       }
 
       lastErr = 'no_tool_calls';
+      logWarn({
+        message: 'llm_chat_completion_no_tool_calls',
+        details: {
+          operation: args.operation ?? 'semantic_unknown',
+          traceId: args.traceId,
+          endpoint: ep.label,
+          model: ep.model,
+        },
+      });
     } catch (e) {
       clearTimeout(t);
       lastErr = (e as Error).name === 'AbortError' ? 'timeout' : (e as Error).message;
+      logWarn({
+        message: 'llm_chat_completion_exception',
+        details: {
+          operation: args.operation ?? 'semantic_unknown',
+          traceId: args.traceId,
+          endpoint: ep.label,
+          model: ep.model,
+          error: lastErr,
+        },
+      });
     }
   }
 

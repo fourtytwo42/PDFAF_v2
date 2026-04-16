@@ -27,6 +27,7 @@ import { detectDomain, DOMAIN_ALT_TEXT_GUIDANCE, type DocumentDomain } from './d
 import { chatCompletionToolCall } from './openAiCompatClient.js';
 import { isLlmTimeoutOrAbortError } from './llmBatchGuard.js';
 import { renderPageToJpegDataUrl } from './pdfPageRender.js';
+import { logInfo } from '../../logging.js';
 
 export interface SemanticRepairInput {
   buffer: Buffer;
@@ -264,6 +265,8 @@ Rules:
       toolChoice: { type: 'function', function: { name: 'propose_alt_text' } },
       timeoutMs: options.timeoutMs,
       signal: options.signal,
+      operation: 'semantic_figures',
+      traceId: `${ctx.filename}:figure_batch:${batchIndex}`,
     });
 
     const raw = payload.arguments['proposals'];
@@ -351,6 +354,16 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   }
 
   const candidates = buildFigureCandidates(snapshot);
+  logInfo({
+    message: 'semantic_figures_candidate_scan',
+    details: {
+      filename,
+      scoreBefore,
+      altCategoryScore: altCat.score,
+      candidateCount: candidates.length,
+      pageCount: analysis.pageCount,
+    },
+  });
   if (candidates.length === 0) {
     return {
       buffer,

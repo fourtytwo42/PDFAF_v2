@@ -572,6 +572,28 @@ export function semanticDebugLogEnabled(): boolean {
   return process.env['PDFAF_SEMANTIC_DEBUG_LOG'] === '1';
 }
 
+/**
+ * When `PDFAF_REMEDIATE_DEFAULT_SEMANTIC=1` (e.g. Docker compose), merge these into `/v1/remediate`
+ * before per-request `options` so figure + heading LLM passes run unless the client overrides with
+ * explicit `false`. Tests set `PDFAF_REMEDIATE_DEFAULT_SEMANTIC=0` (see vitest.config).
+ */
+export function getDefaultRemediateSemanticOptions(): {
+  semantic?: boolean;
+  semanticHeadings?: boolean;
+  semanticPromoteHeadings?: boolean;
+  semanticUntaggedHeadings?: boolean;
+} {
+  if (process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC'] !== '1') {
+    return {};
+  }
+  return {
+    semantic: true,
+    semanticHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS'] !== '0',
+    semanticPromoteHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_PROMOTE'] === '1',
+    semanticUntaggedHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_UNTAGGED'] === '1',
+  };
+}
+
 // ─── Phase 5 — polish / production ───────────────────────────────────────────
 
 export const NODE_ENV = process.env['NODE_ENV'] ?? 'development';

@@ -8,6 +8,7 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     env: {
       PDFAF_DISABLE_RATE_LIMIT: '1',
+      PDFAF_REMEDIATE_DEFAULT_SEMANTIC: '0',
     },
   },
 });

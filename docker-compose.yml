@@ -1,5 +1,22 @@
 # Full stack: PDFAF API + Gemma 4 E2B Q4 (llama-server) sidecar.
-# Models cache in volume `llm-hf-cache` (~4+ GiB first pull).
+# The `llm` image is built from `docker/llm/Dockerfile` and embeds the default GGUF (~4 GiB) at build time
+# (no first-boot Hugging Face download). Rebuild to change weights: `docker compose build llm --no-cache`.
+#
+# Data disk: keep Docker Engine data-root on the large volume (e.g. /etc/docker/daemon.json:
+#   { "data-root": "/mnt/docker-data/docker" }
+# so image layers and daemon state are not on a small OS LV). For BuildKit/client temp during builds,
+# use ./scripts/setup-docker-datadisk-workdir.sh once, then ./scripts/docker-compose-pdfaf.sh … or ./scripts/docker-smoke.sh
+# (both set DOCKER_TMPDIR under PDFAF_DOCKER_WORK_ROOT, default /mnt/docker-data/pdfaf-docker-work).
+# Large image exports still use /var/lib/containerd (ingest/tmpmounts). If / fills during `build llm`, run once:
+#   sudo ./scripts/move-containerd-root-to-datadisk.sh
+# Smoke test (build + curl): ./scripts/docker-smoke.sh
+#
+# If `sudo docker compose` says "unknown command: docker compose", root has no Compose v2 plugin.
+# Prefer: add your user to the `docker` group, re-login, then run `docker compose …` without sudo.
+# Or install the plugin for root once (after installing it under your user, see GitHub compose releases):
+#   sudo mkdir -p /root/.docker/cli-plugins
+#   sudo cp "$HOME/.docker/cli-plugins/docker-compose" /root/.docker/cli-plugins/docker-compose
+#   sudo chmod +x /root/.docker/cli-plugins/docker-compose
 #
 # Local hybrid: run only the LLM container, then native API:
 #   docker compose up llm -d
@@ -7,13 +24,20 @@
 
 services:
   llm:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    build:
+      context: ./docker/llm
+      dockerfile: Dockerfile
+      args:
+        HF_REPO: ${GEMMA4_HF_REPO:-unsloth/gemma-4-E2B-it-GGUF}
+        GGUF_FILE: ${GEMMA4_GGUF_FILE:-gemma-4-E2B-it-Q4_K_M.gguf}
+        MMPROJ_FILE: ${GEMMA4_MMPROJ_FILE:-mmproj-F16.gguf}
+    image: pdfaf-llm:local
     restart: unless-stopped
     command:
-      - '-hf'
-      - '${GEMMA4_HF_REPO:-unsloth/gemma-4-E2B-it-GGUF}'
       - '-m'
-      - '${GEMMA4_GGUF_FILE:-gemma-4-E2B-it-Q4_K_M.gguf}'
+      - '/models/llama-default.gguf'
+      - '--mmproj'
+      - '/models/llama-default-mmproj.gguf'
       - '--host'
       - '0.0.0.0'
       - '--port'
@@ -24,18 +48,15 @@ services:
       - '{"enable_thinking": false}'
       - '--reasoning-format'
       - 'deepseek'
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-    volumes:
-      - llm-hf-cache:/root/.cache
     ports:
-      - '127.0.0.1:1234:8080'
+      # If 1234 is busy (e.g. old llm container or native llama-server), set LLM_HOST_PORT=1235 in .env
+      - '127.0.0.1:${LLM_HOST_PORT:-1234}:8080'
     healthcheck:
       test: ['CMD', 'curl', '-sf', 'http://127.0.0.1:8080/health']
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 600s
+      start_period: 120s
 
   pdfaf:
     build: .
@@ -47,10 +68,17 @@ services:
     environment:
       PORT: '6200'
       DB_PATH: /data/pdfaf.db
+      TMPDIR: /data/tmp
       PDFAF_RUN_LOCAL_LLM: '0'
       OPENAI_COMPAT_BASE_URL: http://llm:8080/v1
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-local}
       OPENAI_COMPAT_MODEL_AUTO: '1'
+      # LLM-assisted passes unless the client sends explicit `false` in multipart `options` JSON.
+      PDFAF_REMEDIATE_DEFAULT_SEMANTIC: '1'
+      PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS: '1'
+      # Optional: set to 1 for promote / untagged heading experiments (slower).
+      # PDFAF_REMEDIATE_DEFAULT_SEMANTIC_PROMOTE: '0'
+      # PDFAF_REMEDIATE_DEFAULT_SEMANTIC_UNTAGGED: '0'
     volumes:
       - pdfaf-data:/data
     restart: unless-stopped
@@ -63,4 +91,3 @@ services:
 
 volumes:
   pdfaf-data:
-  llm-hf-cache:

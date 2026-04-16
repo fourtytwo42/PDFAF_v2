@@ -60,7 +60,7 @@ curl -sS http://localhost:6200/v1/playbooks | jq '{ n: (.playbooks|length) }'
 
 ## Quick start (Docker — API + Gemma Q4 sidecar)
 
-Compose runs **two** services: `llm` ([`ghcr.io/ggml-org/llama.cpp:server`](https://github.com/ggml-org/llama.cpp/blob/master/docs/docker.md)) pulls **Unsloth** `gemma-4-E2B-it-Q4_K_M.gguf` on first start (cached in volume `llm-hf-cache`), and `pdfaf` talks to it over the internal network (`OPENAI_COMPAT_MODEL_AUTO=1` picks the model id from `/v1/models`). First boot can take many minutes while weights download.
+Compose runs **two** services: `llm` is built from `docker/llm/Dockerfile` on top of [`ghcr.io/ggml-org/llama.cpp:server`](https://github.com/ggml-org/llama.cpp/blob/master/docs/docker.md) and **embeds** the default **Unsloth** `gemma-4-E2B-it-Q4_K_M.gguf` at **image build** time (~4 GiB layer; **no `HF_TOKEN`** for that public file). First `docker compose up` only starts the server—no weight download. Rebuild with `docker compose build llm` (optionally `--no-cache`) after changing `GEMMA4_HF_REPO` / `GEMMA4_GGUF_FILE` build-args in `.env`. The `pdfaf` service talks to `llm` over the internal network (`OPENAI_COMPAT_MODEL_AUTO=1` picks the model id from `/v1/models`).
 
 ```bash
 docker compose up --build
@@ -69,7 +69,7 @@ curl -sS http://localhost:6200/v1/health
 
 - API: `http://localhost:6200` · LLM (host): `http://127.0.0.1:1234` (maps container `8080`).
 - SQLite and playbooks: volume `pdfaf-data` (`DB_PATH=/data/pdfaf.db`).
-- Optional gated HF deps: set `HF_TOKEN` in the environment when you `docker compose up`.
+- Optional: set `HF_TOKEN` only if you point `GEMMA4_HF_REPO` / `GEMMA4_GGUF_FILE` at a **gated** Hugging Face model; the default Gemma GGUF does not need it.
 
 ### Run the LLM in Docker, API natively (good for local dev)
 

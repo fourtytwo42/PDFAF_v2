@@ -1,0 +1,2 @@
+# Avoid CRLF in shell scripts on Windows checkouts (breaks Linux shebangs).
+*.sh text eol=lf

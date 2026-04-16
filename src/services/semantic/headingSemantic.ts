@@ -22,6 +22,7 @@ import { detectDomain, DOMAIN_ALT_TEXT_GUIDANCE, type DocumentDomain } from './d
 import { chatCompletionToolCall } from './openAiCompatClient.js';
 import { isLlmTimeoutOrAbortError } from './llmBatchGuard.js';
 import type { SemanticRepairOutput } from './semanticService.js';
+import { logInfo } from '../../logging.js';
 
 export interface SemanticHeadingRepairInput {
   buffer: Buffer;
@@ -157,6 +158,8 @@ Rules:
       toolChoice: { type: 'function', function: { name: 'propose_heading_levels' } },
       timeoutMs: options.timeoutMs,
       signal: options.signal,
+      operation: 'semantic_headings',
+      traceId: `${ctx.filename}:heading_batch:${batchIndex}`,
     });
 
     const raw = payload.arguments['proposals'];
@@ -239,6 +242,16 @@ export async function applySemanticHeadingRepairs(
   }
 
   const candidates = buildHeadingCandidates(snapshot);
+  logInfo({
+    message: 'semantic_headings_candidate_scan',
+    details: {
+      filename,
+      scoreBefore,
+      headingCategoryScore: hs.score,
+      candidateCount: candidates.length,
+      pageCount: analysis.pageCount,
+    },
+  });
   if (candidates.length === 0) {
     return empty('no_candidates');
   }
