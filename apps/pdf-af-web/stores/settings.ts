@@ -40,6 +40,35 @@ function validateUrl(value: string): boolean {
   }
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+function resolveRuntimeApiBaseUrl(defaultApiBaseUrl: string): string {
+  if (typeof window === 'undefined') {
+    return defaultApiBaseUrl;
+  }
+
+  try {
+    const parsed = new URL(defaultApiBaseUrl);
+    const browserHost = window.location.hostname;
+
+    if (isLoopbackHost(parsed.hostname) && browserHost && !isLoopbackHost(browserHost)) {
+      parsed.hostname = browserHost;
+    }
+
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return defaultApiBaseUrl;
+  }
+}
+
 export const useAppSettingsStore = create<AppSettingsState>()(
   persist(
     (set, get) => ({
@@ -68,7 +97,7 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         await get().hydratePersistedState();
         if (get().initialized) return;
 
-        const apiBaseUrl = get().apiBaseUrlOverride ?? defaultApiBaseUrl;
+        const apiBaseUrl = get().apiBaseUrlOverride ?? resolveRuntimeApiBaseUrl(defaultApiBaseUrl);
         set({
           initialized: true,
           apiBaseUrl,
