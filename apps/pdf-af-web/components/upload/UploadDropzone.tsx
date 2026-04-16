@@ -78,8 +78,9 @@ export function UploadDropzone() {
               Build a local batch queue in seconds
             </p>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--muted)] md:text-base">
-              Drag PDFs into the workspace or pick files manually. Milestone 2 stores
-              originals in IndexedDB so they survive refresh without touching the server.
+              Drag PDFs into the workspace or pick files manually. Originals stay in
+              IndexedDB so they survive refresh without touching the server, and selected
+              files can now be graded from the queue.
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <Button

@@ -15,7 +15,9 @@ interface DashboardShellProps {
 
 export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
   const initialize = useAppSettingsStore((state) => state.initialize);
+  const apiBaseUrl = useAppSettingsStore((state) => state.apiBaseUrl);
   const hydrateFromStorage = useQueueStore((state) => state.hydrateFromStorage);
+  const runScheduler = useQueueStore((state) => state.runScheduler);
 
   useEffect(() => {
     void (async () => {
@@ -23,6 +25,10 @@ export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
       await hydrateFromStorage();
     })();
   }, [defaultApiBaseUrl, hydrateFromStorage, initialize]);
+
+  useEffect(() => {
+    void runScheduler();
+  }, [apiBaseUrl, runScheduler]);
 
   return (
     <main className="app-shell">

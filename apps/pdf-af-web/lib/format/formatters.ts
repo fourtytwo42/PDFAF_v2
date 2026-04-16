@@ -36,3 +36,26 @@ export function formatJobTimestamp(value: string): string {
     timeStyle: 'short',
   }).format(date);
 }
+
+export function formatPdfClass(value: string): string {
+  switch (value) {
+    case 'native_tagged':
+      return 'Native Tagged';
+    case 'native_untagged':
+      return 'Native Untagged';
+    case 'scanned':
+      return 'Scanned';
+    case 'mixed':
+      return 'Mixed';
+    default:
+      return value;
+  }
+}
+
+export function formatDurationMs(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return 'unknown';
+
+  if (value < 1000) return `${Math.round(value)} ms`;
+
+  return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} s`;
+}

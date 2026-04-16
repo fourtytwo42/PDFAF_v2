@@ -78,6 +78,21 @@ export async function createJobWithOriginalBlob(
   await tx.done;
 }
 
+export async function putJobRecord(job: JobRecord): Promise<void> {
+  const db = await getDb();
+  await db.put(JOB_RECORDS_STORE, job);
+}
+
+export async function putJobRecords(jobs: JobRecord[]): Promise<void> {
+  if (jobs.length === 0) return;
+
+  const db = await getDb();
+  const tx = db.transaction(JOB_RECORDS_STORE, 'readwrite');
+
+  await Promise.all(jobs.map((job) => tx.store.put(job)));
+  await tx.done;
+}
+
 export async function deleteJobAndBlobs(jobId: string): Promise<void> {
   const db = await getDb();
   const tx = db.transaction([JOB_RECORDS_STORE, FILE_BLOBS_STORE], 'readwrite');

@@ -3,20 +3,33 @@
 import { Button } from '../common/Button';
 import { SectionCard } from '../common/SectionCard';
 import { StatusPill } from '../common/StatusPill';
-import { formatFileSize, formatJobTimestamp } from '../../lib/format/formatters';
+import { formatFileSize, formatJobTimestamp, formatPdfClass } from '../../lib/format/formatters';
 import { useQueueStore } from '../../stores/queue';
 import type { JobRecord } from '../../types/queue';
 import { BatchActionBar } from './BatchActionBar';
 
-function getStatusTone(job: JobRecord): 'accent' | 'danger' {
-  return job.status === 'failed' ? 'danger' : 'accent';
+function getStatusTone(job: JobRecord): 'accent' | 'danger' | 'success' {
+  if (job.status === 'failed') return 'danger';
+  if (job.status === 'done') return 'success';
+  return 'accent';
+}
+
+function formatResultSummary(job: JobRecord): string {
+  if (!job.findingSummaries || job.findingSummaries.length === 0) {
+    return job.analyzeResult ? 'No actionable findings surfaced in the stored summary.' : 'Not analyzed yet.';
+  }
+
+  return job.findingSummaries.map((finding) => finding.title).join(' · ');
 }
 
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
   const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
+  const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
+  const openDetail = useQueueStore((state) => state.openDetail);
   const removeJob = useQueueStore((state) => state.removeJob);
+  const retryJob = useQueueStore((state) => state.retryJob);
   const toggleSelection = useQueueStore((state) => state.toggleSelection);
   const toggleSelectAllVisible = useQueueStore((state) => state.toggleSelectAllVisible);
 
@@ -52,10 +65,19 @@ export function QueueTable() {
                     Size
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Local Status
+                    Status
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Added
+                    Score / Grade
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                    PDF Class
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Top Findings
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Updated
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
                     Actions
@@ -82,7 +104,7 @@ export function QueueTable() {
                       </td>
                       <td className="px-4 py-4">
                         <p className="max-w-xl break-all text-sm font-semibold text-[var(--foreground)]">
-                          {job.fileName}
+                        {job.fileName}
                         </p>
                         {job.errorMessage ? (
                           <p className="mt-2 text-sm leading-6 text-[var(--danger)]">
@@ -97,10 +119,44 @@ export function QueueTable() {
                         <StatusPill label={job.status} tone={getStatusTone(job)} />
                       </td>
                       <td className="px-4 py-4 text-sm text-[var(--foreground)]">
-                        {formatJobTimestamp(job.createdAt)}
+                        {job.analyzeResult ? `${job.analyzeResult.score} / ${job.analyzeResult.grade}` : 'Not analyzed'}
+                      </td>
+                      <td className="px-4 py-4 text-sm text-[var(--foreground)]">
+                        {job.analyzeResult ? formatPdfClass(job.analyzeResult.pdfClass) : 'Not analyzed'}
+                      </td>
+                      <td className="max-w-sm px-4 py-4 text-sm leading-6 text-[var(--foreground)]">
+                        {formatResultSummary(job)}
+                      </td>
+                      <td className="px-4 py-4 text-sm text-[var(--foreground)]">
+                        {formatJobTimestamp(job.updatedAt)}
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex justify-end gap-2">
+                          <Button
+                            variant="primary"
+                            onClick={() => void enqueueAnalyze([job.id])}
+                            disabled={
+                              !['idle', 'failed', 'done'].includes(job.status)
+                            }
+                          >
+                            Grade
+                          </Button>
+                          {job.status === 'failed' ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() => void retryJob(job.id)}
+                            >
+                              Retry
+                            </Button>
+                          ) : null}
+                          {job.analyzeResult ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() => openDetail(job.id)}
+                            >
+                              View Details
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             onClick={() => void downloadOriginal(job.id)}
@@ -110,6 +166,7 @@ export function QueueTable() {
                           <Button
                             variant="secondary"
                             onClick={() => void removeJob(job.id)}
+                            disabled={job.status === 'uploading' || job.status === 'analyzing'}
                           >
                             Remove
                           </Button>

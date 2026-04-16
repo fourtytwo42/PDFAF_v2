@@ -1,4 +1,12 @@
-export type JobStatus = 'idle' | 'failed';
+import type { AnalyzeSummary, NormalizedFinding } from './analyze';
+
+export type JobStatus =
+  | 'idle'
+  | 'queued_analyze'
+  | 'uploading'
+  | 'analyzing'
+  | 'done'
+  | 'failed';
 
 export type JobMode = null | 'grade' | 'remediate';
 
@@ -13,9 +21,9 @@ export interface JobRecord {
   mode: JobMode;
   errorMessage?: string;
   originalBlobKey: string;
-  analyzeResult?: unknown;
+  analyzeResult?: AnalyzeSummary;
   remediationResult?: unknown;
-  findingSummaries?: unknown;
+  findingSummaries?: NormalizedFinding[];
 }
 
 export interface FileBlobRecord {

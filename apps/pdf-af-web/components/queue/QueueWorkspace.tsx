@@ -2,6 +2,7 @@
 
 import { SectionCard } from '../common/SectionCard';
 import { useQueueStore } from '../../stores/queue';
+import { QueueDetailDrawer } from './QueueDetailDrawer';
 import { QueueTable } from './QueueTable';
 
 function StorageStateMessage() {
@@ -42,41 +43,47 @@ export function QueueWorkspace() {
 
   if (jobs.length === 0) {
     return (
-      <SectionCard
-        title="Workspace"
-        description="Your queue starts empty. Add PDFs above to create local rows that survive refresh in this browser."
-      >
-        <div className="grid gap-4">
-          <StorageStateMessage />
-          <div className="grid gap-4 md:grid-cols-3">
-            <article className="surface-strong rounded-3xl p-5">
-              <p className="text-sm leading-6 text-[var(--foreground)]">
-                Add one file or a batch and see each PDF appear immediately as its own local
-                queue row.
-              </p>
-            </article>
-            <article className="surface-strong rounded-3xl p-5">
-              <p className="text-sm leading-6 text-[var(--foreground)]">
-                Original PDFs remain downloadable after refresh because they live in
-                IndexedDB, not on the server.
-              </p>
-            </article>
-            <article className="surface-strong rounded-3xl p-5">
-              <p className="text-sm leading-6 text-[var(--foreground)]">
-                Analyze, remediate, and batch downloads layer onto this queue in later
-                milestones.
-              </p>
-            </article>
+      <>
+        <SectionCard
+          title="Workspace"
+          description="Your queue starts empty. Add PDFs above to create local rows that survive refresh in this browser."
+        >
+          <div className="grid gap-4">
+            <StorageStateMessage />
+            <div className="grid gap-4 md:grid-cols-3">
+              <article className="surface-strong rounded-3xl p-5">
+                <p className="text-sm leading-6 text-[var(--foreground)]">
+                  Add one file or a batch and see each PDF appear immediately as its own local
+                  queue row.
+                </p>
+              </article>
+              <article className="surface-strong rounded-3xl p-5">
+                <p className="text-sm leading-6 text-[var(--foreground)]">
+                  Original PDFs remain downloadable after refresh because they live in
+                  IndexedDB, not on the server.
+                </p>
+              </article>
+              <article className="surface-strong rounded-3xl p-5">
+                <p className="text-sm leading-6 text-[var(--foreground)]">
+                  Analyze results will appear here with score, grade, PDF class, and linked
+                  findings once you grade files.
+                </p>
+              </article>
+            </div>
           </div>
-        </div>
-      </SectionCard>
+        </SectionCard>
+        <QueueDetailDrawer />
+      </>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <StorageStateMessage />
-      <QueueTable />
-    </div>
+    <>
+      <div className="space-y-4">
+        <StorageStateMessage />
+        <QueueTable />
+      </div>
+      <QueueDetailDrawer />
+    </>
   );
 }
