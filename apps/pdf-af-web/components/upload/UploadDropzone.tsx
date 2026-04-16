@@ -41,15 +41,15 @@ export function UploadDropzone() {
 
   return (
     <SectionCard
-      title="Drop PDFs Here"
-      description="Add one file or a whole batch. Files stay in this browser only until you remove them."
+      title="Input"
+      description="Add PDFs to the local queue. Files stay in this browser."
       action={<StatusPill label={`${jobs.length} Local Files`} tone="accent" />}
     >
       <div
-        className={`rounded-[28px] border border-dashed px-6 py-8 transition md:px-8 md:py-10 ${
+        className={`border border-dashed px-3 py-3 transition ${
           isDragging
             ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
-            : 'border-[color:var(--surface-border)] bg-white/40'
+            : 'border-[color:var(--surface-border)] bg-[var(--surface-strong)]'
         }`}
         onDragEnter={(event) => {
           stopEvent(event);
@@ -74,39 +74,37 @@ export function UploadDropzone() {
           onChange={(event) => void handleInputChange(event)}
         />
 
-        <div className="grid gap-6 md:grid-cols-[1.2fr_0.8fr] md:items-center">
+        <div className="grid gap-3 lg:grid-cols-[1fr_320px] lg:items-start">
           <div>
-            <p className="text-3xl font-semibold tracking-tight text-[var(--foreground)]">
-              Build a local batch queue in seconds
+            <p className="text-sm font-bold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
+              Queue Intake
             </p>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--muted)] md:text-base">
-              Drag PDFs into the workspace or pick files manually. Originals stay in
-              IndexedDB so they survive refresh without touching the server, and selected
-              files can be graded or remediated from the queue.
+            <p className="mt-2 max-w-3xl text-xs leading-5 text-[var(--muted)]">
+              Drag files here or choose them manually. Originals are stored in IndexedDB and
+              never uploaded until you run grade or remediate.
             </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 variant="primary"
                 onClick={() => inputRef.current?.click()}
                 disabled={isAddingFiles}
               >
-                {isAddingFiles ? 'Adding Files...' : 'Choose PDFs'}
+                {isAddingFiles ? 'Adding...' : 'Choose Pdfs'}
               </Button>
-              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                PDF only · up to {MAX_UPLOAD_SIZE_MB} MB each
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
+                pdf only · max {MAX_UPLOAD_SIZE_MB}mb · multi-select enabled
               </span>
             </div>
           </div>
 
-          <div className="surface-strong rounded-[24px] p-5">
-            <div className="flex items-start justify-between gap-4">
+          <div className="surface-strong p-3">
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
                   Auto-remediate on add
                 </p>
-                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  Off keeps files staged locally until you choose an action. On sends newly
-                  added files straight into the remediation queue.
+                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                  Off = stage only. On = queue remediation immediately.
                 </p>
               </div>
               <label className="relative inline-flex items-center">
@@ -116,24 +114,24 @@ export function UploadDropzone() {
                   onChange={(event) => setAutoRemediateOnAdd(event.target.checked)}
                   className="peer sr-only"
                 />
-                <span className="h-7 w-12 rounded-full bg-black/10 transition peer-checked:bg-[var(--accent)]" />
-                <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition peer-checked:translate-x-5" />
+                <span className="h-5 w-10 border border-[color:var(--surface-border)] bg-black transition peer-checked:bg-[var(--accent-soft)]" />
+                <span className="absolute left-[2px] top-[2px] h-4 w-4 bg-[var(--muted)] transition peer-checked:translate-x-5 peer-checked:bg-[var(--accent)]" />
               </label>
             </div>
-            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent-strong)]">
+            <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
               Default: Off
             </p>
           </div>
         </div>
 
         {validationMessages.length ? (
-          <div className="mt-6 grid gap-3">
+          <div className="mt-3 grid gap-2">
             {validationMessages.slice(0, 6).map((item) => (
               <p
                 key={item.id}
-                className="rounded-2xl bg-[color:rgba(149,95,17,0.10)] px-4 py-3 text-sm leading-6 text-[var(--warning)]"
+                className="border border-[color:rgba(255,224,102,0.28)] bg-[color:rgba(255,224,102,0.08)] px-2 py-2 text-xs leading-5 text-[var(--warning)]"
               >
-                <span className="font-semibold text-[var(--foreground)]">{item.fileName}</span>{' '}
+                <span className="font-bold text-[var(--foreground)]">{item.fileName}</span>{' '}
                 {item.message}
               </p>
             ))}

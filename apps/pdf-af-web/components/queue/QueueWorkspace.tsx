@@ -16,7 +16,7 @@ function StorageStateMessage() {
   const latestMessage = validationMessages[0]?.message;
 
   return (
-    <p className="rounded-2xl bg-[color:rgba(161,50,50,0.08)] px-4 py-3 text-sm leading-6 text-[var(--danger)]">
+    <p className="border border-[color:rgba(255,114,114,0.28)] bg-[color:rgba(255,114,114,0.08)] px-2 py-2 text-xs leading-5 text-[var(--danger)]">
       {latestMessage ??
         'Browser storage is not available, so the local queue cannot be used right now.'}
     </p>
@@ -34,8 +34,8 @@ export function QueueWorkspace() {
         title="Workspace"
         description="Preparing the browser-local queue and restoring any previously added files."
       >
-        <div className="rounded-[24px] border border-[color:var(--surface-border)] bg-white/45 px-6 py-10">
-          <p className="text-sm leading-6 text-[var(--muted)]">Loading local queue...</p>
+        <div className="border border-[color:var(--surface-border)] bg-[var(--surface-strong)] px-3 py-6">
+          <p className="text-xs leading-5 text-[var(--muted)]">Loading local queue...</p>
         </div>
       </SectionCard>
     );
@@ -46,35 +46,17 @@ export function QueueWorkspace() {
       <>
         <SectionCard
           title="Workspace"
-          description="Your queue starts empty. Add PDFs above to create local rows that survive refresh in this browser."
+          description="Queue is empty."
         >
           <div className="grid gap-4">
             <StorageStateMessage />
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <article className="surface-strong rounded-3xl p-5">
-                <p className="text-sm leading-6 text-[var(--foreground)]">
-                  Add one file or a batch and see each PDF appear immediately as its own local
-                  queue row.
-                </p>
-              </article>
-              <article className="surface-strong rounded-3xl p-5">
-                <p className="text-sm leading-6 text-[var(--foreground)]">
-                  Original PDFs remain downloadable after refresh because they live in
-                  IndexedDB, not on the server.
-                </p>
-              </article>
-              <article className="surface-strong rounded-3xl p-5">
-                <p className="text-sm leading-6 text-[var(--foreground)]">
-                  Analyze results will appear here with score, grade, PDF class, and linked
-                  findings once you grade files.
-                </p>
-              </article>
-              <article className="surface-strong rounded-3xl p-5">
-                <p className="text-sm leading-6 text-[var(--foreground)]">
-                  Auto-remediate can queue new files immediately when you want a faster
-                  batch-processing flow.
-                </p>
-              </article>
+            <div className="surface-strong p-3">
+              <ul className="space-y-1 text-xs leading-5 text-[var(--muted)]">
+                <li>add pdfs above to create local queue rows</li>
+                <li>run grade or remediate from the queue toolbar</li>
+                <li>click details for findings, tools, and before/after results</li>
+                <li>original and remediated files stay in this browser until removed</li>
+              </ul>
             </div>
           </div>
         </SectionCard>

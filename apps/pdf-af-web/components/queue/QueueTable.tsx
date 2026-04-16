@@ -37,6 +37,14 @@ function formatResultSummary(job: JobRecord): string {
   return job.findingSummaries.map((finding) => finding.title).join(' · ');
 }
 
+function formatFindingsSummary(job: JobRecord): string {
+  if (!job.findingSummaries || job.findingSummaries.length === 0) {
+    return job.analyzeResult ? 'none' : 'n/a';
+  }
+
+  return job.findingSummaries.slice(0, 3).map((finding) => finding.title).join(' · ');
+}
+
 function getDisplaySummary(job: JobRecord) {
   return job.remediationResult?.after ?? job.analyzeResult;
 }
@@ -59,48 +67,48 @@ export function QueueTable() {
   return (
     <SectionCard
       title="Local Queue"
-      description="Rows here exist only in this browser. Refresh-safe originals are stored in IndexedDB until you remove them."
+      description="Dense queue view. Click details for the full record."
       action={<StatusPill label={`${jobs.length} Files`} tone="accent" />}
     >
-      <div className="space-y-4">
+      <div className="space-y-2">
         <BatchActionBar />
 
-        <div className="overflow-hidden rounded-[24px] border border-[color:var(--surface-border)] bg-white/55">
+        <div className="overflow-hidden border border-[color:var(--surface-border)] bg-[var(--surface-strong)]">
           <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse">
+            <table className="min-w-full border-collapse text-xs">
               <thead>
-                <tr className="border-b border-[color:var(--surface-border)] bg-white/60">
-                  <th className="px-4 py-3 text-left">
+                <tr className="border-b border-[color:var(--surface-border)] bg-black">
+                  <th className="px-2 py-2 text-left">
                     <input
                       aria-label="Select all files"
-                      className="focus-ring h-4 w-4 rounded border-[color:var(--surface-border)]"
+                      className="focus-ring h-3.5 w-3.5 border-[color:var(--surface-border)] bg-black"
                       type="checkbox"
                       checked={allSelected}
                       onChange={() => toggleSelectAllVisible()}
                     />
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
                     File Name
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
                     Size
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Score / Grade
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+                    Result
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
                     PDF Class
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Top Findings
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+                    Findings
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
                     Updated
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <th className="px-2 py-2 text-right text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
                     Actions
                   </th>
                 </tr>
@@ -113,41 +121,41 @@ export function QueueTable() {
                   return (
                     <tr
                       key={job.id}
-                      className="border-b border-[color:var(--surface-border)] last:border-b-0"
+                      className="border-b border-[color:var(--surface-border)] align-top last:border-b-0"
                     >
-                      <td className="px-4 py-4 align-top">
+                      <td className="px-2 py-2 align-top">
                         <input
                           aria-label={`Select ${job.fileName}`}
-                          className="focus-ring mt-1 h-4 w-4 rounded border-[color:var(--surface-border)]"
+                          className="focus-ring mt-0.5 h-3.5 w-3.5 border-[color:var(--surface-border)] bg-black"
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleSelection(job.id)}
                         />
                       </td>
-                      <td className="px-4 py-4">
-                        <p className="max-w-xl break-all text-sm font-semibold text-[var(--foreground)]">
+                      <td className="px-2 py-2">
+                        <p className="max-w-xl break-all text-xs font-bold text-[var(--foreground)]">
                         {job.fileName}
                         </p>
                         {job.errorMessage ? (
-                          <p className="mt-2 text-sm leading-6 text-[var(--danger)]">
+                          <p className="mt-1 text-[11px] leading-5 text-[var(--danger)]">
                             {job.errorMessage}
                           </p>
                         ) : null}
                       </td>
-                      <td className="px-4 py-4 text-sm text-[var(--foreground)]">
+                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
                         {formatFileSize(job.fileSize)}
                       </td>
-                      <td className="px-4 py-4">
-                        <div className="flex flex-wrap items-center gap-2">
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap items-center gap-1">
                           <StatusPill label={job.status} tone={getStatusTone(job)} />
                           {job.status === 'queued_analyze' || job.status === 'queued_remediate' ? (
-                            <span className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-                              Awaiting scheduler
+                            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                              waiting
                             </span>
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-4 py-4 text-sm text-[var(--foreground)]">
+                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
                         <div className="flex flex-col gap-1">
                           <span>{formatResultSummary(job)}</span>
                           {job.remediationResult?.improved ? (
@@ -155,17 +163,17 @@ export function QueueTable() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-4 py-4 text-sm text-[var(--foreground)]">
+                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
                         {displaySummary ? formatPdfClass(displaySummary.pdfClass) : 'Not analyzed'}
                       </td>
-                      <td className="max-w-sm px-4 py-4 text-sm leading-6 text-[var(--foreground)]">
-                        {formatResultSummary(job)}
+                      <td className="max-w-sm px-2 py-2 text-xs leading-5 text-[var(--foreground)]">
+                        {formatFindingsSummary(job)}
                       </td>
-                      <td className="px-4 py-4 text-sm text-[var(--foreground)]">
+                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
                         {formatJobTimestamp(job.updatedAt)}
                       </td>
-                      <td className="px-4 py-4">
-                        <div className="flex justify-end gap-2">
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap justify-end gap-1">
                           <Button
                             variant="primary"
                             onClick={() => void enqueueAnalyze([job.id])}

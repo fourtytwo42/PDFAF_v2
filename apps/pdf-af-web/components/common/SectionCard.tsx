@@ -14,14 +14,14 @@ export function SectionCard({
   action,
 }: SectionCardProps) {
   return (
-    <section className="surface rounded-[28px] p-6 md:p-8">
-      <div className="mb-6 flex items-start justify-between gap-4">
+    <section className="surface p-3 md:p-4">
+      <div className="mb-3 flex items-start justify-between gap-3 border-b border-[color:var(--surface-border)] pb-2">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight text-[var(--foreground)] md:text-2xl">
+          <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-[var(--accent-strong)]">
             {title}
           </h2>
           {description ? (
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)] md:text-base">
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--muted)]">
               {description}
             </p>
           ) : null}
@@ -32,4 +32,3 @@ export function SectionCard({
     </section>
   );
 }
-

@@ -4,20 +4,19 @@ interface StatusPillProps {
 }
 
 const toneClasses: Record<StatusPillProps['tone'], string> = {
-  neutral: 'bg-black/5 text-[var(--foreground)]',
-  success: 'bg-[color:rgba(19,111,79,0.12)] text-[var(--success)]',
-  warning: 'bg-[color:rgba(149,95,17,0.14)] text-[var(--warning)]',
-  danger: 'bg-[color:rgba(161,50,50,0.14)] text-[var(--danger)]',
-  accent: 'bg-[var(--accent-soft)] text-[var(--accent-strong)]',
+  neutral: 'bg-transparent text-[var(--muted)] border border-[color:var(--surface-border)]',
+  success: 'bg-[color:rgba(109,255,114,0.08)] text-[var(--success)] border border-[color:rgba(109,255,114,0.28)]',
+  warning: 'bg-[color:rgba(255,224,102,0.08)] text-[var(--warning)] border border-[color:rgba(255,224,102,0.28)]',
+  danger: 'bg-[color:rgba(255,114,114,0.08)] text-[var(--danger)] border border-[color:rgba(255,114,114,0.28)]',
+  accent: 'bg-[var(--accent-soft)] text-[var(--accent-strong)] border border-[color:rgba(109,255,114,0.28)]',
 };
 
 export function StatusPill({ label, tone }: StatusPillProps) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${toneClasses[tone]}`}
+      className={`inline-flex items-center px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] ${toneClasses[tone]}`}
     >
       {label}
     </span>
   );
 }
-

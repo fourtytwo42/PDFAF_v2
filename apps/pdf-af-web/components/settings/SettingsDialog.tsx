@@ -62,19 +62,19 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="surface w-full max-w-2xl rounded-[32px] p-6 md:p-8">
-        <div className="flex items-start justify-between gap-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4">
+      <div className="surface w-full max-w-2xl p-4">
+        <div className="flex items-start justify-between gap-3 border-b border-[color:var(--surface-border)] pb-2">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-              API Settings
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
+              Api Settings
             </p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
-              Configure the PDFAF API endpoint
+            <h2 className="mt-1 text-sm font-bold uppercase tracking-[0.12em] text-[var(--accent-strong)]">
+              Configure Upstream
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--muted)]">
+            <p className="mt-1 max-w-xl text-xs leading-5 text-[var(--muted)]">
               The saved value is stored only in this browser. For deployment, set
-              <span className="mx-1 font-semibold text-[var(--foreground)]">PDFAF_API_BASE_URL</span>
+              <span className="mx-1 font-bold text-[var(--foreground)]">PDFAF_API_BASE_URL</span>
               on the web app and it will become the default upstream automatically.
             </p>
           </div>
@@ -83,13 +83,13 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
           </Button>
         </div>
 
-        <div className="mt-6 space-y-4">
+        <div className="mt-3 space-y-3">
           <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-[var(--foreground)]">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--foreground)]">
               API base URL
             </span>
             <input
-              className="focus-ring w-full rounded-2xl border border-[color:var(--surface-border)] bg-white/80 px-4 py-3 text-[var(--foreground)] shadow-sm"
+              className="focus-ring w-full border border-[color:var(--surface-border)] bg-black px-3 py-2 text-xs text-[var(--foreground)]"
               value={draftValue}
               onChange={(event) => setDraftValue(event.target.value)}
               placeholder="http://localhost:6200"
@@ -97,19 +97,19 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
           </label>
 
           {validationMessage ? (
-            <p className="rounded-2xl bg-[color:rgba(161,50,50,0.08)] px-4 py-3 text-sm text-[var(--danger)]">
+            <p className="border border-[color:rgba(255,114,114,0.28)] bg-[color:rgba(255,114,114,0.08)] px-2 py-2 text-xs text-[var(--danger)]">
               {validationMessage}
             </p>
           ) : null}
 
           {connection.error && connection.status !== 'checking' ? (
-            <p className="rounded-2xl bg-[color:rgba(149,95,17,0.10)] px-4 py-3 text-sm text-[var(--warning)]">
+            <p className="border border-[color:rgba(255,224,102,0.28)] bg-[color:rgba(255,224,102,0.08)] px-2 py-2 text-xs text-[var(--warning)]">
               Last test: {connection.error.message}
             </p>
           ) : null}
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <Button variant="primary" onClick={() => void handleSave()}>
             Save URL
           </Button>
@@ -128,7 +128,7 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
           </Button>
         </div>
 
-        <p className="mt-4 text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
+        <p className="mt-3 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
           Server default: {defaultApiBaseUrl}
         </p>
       </div>

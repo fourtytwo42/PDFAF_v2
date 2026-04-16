@@ -32,7 +32,7 @@ export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
 
   return (
     <main className="app-shell">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-6 md:px-8 md:py-8">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-2 px-2 py-2 md:px-3 md:py-3">
         <BrandBar />
         <UploadDropzone />
         <ConnectionStatusCard />

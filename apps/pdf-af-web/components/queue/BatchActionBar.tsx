@@ -56,24 +56,24 @@ export function BatchActionBar() {
   );
 
   return (
-    <div className="flex flex-col gap-3 rounded-[24px] border border-[color:var(--surface-border)] bg-white/45 px-4 py-4 md:flex-row md:items-center md:justify-between">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-col gap-2 border border-[color:var(--surface-border)] bg-[var(--surface-strong)] px-2 py-2 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center gap-2">
         <StatusPill label={`${selectedJobIds.length} Selected`} tone="accent" />
         <StatusPill label={`${activeCount} Active`} tone={activeCount > 0 ? 'success' : 'neutral'} />
         <StatusPill label={`${queuedCount} Queued`} tone={queuedCount > 0 ? 'accent' : 'neutral'} />
         <StatusPill label={queuePaused ? 'Paused' : 'Running'} tone={queuePaused ? 'warning' : 'success'} />
-        <p className="text-sm leading-6 text-[var(--muted)]">
-          Analyze or remediate selected files, retry failures, and download selected remediated outputs as a ZIP.
+        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+          bulk controls
         </p>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
         <Button variant="ghost" onClick={() => toggleSelectAllVisible()} disabled={!hasJobs}>
           {allVisibleSelected ? 'Unselect All' : 'Select All'}
         </Button>
-        <label className="flex items-center gap-2 rounded-full border border-[color:var(--surface-border)] bg-white/80 px-3 py-2 text-sm font-semibold text-[var(--foreground)]">
+        <label className="flex items-center gap-2 border border-[color:var(--surface-border)] bg-black px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--foreground)]">
           <span>Concurrency</span>
           <select
-            className="bg-transparent outline-none"
+            className="bg-transparent text-[var(--foreground)] outline-none"
             value={preferredQueueConcurrency}
             onChange={(event) => setPreferredQueueConcurrency(Number(event.target.value))}
           >

@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { Button } from '../common/Button';
 import { StatusPill } from '../common/StatusPill';
 import {
@@ -22,6 +23,23 @@ function getDisplayedResult(job: ReturnType<typeof useQueueStore.getState>['jobs
   return job.remediationResult?.after ?? job.analyzeResult;
 }
 
+function DetailSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="surface-strong p-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
+        {title}
+      </p>
+      <div className="mt-2">{children}</div>
+    </section>
+  );
+}
+
 export function QueueDetailDrawer() {
   const detailJobId = useQueueStore((state) => state.detailJobId);
   const jobs = useQueueStore((state) => state.jobs);
@@ -31,7 +49,6 @@ export function QueueDetailDrawer() {
   const retryJob = useQueueStore((state) => state.retryJob);
 
   const job = jobs.find((candidate) => candidate.id === detailJobId);
-
   if (!job) return null;
 
   const result = getDisplayedResult(job);
@@ -43,26 +60,26 @@ export function QueueDetailDrawer() {
           ? { label: 'Headings', summary: remediation.semanticHeadings }
           : null,
         remediation.semanticPromoteHeadings
-          ? { label: 'Promote Headings', summary: remediation.semanticPromoteHeadings }
+          ? { label: 'Promote', summary: remediation.semanticPromoteHeadings }
           : null,
         remediation.semanticUntaggedHeadings
-          ? { label: 'Untagged Headings', summary: remediation.semanticUntaggedHeadings }
+          ? { label: 'Untagged', summary: remediation.semanticUntaggedHeadings }
           : null,
       ].filter(Boolean) as Array<{ label: string; summary: SemanticSummary }>
     : [];
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/20 p-3 md:p-5">
-      <div className="surface flex h-full w-full max-w-2xl flex-col overflow-hidden rounded-[32px]">
-        <div className="flex items-start justify-between gap-4 border-b border-[color:var(--surface-border)] px-6 py-5 md:px-8">
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/80">
+      <div className="surface flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-[color:var(--surface-border)]">
+        <div className="flex items-start justify-between gap-3 border-b border-[color:var(--surface-border)] px-3 py-3">
           <div className="min-w-0">
-            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-              File Details
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
+              Details
             </p>
-            <h2 className="mt-2 break-all text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+            <h2 className="mt-1 break-all text-sm font-bold uppercase tracking-[0.08em] text-[var(--accent-strong)]">
               {job.fileName}
             </h2>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-1">
               <StatusPill label={job.status} tone={getStatusTone(job.status)} />
               {remediation ? (
                 <>
@@ -76,7 +93,7 @@ export function QueueDetailDrawer() {
                   />
                 </>
               ) : result ? (
-                <StatusPill label={`${result.grade} · ${result.score}`} tone="success" />
+                <StatusPill label={`${result.grade} ${result.score}`} tone="success" />
               ) : null}
             </div>
           </div>
@@ -85,41 +102,36 @@ export function QueueDetailDrawer() {
           </Button>
         </div>
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6 md:px-8">
-          <section className="surface-strong rounded-[24px] p-5">
-            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-              File Summary
-            </p>
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 text-sm">
+        <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+          <DetailSection title="Summary">
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
               <div>
                 <dt className="text-[var(--muted)]">Size</dt>
-                <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {formatFileSize(job.fileSize)}
                 </dd>
               </div>
               <div>
                 <dt className="text-[var(--muted)]">Updated</dt>
-                <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {formatJobTimestamp(job.updatedAt)}
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--muted)]">PDF Class</dt>
-                <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <dt className="text-[var(--muted)]">Pdf Class</dt>
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {result ? formatPdfClass(result.pdfClass) : 'Not analyzed'}
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--muted)]">Page Count</dt>
-                <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <dt className="text-[var(--muted)]">Pages</dt>
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {result ? result.pageCount : 'Not analyzed'}
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--muted)]">
-                  {remediation ? 'Processing Time' : 'Analysis Time'}
-                </dt>
-                <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <dt className="text-[var(--muted)]">Elapsed</dt>
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {remediation
                     ? formatDurationMs(remediation.remediationDurationMs)
                     : result
@@ -129,183 +141,178 @@ export function QueueDetailDrawer() {
               </div>
               <div>
                 <dt className="text-[var(--muted)]">Mode</dt>
-                <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {job.mode ?? 'Not queued'}
                 </dd>
               </div>
             </dl>
-            <div className="mt-5">
-              <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => void downloadOriginal(job.id)}>
-                  Download Original
+            <div className="mt-3 flex flex-wrap gap-1">
+              <Button variant="secondary" onClick={() => void downloadOriginal(job.id)}>
+                Download Original
+              </Button>
+              {job.remediatedBlobKey ? (
+                <Button variant="secondary" onClick={() => void downloadRemediated(job.id)}>
+                  Download Remediated
                 </Button>
-                {job.remediatedBlobKey ? (
-                  <Button variant="secondary" onClick={() => void downloadRemediated(job.id)}>
-                    Download Remediated
-                  </Button>
-                ) : null}
-                {job.status === 'failed' && (job.mode === 'grade' || job.mode === 'remediate') ? (
-                  <Button variant="secondary" onClick={() => void retryJob(job.id)}>
-                    Retry
-                  </Button>
-                ) : null}
-              </div>
+              ) : null}
+              {job.status === 'failed' && (job.mode === 'grade' || job.mode === 'remediate') ? (
+                <Button variant="secondary" onClick={() => void retryJob(job.id)}>
+                  Retry
+                </Button>
+              ) : null}
             </div>
-          </section>
+          </DetailSection>
 
           {remediation ? (
-            <section className="surface-strong rounded-[24px] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                Before and After
-              </p>
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <article className="rounded-2xl border border-[color:var(--surface-border)] bg-white/65 px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+            <DetailSection title="Before / After">
+              <div className="grid gap-2 md:grid-cols-2">
+                <article className="border border-[color:var(--surface-border)] bg-black/30 px-2 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
                     Before
                   </p>
-                  <p className="mt-2 text-lg font-semibold text-[var(--foreground)]">
+                  <p className="mt-1 text-xs font-bold text-[var(--foreground)]">
                     {formatScoreGrade(remediation.before.score, remediation.before.grade)}
                   </p>
-                  <p className="mt-1 text-sm text-[var(--muted)]">
+                  <p className="mt-1 text-[11px] text-[var(--muted)]">
                     {formatPdfClass(remediation.before.pdfClass)} · {remediation.before.pageCount} pages
                   </p>
                 </article>
-                <article className="rounded-2xl border border-[color:var(--surface-border)] bg-white/65 px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                <article className="border border-[color:var(--surface-border)] bg-black/30 px-2 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
                     After
                   </p>
-                  <p className="mt-2 text-lg font-semibold text-[var(--foreground)]">
+                  <p className="mt-1 text-xs font-bold text-[var(--foreground)]">
                     {formatScoreGrade(remediation.after.score, remediation.after.grade)}
                   </p>
-                  <p className="mt-1 text-sm text-[var(--muted)]">
+                  <p className="mt-1 text-[11px] text-[var(--muted)]">
                     {formatPdfClass(remediation.after.pdfClass)} · {remediation.after.pageCount} pages
                   </p>
                 </article>
               </div>
               {remediation.remediatedPdfTooLarge ? (
-                <p className="mt-4 rounded-2xl bg-[color:rgba(149,95,17,0.10)] px-4 py-3 text-sm leading-6 text-[var(--warning)]">
+                <p className="mt-2 border border-[color:rgba(255,224,102,0.28)] bg-[color:rgba(255,224,102,0.08)] px-2 py-2 text-xs leading-5 text-[var(--warning)]">
                   Remediated output was too large for inline download from the API response.
                 </p>
               ) : null}
-            </section>
+            </DetailSection>
           ) : null}
 
           {job.errorMessage ? (
-            <section className="rounded-[24px] bg-[color:rgba(161,50,50,0.08)] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--danger)]">
+            <section className="border border-[color:rgba(255,114,114,0.28)] bg-[color:rgba(255,114,114,0.08)] p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--danger)]">
                 Last Error
               </p>
-              <p className="mt-3 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--danger)]">{job.errorMessage}</p>
             </section>
           ) : null}
 
           {remediation ? (
-            <section className="surface-strong rounded-[24px] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                Applied Tools
-              </p>
-              <div className="mt-4 grid gap-3">
+            <DetailSection title="Applied Tools">
+              <div className="grid gap-2">
                 {remediation.appliedTools.length > 0 ? (
                   remediation.appliedTools.map((tool, index) => (
                     <article
                       key={`${tool.toolName}-${tool.round}-${index}`}
-                      className="rounded-2xl border border-[color:var(--surface-border)] bg-white/65 px-4 py-4"
+                      className="border border-[color:var(--surface-border)] bg-black/30 px-2 py-2"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-[var(--foreground)]">{tool.toolName}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold text-[var(--foreground)]">{tool.toolName}</p>
                         <StatusPill
                           label={tool.outcome}
-                          tone={tool.outcome === 'applied' ? 'success' : tool.outcome === 'failed' ? 'danger' : 'accent'}
+                          tone={
+                            tool.outcome === 'applied'
+                              ? 'success'
+                              : tool.outcome === 'failed'
+                                ? 'danger'
+                                : 'accent'
+                          }
                         />
                       </div>
-                      <p className="mt-2 text-sm text-[var(--muted)]">
-                        Stage {tool.stage} · Round {tool.round} · {tool.scoreBefore} to {tool.scoreAfter}
+                      <p className="mt-1 text-[11px] text-[var(--muted)]">
+                        stage {tool.stage} · round {tool.round} · {tool.scoreBefore} to{' '}
+                        {tool.scoreAfter}
                       </p>
                       {tool.details ? (
-                        <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">{tool.details}</p>
+                        <p className="mt-1 text-xs leading-5 text-[var(--foreground)]">
+                          {tool.details}
+                        </p>
                       ) : null}
                     </article>
                   ))
                 ) : (
-                  <p className="text-sm leading-6 text-[var(--muted)]">
+                  <p className="text-xs leading-5 text-[var(--muted)]">
                     No applied tool details were surfaced in the stored remediation summary.
                   </p>
                 )}
               </div>
-            </section>
+            </DetailSection>
           ) : null}
 
           {remediation ? (
-            <section className="surface-strong rounded-[24px] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                Semantic Summary
-              </p>
-              <div className="mt-4 grid gap-3">
+            <DetailSection title="Semantic">
+              <div className="grid gap-2">
                 {semanticSummaries.map(({ label, summary }) => (
                   <article
                     key={label}
-                    className="rounded-2xl border border-[color:var(--surface-border)] bg-white/65 px-4 py-4"
+                    className="border border-[color:var(--surface-border)] bg-black/30 px-2 py-2"
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-[var(--foreground)]">{label}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-bold text-[var(--foreground)]">{label}</p>
                       <StatusPill label={summary.skippedReason} tone="accent" />
                     </div>
-                    <p className="mt-2 text-sm text-[var(--muted)]">
-                      Accepted {summary.proposalsAccepted} · Rejected {summary.proposalsRejected}
-                      {' · '}Batches {summary.batches.length}
+                    <p className="mt-1 text-[11px] text-[var(--muted)]">
+                      accepted {summary.proposalsAccepted} · rejected {summary.proposalsRejected} ·
+                      batches {summary.batches.length}
                     </p>
                     {summary.errorMessage ? (
-                      <p className="mt-2 text-sm leading-6 text-[var(--danger)]">
+                      <p className="mt-1 text-xs leading-5 text-[var(--danger)]">
                         {summary.errorMessage}
                       </p>
                     ) : null}
                   </article>
                 ))}
                 {semanticSummaries.length === 0 ? (
-                  <p className="text-sm leading-6 text-[var(--muted)]">
+                  <p className="text-xs leading-5 text-[var(--muted)]">
                     No semantic-pass summaries were returned for this remediation run.
                   </p>
                 ) : null}
               </div>
-            </section>
+            </DetailSection>
           ) : null}
 
           {remediation?.ocrPipeline ? (
-            <section className="rounded-[24px] bg-[color:rgba(149,95,17,0.10)] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--warning)]">
-                OCR Pipeline
+            <section className="border border-[color:rgba(255,224,102,0.28)] bg-[color:rgba(255,224,102,0.08)] p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--warning)]">
+                Ocr Pipeline
               </p>
-              <p className="mt-3 text-sm leading-6 text-[var(--warning)]">
+              <p className="mt-1 text-xs leading-5 text-[var(--warning)]">
                 {remediation.ocrPipeline.guidance}
               </p>
             </section>
           ) : null}
 
           {result ? (
-            <section className="surface-strong rounded-[24px] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                Category Breakdown
-              </p>
-              <div className="mt-4 grid gap-3">
+            <DetailSection title="Categories">
+              <div className="grid gap-2">
                 {result.categories.map((category) => (
                   <article
                     key={category.key}
-                    className="rounded-2xl border border-[color:var(--surface-border)] bg-white/65 px-4 py-4"
+                    className="border border-[color:var(--surface-border)] bg-black/30 px-2 py-2"
                   >
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center justify-between gap-2">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-xs font-bold text-[var(--foreground)]">
                           {category.label}
                         </p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-                          {category.findingCount} actionable finding{category.findingCount === 1 ? '' : 's'}
+                        <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                          {category.findingCount} finding{category.findingCount === 1 ? '' : 's'}
                         </p>
                       </div>
                       <div className="text-right">
-                        <p className="text-lg font-semibold text-[var(--foreground)]">
+                        <p className="text-xs font-bold text-[var(--foreground)]">
                           {category.score}
                         </p>
-                        <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
                           {category.severity}
                         </p>
                       </div>
@@ -313,50 +320,56 @@ export function QueueDetailDrawer() {
                   </article>
                 ))}
               </div>
-            </section>
+            </DetailSection>
           ) : null}
 
           {result ? (
-            <section className="surface-strong rounded-[24px] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                Top Findings
-              </p>
-              <div className="mt-4 grid gap-4">
+            <DetailSection title="Findings">
+              <div className="grid gap-2">
                 {result.findings.length > 0 ? (
                   result.findings.map((finding) => (
                     <article
                       key={finding.id}
-                      className="rounded-2xl border border-[color:var(--surface-border)] bg-white/65 px-4 py-4"
+                      className="border border-[color:var(--surface-border)] bg-black/30 px-2 py-2"
                     >
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1">
                         <StatusPill
                           label={finding.severity}
-                          tone={finding.severity === 'critical' || finding.severity === 'moderate' ? 'danger' : 'warning'}
+                          tone={
+                            finding.severity === 'critical' || finding.severity === 'moderate'
+                              ? 'danger'
+                              : 'warning'
+                          }
                         />
-                        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
                           {finding.category}
                         </span>
                         {finding.page ? (
-                          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                            Page {finding.page}
+                          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
+                            page {finding.page}
+                          </span>
+                        ) : null}
+                        {finding.count ? (
+                          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted)]">
+                            count {finding.count}
                           </span>
                         ) : null}
                       </div>
-                      <p className="mt-3 text-base font-semibold text-[var(--foreground)]">
+                      <p className="mt-1 text-xs font-bold text-[var(--foreground)]">
                         {finding.title}
                       </p>
-                      <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">
+                      <p className="mt-1 text-xs leading-5 text-[var(--foreground)]">
                         {finding.summary}
                       </p>
                       {finding.references.length > 0 ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-2 flex flex-wrap gap-1">
                           {finding.references.map((reference) => (
                             <a
                               key={`${finding.id}-${reference.href}`}
                               href={reference.href}
                               target="_blank"
                               rel="noreferrer"
-                              className="focus-ring inline-flex items-center rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent-strong)]"
+                              className="focus-ring inline-flex items-center border border-[color:var(--surface-border)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--accent-strong)]"
                             >
                               {reference.label}
                             </a>
@@ -366,12 +379,12 @@ export function QueueDetailDrawer() {
                     </article>
                   ))
                 ) : (
-                  <p className="text-sm leading-6 text-[var(--muted)]">
+                  <p className="text-xs leading-5 text-[var(--muted)]">
                     No actionable findings were surfaced in the stored analysis summary.
                   </p>
                 )}
               </div>
-            </section>
+            </DetailSection>
           ) : null}
         </div>
       </div>
