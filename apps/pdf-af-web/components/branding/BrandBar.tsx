@@ -12,17 +12,17 @@ export function BrandBar() {
       <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
         <div className="max-w-3xl">
           <div className="mb-4 flex items-center gap-3">
-            <StatusPill label="Milestone 1" tone="accent" />
+            <StatusPill label="Milestone 2" tone="accent" />
             <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
-              Browser-first PDF operations shell
+              Browser-local queue and file persistence
             </span>
           </div>
           <h1 className="text-4xl font-semibold tracking-tight text-[var(--foreground)] md:text-6xl">
             PDF AF
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--muted)] md:text-lg">
-            Grade PDFs. Fix PDFs. Download results. This first milestone establishes the
-            frontend shell, API connectivity, and design system.
+            Grade PDFs. Fix PDFs. Download results. The app now supports a persistent
+            browser-local queue so batches can be staged before processing lands.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -34,4 +34,3 @@ export function BrandBar() {
     </header>
   );
 }
-

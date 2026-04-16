@@ -34,7 +34,7 @@ export function ConnectionStatusCard() {
   return (
     <SectionCard
       title="API Connection"
-      description="Milestone 1 only talks to GET /v1/health. This validates the connection contract before queueing and processing land."
+      description="The app still uses GET /v1/health for connectivity. Queueing now lives in the browser, and processing actions will attach to this connection in later milestones."
       action={
         <div className="flex items-center gap-2">
           <Button variant="secondary" onClick={() => void refreshHealth()}>
@@ -123,4 +123,3 @@ export function ConnectionStatusCard() {
     </SectionCard>
   );
 }
-

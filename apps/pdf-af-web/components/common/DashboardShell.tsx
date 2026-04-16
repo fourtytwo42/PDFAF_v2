@@ -2,11 +2,12 @@
 
 import { useEffect } from 'react';
 import { BrandBar } from '../branding/BrandBar';
-import { EmptyWorkspace } from './EmptyWorkspace';
 import { ConnectionStatusCard } from '../settings/ConnectionStatusCard';
 import { SettingsDialog } from '../settings/SettingsDialog';
-import { UploadPlaceholder } from '../upload/UploadPlaceholder';
+import { QueueWorkspace } from '../queue/QueueWorkspace';
+import { UploadDropzone } from '../upload/UploadDropzone';
 import { useAppSettingsStore } from '../../stores/settings';
+import { useQueueStore } from '../../stores/queue';
 
 interface DashboardShellProps {
   defaultApiBaseUrl: string;
@@ -14,21 +15,24 @@ interface DashboardShellProps {
 
 export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
   const initialize = useAppSettingsStore((state) => state.initialize);
+  const hydrateFromStorage = useQueueStore((state) => state.hydrateFromStorage);
 
   useEffect(() => {
-    void initialize(defaultApiBaseUrl);
-  }, [defaultApiBaseUrl, initialize]);
+    void (async () => {
+      await initialize(defaultApiBaseUrl);
+      await hydrateFromStorage();
+    })();
+  }, [defaultApiBaseUrl, hydrateFromStorage, initialize]);
 
   return (
     <main className="app-shell">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-6 md:px-8 md:py-8">
         <BrandBar />
-        <UploadPlaceholder />
+        <UploadDropzone />
         <ConnectionStatusCard />
-        <EmptyWorkspace />
+        <QueueWorkspace />
       </div>
       <SettingsDialog defaultApiBaseUrl={defaultApiBaseUrl} />
     </main>
   );
 }
-
