@@ -714,15 +714,79 @@ Completion check:
 
 Deliverables:
 
-- drag-and-drop upload
-- IndexedDB storage
-- queue table
-- selection model
+- drag-and-drop upload and file picker
+- IndexedDB-backed job and blob persistence
+- queue table with local-only file rows
+- selection model with batch selection controls
 - persistence across refresh
+- validation, removal, and duplicate-handling rules locked for later milestones
+
+Implementation requirements:
+
+- Add a browser storage layer under `lib/storage/` using `idb` or `Dexie`.
+- Store metadata and blobs separately:
+  - `jobRecords` for queue metadata/state
+  - `fileBlobs` for original file blobs
+- A Milestone 2 `JobRecord` must include:
+  - `id`
+  - `fileName`
+  - `fileSize`
+  - `mimeType`
+  - `createdAt`
+  - `updatedAt`
+  - `status`
+  - `mode`
+  - `errorMessage`
+  - `originalBlobKey`
+  - placeholders for future `analyzeResult`, `remediationResult`, and `findingSummaries`
+- Supported statuses in Milestone 2:
+  - `idle`
+  - `failed`
+- Supported modes in Milestone 2:
+  - `null`
+  - `grade`
+  - `remediate`
+- Upload acceptance rules:
+  - accept PDF files only
+  - reject zero-byte files
+  - reject files above a configurable client-side size cap aligned to the API default
+  - show validation feedback per file
+- Duplicate handling:
+  - allow duplicates by default
+  - each added file gets its own job id even if name and size match another row
+- Removal behavior:
+  - removing a row deletes its `jobRecord`
+  - removing a row deletes its associated blob immediately
+- Refresh restore behavior:
+  - all stored rows restore from IndexedDB on page load
+  - original files remain downloadable after refresh
+  - selection state does not persist across refresh
+- Table columns in Milestone 2:
+  - selection checkbox
+  - file name
+  - size
+  - local status
+  - added time
+  - row actions
+- Row actions in Milestone 2:
+  - remove
+  - download original
+- Upload UI behavior:
+  - the dropzone becomes functional
+  - adding files appends rows immediately
+  - no API calls are made in this milestone
+  - auto-remediate remains visible but disabled or clearly labeled as future behavior
+- Empty and error states:
+  - empty state explains files stay in this browser only
+  - storage failure state explains quota/storage availability issues clearly
+- Introduce a dedicated queue store separate from the settings store.
+- Do not add scheduler logic in Milestone 2; this milestone ends at local queueing and persistence.
 
 Completion check:
 
-- user can add files and see them restored after refresh
+- user can add PDFs, reload, and see the same rows restored with originals still downloadable
+- invalid files are rejected with clear per-file feedback
+- removing a row clears both its metadata and blob
 
 ## Milestone 3 — Analyze Flow
 
@@ -732,10 +796,25 @@ Deliverables:
 - analyze selected
 - result rendering
 - detail drawer
+- finding normalization with standards/help references
+
+Implementation requirements:
+
+- Normalize API findings into UI-facing finding records rather than rendering raw payloads directly.
+- Each surfaced finding should support:
+  - plain-language title
+  - summary
+  - category
+  - severity or impact
+  - `references[]` for standards/help links
+- `references[]` should support at least:
+  - WCAG 2.1 AA section URLs
+  - Adobe Acrobat help URLs
+- If the API does not provide stable finding identifiers, add a frontend mapping layer with stable internal ids so the standards links are deterministic.
 
 Completion check:
 
-- user can batch grade files and inspect results
+- user can batch grade files, inspect results, and open finding details with WCAG/Adobe links where mappings exist
 
 ## Milestone 4 — Remediation Flow
 

@@ -152,6 +152,7 @@ For this PRD, “browser local storage” means:
 8. Download many remediated PDFs as a ZIP.
 9. Remove files from the local queue and clear browser-stored data.
 10. See whether a file improved, failed, or still needs manual attention.
+11. Read clear issue details for graded PDFs, including direct links to relevant WCAG 2.1 AA and Adobe guidance where available.
 
 ---
 
@@ -259,6 +260,12 @@ Rows should visually emphasize:
 - files with no change
 - files still processing
 
+When grading data exists, queue rows and details should also surface:
+
+- plain-language issue summaries
+- the affected accessibility area
+- direct standards/help links such as WCAG 2.1 AA sections and Adobe remediation guidance
+
 ---
 
 ## 4. Batch Action Experience
@@ -310,6 +317,12 @@ Use a right-side drawer or expandable detail panel showing:
 - semantic summary
 - error message if failed
 - download buttons
+
+Top findings should not be raw API JSON. They should be normalized into operator-friendly items that can include:
+
+- short explanation of what is wrong
+- why it matters
+- link out to standards/help references such as WCAG 2.1 AA and Adobe docs
 
 If remediation ran, the user should clearly see:
 
