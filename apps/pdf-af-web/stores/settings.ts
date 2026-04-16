@@ -7,6 +7,7 @@ import { LOCAL_STORAGE_KEYS } from '../lib/constants/config';
 import type { ApiConnectionState, ApiErrorShape, HealthSummary } from '../types/health';
 
 interface AppSettingsState {
+  storageHydrated: boolean;
   initialized: boolean;
   apiBaseUrl: string;
   apiBaseUrlOverride: string | null;
@@ -14,6 +15,7 @@ interface AppSettingsState {
   lastHealthPayload: HealthSummary | null;
   lastHealthCheckedAt: string | null;
   settingsDialogOpen: boolean;
+  hydratePersistedState: () => Promise<void>;
   initialize: (defaultApiBaseUrl: string) => Promise<void>;
   openSettings: () => void;
   closeSettings: () => void;
@@ -41,6 +43,7 @@ function validateUrl(value: string): boolean {
 export const useAppSettingsStore = create<AppSettingsState>()(
   persist(
     (set, get) => ({
+      storageHydrated: false,
       initialized: false,
       apiBaseUrl: 'http://localhost:6200',
       apiBaseUrlOverride: null,
@@ -49,7 +52,20 @@ export const useAppSettingsStore = create<AppSettingsState>()(
       lastHealthCheckedAt: null,
       settingsDialogOpen: false,
 
+      hydratePersistedState: async () => {
+        if (get().storageHydrated || useAppSettingsStore.persist.hasHydrated()) {
+          if (!get().storageHydrated) {
+            set({ storageHydrated: true });
+          }
+          return;
+        }
+
+        await useAppSettingsStore.persist.rehydrate();
+        set({ storageHydrated: true });
+      },
+
       initialize: async (defaultApiBaseUrl) => {
+        await get().hydratePersistedState();
         if (get().initialized) return;
 
         const apiBaseUrl = get().apiBaseUrlOverride ?? defaultApiBaseUrl;
@@ -131,10 +147,10 @@ export const useAppSettingsStore = create<AppSettingsState>()(
     {
       name: LOCAL_STORAGE_KEYS.settings,
       storage: createJSONStorage(() => localStorage),
+      skipHydration: true,
       partialize: (state) => ({
         apiBaseUrlOverride: state.apiBaseUrlOverride,
       }),
     },
   ),
 );
-
