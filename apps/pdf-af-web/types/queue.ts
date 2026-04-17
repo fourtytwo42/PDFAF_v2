@@ -31,6 +31,7 @@ export interface JobRecord {
   fileStatus: StoredFileStatus;
   storedFileName?: string | null;
   storedSizeBytes?: number | null;
+  hasServerSource: boolean;
   expiresAt?: string | null;
   deletedAt?: string | null;
   deletionReason?: StoredDeletionReason;

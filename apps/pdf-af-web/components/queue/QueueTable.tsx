@@ -197,6 +197,7 @@ function needsReuploadToFix(job: JobRecord): boolean {
   return Boolean(
     job.persisted &&
       !job.localFile &&
+      !job.hasServerSource &&
       job.fileStatus !== 'available' &&
       job.analyzeResult &&
       !job.remediationResult,
@@ -413,13 +414,19 @@ export function QueueTable() {
                           Check
                         </Button>
                       ) : null}
-                      <Button
-                        variant="secondary"
-                        onClick={() => void enqueueRemediate([job.id])}
-                        disabled={!canRun || (job.persisted && !job.localFile && job.fileStatus !== 'available')}
-                        title={
-                          requiresReupload
-                            ? 'Add this PDF again to fix it'
+                        <Button
+                          variant="secondary"
+                          onClick={() => void enqueueRemediate([job.id])}
+                          disabled={
+                            !canRun ||
+                            (job.persisted &&
+                              !job.localFile &&
+                              job.fileStatus !== 'available' &&
+                              !job.hasServerSource)
+                          }
+                          title={
+                            requiresReupload
+                              ? 'Add this PDF again to fix it'
                             : job.remediationResult
                               ? 'Fix this PDF again'
                               : 'Fix this PDF'

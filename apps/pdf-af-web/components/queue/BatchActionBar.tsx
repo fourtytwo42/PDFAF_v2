@@ -10,7 +10,7 @@ import { Button } from '../common/Button';
 import { useQueueStore } from '../../stores/queue';
 
 function canRemediate(job: ReturnType<typeof useQueueStore.getState>['jobs'][number]) {
-  return Boolean(job.localFile) || (job.persisted && job.fileStatus === 'available');
+  return Boolean(job.localFile) || (job.persisted && (job.fileStatus === 'available' || job.hasServerSource));
 }
 
 export function BatchActionBar() {

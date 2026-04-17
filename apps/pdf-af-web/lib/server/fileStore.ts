@@ -22,6 +22,7 @@ const DEFAULT_QUOTA_BYTES = Number(
 );
 const DATABASE_FILE = 'pdf-af-web.sqlite';
 const REMEDIATED_DIR = 'remediated';
+const SOURCE_DIR = 'source';
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
 interface StoredFileRow {
@@ -32,6 +33,9 @@ interface StoredFileRow {
   storage_path: string | null;
   file_size: number;
   stored_size_bytes: number | null;
+  source_stored_file_name: string | null;
+  source_storage_path: string | null;
+  source_stored_size_bytes: number | null;
   mime_type: string;
   status: JobStatus;
   mode: JobMode;
@@ -63,6 +67,9 @@ interface PersistRecordInput {
   storedFileName?: string | null;
   storagePath?: string | null;
   storedSizeBytes?: number | null;
+  sourceStoredFileName?: string | null;
+  sourceStoragePath?: string | null;
+  sourceStoredSizeBytes?: number | null;
   expiresAt?: string | null;
   deletedAt?: string | null;
   deletionReason?: StoredDeletionReason;
@@ -101,6 +108,10 @@ function getDatabasePath(): string {
 
 function getRemediatedBaseDir(): string {
   return path.join(getStorageDir(), REMEDIATED_DIR);
+}
+
+function getSourceBaseDir(): string {
+  return path.join(getStorageDir(), SOURCE_DIR);
 }
 
 function normalizeNumber(value: number, fallback: number): number {
@@ -277,6 +288,12 @@ let databaseInstance: Database.Database | null = null;
 let setupPromise: Promise<void> | null = null;
 let cleanupStarted = false;
 
+function ensureColumn(db: Database.Database, tableName: string, columnName: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
 function database(): Database.Database {
   if (databaseInstance) return databaseInstance;
 
@@ -291,6 +308,9 @@ function database(): Database.Database {
       storage_path TEXT,
       file_size INTEGER NOT NULL,
       stored_size_bytes INTEGER,
+      source_stored_file_name TEXT,
+      source_storage_path TEXT,
+      source_stored_size_bytes INTEGER,
       mime_type TEXT NOT NULL,
       status TEXT NOT NULL,
       mode TEXT,
@@ -313,6 +333,10 @@ function database(): Database.Database {
       ON stored_files(expires_at);
   `);
 
+  ensureColumn(databaseInstance, 'stored_files', 'source_stored_file_name', 'TEXT');
+  ensureColumn(databaseInstance, 'stored_files', 'source_storage_path', 'TEXT');
+  ensureColumn(databaseInstance, 'stored_files', 'source_stored_size_bytes', 'INTEGER');
+
   return databaseInstance;
 }
 
@@ -321,6 +345,7 @@ export async function ensureServerStorageReady(): Promise<void> {
     setupPromise = (async () => {
       await fs.mkdir(getStorageDir(), { recursive: true });
       await fs.mkdir(getRemediatedBaseDir(), { recursive: true });
+      await fs.mkdir(getSourceBaseDir(), { recursive: true });
       database();
       ensureCleanupLoop();
       await sweepExpiredRecordsInternal();
@@ -339,6 +364,10 @@ function rowToRecord(row: StoredFileRow): StoredFileRecord {
     storagePath: row.storage_path,
     fileSize: row.file_size,
     storedSizeBytes: row.stored_size_bytes,
+    sourceStoredFileName: row.source_stored_file_name,
+    sourceStoragePath: row.source_storage_path,
+    sourceStoredSizeBytes: row.source_stored_size_bytes,
+    hasServerSource: Boolean(row.source_storage_path),
     mimeType: row.mime_type,
     status: row.status,
     mode: row.mode,
@@ -362,7 +391,14 @@ function rowToRecord(row: StoredFileRow): StoredFileRecord {
 }
 
 function toSummary(record: StoredFileRecord): StoredFileSummary {
-  const { sessionId: _sessionId, storagePath: _storagePath, ...summary } = record;
+  const {
+    sessionId: _sessionId,
+    storagePath: _storagePath,
+    sourceStoredFileName: _sourceStoredFileName,
+    sourceStoragePath: _sourceStoragePath,
+    sourceStoredSizeBytes: _sourceStoredSizeBytes,
+    ...summary
+  } = record;
   return summary;
 }
 
@@ -376,11 +412,13 @@ function putRecord(input: PersistRecordInput): StoredFileRecord {
     `
       INSERT INTO stored_files (
         id, session_id, file_name, stored_file_name, storage_path, file_size, stored_size_bytes,
-        mime_type, status, mode, error_message, file_status, created_at, updated_at, expires_at,
-        deleted_at, deletion_reason, analyze_result_json, remediation_result_json, finding_summaries_json
+        source_stored_file_name, source_storage_path, source_stored_size_bytes, mime_type, status,
+        mode, error_message, file_status, created_at, updated_at, expires_at, deleted_at,
+        deletion_reason, analyze_result_json, remediation_result_json, finding_summaries_json
       ) VALUES (
         @id, @session_id, @file_name, @stored_file_name, @storage_path, @file_size, @stored_size_bytes,
-        @mime_type, @status, @mode, @error_message, @file_status, @created_at, @updated_at, @expires_at,
+        @source_stored_file_name, @source_storage_path, @source_stored_size_bytes, @mime_type,
+        @status, @mode, @error_message, @file_status, @created_at, @updated_at, @expires_at,
         @deleted_at, @deletion_reason, @analyze_result_json, @remediation_result_json, @finding_summaries_json
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -390,6 +428,9 @@ function putRecord(input: PersistRecordInput): StoredFileRecord {
         storage_path = excluded.storage_path,
         file_size = excluded.file_size,
         stored_size_bytes = excluded.stored_size_bytes,
+        source_stored_file_name = excluded.source_stored_file_name,
+        source_storage_path = excluded.source_storage_path,
+        source_stored_size_bytes = excluded.source_stored_size_bytes,
         mime_type = excluded.mime_type,
         status = excluded.status,
         mode = excluded.mode,
@@ -412,6 +453,9 @@ function putRecord(input: PersistRecordInput): StoredFileRecord {
     storage_path: input.storagePath ?? null,
     file_size: input.fileSize,
     stored_size_bytes: input.storedSizeBytes ?? null,
+    source_stored_file_name: input.sourceStoredFileName ?? null,
+    source_storage_path: input.sourceStoragePath ?? null,
+    source_stored_size_bytes: input.sourceStoredSizeBytes ?? null,
     mime_type: input.mimeType,
     status: input.status,
     mode: input.mode,
@@ -461,6 +505,9 @@ export async function deleteStoredFile(sessionId: string, id: string): Promise<b
   if (record.storagePath) {
     await fs.rm(record.storagePath, { force: true }).catch(() => undefined);
   }
+  if (record.sourceStoragePath) {
+    await fs.rm(record.sourceStoragePath, { force: true }).catch(() => undefined);
+  }
 
   database().prepare('DELETE FROM stored_files WHERE id = ? AND session_id = ?').run(id, sessionId);
   return true;
@@ -468,6 +515,10 @@ export async function deleteStoredFile(sessionId: string, id: string): Promise<b
 
 function remediatedPath(sessionId: string, id: string): string {
   return path.join(getRemediatedBaseDir(), sessionId, `${id}.pdf`);
+}
+
+function sourcePath(sessionId: string, id: string): string {
+  return path.join(getSourceBaseDir(), sessionId, `${id}.pdf`);
 }
 
 async function saveRemediatedFile(
@@ -490,6 +541,24 @@ async function saveRemediatedFile(
   };
 }
 
+async function saveSourceFile(
+  sessionId: string,
+  id: string,
+  file: File,
+): Promise<{ sourceStoragePath: string; sourceStoredFileName: string; sourceStoredSizeBytes: number }> {
+  const dir = path.join(getSourceBaseDir(), sessionId);
+  await fs.mkdir(dir, { recursive: true });
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const sourceStoragePath = sourcePath(sessionId, id);
+  await fs.writeFile(sourceStoragePath, bytes);
+
+  return {
+    sourceStoragePath,
+    sourceStoredFileName: file.name,
+    sourceStoredSizeBytes: bytes.byteLength,
+  };
+}
+
 function decodeBase64(base64: string): Uint8Array {
   return Uint8Array.from(Buffer.from(base64, 'base64'));
 }
@@ -500,13 +569,17 @@ async function enforceQuota(sessionId: string, keepId: string) {
     .prepare(
       `
         SELECT * FROM stored_files
-        WHERE session_id = ? AND file_status = 'available'
+        WHERE session_id = ?
+          AND (storage_path IS NOT NULL OR source_storage_path IS NOT NULL)
         ORDER BY created_at ASC
       `,
     )
     .all(sessionId) as StoredFileRow[];
 
-  let totalBytes = rows.reduce((sum, row) => sum + (row.stored_size_bytes ?? 0), 0);
+  let totalBytes = rows.reduce(
+    (sum, row) => sum + (row.stored_size_bytes ?? 0) + (row.source_stored_size_bytes ?? 0),
+    0,
+  );
   const quota = quotaBytes();
 
   for (const row of rows) {
@@ -517,6 +590,19 @@ async function enforceQuota(sessionId: string, keepId: string) {
     if (record.storagePath) {
       await fs.rm(record.storagePath, { force: true }).catch(() => undefined);
     }
+    if (record.sourceStoragePath) {
+      await fs.rm(record.sourceStoragePath, { force: true }).catch(() => undefined);
+    }
+
+    const removedBytes = (record.storedSizeBytes ?? 0) + (record.sourceStoredSizeBytes ?? 0);
+    const removedVisibleFile = record.fileStatus === 'available' && Boolean(record.storagePath);
+    const removedHiddenSource = Boolean(record.sourceStoragePath);
+
+    const errorMessage = removedVisibleFile
+      ? 'Deleted to stay under your saved file limit. Download fixed files sooner.'
+      : removedHiddenSource && record.analyzeResult && !record.remediationResult
+        ? 'Saved source was removed to stay under your storage limit. Add the PDF again if you want to fix it.'
+        : record.errorMessage ?? null;
 
     const updated = putRecord({
       ...record,
@@ -526,21 +612,24 @@ async function enforceQuota(sessionId: string, keepId: string) {
       mimeType: record.mimeType,
       status: record.status,
       mode: record.mode,
-      fileStatus: 'quota_deleted',
+      fileStatus: removedVisibleFile ? 'quota_deleted' : record.fileStatus,
       storedFileName: record.storedFileName,
       storagePath: null,
       storedSizeBytes: null,
+      sourceStoredFileName: removedHiddenSource ? null : record.sourceStoredFileName,
+      sourceStoragePath: null,
+      sourceStoredSizeBytes: null,
       updatedAt: nowIso(),
-      deletedAt: nowIso(),
-      deletionReason: 'quota',
-      errorMessage: 'Deleted to stay under your saved file limit. Download fixed files sooner.',
+      deletedAt: removedVisibleFile ? nowIso() : record.deletedAt,
+      deletionReason: removedVisibleFile ? 'quota' : record.deletionReason,
+      errorMessage,
       analyzeResult: record.analyzeResult,
       remediationResult: record.remediationResult,
       findingSummaries: record.findingSummaries,
       expiresAt: record.expiresAt,
     });
 
-    totalBytes -= record.storedSizeBytes ?? 0;
+    totalBytes -= removedBytes;
     if (updated.id === keepId && totalBytes > quota) {
       break;
     }
@@ -551,6 +640,17 @@ async function markExpiredRecord(record: StoredFileRecord) {
   if (record.storagePath) {
     await fs.rm(record.storagePath, { force: true }).catch(() => undefined);
   }
+  if (record.sourceStoragePath) {
+    await fs.rm(record.sourceStoragePath, { force: true }).catch(() => undefined);
+  }
+
+  const expiredVisibleFile = record.fileStatus === 'available' && Boolean(record.storagePath);
+  const expiredHiddenSource = Boolean(record.sourceStoragePath);
+  const errorMessage = expiredVisibleFile
+    ? 'Expired after 24 hours. Download fixed files before they expire.'
+    : expiredHiddenSource && record.analyzeResult && !record.remediationResult
+      ? 'Saved source expired after 24 hours. Add the PDF again if you want to fix it.'
+      : record.errorMessage ?? null;
 
   putRecord({
     ...record,
@@ -560,13 +660,16 @@ async function markExpiredRecord(record: StoredFileRecord) {
     mimeType: record.mimeType,
     status: record.status,
     mode: record.mode,
-    fileStatus: 'expired',
+    fileStatus: expiredVisibleFile ? 'expired' : record.fileStatus,
     storagePath: null,
     storedSizeBytes: null,
+    sourceStoredFileName: expiredHiddenSource ? null : record.sourceStoredFileName,
+    sourceStoragePath: null,
+    sourceStoredSizeBytes: null,
     updatedAt: nowIso(),
-    deletedAt: nowIso(),
-    deletionReason: 'expired',
-    errorMessage: 'Expired after 24 hours. Download fixed files before they expire.',
+    deletedAt: expiredVisibleFile ? nowIso() : record.deletedAt,
+    deletionReason: expiredVisibleFile ? 'expired' : record.deletionReason,
+    errorMessage,
     analyzeResult: record.analyzeResult,
     remediationResult: record.remediationResult,
     findingSummaries: record.findingSummaries,
@@ -580,7 +683,7 @@ async function sweepExpiredRecordsInternal() {
     .prepare(
       `
         SELECT * FROM stored_files
-        WHERE file_status = 'available'
+        WHERE (storage_path IS NOT NULL OR source_storage_path IS NOT NULL)
           AND expires_at IS NOT NULL
           AND expires_at <= ?
       `,
@@ -664,7 +767,24 @@ export async function createAnalyzeRecord(sessionId: string, file: File): Promis
     }
 
     const analyzeResult = normalizeAnalyzePayload(payload);
+    const id = randomUUID();
+    const expiresAt = new Date(Date.now() + retentionMs()).toISOString();
+    let sourceStoredFileName: string | null = null;
+    let sourceStoragePath: string | null = null;
+    let sourceStoredSizeBytes: number | null = null;
+    let errorMessage: string | null = null;
+
+    try {
+      const savedSource = await saveSourceFile(sessionId, id, file);
+      sourceStoredFileName = savedSource.sourceStoredFileName;
+      sourceStoragePath = savedSource.sourceStoragePath;
+      sourceStoredSizeBytes = savedSource.sourceStoredSizeBytes;
+    } catch {
+      errorMessage = 'Checked, but the server could not save this PDF for later fixing.';
+    }
+
     const record = putRecord({
+      id,
       sessionId,
       fileName: file.name,
       fileSize: file.size,
@@ -672,11 +792,20 @@ export async function createAnalyzeRecord(sessionId: string, file: File): Promis
       status: 'done',
       mode: 'grade',
       fileStatus: 'none',
+      errorMessage,
       analyzeResult,
       findingSummaries: analyzeResult.topFindings,
+      sourceStoredFileName,
+      sourceStoragePath,
+      sourceStoredSizeBytes,
+      expiresAt,
     });
 
-    return toSummary(record);
+    if (sourceStoragePath) {
+      await enforceQuota(sessionId, record.id);
+    }
+
+    return toSummary((await getStoredFile(sessionId, record.id)) ?? record);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Analysis failed.';
     const failed = putRecord({
@@ -704,12 +833,20 @@ async function resolveSourceFile(input: { file?: File; sessionId: string; fileId
   }
 
   const existing = await getStoredFile(input.sessionId, input.fileId);
-  if (!existing || existing.fileStatus !== 'available' || !existing.storagePath) {
+  if (!existing) {
     throw new Error('This saved file is no longer available. Add the PDF again.');
   }
 
-  const bytes = await fs.readFile(existing.storagePath);
-  return new File([bytes], existing.storedFileName || existing.fileName, {
+  const sourcePathname = existing.sourceStoragePath ?? existing.storagePath;
+  const sourceFileName =
+    existing.sourceStoredFileName ?? existing.storedFileName ?? existing.fileName;
+
+  if (!sourcePathname) {
+    throw new Error('This saved file is no longer available. Add the PDF again.');
+  }
+
+  const bytes = await fs.readFile(sourcePathname);
+  return new File([bytes], sourceFileName, {
     type: existing.mimeType || 'application/pdf',
   });
 }
@@ -720,6 +857,7 @@ export async function createRemediationRecord(input: {
   fileId?: string;
 }): Promise<StoredFileSummary> {
   await ensureServerStorageReady();
+  const existingRecord = input.fileId ? await getStoredFile(input.sessionId, input.fileId) : null;
   const sourceFile = await resolveSourceFile(input);
   const formData = new FormData();
   formData.append('file', sourceFile, sourceFile.name);
@@ -731,12 +869,15 @@ export async function createRemediationRecord(input: {
     }
 
     const remediationResult = normalizeRemediationResponse(payload);
-    const id = randomUUID();
+    const id = existingRecord?.id ?? randomUUID();
     const expiresAt = new Date(Date.now() + retentionMs()).toISOString();
-    let fileStatus: StoredFileStatus = 'failed';
-    let storedFileName: string | null = null;
-    let storagePath: string | null = null;
-    let storedSizeBytes: number | null = null;
+    let fileStatus: StoredFileStatus = existingRecord?.fileStatus ?? 'failed';
+    let storedFileName: string | null = existingRecord?.storedFileName ?? null;
+    let storagePath: string | null = existingRecord?.storagePath ?? null;
+    let storedSizeBytes: number | null = existingRecord?.storedSizeBytes ?? null;
+    let sourceStoredFileName: string | null = existingRecord?.sourceStoredFileName ?? null;
+    let sourceStoragePath: string | null = existingRecord?.sourceStoragePath ?? null;
+    let sourceStoredSizeBytes: number | null = existingRecord?.sourceStoredSizeBytes ?? null;
     let errorMessage: string | null =
       payload.remediatedPdfTooLarge
         ? 'Fixed file was too large to save for download. Download earlier or retry with a smaller PDF.'
@@ -749,13 +890,20 @@ export async function createRemediationRecord(input: {
       storedFileName = saved.storedFileName;
       storagePath = saved.storagePath;
       storedSizeBytes = saved.storedSizeBytes;
+
+      if (sourceStoragePath) {
+        await fs.rm(sourceStoragePath, { force: true }).catch(() => undefined);
+      }
+      sourceStoredFileName = null;
+      sourceStoragePath = null;
+      sourceStoredSizeBytes = null;
     }
 
     const record = putRecord({
       id,
       sessionId: input.sessionId,
-      fileName: sourceFile.name,
-      fileSize: sourceFile.size,
+      fileName: existingRecord?.fileName ?? sourceFile.name,
+      fileSize: existingRecord?.fileSize ?? sourceFile.size,
       mimeType: sourceFile.type || 'application/pdf',
       status: 'done',
       mode: 'remediate',
@@ -767,7 +915,11 @@ export async function createRemediationRecord(input: {
       storedFileName,
       storagePath,
       storedSizeBytes,
+      sourceStoredFileName,
+      sourceStoragePath,
+      sourceStoredSizeBytes,
       expiresAt,
+      createdAt: existingRecord?.createdAt,
     });
 
     if (fileStatus === 'available') {
@@ -778,14 +930,28 @@ export async function createRemediationRecord(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Remediation failed.';
     const failed = putRecord({
+      id: existingRecord?.id,
       sessionId: input.sessionId,
-      fileName: sourceFile.name,
-      fileSize: sourceFile.size,
+      fileName: existingRecord?.fileName ?? sourceFile.name,
+      fileSize: existingRecord?.fileSize ?? sourceFile.size,
       mimeType: sourceFile.type || 'application/pdf',
       status: 'failed',
       mode: 'remediate',
-      fileStatus: 'failed',
+      fileStatus: existingRecord?.fileStatus ?? 'failed',
       errorMessage: message,
+      analyzeResult: existingRecord?.analyzeResult,
+      remediationResult: existingRecord?.remediationResult,
+      findingSummaries: existingRecord?.findingSummaries,
+      storedFileName: existingRecord?.storedFileName,
+      storagePath: existingRecord?.storagePath,
+      storedSizeBytes: existingRecord?.storedSizeBytes,
+      sourceStoredFileName: existingRecord?.sourceStoredFileName,
+      sourceStoragePath: existingRecord?.sourceStoragePath,
+      sourceStoredSizeBytes: existingRecord?.sourceStoredSizeBytes,
+      expiresAt: existingRecord?.expiresAt,
+      createdAt: existingRecord?.createdAt,
+      deletedAt: existingRecord?.deletedAt,
+      deletionReason: existingRecord?.deletionReason,
     });
 
     return toSummary(failed);
@@ -821,6 +987,9 @@ export async function readDownloadFile(
       fileStatus: 'failed',
       storagePath: null,
       storedSizeBytes: null,
+      sourceStoredFileName: record.sourceStoredFileName,
+      sourceStoragePath: record.sourceStoragePath,
+      sourceStoredSizeBytes: record.sourceStoredSizeBytes,
       updatedAt: nowIso(),
       errorMessage: 'Saved file is no longer available on the server.',
       analyzeResult: record.analyzeResult,

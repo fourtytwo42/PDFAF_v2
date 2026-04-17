@@ -37,7 +37,7 @@ function formatFileAvailability(job: QueueJob): string {
     case 'failed':
       return 'Not available';
     default:
-      return 'Not saved';
+      return job.hasServerSource ? 'Saved for fixing' : 'Not saved';
   }
 }
 

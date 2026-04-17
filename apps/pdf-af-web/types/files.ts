@@ -14,6 +14,10 @@ export interface StoredFileRecord {
   storagePath?: string | null;
   fileSize: number;
   storedSizeBytes?: number | null;
+  sourceStoredFileName?: string | null;
+  sourceStoragePath?: string | null;
+  sourceStoredSizeBytes?: number | null;
+  hasServerSource: boolean;
   mimeType: string;
   status: JobStatus;
   mode: JobMode;
@@ -29,7 +33,11 @@ export interface StoredFileRecord {
   findingSummaries?: NormalizedFinding[];
 }
 
-export interface StoredFileSummary extends Omit<StoredFileRecord, 'sessionId' | 'storagePath'> {}
+export interface StoredFileSummary
+  extends Omit<
+    StoredFileRecord,
+    'sessionId' | 'storagePath' | 'sourceStoredFileName' | 'sourceStoragePath' | 'sourceStoredSizeBytes'
+  > {}
 
 export interface FileListResponse {
   files: StoredFileSummary[];

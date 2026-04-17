@@ -187,6 +187,7 @@ function mapStoredFileToJob(file: StoredFileSummary): JobRecord {
     fileStatus: file.fileStatus,
     storedFileName: file.storedFileName ?? undefined,
     storedSizeBytes: file.storedSizeBytes ?? undefined,
+    hasServerSource: file.hasServerSource,
     expiresAt: file.expiresAt ?? undefined,
     deletedAt: file.deletedAt ?? undefined,
     deletionReason: file.deletionReason ?? undefined,
@@ -207,6 +208,7 @@ function createLocalJob(file: File, mode: JobMode, status: JobStatus): JobRecord
     status,
     mode,
     fileStatus: 'none',
+    hasServerSource: false,
     localFile: file,
     persisted: false,
   };
@@ -228,7 +230,10 @@ function canAnalyzeJob(job: JobRecord): boolean {
 function canRemediateJob(job: JobRecord): boolean {
   return (
     Boolean(job.localFile) ||
-    (job.persisted && job.fileStatus === 'available' && job.status !== 'uploading' && job.status !== 'remediating')
+    (job.persisted &&
+      (job.fileStatus === 'available' || job.hasServerSource) &&
+      job.status !== 'uploading' &&
+      job.status !== 'remediating')
   );
 }
 
@@ -280,7 +285,9 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
     const result =
       job.mode === 'grade'
         ? await uploadForAnalyze(job.localFile as File)
-        : job.localFile
+        : job.persisted
+          ? await remediateStoredFile(job.id)
+          : job.localFile
           ? await uploadForRemediation(job.localFile)
           : await remediateStoredFile(job.id);
 
