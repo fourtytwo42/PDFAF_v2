@@ -2,12 +2,16 @@ FROM node:22-bookworm-slim AS base
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable
 
 FROM base AS deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/pdf-af-web/package.json apps/pdf-af-web/package.json
-RUN pnpm install --filter pdf-af-web... --frozen-lockfile
+RUN pnpm install --filter pdf-af-web... --frozen-lockfile \
+  && pnpm --filter pdf-af-web exec npm rebuild better-sqlite3 --build-from-source
 
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
