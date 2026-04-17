@@ -24,6 +24,5 @@ ENV HOSTNAME=0.0.0.0
 ENV PDF_AF_STORAGE_DIR=/data
 COPY --from=builder /app/apps/pdf-af-web/.next/standalone ./
 COPY --from=builder /app/apps/pdf-af-web/.next/static ./apps/pdf-af-web/.next/static
-COPY --from=builder /app/apps/pdf-af-web/public ./apps/pdf-af-web/public
 EXPOSE 3100
 CMD ["node", "apps/pdf-af-web/server.js"]
