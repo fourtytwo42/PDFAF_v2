@@ -20,6 +20,7 @@ import {
 import { useQueueStore } from '../../stores/queue';
 import type { JobRecord } from '../../types/queue';
 import { BatchActionBar } from './BatchActionBar';
+import { QueueDetailDrawer } from './QueueDetailDrawer';
 
 function getStatusTone(job: JobRecord): 'accent' | 'danger' | 'success' {
   if (job.status === 'failed') return 'danger';
@@ -117,6 +118,8 @@ function GradeBadge({ score, grade }: { score: number; grade: string }) {
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
+  const detailJobId = useQueueStore((state) => state.detailJobId);
+  const closeDetail = useQueueStore((state) => state.closeDetail);
   const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
   const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
@@ -205,8 +208,8 @@ export function QueueTable() {
                         <Button
                           variant="ghost"
                           className="h-10 w-10 shrink-0 p-0"
-                          onClick={() => openDetail(job.id)}
-                          title="See details"
+                          onClick={() => (detailJobId === job.id ? closeDetail() : openDetail(job.id))}
+                          title={detailJobId === job.id ? 'Close details' : 'See details'}
                           aria-label={`See details for ${job.fileName}`}
                         >
                           <InfoIcon className="h-4 w-4" />
@@ -298,6 +301,8 @@ export function QueueTable() {
                         </Button>
                       ) : null}
                     </div>
+
+                    {detailJobId === job.id ? <QueueDetailDrawer job={job} /> : null}
                   </div>
                 </div>
               </article>

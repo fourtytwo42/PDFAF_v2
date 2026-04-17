@@ -2,7 +2,6 @@
 
 import { SectionCard } from '../common/SectionCard';
 import { useQueueStore } from '../../stores/queue';
-import { QueueDetailDrawer } from './QueueDetailDrawer';
 import { QueueTable } from './QueueTable';
 
 function StorageStateMessage() {
@@ -52,7 +51,6 @@ export function QueueWorkspace() {
             </div>
           </div>
         </SectionCard>
-        <QueueDetailDrawer />
       </>
     );
   }
@@ -63,7 +61,6 @@ export function QueueWorkspace() {
         <StorageStateMessage />
         <QueueTable />
       </div>
-      <QueueDetailDrawer />
     </>
   );
 }
