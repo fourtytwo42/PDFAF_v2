@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  CheckIcon,
   DownloadIcon,
   MagicIcon,
   TrashIcon,
@@ -20,7 +19,6 @@ export function BatchActionBar() {
     (state) => state.downloadSelectedRemediatedZip,
   );
   const removeSelected = useQueueStore((state) => state.removeSelected);
-  const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const preferredQueueConcurrency = useQueueStore((state) => state.preferredQueueConcurrency);
   const setPreferredQueueConcurrency = useQueueStore(
@@ -30,11 +28,6 @@ export function BatchActionBar() {
 
   const hasJobs = jobs.length > 0;
   const allVisibleSelected = hasJobs && selectedJobIds.length === jobs.length;
-  const hasGradeableSelection = jobs.some(
-    (job) =>
-      selectedJobIds.includes(job.id) &&
-      (job.status === 'idle' || job.status === 'failed' || job.status === 'done'),
-  );
   const hasRemediatableSelection = jobs.some(
     (job) =>
       selectedJobIds.includes(job.id) &&
@@ -69,15 +62,6 @@ export function BatchActionBar() {
             <option value={3}>3</option>
           </select>
         </label>
-        <Button
-          variant="primary"
-          onClick={() => void enqueueAnalyze()}
-          disabled={!hasGradeableSelection}
-          title="Check the selected files"
-        >
-          <CheckIcon className="h-4 w-4" />
-          Check
-        </Button>
         <Button
           variant="secondary"
           onClick={() => void enqueueRemediate()}

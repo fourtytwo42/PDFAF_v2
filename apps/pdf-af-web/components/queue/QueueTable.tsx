@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  CheckIcon,
   DownloadIcon,
   FileIcon,
   InfoIcon,
@@ -211,7 +210,6 @@ export function QueueTable() {
   const detailJobId = useQueueStore((state) => state.detailJobId);
   const closeDetail = useQueueStore((state) => state.closeDetail);
   const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
-  const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const openDetail = useQueueStore((state) => state.openDetail);
   const removeJob = useQueueStore((state) => state.removeJob);
@@ -242,8 +240,6 @@ export function QueueTable() {
             const displaySummary = getDisplaySummary(job);
             const completedDuration = getCompletedDuration(job);
             const canRun = ['idle', 'failed', 'done'].includes(job.status);
-            const showCheckButton =
-              !job.analyzeResult && !job.remediationResult && (job.status === 'idle' || job.status === 'failed');
             const fixLabel = job.remediationResult ? 'Fix Again' : 'Fix';
             const downloadAction = getPrimaryDownloadAction(job);
             const retentionWarning = getRetentionWarning(job);
@@ -424,30 +420,19 @@ export function QueueTable() {
                     ) : null}
 
                     <div className="mt-4 flex flex-wrap gap-2">
-                      {showCheckButton ? (
-                        <Button
-                          variant="primary"
-                          onClick={() => void enqueueAnalyze([job.id])}
-                          disabled={!canRun}
-                          title="Check this PDF"
-                        >
-                          <CheckIcon className="h-4 w-4" />
-                          Check
-                        </Button>
-                      ) : null}
-                        <Button
-                          variant="secondary"
-                          onClick={() => void enqueueRemediate([job.id])}
-                          disabled={
-                            !canRun ||
-                            (job.persisted &&
-                              !job.localFile &&
-                              job.fileStatus !== 'available' &&
-                              !job.hasServerSource)
-                          }
-                          title={
-                            requiresReupload
-                              ? 'Add this PDF again to fix it'
+                      <Button
+                        variant="secondary"
+                        onClick={() => void enqueueRemediate([job.id])}
+                        disabled={
+                          !canRun ||
+                          (job.persisted &&
+                            !job.localFile &&
+                            job.fileStatus !== 'available' &&
+                            !job.hasServerSource)
+                        }
+                        title={
+                          requiresReupload
+                            ? 'Add this PDF again to fix it'
                             : job.remediationResult
                               ? 'Fix this PDF again'
                               : 'Fix this PDF'

@@ -204,7 +204,8 @@ function createLocalJob(file: File, mode: JobMode, status: JobStatus): JobRecord
     mimeType: file.type || 'application/pdf',
     createdAt: timestamp,
     updatedAt: timestamp,
-    processingStartedAt: status === 'queued_remediate' ? timestamp : undefined,
+    processingStartedAt:
+      status === 'queued_analyze' || status === 'queued_remediate' ? timestamp : undefined,
     status,
     mode,
     fileStatus: 'none',
@@ -392,8 +393,8 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
       createdJobs.push(
         createLocalJob(
           file,
-          autoRemediateOnAdd ? 'remediate' : null,
-          autoRemediateOnAdd ? 'queued_remediate' : 'idle',
+          autoRemediateOnAdd ? 'remediate' : 'grade',
+          autoRemediateOnAdd ? 'queued_remediate' : 'queued_analyze',
         ),
       );
     }
@@ -404,9 +405,7 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
       isAddingFiles: false,
     }));
 
-    if (autoRemediateOnAdd) {
-      await get().runScheduler();
-    }
+    await get().runScheduler();
   },
 
   removeJob: async (jobId) => {

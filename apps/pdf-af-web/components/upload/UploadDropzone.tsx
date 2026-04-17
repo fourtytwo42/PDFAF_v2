@@ -43,7 +43,7 @@ export function UploadDropzone() {
   return (
     <SectionCard
       title="Add files"
-      description="Pick PDFs to check or fix."
+      description="Pick PDFs to fix."
       action={<StatusPill label={`${jobs.length} files`} tone="accent" />}
     >
       <div
