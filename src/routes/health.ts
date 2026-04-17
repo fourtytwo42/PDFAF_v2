@@ -1,15 +1,20 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Router, type IRouter } from 'express';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   DB_PATH,
+  GEMMA4_GGUF_FILE,
+  GEMMA4_MMPROJ_FILE,
   getOpenAiCompatApiKey,
   getOpenAiCompatBaseUrl,
   HEALTH_LLM_PROBE_TIMEOUT_MS,
+  LLAMA_SERVER_BIN,
+  PDFAF_DESKTOP_MODE,
   PYTHON_BIN,
   QPDF_BIN,
+  runLocalLlmEnabled,
 } from '../config.js';
 import { getDb } from '../db/client.js';
 import { remediationStatsLast24h } from '../metrics.js';
@@ -109,6 +114,46 @@ async function probeLlmReachable(): Promise<boolean> {
   }
 }
 
+function readLocalLlmState(): {
+  installed: boolean;
+  enabled: boolean;
+  activeMode: 'local' | 'remote' | 'none';
+  serverBin: string;
+  serverPresent: boolean;
+  modelPath: string;
+  modelPresent: boolean;
+  mmprojPath: string;
+  mmprojPresent: boolean;
+} {
+  const envInstalled = process.env['PDFAF_LOCAL_LLM_INSTALLED'] === '1';
+  const envEnabled = process.env['PDFAF_LOCAL_LLM_ENABLED'] === '1';
+  const activeModeEnv = process.env['PDFAF_LOCAL_LLM_ACTIVE_MODE'];
+  const serverPresent = existsSync(LLAMA_SERVER_BIN);
+  const modelPresent = existsSync(GEMMA4_GGUF_FILE);
+  const mmprojPresent = existsSync(GEMMA4_MMPROJ_FILE);
+  const installed = envInstalled || (PDFAF_DESKTOP_MODE && serverPresent && modelPresent && mmprojPresent);
+  const enabled = envEnabled || runLocalLlmEnabled();
+
+  return {
+    installed,
+    enabled,
+    activeMode:
+      activeModeEnv === 'local' || activeModeEnv === 'remote' || activeModeEnv === 'none'
+        ? activeModeEnv
+        : enabled && installed
+          ? 'local'
+          : getOpenAiCompatBaseUrl().trim()
+            ? 'remote'
+            : 'none',
+    serverBin: LLAMA_SERVER_BIN,
+    serverPresent,
+    modelPath: GEMMA4_GGUF_FILE,
+    modelPresent,
+    mmprojPath: GEMMA4_MMPROJ_FILE,
+    mmprojPresent,
+  };
+}
+
 healthRouter.get('/', async (_req, res) => {
   const [qpdfR, pythonR, pikepdf, fonttools, tesseract, ocrmypdf] = await Promise.all([
     checkQpdf(),
@@ -174,6 +219,7 @@ healthRouter.get('/', async (_req, res) => {
   if (llmConfigured && !llmReachable) {
     degradedReasons.push('llm_unreachable');
   }
+  const localLlmState = readLocalLlmState();
 
   let status: 'ok' | 'degraded' | 'down' = 'ok';
   if (!dbCheck.ok) {
@@ -215,6 +261,8 @@ healthRouter.get('/', async (_req, res) => {
         configured: llmConfigured,
         reachable: llmConfigured ? llmReachable : false,
         required: false,
+        mode: localLlmState.activeMode,
+        local: localLlmState,
       },
       database: {
         ok: dbCheck.ok,

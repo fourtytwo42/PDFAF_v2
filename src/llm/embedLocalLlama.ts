@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import {
   GEMMA4_GGUF_FILE,
   GEMMA4_HF_REPO,
@@ -9,9 +9,10 @@ import {
   PDFAF_LLAMA_PORT,
   PDFAF_LLAMA_READY_TIMEOUT_MS,
   PDFAF_LLAMA_WORKDIR,
+  PDFAF_DESKTOP_MODE,
   runLocalLlmEnabled,
 } from '../config.js';
-import { logError, logInfo } from '../logging.js';
+import { logError, logInfo, logWarn } from '../logging.js';
 
 let llamaChild: ChildProcess | null = null;
 
@@ -20,6 +21,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 function preferWorkdirFile(filename: string): string {
+  if (isAbsolute(filename)) {
+    return filename;
+  }
   const rootFile = join(process.cwd(), filename);
   const workFile = join(PDFAF_LLAMA_WORKDIR, filename);
   if (existsSync(rootFile) && !existsSync(workFile)) {
@@ -78,27 +82,41 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
 
   const workGguf = preferWorkdirFile(GEMMA4_GGUF_FILE);
   const workMmproj = preferWorkdirFile(GEMMA4_MMPROJ_FILE);
-  const rootJson = join(process.cwd(), `${GEMMA4_GGUF_FILE}.json`);
-  const workJson = join(PDFAF_LLAMA_WORKDIR, `${GEMMA4_GGUF_FILE}.json`);
-  if (existsSync(rootJson) && !existsSync(workJson)) {
-    try {
-      renameSync(rootJson, workJson);
-    } catch {
-      /* ignore */
-    }
-  }
-  for (const base of [process.cwd(), PDFAF_LLAMA_WORKDIR]) {
-    const dip = join(base, `${GEMMA4_GGUF_FILE}.downloadInProgress`);
-    if (existsSync(dip)) {
+  if (!isAbsolute(GEMMA4_GGUF_FILE)) {
+    const rootJson = join(process.cwd(), `${GEMMA4_GGUF_FILE}.json`);
+    const workJson = join(PDFAF_LLAMA_WORKDIR, `${GEMMA4_GGUF_FILE}.json`);
+    if (existsSync(rootJson) && !existsSync(workJson)) {
       try {
-        unlinkSync(dip);
+        renameSync(rootJson, workJson);
       } catch {
         /* ignore */
+      }
+    }
+    for (const base of [process.cwd(), PDFAF_LLAMA_WORKDIR]) {
+      const dip = join(base, `${GEMMA4_GGUF_FILE}.downloadInProgress`);
+      if (existsSync(dip)) {
+        try {
+          unlinkSync(dip);
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
 
   const localModelReady = existsSync(workGguf) && existsSync(workMmproj);
+  const localServerReady = existsSync(LLAMA_SERVER_BIN);
+  if (PDFAF_DESKTOP_MODE && (!localServerReady || !localModelReady)) {
+    logWarn({
+      message: 'embed_llm_skipped',
+      details: {
+        reason: 'desktop local AI runtime is incomplete',
+        localServerReady,
+        localModelReady,
+      },
+    });
+    return;
+  }
   const args = localModelReady
     ? [
         '-m',

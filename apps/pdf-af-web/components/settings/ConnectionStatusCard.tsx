@@ -104,9 +104,25 @@ export function ConnectionStatusCard() {
                 </dd>
               </div>
               <div>
+                <dt className="text-[var(--muted)]">LLM Mode</dt>
+                <dd className="mt-0.5 font-bold uppercase text-[var(--foreground)]">
+                  {connection.summary.llmMode}
+                </dd>
+              </div>
+              <div>
                 <dt className="text-[var(--muted)]">LLM Reachable</dt>
                 <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                   {connection.summary.llmReachable ? 'Yes' : 'No'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[var(--muted)]">Local AI</dt>
+                <dd className="mt-0.5 font-bold text-[var(--foreground)]">
+                  {connection.summary.localLlm?.installed
+                    ? connection.summary.localLlm.enabled
+                      ? 'Installed + enabled'
+                      : 'Installed + disabled'
+                    : 'Not installed'}
                 </dd>
               </div>
             </dl>

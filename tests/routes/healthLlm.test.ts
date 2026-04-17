@@ -63,13 +63,20 @@ describe('healthRouter LLM reporting', () => {
 
   it('reports configured=false and reachable=false when no LLM base URL is set', async () => {
     delete process.env['OPENAI_COMPAT_BASE_URL'];
+    delete process.env['PDFAF_LOCAL_LLM_INSTALLED'];
+    delete process.env['PDFAF_LOCAL_LLM_ENABLED'];
     vi.stubGlobal('fetch', vi.fn());
 
     const app = await createHealthApp();
     const res = await request(app).get('/v1/health');
 
     expect(res.status).toBe(200);
-    expect(res.body.dependencies.llm).toEqual({ configured: false, reachable: false, required: false });
+    expect(res.body.dependencies.llm).toMatchObject({
+      configured: false,
+      reachable: false,
+      required: false,
+      mode: 'none',
+    });
     expect(res.body.dependencies.python.bin).toBe('python');
     expect(res.body.dependencies.qpdf.bin).toBe('qpdf');
     expect(res.body.dependencies.qpdf.required).toBe(true);
@@ -93,7 +100,12 @@ describe('healthRouter LLM reporting', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
-    expect(res.body.dependencies.llm).toEqual({ configured: true, reachable: true, required: false });
+    expect(res.body.dependencies.llm).toMatchObject({
+      configured: true,
+      reachable: true,
+      required: false,
+      mode: 'remote',
+    });
     expect(res.body.degradedReasons ?? []).not.toContain('llm_unreachable');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -113,7 +125,12 @@ describe('healthRouter LLM reporting', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('degraded');
-    expect(res.body.dependencies.llm).toEqual({ configured: true, reachable: false, required: false });
+    expect(res.body.dependencies.llm).toMatchObject({
+      configured: true,
+      reachable: false,
+      required: false,
+      mode: 'remote',
+    });
     expect(res.body.degradedReasons).toContain('llm_unreachable');
   });
 
@@ -157,5 +174,24 @@ describe('healthRouter LLM reporting', () => {
     expect(res.status).toBe(200);
     expect(res.body.dependencies.qpdf.bin).toBe('C:\\PDFAF\\runtime\\qpdf\\bin\\qpdf.exe');
     expect(res.body.dependencies.qpdf.version).toBe('qpdf 12.3.2');
+  });
+
+  it('reports desktop local AI state when configured', async () => {
+    process.env['PDFAF_LOCAL_LLM_INSTALLED'] = '1';
+    process.env['PDFAF_LOCAL_LLM_ENABLED'] = '1';
+    process.env['PDFAF_LOCAL_LLM_ACTIVE_MODE'] = 'local';
+    process.env['LLAMA_SERVER_BIN'] = 'C:\\PDFAF\\llm\\bin\\llama-server.exe';
+    process.env['GEMMA4_GGUF_FILE'] = 'C:\\PDFAF\\llm\\models\\gemma.gguf';
+    process.env['GEMMA4_MMPROJ_FILE'] = 'C:\\PDFAF\\llm\\models\\mmproj.gguf';
+    vi.stubGlobal('fetch', vi.fn());
+
+    const app = await createHealthApp();
+    const res = await request(app).get('/v1/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.dependencies.llm.mode).toBe('local');
+    expect(res.body.dependencies.llm.local.installed).toBe(true);
+    expect(res.body.dependencies.llm.local.enabled).toBe(true);
+    expect(res.body.dependencies.llm.local.serverBin).toBe('C:\\PDFAF\\llm\\bin\\llama-server.exe');
   });
 });

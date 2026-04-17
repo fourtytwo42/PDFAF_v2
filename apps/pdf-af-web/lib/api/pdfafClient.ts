@@ -20,6 +20,20 @@ function mapHealthResponse(payload: RawHealthResponse): HealthSummary {
     port: payload.port,
     llmConfigured: Boolean(payload.dependencies?.llm?.configured),
     llmReachable: Boolean(payload.dependencies?.llm?.reachable),
+    llmMode: payload.dependencies?.llm?.mode ?? 'none',
+    localLlm: payload.dependencies?.llm?.local
+      ? {
+          installed: Boolean(payload.dependencies.llm.local.installed),
+          enabled: Boolean(payload.dependencies.llm.local.enabled),
+          activeMode: payload.dependencies.llm.local.activeMode ?? 'none',
+          serverBin: payload.dependencies.llm.local.serverBin ?? '',
+          serverPresent: Boolean(payload.dependencies.llm.local.serverPresent),
+          modelPath: payload.dependencies.llm.local.modelPath ?? '',
+          modelPresent: Boolean(payload.dependencies.llm.local.modelPresent),
+          mmprojPath: payload.dependencies.llm.local.mmprojPath ?? '',
+          mmprojPresent: Boolean(payload.dependencies.llm.local.mmprojPresent),
+        }
+      : undefined,
     databaseOk: payload.dependencies?.database?.ok,
   };
 }

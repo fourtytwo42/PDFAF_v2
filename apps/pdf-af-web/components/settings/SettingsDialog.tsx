@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '../common/Button';
+import { LocalAiSettingsCard } from './LocalAiSettingsCard';
 import { useAppSettingsStore } from '../../stores/settings';
 
 interface SettingsDialogProps {
@@ -99,6 +100,8 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
               Last test: {connection.error.message}
             </p>
           ) : null}
+
+          <LocalAiSettingsCard />
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-1.5">

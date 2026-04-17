@@ -84,7 +84,7 @@ describe('embedLocalLlama', () => {
     expect(args).toContain('-m');
     expect(args).toContain('--mmproj');
     expect(args).not.toContain('-hf');
-    expect(options.cwd).toContain('data/llama-work');
+    expect(options.cwd).toContain('llama-work');
     expect(process.env['OPENAI_COMPAT_BASE_URL']).toBe('http://127.0.0.1:1234/v1');
     expect(process.env['OPENAI_COMPAT_MODEL']).toBe('gemma-4-E2B-it-Q4_K_M.gguf');
     expect(fetchMock).toHaveBeenCalled();
@@ -137,6 +137,22 @@ describe('embedLocalLlama', () => {
       /Embedded llama-server did not become ready at http:\/\/127\.0\.0\.1:1234\/v1\/models within 1ms/,
     );
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('skips desktop local mode when installed artifacts are incomplete', async () => {
+    process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
+    process.env['PDFAF_DESKTOP_MODE'] = '1';
+    process.env['LLAMA_SERVER_BIN'] = 'C:\\PDFAF\\llm\\bin\\llama-server.exe';
+    process.env['GEMMA4_GGUF_FILE'] = 'C:\\PDFAF\\llm\\models\\gemma.gguf';
+    process.env['GEMMA4_MMPROJ_FILE'] = 'C:\\PDFAF\\llm\\models\\mmproj.gguf';
+
+    existsSyncMock.mockImplementation((path: string) => path === 'C:\\PDFAF\\llm\\bin\\llama-server.exe');
+
+    const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
+    await startEmbeddedLlmIfEnabled();
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(process.env['OPENAI_COMPAT_BASE_URL']).toBeUndefined();
   });
 
   it('stopEmbeddedLlm is safe with no child and kills active child once', async () => {

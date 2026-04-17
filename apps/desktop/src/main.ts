@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, Tray, nativeImage } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } from 'electron';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -12,6 +12,7 @@ import {
   validatePackagedDependencyPaths,
   type DesktopDependencyPaths,
 } from './runtime.js';
+import { LocalLlmManager, type LocalLlmPublicState } from './localLlm.js';
 
 type StartupPhase =
   | 'idle'
@@ -78,6 +79,7 @@ let isQuitting = false;
 let runtimePaths: RuntimePaths | null = null;
 let dependencyPaths: DesktopDependencyPaths | null = null;
 let desktopState: DesktopState = { ...defaultDesktopState };
+let localLlmManager: LocalLlmManager | null = null;
 
 const runtimeState: RuntimeState = {
   apiChild: null,
@@ -166,6 +168,10 @@ function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     PDFAF_NODE_BIN: dependencyPaths.nodeBin,
     PDFAF_PYTHON_BIN: dependencyPaths.pythonBin,
     PDFAF_QPDF_BIN: dependencyPaths.qpdfBin,
+    PDFAF_LOCAL_LLM_INSTALLED: localLlmManager?.isInstalled() ? '1' : '0',
+    PDFAF_LOCAL_LLM_ENABLED: localLlmManager?.getState().enabled ? '1' : '0',
+    PDFAF_LOCAL_LLM_ACTIVE_MODE: localLlmManager?.getState().enabled && localLlmManager?.isInstalled() ? 'local' : 'none',
+    ...(localLlmManager?.getApiEnv() ?? {}),
     ...extra,
   });
 }
@@ -393,6 +399,40 @@ async function handleRuntimeFailure(
   app.quit();
 }
 
+function broadcastLocalLlmState(state: LocalLlmPublicState): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('pdfaf:local-llm:changed', state);
+}
+
+function registerLocalLlmIpc(): void {
+  ipcMain.handle('pdfaf:local-llm:get-state', async () => localLlmManager?.getState() ?? null);
+  ipcMain.handle('pdfaf:local-llm:cancel', async () => localLlmManager?.cancelInstall() ?? null);
+  ipcMain.handle('pdfaf:local-llm:install', async () => {
+    if (!localLlmManager) {
+      throw new Error('Local AI manager is not initialized.');
+    }
+    const state = await localLlmManager.install();
+    await restartServices();
+    return state;
+  });
+  ipcMain.handle('pdfaf:local-llm:remove', async () => {
+    if (!localLlmManager) {
+      throw new Error('Local AI manager is not initialized.');
+    }
+    const state = await localLlmManager.remove();
+    await restartServices();
+    return state;
+  });
+  ipcMain.handle('pdfaf:local-llm:set-enabled', async (_event, enabled: boolean) => {
+    if (!localLlmManager) {
+      throw new Error('Local AI manager is not initialized.');
+    }
+    const state = await localLlmManager.setEnabled(enabled);
+    await restartServices();
+    return state;
+  });
+}
+
 function getCurrentWebUrl(): string {
   if (!runtimeState.webPort) {
     throw new Error('The web port is not initialized.');
@@ -437,6 +477,9 @@ async function showMainWindow(): Promise<void> {
   });
 
   await mainWindow.loadURL(getCurrentWebUrl());
+  if (localLlmManager) {
+    broadcastLocalLlmState(localLlmManager.getState());
+  }
   mainWindow.show();
   mainWindow.focus();
 }
@@ -667,6 +710,19 @@ async function bootstrap(): Promise<void> {
   runtimePaths = resolveRuntimePaths();
   await ensureRuntimePaths(runtimePaths);
   await loadDesktopState();
+  localLlmManager = new LocalLlmManager({
+    llmRootDir: runtimePaths.llmDir,
+    onStateChange: (state) => {
+      queueLog(
+        'electron',
+        `Local AI state changed: status=${state.status} enabled=${state.enabled} available=${state.available}`,
+      );
+      broadcastLocalLlmState(state);
+    },
+    log: (message) => queueLog('electron', message),
+  });
+  await localLlmManager.initialize();
+  registerLocalLlmIpc();
   logFilePath = runtimePaths.logFilePath;
   queueLog('electron', 'Desktop runtime booting');
   queueLog('electron', `Desktop app data dir: ${runtimePaths.appDataDir}`);
