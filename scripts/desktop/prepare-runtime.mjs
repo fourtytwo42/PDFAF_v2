@@ -13,8 +13,8 @@ const cacheRoot = join(desktopRoot, '.runtime-cache');
 
 const defaultManifest = {
   node: {
-    version: '22.22.2',
-    url: 'https://nodejs.org/dist/v22.22.2/win-x64/node.exe',
+    version: process.version.replace(/^v/, ''),
+    source: process.execPath,
   },
   python: {
     version: '3.11.9',
@@ -112,10 +112,8 @@ async function firstDirectory(path) {
 
 async function stageNode() {
   const nodeStageDir = join(runtimeRoot, 'node');
-  const nodeCachePath = join(cacheRoot, `node-v${defaultManifest.node.version}-x64.exe`);
-  await ensureDownloaded(defaultManifest.node.url, nodeCachePath);
   await ensureDir(nodeStageDir);
-  await copyFile(nodeCachePath, join(nodeStageDir, 'node.exe'));
+  await copyFile(process.execPath, join(nodeStageDir, 'node.exe'));
   log(`Staged Node runtime: ${join(nodeStageDir, 'node.exe')}`);
 }
 
