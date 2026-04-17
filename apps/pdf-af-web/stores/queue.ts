@@ -228,6 +228,15 @@ function buildRemediatedFileName(fileName: string): string {
     : `${fileName}-remediated.pdf`;
 }
 
+async function getProcessingBlob(job: JobRecord) {
+  const remediatedBlob = await getRemediatedBlob(job.id);
+  if (remediatedBlob) {
+    return remediatedBlob;
+  }
+
+  return getOriginalBlob(job.id);
+}
+
 function decodeBase64ToBlob(base64: string, mimeType: string): Blob {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -319,9 +328,9 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
   try {
     await putJobRecord(job);
 
-    const originalBlob = await getOriginalBlob(jobId);
-    if (!originalBlob) {
-      throw new Error('Original PDF is no longer available in browser storage.');
+    const processingBlob = await getProcessingBlob(job);
+    if (!processingBlob) {
+      throw new Error('No PDF file is available in browser storage for this row.');
     }
 
     job = {
@@ -336,7 +345,7 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
     const apiBaseUrl = useAppSettingsStore.getState().apiBaseUrl;
 
     if (job.mode === 'grade') {
-      const analyzeResult = await analyzePdf(apiBaseUrl, originalBlob.blob, job.fileName);
+      const analyzeResult = await analyzePdf(apiBaseUrl, processingBlob.blob, processingBlob.fileName);
       job = {
         ...job,
         status: 'done',
@@ -350,12 +359,17 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
       set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
       await putJobRecord(job);
     } else {
-      const remediation = await remediatePdf(apiBaseUrl, originalBlob.blob, job.fileName);
+      const remediation = await remediatePdf(apiBaseUrl, processingBlob.blob, processingBlob.fileName);
       let nextRemediatedBlobKey = job.remediatedBlobKey;
 
       if (job.remediatedBlobKey) {
         await deleteBlobByKey(job.remediatedBlobKey);
         nextRemediatedBlobKey = undefined;
+      }
+
+      const originalBlob = await getOriginalBlob(job.id);
+      if (originalBlob) {
+        await deleteBlobByKey(originalBlob.blobKey);
       }
 
       if (remediation.remediatedPdfBase64) {
@@ -386,6 +400,7 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
         mode: 'remediate',
         analyzeResult: remediation.summary.after,
         remediationResult: remediation.summary,
+        originalBlobKey: nextRemediatedBlobKey ?? job.originalBlobKey,
         remediatedBlobKey: nextRemediatedBlobKey,
         findingSummaries: remediation.summary.after.topFindings,
         updatedAt: nowIso(),
@@ -622,6 +637,10 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     if (!job) return;
 
     try {
+      if (job.remediatedBlobKey) {
+        throw new Error('Only the fixed PDF is kept after remediation.');
+      }
+
       const blobRecord = await getOriginalBlob(jobId);
       if (!blobRecord) {
         throw new Error('Original file is no longer available in browser storage.');

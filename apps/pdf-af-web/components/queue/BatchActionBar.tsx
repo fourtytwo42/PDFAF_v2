@@ -16,8 +16,6 @@ import { useQueueStore } from '../../stores/queue';
 export function BatchActionBar() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
-  const clearSelection = useQueueStore((state) => state.clearSelection);
-  const clearCompleted = useQueueStore((state) => state.clearCompleted);
   const downloadSelectedRemediatedZip = useQueueStore(
     (state) => state.downloadSelectedRemediatedZip,
   );
@@ -43,7 +41,6 @@ export function BatchActionBar() {
   const queuedCount = jobs.filter(
     (job) => job.status === 'queued_analyze' || job.status === 'queued_remediate',
   ).length;
-  const hasCompletedRows = jobs.some((job) => job.status === 'done');
   const hasGradeableSelection = jobs.some(
     (job) =>
       selectedJobIds.includes(job.id) &&
@@ -138,23 +135,6 @@ export function BatchActionBar() {
         >
           <DownloadIcon className="h-4 w-4" />
           Download
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={() => void clearCompleted()}
-          disabled={!hasCompletedRows}
-          title="Remove finished files"
-        >
-          <DownloadIcon className="h-4 w-4" />
-          Clear done
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={() => clearSelection()}
-          disabled={selectedJobIds.length === 0}
-          title="Clear the current selection"
-        >
-          Clear
         </Button>
         <Button
           variant="secondary"

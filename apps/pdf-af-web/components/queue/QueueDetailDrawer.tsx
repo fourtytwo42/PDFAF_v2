@@ -147,18 +147,22 @@ export function QueueDetailDrawer() {
         <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-4 md:px-5 md:pb-5">
           <DetailSection title="Quick actions">
             <div className="flex flex-wrap gap-2">
-              <Button variant="primary" onClick={() => void enqueueAnalyze([job.id])} title="Check this file">
-                <CheckIcon className="h-4 w-4" />
-                Check
-              </Button>
+              {!job.analyzeResult && !job.remediationResult ? (
+                <Button variant="primary" onClick={() => void enqueueAnalyze([job.id])} title="Check this file">
+                  <CheckIcon className="h-4 w-4" />
+                  Check
+                </Button>
+              ) : null}
               <Button variant="secondary" onClick={() => void enqueueRemediate([job.id])} title="Fix this file">
                 <MagicIcon className="h-4 w-4" />
-                Fix
+                {job.remediationResult ? 'Fix Again' : 'Fix'}
               </Button>
-              <Button variant="ghost" onClick={() => void downloadOriginal(job.id)} title="Download the original file">
-                <DownloadIcon className="h-4 w-4" />
-                Original
-              </Button>
+              {!job.remediatedBlobKey && !job.remediationResult ? (
+                <Button variant="ghost" onClick={() => void downloadOriginal(job.id)} title="Download the original file">
+                  <DownloadIcon className="h-4 w-4" />
+                  Original
+                </Button>
+              ) : null}
               {job.remediatedBlobKey ? (
                 <Button variant="ghost" onClick={() => void downloadRemediated(job.id)} title="Download the fixed file">
                   <DownloadIcon className="h-4 w-4" />

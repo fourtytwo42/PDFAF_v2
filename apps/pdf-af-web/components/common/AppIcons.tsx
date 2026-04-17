@@ -105,6 +105,16 @@ export function MoreIcon(props: IconProps) {
   );
 }
 
+export function InfoIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10v6" />
+      <path d="M12 7h.01" />
+    </BaseIcon>
+  );
+}
+
 export function FileIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>

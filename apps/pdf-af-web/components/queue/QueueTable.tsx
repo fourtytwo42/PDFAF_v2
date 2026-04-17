@@ -3,9 +3,10 @@
 import {
   CheckIcon,
   FileIcon,
+  InfoIcon,
   MagicIcon,
-  MoreIcon,
   RetryIcon,
+  TrashIcon,
 } from '../common/AppIcons';
 import { Button } from '../common/Button';
 import { SectionCard } from '../common/SectionCard';
@@ -72,22 +73,56 @@ function formatFindingsSummary(job: JobRecord): string {
     return job.analyzeResult ? 'No big problems found' : 'No results yet';
   }
 
-  return job.findingSummaries.length === 1
-    ? '1 thing to look at'
-    : `${job.findingSummaries.length} things to look at`;
+  return job.findingSummaries
+    .slice(0, 2)
+    .map((finding) => finding.title)
+    .join(' · ');
 }
 
 function getDisplaySummary(job: JobRecord) {
   return job.remediationResult?.after ?? job.analyzeResult;
 }
 
+function getPrimaryDownloadAction(job: JobRecord) {
+  if (job.remediatedBlobKey) return 'fixed';
+  if (job.remediationResult) return 'none';
+  return 'original';
+}
+
+function getGradeTone(grade: string) {
+  switch (grade) {
+    case 'A':
+      return 'border-[color:rgba(22,163,74,0.18)] bg-[color:rgba(22,163,74,0.1)] text-[var(--success)]';
+    case 'B':
+      return 'border-[color:rgba(34,197,94,0.18)] bg-[color:rgba(34,197,94,0.08)] text-[#15803d]';
+    case 'C':
+      return 'border-[color:rgba(234,179,8,0.18)] bg-[color:rgba(234,179,8,0.08)] text-[#a16207]';
+    case 'D':
+      return 'border-[color:rgba(249,115,22,0.18)] bg-[color:rgba(249,115,22,0.08)] text-[#c2410c]';
+    case 'F':
+    default:
+      return 'border-[color:rgba(220,38,38,0.18)] bg-[color:rgba(220,38,38,0.08)] text-[var(--danger)]';
+  }
+}
+
+function GradeBadge({ score, grade }: { score: number; grade: string }) {
+  return (
+    <div className={`rounded-2xl border px-3 py-2 ${getGradeTone(grade)}`}>
+      <p className="text-lg font-semibold leading-none">{grade}</p>
+      <p className="mt-1 text-xs font-medium">{score}</p>
+    </div>
+  );
+}
+
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
   const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
+  const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const openDetail = useQueueStore((state) => state.openDetail);
+  const removeJob = useQueueStore((state) => state.removeJob);
   const retryJob = useQueueStore((state) => state.retryJob);
   const toggleSelection = useQueueStore((state) => state.toggleSelection);
 
@@ -105,6 +140,10 @@ export function QueueTable() {
             const isSelected = selectedJobIds.includes(job.id);
             const displaySummary = getDisplaySummary(job);
             const canRun = ['idle', 'failed', 'done'].includes(job.status);
+            const showCheckButton =
+              !job.analyzeResult && !job.remediationResult && (job.status === 'idle' || job.status === 'failed');
+            const fixLabel = job.remediationResult ? 'Fix Again' : 'Fix';
+            const downloadAction = getPrimaryDownloadAction(job);
 
             return (
               <article key={job.id} className="surface-strong p-4">
@@ -124,60 +163,129 @@ export function QueueTable() {
                       <div className="min-w-0">
                         <button
                           type="button"
-                          className="truncate text-left text-base font-semibold text-[var(--foreground)] underline-offset-2 hover:text-[var(--accent-strong)] hover:underline"
-                          onClick={() => void downloadOriginal(job.id)}
-                          title="Download original PDF"
+                          className={`truncate text-left text-base font-semibold underline-offset-2 ${
+                            downloadAction === 'none'
+                              ? 'cursor-default text-[var(--foreground)]'
+                              : 'text-[var(--foreground)] hover:text-[var(--accent-strong)] hover:underline'
+                          }`}
+                          onClick={() =>
+                            void (
+                              downloadAction === 'fixed'
+                                ? downloadRemediated(job.id)
+                                : downloadAction === 'original'
+                                  ? downloadOriginal(job.id)
+                                  : Promise.resolve()
+                            )
+                          }
+                          title={
+                            downloadAction === 'fixed'
+                              ? 'Download fixed PDF'
+                              : downloadAction === 'original'
+                                ? 'Download original PDF'
+                                : 'No downloadable file is available'
+                          }
                         >
                           {job.fileName}
                         </button>
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <StatusPill label={formatFriendlyStatus(job)} tone={getStatusTone(job)} />
-                          {job.remediationResult?.improved ? (
-                            <StatusPill label="Better now" tone="success" />
-                          ) : null}
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                          <span
+                            className={
+                              job.status === 'failed'
+                                ? 'text-[var(--danger)]'
+                                : job.status === 'done'
+                                  ? 'text-[var(--muted)]'
+                                  : 'text-[var(--accent-strong)]'
+                            }
+                          >
+                            {formatFriendlyStatus(job)}
+                          </span>
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        className="h-10 w-10 shrink-0 p-0"
-                        onClick={() => openDetail(job.id)}
-                        title="See more info"
-                        aria-label={`See more info for ${job.fileName}`}
-                      >
-                        <MoreIcon className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          className="h-10 w-10 shrink-0 p-0"
+                          onClick={() => openDetail(job.id)}
+                          title="See details"
+                          aria-label={`See details for ${job.fileName}`}
+                        >
+                          <InfoIcon className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="h-10 w-10 shrink-0 p-0"
+                          onClick={() => void removeJob(job.id)}
+                          disabled={
+                            job.status === 'uploading' ||
+                            job.status === 'analyzing' ||
+                            job.status === 'remediating'
+                          }
+                          title="Remove file"
+                          aria-label={`Remove ${job.fileName}`}
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
 
-                    <p className="mt-3 text-lg font-semibold tracking-[-0.02em] text-[var(--foreground)]">
-                      {formatResultSummary(job)}
-                    </p>
-                    <p className="mt-1 text-sm text-[var(--muted)]">
-                      {displaySummary ? formatPdfClass(displaySummary.pdfClass) : 'Not checked yet'} ·{' '}
-                      {formatFileSize(job.fileSize)} · {formatJobTimestamp(job.updatedAt)}
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--muted)]">{formatFindingsSummary(job)}</p>
+                    <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
+                        {job.remediationResult ? (
+                          <>
+                            <GradeBadge
+                              score={job.remediationResult.before.score}
+                              grade={job.remediationResult.before.grade}
+                            />
+                            <div className="pt-3 text-sm text-[var(--muted)]">→</div>
+                            <GradeBadge
+                              score={job.remediationResult.after.score}
+                              grade={job.remediationResult.after.grade}
+                            />
+                          </>
+                        ) : displaySummary ? (
+                          <GradeBadge score={displaySummary.score} grade={displaySummary.grade} />
+                        ) : (
+                          <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[#f8fafc] px-3 py-2 text-sm font-medium text-[var(--muted)]">
+                            Waiting
+                          </div>
+                        )}
+                        <div className="min-w-0 pt-1">
+                          <p className="text-sm text-[var(--muted)]">
+                            {displaySummary ? formatPdfClass(displaySummary.pdfClass) : 'Not checked yet'}
+                          </p>
+                          <p className="mt-1 text-sm text-[var(--muted)]">
+                            {formatFileSize(job.fileSize)} · {formatJobTimestamp(job.updatedAt)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="max-w-sm pt-1 text-sm leading-6 text-[var(--foreground)] md:text-right">
+                        {formatFindingsSummary(job)}
+                      </div>
+                    </div>
                     {job.errorMessage ? (
                       <p className="mt-2 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
                     ) : null}
 
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <Button
-                        variant="primary"
-                        onClick={() => void enqueueAnalyze([job.id])}
-                        disabled={!canRun}
-                        title="Check this PDF"
-                      >
-                        <CheckIcon className="h-4 w-4" />
-                        Check
-                      </Button>
+                      {showCheckButton ? (
+                        <Button
+                          variant="primary"
+                          onClick={() => void enqueueAnalyze([job.id])}
+                          disabled={!canRun}
+                          title="Check this PDF"
+                        >
+                          <CheckIcon className="h-4 w-4" />
+                          Check
+                        </Button>
+                      ) : null}
                       <Button
                         variant="secondary"
                         onClick={() => void enqueueRemediate([job.id])}
                         disabled={!canRun}
-                        title="Fix this PDF"
+                        title={job.remediationResult ? 'Fix this PDF again' : 'Fix this PDF'}
                       >
                         <MagicIcon className="h-4 w-4" />
-                        Fix
+                        {fixLabel}
                       </Button>
                       {job.status === 'failed' ? (
                         <Button
