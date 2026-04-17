@@ -890,14 +890,14 @@ export async function createRemediationRecord(input: {
       storedFileName = saved.storedFileName;
       storagePath = saved.storagePath;
       storedSizeBytes = saved.storedSizeBytes;
-
-      if (sourceStoragePath) {
-        await fs.rm(sourceStoragePath, { force: true }).catch(() => undefined);
-      }
-      sourceStoredFileName = null;
-      sourceStoragePath = null;
-      sourceStoredSizeBytes = null;
     }
+
+    if (sourceStoragePath) {
+      await fs.rm(sourceStoragePath, { force: true }).catch(() => undefined);
+    }
+    sourceStoredFileName = null;
+    sourceStoragePath = null;
+    sourceStoredSizeBytes = null;
 
     const record = putRecord({
       id,
