@@ -49,6 +49,41 @@ flowchart LR
   W --> D
 ```
 
+## Desktop Storage Policy
+
+The Windows app should not inherit the web app's temporary server-style retention rules.
+
+Desktop storage should be persistent by default:
+
+- store source PDFs in local app data
+- store remediated PDFs in local app data
+- store SQLite databases in local app data
+- store logs in local app data
+- store model files in local app data
+
+Recommended Windows root:
+
+- `%LOCALAPPDATA%\PDFAF\data\`
+
+Recommended subdirectories:
+
+- `source\`
+- `remediated\`
+- `db\`
+- `logs\`
+- `llm\`
+- `temp\`
+
+The desktop build should not auto-delete files after 24 hours and should not apply the current web quota deletion behavior by default.
+
+Instead of automatic retention cleanup, the desktop app should provide user-controlled cleanup actions such as:
+
+- open data folder
+- clear temporary files
+- delete saved source PDFs
+- delete saved remediated PDFs
+- delete model files
+
 ## Installer Strategy
 
 ### Initial installer contents
@@ -95,7 +130,7 @@ Current code uses `python3` directly in the API bridge and health checks. On Win
 
 ### 2. Storage defaults are container-oriented
 
-The web app currently defaults file storage to `/data`, which is not a desktop-safe default. The Windows app should use a writable app data directory.
+The web app currently defaults file storage to `/data`, which is not a desktop-safe default. The Windows app should use a writable app data directory and treat saved PDFs as persistent local files rather than expiring server artifacts.
 
 ### 3. API startup is not app-managed
 
@@ -138,6 +173,10 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
   - API database
   - web app saved files
   - temp and model work directories where needed
+- Add an explicit storage policy split between:
+  - desktop persistent storage
+  - web ephemeral storage
+- Disable automatic retention expiry and quota deletion in desktop mode.
 - Stop relying on fixed `localhost:6200` assumptions in production packaging.
 - Define a single source of truth for runtime paths injected by Electron.
 
@@ -177,6 +216,7 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
   - dependency detection failures
   - model download failures
   - child process exits
+- Add desktop settings/actions for storage management instead of background expiry.
 - Add desktop smoke tests.
 - Confirm behavior on a clean Windows machine without developer tooling installed.
 
@@ -186,6 +226,7 @@ The branch should eventually produce:
 
 - a desktop shell app under `apps/desktop`
 - Windows-specific runtime path handling
+- persistent desktop storage in app data
 - a first-run setup experience
 - optional local model installation flow
 - a repeatable Windows installer build
@@ -210,11 +251,13 @@ The first Windows release should be considered successful when a non-technical u
 2. Launch the desktop app from the Start menu.
 3. Analyze and remediate PDFs without manually starting servers.
 4. Use either remote AI immediately or install the local AI model from inside the app.
-5. Close the app cleanly without orphaned local processes.
+5. Reopen previously saved PDFs and remediated outputs from persistent local storage.
+6. Close the app cleanly without orphaned local processes.
 
 ## Notes
 
 - The first release should prioritize reliability over installer compactness.
 - Avoid making Docker Desktop a required end-user dependency.
 - Keep model weights out of the installer unless offline-only use is required.
+- Do not carry over the web app's 24-hour retention and quota deletion model into desktop mode.
 - Keep generated PDF payloads and base64 blobs out of docs, logs, and commits.
