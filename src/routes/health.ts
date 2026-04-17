@@ -8,6 +8,7 @@ import {
   getOpenAiCompatApiKey,
   getOpenAiCompatBaseUrl,
   HEALTH_LLM_PROBE_TIMEOUT_MS,
+  PYTHON_BIN,
 } from '../config.js';
 import { getDb } from '../db/client.js';
 import { remediationStatsLast24h } from '../metrics.js';
@@ -42,13 +43,13 @@ async function checkQpdf(): Promise<{ status: 'ok' | 'unavailable'; version: str
 }
 
 async function checkPython(): Promise<{ status: 'ok' | 'unavailable'; version: string | null }> {
-  const line = await execVersion('python3', ['--version']);
+  const line = await execVersion(PYTHON_BIN, ['--version']);
   return line ? { status: 'ok', version: line } : { status: 'unavailable', version: null };
 }
 
 async function checkPikepdf(): Promise<'ok' | 'unavailable'> {
   try {
-    await execFileAsync('python3', ['-c', 'import pikepdf'], { timeout: 10_000 });
+    await execFileAsync(PYTHON_BIN, ['-c', 'import pikepdf'], { timeout: 10_000 });
     return 'ok';
   } catch {
     return 'unavailable';
@@ -57,7 +58,7 @@ async function checkPikepdf(): Promise<'ok' | 'unavailable'> {
 
 async function checkFonttools(): Promise<'ok' | 'unavailable'> {
   try {
-    await execFileAsync('python3', ['-c', 'import fontTools'], { timeout: 10_000 });
+    await execFileAsync(PYTHON_BIN, ['-c', 'import fontTools'], { timeout: 10_000 });
     return 'ok';
   } catch {
     return 'unavailable';
@@ -192,7 +193,13 @@ healthRouter.get('/', async (_req, res) => {
     port: parseInt(process.env['PORT'] ?? '6200', 10),
     dependencies: {
       qpdf: { available: qpdfR.status === 'ok', version: qpdfR.version },
-      python: { available: pythonR.status === 'ok', version: pythonR.version, pikepdf: pikepdf === 'ok', fonttools: fonttools === 'ok' },
+      python: {
+        available: pythonR.status === 'ok',
+        version: pythonR.version,
+        bin: PYTHON_BIN,
+        pikepdf: pikepdf === 'ok',
+        fonttools: fonttools === 'ok',
+      },
       tesseract: { available: tesseract.available, version: tesseract.version },
       ocrmypdf: { available: ocrmypdf.available, version: ocrmypdf.version },
       llm: {

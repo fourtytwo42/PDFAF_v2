@@ -6,6 +6,10 @@ import 'dotenv/config';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+export function isWindowsPlatform(): boolean {
+  return process.platform === 'win32';
+}
+
 export const SCORING_WEIGHTS = {
   text_extractability: 0.175,
   title_language:      0.130,
@@ -160,10 +164,19 @@ function resolvePythonScriptPath(): string {
   return new URL('../python/pdf_analysis_helper.py', import.meta.url).pathname;
 }
 
+export function resolvePythonBin(): string {
+  const env = process.env['PDFAF_PYTHON_BIN']?.trim();
+  if (env) return env;
+  return isWindowsPlatform() ? 'python' : 'python3';
+}
+
 export const PYTHON_SCRIPT_PATH = resolvePythonScriptPath();
+export const PYTHON_BIN = resolvePythonBin();
+export const PDFAF_APP_DATA_DIR = process.env['PDFAF_APP_DATA_DIR']?.trim() ?? '';
 export const DB_PATH = process.env['DB_PATH'] ?? './data/pdfaf.db';
 export const PORT    = parseInt(process.env['PORT'] ?? '6200', 10);
 export const HOST    = process.env['HOST']?.trim() ?? '';
+export const PDFAF_DESKTOP_MODE = process.env['PDFAF_DESKTOP_MODE'] === '1';
 
 // ─── Phase 2 — deterministic remediation ─────────────────────────────────────
 

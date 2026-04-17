@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import {
+  PYTHON_BIN,
   PYTHON_TIMEOUT_MS,
   PYTHON_SCRIPT_PATH,
   PYTHON_MUTATION_TIMEOUT_MS,
@@ -74,7 +75,7 @@ export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysis
       resolve(result);
     };
 
-    const proc = spawn('python3', [PYTHON_SCRIPT_PATH, pdfPath], {
+    const proc = spawn(PYTHON_BIN, [PYTHON_SCRIPT_PATH, pdfPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
@@ -94,7 +95,7 @@ export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysis
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
     proc.on('error', (err) => {
-      console.error(`[bridge] failed to spawn python3: ${err.message}`);
+      console.error(`[bridge] failed to spawn ${PYTHON_BIN}: ${err.message}`);
       done(EMPTY_RESULT);
     });
 
@@ -170,7 +171,7 @@ export async function runPythonMutationBatch(
       resolve(r);
     };
 
-    const proc = spawn('python3', [PYTHON_SCRIPT_PATH, '--mutate', requestPath], {
+    const proc = spawn(PYTHON_BIN, [PYTHON_SCRIPT_PATH, '--mutate', requestPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

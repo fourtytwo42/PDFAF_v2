@@ -56,6 +56,19 @@ let mainWindow: BrowserWindow | null = null;
 let logFilePath = '';
 let isQuitting = false;
 
+interface RuntimePaths {
+  appDataDir: string;
+  dbDir: string;
+  dbPath: string;
+  filesDir: string;
+  logsDir: string;
+  logFilePath: string;
+  llmDir: string;
+  tempDir: string;
+}
+
+let runtimePaths: RuntimePaths | null = null;
+
 const runtimeState: RuntimeState = {
   apiChild: null,
   webChild: null,
@@ -71,6 +84,53 @@ function baseChildEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
     ...extra,
     ELECTRON_RUN_AS_NODE: '1',
   };
+}
+
+function resolveRuntimePaths(): RuntimePaths {
+  const appDataDir = join(app.getPath('userData'), 'data');
+  const dbDir = join(appDataDir, 'db');
+  const filesDir = join(appDataDir, 'files');
+  const logsDir = join(appDataDir, 'logs');
+  const llmDir = join(appDataDir, 'llm');
+  const tempDir = join(appDataDir, 'temp');
+
+  return {
+    appDataDir,
+    dbDir,
+    dbPath: join(dbDir, 'pdfaf.db'),
+    filesDir,
+    logsDir,
+    logFilePath: join(logsDir, 'pdfaf-desktop.log'),
+    llmDir,
+    tempDir,
+  };
+}
+
+async function ensureRuntimePaths(paths: RuntimePaths): Promise<void> {
+  await Promise.all([
+    mkdir(paths.appDataDir, { recursive: true }),
+    mkdir(paths.dbDir, { recursive: true }),
+    mkdir(paths.filesDir, { recursive: true }),
+    mkdir(paths.logsDir, { recursive: true }),
+    mkdir(paths.llmDir, { recursive: true }),
+    mkdir(paths.tempDir, { recursive: true }),
+  ]);
+}
+
+function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  if (!runtimePaths) {
+    throw new Error('Runtime paths are not initialized.');
+  }
+
+  return baseChildEnv({
+    DB_PATH: runtimePaths.dbPath,
+    PDF_AF_STORAGE_DIR: runtimePaths.filesDir,
+    PDF_AF_STORAGE_POLICY: 'desktop-persistent',
+    PDFAF_APP_DATA_DIR: runtimePaths.appDataDir,
+    PDFAF_DESKTOP_MODE: '1',
+    PDFAF_LLAMA_WORKDIR: runtimePaths.llmDir,
+    ...extra,
+  });
 }
 
 async function writeLog(source: 'api' | 'web' | 'electron', message: string): Promise<void> {
@@ -339,7 +399,7 @@ async function initializeRuntime(): Promise<void> {
   queueLog('electron', `Allocated apiPort=${runtimeState.apiPort} webPort=${runtimeState.webPort}`);
 
   runtimeState.startupPhase = 'starting_api';
-  runtimeState.apiChild = spawnManagedChild('api', apiEntry, apiCwd, baseChildEnv({
+  runtimeState.apiChild = spawnManagedChild('api', apiEntry, apiCwd, desktopChildEnv({
     HOST: '127.0.0.1',
     NODE_ENV: 'production',
     PORT: String(runtimeState.apiPort),
@@ -357,7 +417,7 @@ async function initializeRuntime(): Promise<void> {
   }
 
   runtimeState.startupPhase = 'starting_web';
-  runtimeState.webChild = spawnManagedChild('web', webEntry, webCwd, baseChildEnv({
+  runtimeState.webChild = spawnManagedChild('web', webEntry, webCwd, desktopChildEnv({
     HOSTNAME: '127.0.0.1',
     NODE_ENV: 'production',
     PDFAF_API_BASE_URL: `http://127.0.0.1:${runtimeState.apiPort}`,
@@ -408,9 +468,11 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.whenReady();
-  await mkdir(app.getPath('logs'), { recursive: true });
-  logFilePath = join(app.getPath('logs'), 'pdfaf-desktop.log');
+  runtimePaths = resolveRuntimePaths();
+  await ensureRuntimePaths(runtimePaths);
+  logFilePath = runtimePaths.logFilePath;
   queueLog('electron', 'Desktop runtime booting');
+  queueLog('electron', `Desktop app data dir: ${runtimePaths.appDataDir}`);
 
   try {
     await initializeRuntime();

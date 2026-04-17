@@ -14,6 +14,8 @@ import type { JobMode, JobStatus } from '../../types/queue';
 import type { RawRemediationResponse, RemediationSummary } from '../../types/remediation';
 import { normalizeAnalyzePayload } from '../findings/normalize';
 
+type StoragePolicy = 'desktop-persistent' | 'web-ephemeral';
+
 const DEFAULT_STORAGE_DIR = process.env.PDF_AF_STORAGE_DIR?.trim() || '/data';
 const DEFAULT_RETENTION_HOURS = Number(process.env.PDF_AF_RETENTION_HOURS ?? '24');
 const DEFAULT_RETENTION_MS = DEFAULT_RETENTION_HOURS * 60 * 60 * 1000;
@@ -86,6 +88,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+export function configuredStoragePolicy(): StoragePolicy {
+  return process.env.PDF_AF_STORAGE_POLICY === 'desktop-persistent'
+    ? 'desktop-persistent'
+    : 'web-ephemeral';
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
@@ -100,6 +108,10 @@ function configuredApiBaseUrl(): string {
 
 function getStorageDir(): string {
   return DEFAULT_STORAGE_DIR;
+}
+
+export function isDesktopPersistentStorage(): boolean {
+  return configuredStoragePolicy() === 'desktop-persistent';
 }
 
 function getDatabasePath(): string {
@@ -124,6 +136,12 @@ function retentionMs(): number {
 
 function quotaBytes(): number {
   return normalizeNumber(DEFAULT_QUOTA_BYTES, 1024 * 1024 * 1024);
+}
+
+export function computedExpiresAt(): string | null {
+  return isDesktopPersistentStorage()
+    ? null
+    : new Date(Date.now() + retentionMs()).toISOString();
 }
 
 function isSeverity(value: unknown): boolean {
@@ -347,8 +365,10 @@ export async function ensureServerStorageReady(): Promise<void> {
       await fs.mkdir(getRemediatedBaseDir(), { recursive: true });
       await fs.mkdir(getSourceBaseDir(), { recursive: true });
       database();
-      ensureCleanupLoop();
-      await sweepExpiredRecordsInternal();
+      if (!isDesktopPersistentStorage()) {
+        ensureCleanupLoop();
+        await sweepExpiredRecordsInternal();
+      }
     })();
   }
 
@@ -564,6 +584,7 @@ function decodeBase64(base64: string): Uint8Array {
 }
 
 async function enforceQuota(sessionId: string, keepId: string) {
+  if (isDesktopPersistentStorage()) return;
   const db = database();
   const rows = db
     .prepare(
@@ -697,6 +718,7 @@ async function sweepExpiredRecordsInternal() {
 
 export async function sweepExpiredRecords() {
   await ensureServerStorageReady();
+  if (isDesktopPersistentStorage()) return;
   await sweepExpiredRecordsInternal();
 }
 
@@ -773,7 +795,7 @@ export async function createAnalyzeRecord(sessionId: string, file: File): Promis
 
     const analyzeResult = normalizeAnalyzePayload(payload);
     const id = randomUUID();
-    const expiresAt = new Date(Date.now() + retentionMs()).toISOString();
+    const expiresAt = computedExpiresAt();
     let sourceStoredFileName: string | null = null;
     let sourceStoragePath: string | null = null;
     let sourceStoredSizeBytes: number | null = null;
@@ -806,7 +828,7 @@ export async function createAnalyzeRecord(sessionId: string, file: File): Promis
       expiresAt,
     });
 
-    if (sourceStoragePath) {
+    if (sourceStoragePath && !isDesktopPersistentStorage()) {
       await enforceQuota(sessionId, record.id);
     }
 
@@ -878,7 +900,7 @@ export async function createRemediationRecord(input: {
 
     const remediationResult = normalizeRemediationResponse(payload);
     const id = existingRecord?.id ?? randomUUID();
-    const expiresAt = new Date(Date.now() + retentionMs()).toISOString();
+    const expiresAt = computedExpiresAt();
     let fileStatus: StoredFileStatus = existingRecord?.fileStatus ?? 'failed';
     let storedFileName: string | null = existingRecord?.storedFileName ?? null;
     let storagePath: string | null = existingRecord?.storagePath ?? null;
@@ -900,12 +922,12 @@ export async function createRemediationRecord(input: {
       storedSizeBytes = saved.storedSizeBytes;
     }
 
-    if (sourceStoragePath) {
+    if (sourceStoragePath && !isDesktopPersistentStorage()) {
       await fs.rm(sourceStoragePath, { force: true }).catch(() => undefined);
+      sourceStoredFileName = null;
+      sourceStoragePath = null;
+      sourceStoredSizeBytes = null;
     }
-    sourceStoredFileName = null;
-    sourceStoragePath = null;
-    sourceStoredSizeBytes = null;
 
     const record = putRecord({
       id,
@@ -930,7 +952,7 @@ export async function createRemediationRecord(input: {
       createdAt: existingRecord?.createdAt,
     });
 
-    if (fileStatus === 'available') {
+    if (fileStatus === 'available' && !isDesktopPersistentStorage()) {
       await enforceQuota(input.sessionId, record.id);
     }
 
