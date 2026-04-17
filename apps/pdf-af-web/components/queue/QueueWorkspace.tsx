@@ -22,14 +22,6 @@ function StorageStateMessage() {
   );
 }
 
-function RetentionBanner() {
-  return (
-    <p className="border border-[color:rgba(183,121,31,0.2)] bg-[color:rgba(183,121,31,0.08)] px-3 py-2 text-xs leading-5 text-[var(--warning)]">
-      Fixed PDFs stay on this server for 24 hours. Saved fixed files may be deleted sooner if your total goes over 1 GB, so download anything you want to keep.
-    </p>
-  );
-}
-
 export function QueueWorkspace() {
   const jobs = useQueueStore((state) => state.jobs);
   const hydrated = useQueueStore((state) => state.hydrated);
@@ -53,7 +45,6 @@ export function QueueWorkspace() {
           description="Nothing here yet."
         >
           <div className="grid gap-4">
-            <RetentionBanner />
             <StorageStateMessage />
             <div className="surface-strong p-4">
               <p className="text-sm leading-6 text-[var(--muted)]">Add a PDF to get started.</p>
@@ -67,7 +58,6 @@ export function QueueWorkspace() {
   return (
     <>
       <div className="space-y-4">
-        <RetentionBanner />
         <StorageStateMessage />
         <QueueTable />
       </div>
