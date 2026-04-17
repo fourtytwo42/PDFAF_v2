@@ -288,8 +288,8 @@ export function QueueTable() {
                       : 'Fixing');
 
             return (
-              <article key={job.id} className="surface-strong p-4">
-                <div className="flex items-start gap-3">
+              <article key={job.id} className="surface-strong overflow-hidden p-4">
+                <div className="flex min-w-0 items-start gap-3">
                   <input
                     aria-label={`Select ${job.fileName}`}
                     className="focus-ring mt-1 h-4 w-4 rounded border-[color:var(--surface-border)]"
@@ -301,11 +301,11 @@ export function QueueTable() {
                     <FileIcon className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
                       <div className="min-w-0">
                         <button
                           type="button"
-                          className={`truncate text-left text-base font-semibold underline-offset-2 ${
+                          className={`block max-w-full overflow-hidden text-left text-base font-semibold leading-6 underline-offset-2 break-words [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] ${
                             downloadAction === 'none'
                               ? 'cursor-default text-[var(--foreground)]'
                               : 'text-[var(--foreground)] hover:text-[var(--accent-strong)] hover:underline'
@@ -339,7 +339,7 @@ export function QueueTable() {
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center justify-end gap-2 self-start">
                         <Button
                           variant="ghost"
                           className="h-10 w-10 shrink-0 p-0"
