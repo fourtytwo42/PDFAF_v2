@@ -147,6 +147,29 @@ function ProcessingTimer({ startedAt }: { startedAt: string }) {
   return <span>{formatElapsed(now - start)}</span>;
 }
 
+function getCompletedDuration(job: JobRecord): string | null {
+  if (job.remediationResult?.remediationDurationMs) {
+    return formatElapsed(job.remediationResult.remediationDurationMs);
+  }
+
+  if (job.analyzeResult?.analysisDurationMs) {
+    return formatElapsed(job.analyzeResult.analysisDurationMs);
+  }
+
+  if (job.status !== 'done' || !job.processingStartedAt) {
+    return null;
+  }
+
+  const startedAt = new Date(job.processingStartedAt).getTime();
+  const finishedAt = new Date(job.updatedAt).getTime();
+
+  if (Number.isNaN(startedAt) || Number.isNaN(finishedAt) || finishedAt < startedAt) {
+    return null;
+  }
+
+  return formatElapsed(finishedAt - startedAt);
+}
+
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
@@ -174,6 +197,7 @@ export function QueueTable() {
           {jobs.map((job) => {
             const isSelected = selectedJobIds.includes(job.id);
             const displaySummary = getDisplaySummary(job);
+            const completedDuration = getCompletedDuration(job);
             const canRun = ['idle', 'failed', 'done'].includes(job.status);
             const showCheckButton =
               !job.analyzeResult && !job.remediationResult && (job.status === 'idle' || job.status === 'failed');
@@ -302,6 +326,9 @@ export function QueueTable() {
                           <p className="mt-1 text-sm text-[var(--muted)]">
                             {formatFileSize(job.fileSize)} · {formatJobTimestamp(job.updatedAt)}
                           </p>
+                          {completedDuration ? (
+                            <p className="mt-1 text-sm text-[var(--muted)]">Took {completedDuration}</p>
+                          ) : null}
                         </div>
                       </div>
                       <div className="max-w-sm pt-1 text-sm leading-6 text-[var(--foreground)] md:text-right">
