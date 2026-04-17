@@ -127,7 +127,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
   };
 
   if (progressJobId) {
-    startRemediationProgress(progressJobId, 'Uploading file', 4, filename);
+    startRemediationProgress(progressJobId, 'Uploading PDF', 4, filename);
   }
 
   let parsedOptions: ParsedRemediateOptions = {};
@@ -184,10 +184,10 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       },
     });
 
-    await reportProgress(10, 'Analyzing source PDF', filename);
+    await reportProgress(10, 'Reading your PDF', filename);
     const { result, snapshot } = await analyzePdf(tempPath, filename);
     const buffer = await readFile(tempPath);
-    await reportProgress(18, 'Planning fixes');
+    await reportProgress(18, 'Getting fixes ready');
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
       buffer,
       filename,
@@ -220,7 +220,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       parsedOptions.semanticUntaggedHeadingTimeoutMs ?? parsedOptions.semanticTimeoutMs;
 
     if (semanticRequested) {
-      await reportProgress(92, 'Running figure AI');
+      await reportProgress(92, 'Describing figures');
       const scoreRef = remediation.after.score;
       if (!getOpenAiCompatBaseUrl()) {
         semanticSummary = {
@@ -237,7 +237,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         for (let pass = 0; pass < SEMANTIC_REMEDIATE_FIGURE_PASSES; pass++) {
           await reportProgress(
             92 + (((pass + 0.2) / Math.max(1, SEMANTIC_REMEDIATE_FIGURE_PASSES)) * 2),
-            'Running figure AI',
+            'Describing figures',
             `Pass ${pass + 1} of ${SEMANTIC_REMEDIATE_FIGURE_PASSES}`,
           );
           const sem = await applySemanticRepairs({
@@ -263,7 +263,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     // Promote /P → headings before tuning existing heading levels (many PDFs have no H tags yet).
     if (semanticPromoteHeadingsRequested) {
-      await reportProgress(94, 'Running heading AI');
+      await reportProgress(94, 'Organizing headings');
       const scoreRef = outAfter.score;
       if (!getOpenAiCompatBaseUrl()) {
         semanticPromoteHeadingsSummary = {
@@ -280,7 +280,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         for (let pass = 0; pass < SEMANTIC_REMEDIATE_PROMOTE_PASSES; pass++) {
           await reportProgress(
             94 + (((pass + 0.2) / Math.max(1, SEMANTIC_REMEDIATE_PROMOTE_PASSES)) * 1.5),
-            'Running heading AI',
+            'Organizing headings',
             `Promote pass ${pass + 1} of ${SEMANTIC_REMEDIATE_PROMOTE_PASSES}`,
           );
           const promote = await applySemanticPromoteHeadingRepairs({
@@ -302,7 +302,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     }
 
     if (semanticHeadingsRequested) {
-      await reportProgress(95.5, 'Tuning heading levels');
+      await reportProgress(95.5, 'Refining heading levels');
       const scoreRef = outAfter.score;
       if (!getOpenAiCompatBaseUrl()) {
         semanticHeadingsSummary = {
@@ -330,7 +330,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     }
 
     if (semanticUntaggedHeadingsRequested) {
-      await reportProgress(96.5, 'Tagging missing headings');
+      await reportProgress(96.5, 'Adding missing headings');
       const scoreRef = outAfter.score;
       if (!getOpenAiCompatBaseUrl()) {
         semanticUntaggedHeadingsSummary = {
@@ -384,7 +384,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     }
 
     const enc = encodePdfBase64(outBuffer);
-    await reportProgress(98, 'Saving fixed PDF');
+    await reportProgress(98, 'Saving your fixed PDF');
     const totalDuration =
       remediation.remediationDurationMs +
       (semanticSummary?.durationMs ?? 0) +
@@ -488,7 +488,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     recordRemediation(Date.now() - routeStarted);
     if (progressJobId) {
-      completeRemediationProgress(progressJobId, 'Fixed PDF is ready.');
+      completeRemediationProgress(progressJobId, 'Your fixed PDF is ready.');
     }
     res.json(body);
   } catch (err: unknown) {

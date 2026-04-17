@@ -659,7 +659,7 @@ export async function remediatePdf(
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
   if (activePlaybook) {
-    await reportProgress(24, 'Applying learned fixes', activePlaybook.id);
+    await reportProgress(24, 'Using a known fix plan', activePlaybook.id);
     const pb = await executePlaybook(
       buffer,
       filename,
@@ -688,15 +688,15 @@ export async function remediatePdf(
     if (plan.stages.length === 0) break;
     const roundBase = 24 + ((round - 1) / Math.max(1, maxRounds)) * 42;
     const roundSpan = 42 / Math.max(1, maxRounds);
-    await reportProgress(roundBase, 'Planning fixes', `Round ${round} of ${maxRounds}`);
+    await reportProgress(roundBase, 'Choosing fixes', `Pass ${round} of ${maxRounds}`);
 
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
       const stage = plan.stages[stageIndex]!;
       const stagePercent = roundBase + (((stageIndex + 0.35) / Math.max(1, plan.stages.length)) * roundSpan);
       await reportProgress(
         stagePercent,
-        'Applying fixes',
-        `Round ${round}, stage ${stage.stageNumber}`,
+        'Applying improvements',
+        `Pass ${round}, step ${stage.stageNumber}`,
       );
       const stageStartBuffer = currentBuffer;
       const stageStartScore = currentAnalysis.score;
@@ -760,8 +760,8 @@ export async function remediatePdf(
         roundBase + (((stageIndex + 1) / Math.max(1, plan.stages.length)) * roundSpan);
       await reportProgress(
         completedStagePercent,
-        'Checking progress',
-        `Round ${round}, stage ${stage.stageNumber}`,
+        'Checking results',
+        `Pass ${round}, step ${stage.stageNumber}`,
       );
     }
 
@@ -782,7 +782,7 @@ export async function remediatePdf(
   }
 
   {
-    await reportProgress(70, 'Normalizing structure');
+    await reportProgress(70, 'Tidying document structure');
     const st = await applyAccessibilityStructureEnsure({
       filename,
       signal: options?.signal,
@@ -800,7 +800,7 @@ export async function remediatePdf(
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
   if (currentSnapshot.isTagged || currentSnapshot.structureTree !== null) {
-    await reportProgress(78, 'Repairing alt text structure');
+    await reportProgress(78, 'Cleaning up alt text');
     const scoreBefore = currentAnalysis.score;
     const alt = await applyPostRemediationAltRepair(
       currentBuffer,
@@ -829,7 +829,7 @@ export async function remediatePdf(
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
   // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
   if (currentSnapshot.isTagged) {
-    await reportProgress(84, 'Running cleanup passes');
+    await reportProgress(84, 'Running final cleanup');
     const reanalyzeAfterBuffer = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
       const tmpPath = join(tmpdir(), `pdfaf-post-${randomUUID()}.pdf`);
       await writeFile(tmpPath, buf);
@@ -901,7 +901,7 @@ export async function remediatePdf(
   }
 
   {
-    await reportProgress(90, 'Finalizing document');
+    await reportProgress(90, 'Wrapping things up');
     const finRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
     const fin = await applyIcjiaDocumentFinalization({
       filename,

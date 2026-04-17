@@ -87,7 +87,7 @@ export function completeRemediationProgress(jobId: string, detail?: string) {
     jobId,
     status: 'completed',
     percent: 100,
-    stage: 'Done',
+    stage: 'Ready',
     detail,
     startedAt: existing?.startedAt ?? timestamp,
     updatedAt: timestamp,
