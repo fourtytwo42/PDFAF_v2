@@ -49,6 +49,30 @@ flowchart LR
   W --> D
 ```
 
+## Desktop Lifecycle And Tray Behavior
+
+The Windows app should behave like a resident desktop utility, not like a browser tab wrapper.
+
+Required behavior:
+
+- the app shows a notification area icon while running
+- closing the main window does not terminate the app
+- closing the main window hides the window and keeps the app alive in the notification area
+- double-clicking the notification area icon opens or restores the main app window
+- right-clicking the notification area icon opens a context menu with:
+  - open app
+  - restart services
+  - exit
+
+Recommended supporting behavior:
+
+- first close should show a one-time hint that the app is still running in the notification area
+- selecting `Exit` should perform a real shutdown of Electron, the API process, the web server process, and any optional local model process started by the app
+- selecting `Restart services` should restart the managed API/web/model child processes without requiring a full reinstall
+- if the user reopens the app from the Start menu while it is already running, the existing instance should be focused instead of spawning a second resident copy
+
+This tray-first lifecycle needs to be part of the initial desktop shell design because it affects process ownership, shutdown semantics, single-instance locking, and support expectations.
+
 ## Desktop Storage Policy
 
 The Windows app should not inherit the web app's temporary server-style retention rules.
@@ -156,6 +180,162 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
 
 ## Work Required
 
+## Staged Delivery Plan
+
+### Stage 0: Packaging spike
+
+Goal:
+
+- prove the current repo can be wrapped in Electron without a major rewrite
+
+Scope:
+
+- create `apps/desktop`
+- launch a minimal BrowserWindow
+- spawn the existing API and web app in development mode
+- confirm Electron can open the web app locally
+
+Exit criteria:
+
+- one command starts Electron, API, and web app together in development
+- window can open and close without orphaning dev child processes
+
+### Stage 1: Production process orchestration
+
+Goal:
+
+- turn the desktop shell into the runtime owner for packaged builds
+
+Scope:
+
+- build API for production
+- build Next app in standalone mode
+- have Electron spawn both as managed child processes
+- wait for health before loading the UI
+- implement single-instance locking
+
+Exit criteria:
+
+- packaged development build opens reliably
+- app can recover from slow API/web startup
+- second launch focuses the existing app instance
+
+### Stage 2: Desktop persistence and path safety
+
+Goal:
+
+- make the runtime truly Windows-safe and desktop-oriented
+
+Scope:
+
+- add desktop app data path injection
+- route DB, PDFs, logs, temp files, and model files into app data
+- add desktop storage policy separation from web retention/quota behavior
+- add configurable Python binary support
+
+Exit criteria:
+
+- PDFs and outputs persist across restarts
+- no 24-hour expiry behavior in desktop mode
+- no writes depend on Docker-style `/data` paths
+
+### Stage 3: Tray lifecycle and background behavior
+
+Goal:
+
+- make the app behave like a resident Windows utility
+
+Scope:
+
+- add notification area icon
+- hide to tray on window close
+- add tray context menu with `Open App`, `Restart Services`, and `Exit`
+- add double-click restore behavior
+- add one-time user education on first close
+
+Exit criteria:
+
+- closing the window keeps the app alive in the notification area
+- reopening from the tray restores the same instance
+- `Exit` shuts down all managed processes cleanly
+- `Restart Services` works without leaving duplicate processes behind
+
+### Stage 4: Dependency bundling
+
+Goal:
+
+- make core desktop functionality work on a clean Windows machine
+
+Scope:
+
+- decide what is bundled versus optional
+- package core binaries required for analyze/remediate flows
+- add startup diagnostics for missing optional dependencies
+- define whether OCR is first-release or deferred
+
+Exit criteria:
+
+- clean machine can run core app features after install
+- missing optional tools produce actionable status and errors
+
+### Stage 5: Local model installation
+
+Goal:
+
+- support optional local AI without bloating the installer
+
+Scope:
+
+- first-run or settings-based model install flow
+- remote AI mode available immediately
+- local model download with progress and retry
+- model health validation after install
+
+Exit criteria:
+
+- remote AI mode works without local downloads
+- local model can be installed from inside the app
+- installed model survives app restarts and upgrades
+
+### Stage 6: Installer production
+
+Goal:
+
+- generate a repeatable installer that is suitable for user distribution
+
+Scope:
+
+- add `electron-builder`
+- produce NSIS installer
+- configure app metadata, icons, shortcuts, uninstall behavior, and upgrade behavior
+- test install, uninstall, and reinstall flows
+
+Exit criteria:
+
+- installer works on a clean Windows machine
+- installed app launches from Start menu and notification area behavior works
+- uninstall removes the app and leaves user data only if explicitly intended
+
+### Stage 7: Full test and release hardening
+
+Goal:
+
+- move from "it runs" to "it is supportable"
+
+Scope:
+
+- add desktop smoke tests
+- add installer validation checklist
+- add child-process failure handling and restart behavior
+- add structured desktop logs and support docs
+- verify startup, shutdown, tray behavior, persistence, remediation, and model setup on clean machines
+
+Exit criteria:
+
+- release checklist passes on at least one clean Windows environment
+- known-failure cases have actionable UI or logs
+- installer is ready for external testing or public release
+
 ### Phase 1: Desktop shell scaffolding
 
 - Create `apps/desktop` for Electron main/preload code.
@@ -165,6 +345,7 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
   - Next standalone child process
   - Electron BrowserWindow
 - Add health-check wait logic before loading the app UI.
+- Add single-instance app locking.
 
 ### Phase 2: Windows-safe runtime configuration
 
@@ -180,7 +361,19 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
 - Stop relying on fixed `localhost:6200` assumptions in production packaging.
 - Define a single source of truth for runtime paths injected by Electron.
 
-### Phase 3: Dependency packaging
+### Phase 3: Tray lifecycle and background behavior
+
+- Add a notification area icon that stays present while the app is running.
+- Change window close behavior to hide to tray instead of exiting.
+- Add tray menu actions for:
+  - open app
+  - restart services
+  - exit
+- Add double-click tray restore behavior.
+- Add one-time messaging so users understand that closing the window does not exit the app.
+- Ensure `Exit` performs a real full shutdown of managed child processes.
+
+### Phase 4: Dependency packaging
 
 - Decide which dependencies are bundled in the installer:
   - Node runtime
@@ -191,7 +384,7 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
 - Add packaging logic for Windows binaries.
 - Add first-run verification for missing dependencies and actionable user messages.
 
-### Phase 4: Model installation flow
+### Phase 5: Model installation flow
 
 - Add first-run UI for model selection.
 - Support a remote AI mode that works immediately without local download.
@@ -202,14 +395,14 @@ The Windows app needs a clear rule for which of these are bundled, which are opt
   - cancel/resume if practical
 - Persist model paths and health state in app config.
 
-### Phase 5: Installer generation
+### Phase 6: Installer generation
 
 - Add `electron-builder` config.
 - Produce an NSIS installer.
 - Configure app icons, product name, versioning, and output directories.
 - Validate clean install, upgrade install, and uninstall behavior.
 
-### Phase 6: Production hardening
+### Phase 7: Production hardening
 
 - Add structured desktop logs for:
   - process startup failures
@@ -227,6 +420,7 @@ The branch should eventually produce:
 - a desktop shell app under `apps/desktop`
 - Windows-specific runtime path handling
 - persistent desktop storage in app data
+- notification area resident behavior with tray controls
 - a first-run setup experience
 - optional local model installation flow
 - a repeatable Windows installer build
@@ -238,10 +432,11 @@ For the fastest useful progress, implement in this order:
 
 1. Electron shell and process orchestration
 2. Windows-safe path and interpreter configuration
-3. standalone build wiring for the web app and API
-4. installer config with a minimal non-model package
-5. first-run local model download flow
-6. optional OCR and other heavier dependencies
+3. tray lifecycle and single-instance behavior
+4. standalone build wiring for the web app and API
+5. installer config with a minimal non-model package
+6. first-run local model download flow
+7. optional OCR and other heavier dependencies
 
 ## Definition of Done For First Windows Release
 
@@ -250,9 +445,12 @@ The first Windows release should be considered successful when a non-technical u
 1. Run the installer.
 2. Launch the desktop app from the Start menu.
 3. Analyze and remediate PDFs without manually starting servers.
-4. Use either remote AI immediately or install the local AI model from inside the app.
-5. Reopen previously saved PDFs and remediated outputs from persistent local storage.
-6. Close the app cleanly without orphaned local processes.
+4. Close the main window and still find the app running in the notification area.
+5. Reopen the UI by double-clicking the notification area icon.
+6. Use the tray menu to open the app, restart services, or exit.
+7. Use either remote AI immediately or install the local AI model from inside the app.
+8. Reopen previously saved PDFs and remediated outputs from persistent local storage.
+9. Exit the app cleanly without orphaned local processes.
 
 ## Notes
 
