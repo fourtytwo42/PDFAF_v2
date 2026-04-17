@@ -9,6 +9,7 @@ import {
   getOpenAiCompatBaseUrl,
   HEALTH_LLM_PROBE_TIMEOUT_MS,
   PYTHON_BIN,
+  QPDF_BIN,
 } from '../config.js';
 import { getDb } from '../db/client.js';
 import { remediationStatsLast24h } from '../metrics.js';
@@ -37,9 +38,11 @@ async function execVersion(cmd: string, args: string[]): Promise<string | null> 
   }
 }
 
-async function checkQpdf(): Promise<{ status: 'ok' | 'unavailable'; version: string | null }> {
-  const line = await execVersion('qpdf', ['--version']);
-  return line ? { status: 'ok', version: line } : { status: 'unavailable', version: null };
+async function checkQpdf(): Promise<{ status: 'ok' | 'unavailable'; version: string | null; bin: string }> {
+  const line = await execVersion(QPDF_BIN, ['--version']);
+  return line
+    ? { status: 'ok', version: line, bin: QPDF_BIN }
+    : { status: 'unavailable', version: null, bin: QPDF_BIN };
 }
 
 async function checkPython(): Promise<{ status: 'ok' | 'unavailable'; version: string | null }> {
@@ -192,19 +195,26 @@ healthRouter.get('/', async (_req, res) => {
     uptime: Math.floor(process.uptime()),
     port: parseInt(process.env['PORT'] ?? '6200', 10),
     dependencies: {
-      qpdf: { available: qpdfR.status === 'ok', version: qpdfR.version },
+      qpdf: {
+        available: qpdfR.status === 'ok',
+        version: qpdfR.version,
+        bin: qpdfR.bin,
+        required: true,
+      },
       python: {
         available: pythonR.status === 'ok',
         version: pythonR.version,
         bin: PYTHON_BIN,
         pikepdf: pikepdf === 'ok',
         fonttools: fonttools === 'ok',
+        required: true,
       },
-      tesseract: { available: tesseract.available, version: tesseract.version },
-      ocrmypdf: { available: ocrmypdf.available, version: ocrmypdf.version },
+      tesseract: { available: tesseract.available, version: tesseract.version, required: false },
+      ocrmypdf: { available: ocrmypdf.available, version: ocrmypdf.version, required: false },
       llm: {
         configured: llmConfigured,
         reachable: llmConfigured ? llmReachable : false,
+        required: false,
       },
       database: {
         ok: dbCheck.ok,

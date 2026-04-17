@@ -22,6 +22,8 @@ Deeper docs: [`docs/api.md`](docs/api.md), [`docs/scoring.md`](docs/scoring.md),
 
 **Prerequisites:** Node 22+, pnpm 10+, `qpdf`, Python 3 with `pikepdf` and `fonttools`, optional `tesseract-ocr`.
 
+For the Windows desktop build, run `pnpm desktop:runtime:prepare` before packaging. That stages a private Node runtime plus bundled Python and `qpdf` assets under `apps/desktop/.runtime/` so packaged desktop builds do not depend on end-user machine installs.
+
 **Optional — run the LLM inside this app:** install [llama.cpp](https://github.com/ggerganov/llama.cpp) `llama-server` on your `PATH` (or set `LLAMA_SERVER_BIN`), then in `.env` set `PDFAF_RUN_LOCAL_LLM=1` and leave `OPENAI_COMPAT_BASE_URL` empty. On startup the API spawns **llama-server** with Gemma 4 E2B instruct GGUF defaults (`unsloth/gemma-4-E2B-it-GGUF` / `gemma-4-E2B-it-Q4_K_M.gguf`, same weights family as [google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B-it), which is Safetensors-only); the first launch may take a long time while weights download. Stop the API with Ctrl+C to terminate the child server.
 
 ```bash
@@ -93,6 +95,8 @@ This repo’s `docker-compose.yml` now runs the same single-container shape loca
 |---------|-------------|
 | `pnpm dev` | Dev server (tsx watch) |
 | `pnpm build` | Typecheck + compile to `dist/` |
+| `pnpm desktop:runtime:prepare` | Stage bundled Windows runtimes (`node`, Python, `qpdf`) under `apps/desktop/.runtime/` |
+| `pnpm desktop:package:dir` | Build a packaged desktop app directory with bundled runtimes |
 | `pnpm start` | Run compiled `dist/server.js` |
 | `pnpm test` | Vitest |
 | `pnpm lint` | `tsc --noEmit` |

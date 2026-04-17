@@ -69,8 +69,10 @@ describe('healthRouter LLM reporting', () => {
     const res = await request(app).get('/v1/health');
 
     expect(res.status).toBe(200);
-    expect(res.body.dependencies.llm).toEqual({ configured: false, reachable: false });
+    expect(res.body.dependencies.llm).toEqual({ configured: false, reachable: false, required: false });
     expect(res.body.dependencies.python.bin).toBe('python');
+    expect(res.body.dependencies.qpdf.bin).toBe('qpdf');
+    expect(res.body.dependencies.qpdf.required).toBe(true);
     expect(res.body.degradedReasons ?? []).not.toContain('llm_unreachable');
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -91,7 +93,7 @@ describe('healthRouter LLM reporting', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
-    expect(res.body.dependencies.llm).toEqual({ configured: true, reachable: true });
+    expect(res.body.dependencies.llm).toEqual({ configured: true, reachable: true, required: false });
     expect(res.body.degradedReasons ?? []).not.toContain('llm_unreachable');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -111,7 +113,7 @@ describe('healthRouter LLM reporting', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('degraded');
-    expect(res.body.dependencies.llm).toEqual({ configured: true, reachable: false });
+    expect(res.body.dependencies.llm).toEqual({ configured: true, reachable: false, required: false });
     expect(res.body.degradedReasons).toContain('llm_unreachable');
   });
 
@@ -133,5 +135,27 @@ describe('healthRouter LLM reporting', () => {
     expect(res.status).toBe(200);
     expect(res.body.dependencies.python.bin).toBe('C:\\Python\\python.exe');
     expect(res.body.dependencies.python.version).toBe('Python 3.11.9');
+  });
+
+  it('uses PDFAF_QPDF_BIN when configured', async () => {
+    process.env['PDFAF_QPDF_BIN'] = 'C:\\PDFAF\\runtime\\qpdf\\bin\\qpdf.exe';
+    execFileAsyncMock.mockImplementation(async (cmd: string, args: string[]) => {
+      if (cmd === 'C:\\PDFAF\\runtime\\qpdf\\bin\\qpdf.exe' && args[0] === '--version') {
+        return { stdout: 'qpdf 12.3.2\n' };
+      }
+      if ((cmd === 'python3' || cmd === 'python') && args[0] === '--version') return { stdout: 'Python 3.12.0\n' };
+      if ((cmd === 'python3' || cmd === 'python') && args[0] === '-c') return { stdout: '' };
+      if (cmd === 'tesseract' && args[0] === '--version') return { stdout: 'tesseract 5.4.0\n' };
+      if (cmd === 'ocrmypdf' && args[0] === '--version') return { stdout: '16.10.0\n' };
+      throw new Error(`unexpected exec ${cmd} ${args.join(' ')}`);
+    });
+    vi.stubGlobal('fetch', vi.fn());
+
+    const app = await createHealthApp();
+    const res = await request(app).get('/v1/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.dependencies.qpdf.bin).toBe('C:\\PDFAF\\runtime\\qpdf\\bin\\qpdf.exe');
+    expect(res.body.dependencies.qpdf.version).toBe('qpdf 12.3.2');
   });
 });

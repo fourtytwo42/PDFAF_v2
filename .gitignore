@@ -17,3 +17,6 @@ __pycache__/
 .DS_Store
 coverage/
 .next/
+apps/desktop/.runtime/
+apps/desktop/.runtime-cache/
+apps/desktop/dist-packaged/

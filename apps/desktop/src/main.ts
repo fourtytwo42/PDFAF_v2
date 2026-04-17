@@ -4,8 +4,14 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  resolveDesktopAppPaths,
+  resolveDesktopDependencyPaths,
+  validatePackagedDependencyPaths,
+  type DesktopDependencyPaths,
+} from './runtime.js';
 
 type StartupPhase =
   | 'idle'
@@ -60,14 +66,7 @@ interface DesktopState {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const desktopRoot = resolve(__dirname, '..');
-const repoRoot = resolve(desktopRoot, '..', '..');
-const apiEntry = join(repoRoot, 'dist', 'server.js');
-const apiCwd = repoRoot;
-const webCwd = join(repoRoot, 'apps', 'pdf-af-web');
-const webEntry = join(webCwd, '.next', 'standalone', 'apps', 'pdf-af-web', 'server.js');
-const preloadPath = join(desktopRoot, 'dist', 'preload.js');
-const trayIconPath = join(desktopRoot, 'assets', 'tray.ico');
+const appPaths = resolveDesktopAppPaths(__dirname);
 const startupTimeoutMs = 60_000;
 const pollIntervalMs = 500;
 const maxTailLines = 40;
@@ -77,6 +76,7 @@ let mainWindow: BrowserWindow | null = null;
 let logFilePath = '';
 let isQuitting = false;
 let runtimePaths: RuntimePaths | null = null;
+let dependencyPaths: DesktopDependencyPaths | null = null;
 let desktopState: DesktopState = { ...defaultDesktopState };
 
 const runtimeState: RuntimeState = {
@@ -152,6 +152,9 @@ function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   if (!runtimePaths) {
     throw new Error('Runtime paths are not initialized.');
   }
+  if (!dependencyPaths) {
+    throw new Error('Dependency paths are not initialized.');
+  }
 
   return baseChildEnv({
     DB_PATH: runtimePaths.dbPath,
@@ -160,6 +163,9 @@ function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     PDFAF_APP_DATA_DIR: runtimePaths.appDataDir,
     PDFAF_DESKTOP_MODE: '1',
     PDFAF_LLAMA_WORKDIR: runtimePaths.llmDir,
+    PDFAF_NODE_BIN: dependencyPaths.nodeBin,
+    PDFAF_PYTHON_BIN: dependencyPaths.pythonBin,
+    PDFAF_QPDF_BIN: dependencyPaths.qpdfBin,
     ...extra,
   });
 }
@@ -287,12 +293,13 @@ async function waitForWebReady(port: number): Promise<void> {
 
 function spawnManagedChild(
   name: 'api' | 'web',
+  nodeBin: string,
   scriptPath: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
 ): ManagedChild {
-  queueLog('electron', `Spawning ${name}: ${process.execPath} ${scriptPath} (cwd=${cwd})`);
-  const proc = spawn(process.execPath, [scriptPath], {
+  queueLog('electron', `Spawning ${name}: ${nodeBin} ${scriptPath} (cwd=${cwd})`);
+  const proc = spawn(nodeBin, [scriptPath], {
     cwd,
     env,
     stdio: 'pipe',
@@ -414,7 +421,7 @@ async function showMainWindow(): Promise<void> {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: preloadPath,
+      preload: appPaths.preloadPath,
     },
   });
 
@@ -440,17 +447,24 @@ async function createMainWindow(url: string): Promise<void> {
 }
 
 async function startServices(): Promise<void> {
-  if (!existsSync(apiEntry)) {
+  if (!dependencyPaths) {
     throw {
-      component: 'api',
-      message: `Missing API entrypoint: ${apiEntry}`,
+      component: 'desktop',
+      message: 'Desktop dependency paths were not initialized.',
       stderrTail: [],
     } satisfies StartupError;
   }
-  if (!existsSync(webEntry)) {
+  if (!existsSync(appPaths.apiEntry)) {
+    throw {
+      component: 'api',
+      message: `Missing API entrypoint: ${appPaths.apiEntry}`,
+      stderrTail: [],
+    } satisfies StartupError;
+  }
+  if (!existsSync(appPaths.webEntry)) {
     throw {
       component: 'web',
-      message: `Missing web standalone entrypoint: ${webEntry}. Build the web app with standalone output before starting the desktop shell.`,
+      message: `Missing web standalone entrypoint: ${appPaths.webEntry}. Build the web app with standalone output before starting the desktop shell.`,
       stderrTail: [],
     } satisfies StartupError;
   }
@@ -461,11 +475,17 @@ async function startServices(): Promise<void> {
   queueLog('electron', `Allocated apiPort=${runtimeState.apiPort} webPort=${runtimeState.webPort}`);
 
   runtimeState.startupPhase = 'starting_api';
-  runtimeState.apiChild = spawnManagedChild('api', apiEntry, apiCwd, desktopChildEnv({
-    HOST: '127.0.0.1',
-    NODE_ENV: 'production',
-    PORT: String(runtimeState.apiPort),
-  }));
+  runtimeState.apiChild = spawnManagedChild(
+    'api',
+    dependencyPaths.nodeBin,
+    appPaths.apiEntry,
+    appPaths.apiCwd,
+    desktopChildEnv({
+      HOST: '127.0.0.1',
+      NODE_ENV: 'production',
+      PORT: String(runtimeState.apiPort),
+    }),
+  );
 
   runtimeState.startupPhase = 'waiting_for_api';
   try {
@@ -479,12 +499,18 @@ async function startServices(): Promise<void> {
   }
 
   runtimeState.startupPhase = 'starting_web';
-  runtimeState.webChild = spawnManagedChild('web', webEntry, webCwd, desktopChildEnv({
-    HOSTNAME: '127.0.0.1',
-    NODE_ENV: 'production',
-    PDFAF_API_BASE_URL: `http://127.0.0.1:${runtimeState.apiPort}`,
-    PORT: String(runtimeState.webPort),
-  }));
+  runtimeState.webChild = spawnManagedChild(
+    'web',
+    dependencyPaths.nodeBin,
+    appPaths.webEntry,
+    appPaths.webCwd,
+    desktopChildEnv({
+      HOSTNAME: '127.0.0.1',
+      NODE_ENV: 'production',
+      PDFAF_API_BASE_URL: `http://127.0.0.1:${runtimeState.apiPort}`,
+      PORT: String(runtimeState.webPort),
+    }),
+  );
 
   runtimeState.startupPhase = 'waiting_for_web';
   try {
@@ -572,8 +598,8 @@ function buildTrayMenu(): Menu {
 function createTrayIcon(): void {
   if (runtimeState.tray) return;
 
-  const trayImage = existsSync(trayIconPath)
-    ? nativeImage.createFromPath(trayIconPath)
+  const trayImage = existsSync(appPaths.trayIconPath)
+    ? nativeImage.createFromPath(appPaths.trayIconPath)
     : nativeImage.createFromDataURL(
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAx0lEQVR4AY2RsQ3CQBBFnxMHEMABnMAJnMAGnMAJnMABHMAJxwSJP0l2ghJp2SZv7r2dnXve6+5ShlDNQkS9RrkmaRjA2ckb2z9CbYuK7VUyWWtaFgjA5a6W3V6sbjMqYNri7JjBdP4zCZh98oOw3XK7oUNwnR5jh1OrCiAtDfJxQgWVa5iTZ8u4K4DkWt9Nso1gpGnoR0AV4yStM8+gPe8IIwRgz5rEhP1MO9mNfVGLyH8s12Mg3ylGjM2D0T4drm2oAQ0s69c4+jQ5s5rY8Y7A7q8f7l0x1F5gQhSt6XJgAAAABJRU5ErkJggg==',
       );
@@ -634,12 +660,30 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.whenReady();
+  dependencyPaths = resolveDesktopDependencyPaths({
+    desktopDistDir: __dirname,
+    isPackaged: app.isPackaged,
+  });
   runtimePaths = resolveRuntimePaths();
   await ensureRuntimePaths(runtimePaths);
   await loadDesktopState();
   logFilePath = runtimePaths.logFilePath;
   queueLog('electron', 'Desktop runtime booting');
   queueLog('electron', `Desktop app data dir: ${runtimePaths.appDataDir}`);
+  queueLog('electron', `Desktop runtime mode: ${dependencyPaths.mode}`);
+  queueLog('electron', `Resolved node bin: ${dependencyPaths.nodeBin}`);
+  queueLog('electron', `Resolved python bin: ${dependencyPaths.pythonBin}`);
+  queueLog('electron', `Resolved qpdf bin: ${dependencyPaths.qpdfBin}`);
+  const packagedDependencyErrors = validatePackagedDependencyPaths(dependencyPaths);
+  if (packagedDependencyErrors.length > 0) {
+    await showFatalStartupError({
+      component: 'desktop',
+      message: packagedDependencyErrors.join('\n'),
+      stderrTail: [],
+    });
+    app.quit();
+    return;
+  }
   createTrayIcon();
 
   try {

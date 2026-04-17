@@ -1,0 +1,35 @@
+{
+  "appId": "com.pdfaf.desktop",
+  "productName": "PDFAF",
+  "electronVersion": "36.3.1",
+  "npmRebuild": false,
+  "asar": false,
+  "directories": {
+    "output": "apps/desktop/dist-packaged"
+  },
+  "files": [
+    "package.json",
+    "dist/**/*",
+    "python/**/*",
+    "apps/desktop/dist/**/*",
+    "apps/desktop/assets/**/*",
+    "apps/pdf-af-web/.next/standalone/**/*",
+    "apps/pdf-af-web/.next/static/**/*",
+    "apps/pdf-af-web/public/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "apps/desktop/.runtime/win32-x64",
+      "to": "runtime",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "win": {
+    "target": [
+      "dir"
+    ],
+    "artifactName": "PDFAF-${version}-${arch}.${ext}"
+  }
+}

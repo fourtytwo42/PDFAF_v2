@@ -170,8 +170,15 @@ export function resolvePythonBin(): string {
   return isWindowsPlatform() ? 'python' : 'python3';
 }
 
+export function resolveQpdfBin(): string {
+  const env = process.env['PDFAF_QPDF_BIN']?.trim();
+  if (env) return env;
+  return 'qpdf';
+}
+
 export const PYTHON_SCRIPT_PATH = resolvePythonScriptPath();
 export const PYTHON_BIN = resolvePythonBin();
+export const QPDF_BIN = resolveQpdfBin();
 export const PDFAF_APP_DATA_DIR = process.env['PDFAF_APP_DATA_DIR']?.trim() ?? '';
 export const DB_PATH = process.env['DB_PATH'] ?? './data/pdfaf.db';
 export const PORT    = parseInt(process.env['PORT'] ?? '6200', 10);
