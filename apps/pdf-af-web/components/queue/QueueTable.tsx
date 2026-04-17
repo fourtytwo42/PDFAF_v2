@@ -120,6 +120,36 @@ function ProcessingTimer({ startedAt }: { startedAt: string }) {
   return <span>{formatElapsed(now - start)}</span>;
 }
 
+function RemediationProgressBar({
+  percent,
+  label,
+  detail,
+}: {
+  percent: number;
+  label: string;
+  detail?: string;
+}) {
+  const clampedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+
+  return (
+    <div className="mt-3 rounded-2xl border border-[color:var(--surface-border)] bg-white px-3 py-3">
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="font-medium text-[var(--foreground)]">{label}</span>
+        <span className="font-semibold text-[var(--accent-strong)]">{clampedPercent}%</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--accent-soft)]">
+        <div
+          className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-500 ease-out"
+          style={{ width: `${clampedPercent}%` }}
+        />
+      </div>
+      {detail ? (
+        <p className="mt-2 text-xs leading-5 text-[var(--muted)]">{detail}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function getCompletedDuration(job: JobRecord): string | null {
   if (job.remediationResult?.remediationDurationMs) {
     return formatElapsed(job.remediationResult.remediationDurationMs);
@@ -246,7 +276,8 @@ export function QueueTable() {
             const requiresReupload = needsReuploadToFix(job);
             const showProcessingState = isProcessing(job) && Boolean(job.processingStartedAt);
             const processingLabel =
-              job.status === 'queued_analyze'
+              job.progressLabel ??
+              (job.status === 'queued_analyze'
                 ? 'Waiting to check'
                 : job.status === 'queued_remediate'
                   ? 'Waiting to fix'
@@ -254,7 +285,7 @@ export function QueueTable() {
                     ? 'Sending'
                     : job.status === 'analyzing'
                       ? 'Checking'
-                      : 'Fixing';
+                      : 'Fixing');
 
             return (
               <article key={job.id} className="surface-strong p-4">
@@ -417,6 +448,16 @@ export function QueueTable() {
                         <span>•</span>
                         <ProcessingTimer startedAt={job.processingStartedAt} />
                       </div>
+                    ) : null}
+                    {job.mode === 'remediate' &&
+                    (job.status === 'queued_remediate' ||
+                      job.status === 'uploading' ||
+                      job.status === 'remediating') ? (
+                      <RemediationProgressBar
+                        percent={job.progressPercent ?? (job.status === 'queued_remediate' ? 0 : 8)}
+                        label={job.progressLabel ?? processingLabel}
+                        detail={job.progressDetail}
+                      />
                     ) : null}
 
                     <div className="mt-4 flex flex-wrap gap-2">

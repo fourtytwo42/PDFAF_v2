@@ -35,6 +35,7 @@ export async function POST(request: NextRequest) {
   await ensureServerStorageReady();
   const session = resolveSession(request);
   const action = request.nextUrl.searchParams.get('action');
+  const progressJobId = request.headers.get('x-pdfaf-progress-job-id')?.trim() || undefined;
 
   if (action !== 'analyze' && action !== 'remediate') {
     const response = badRequest('Expected ?action=analyze or ?action=remediate.');
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
     const file = await createRemediationRecord({
       sessionId: session.sessionId,
       fileId: body.fileId,
+      progressJobId,
     });
 
     const response = NextResponse.json(wrapFileMutationResponse(file), { status: 200 });
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
   const result =
     action === 'analyze'
       ? await createAnalyzeRecord(session.sessionId, file)
-      : await createRemediationRecord({ sessionId: session.sessionId, file });
+      : await createRemediationRecord({ sessionId: session.sessionId, file, progressJobId });
 
   const response = NextResponse.json(wrapFileMutationResponse(result), { status: 200 });
   session.apply(response);

@@ -4,6 +4,7 @@ import { create, type StateCreator } from 'zustand';
 import {
   deleteFile,
   downloadFile,
+  getRemediationProgress,
   listFiles,
   remediateStoredFile,
   uploadForAnalyze,
@@ -13,6 +14,7 @@ import { LOCAL_STORAGE_KEYS } from '../lib/constants/config';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
 import { downloadSelectedRemediatedZip as downloadRemediatedZipArchive } from '../lib/zip/downloadZip';
 import type { StoredFileSummary } from '../types/files';
+import type { RemediationProgress } from '../types/progress';
 import type {
   FileValidationMessage,
   JobMode,
@@ -191,6 +193,10 @@ function mapStoredFileToJob(file: StoredFileSummary): JobRecord {
     expiresAt: file.expiresAt ?? undefined,
     deletedAt: file.deletedAt ?? undefined,
     deletionReason: file.deletionReason ?? undefined,
+    progressPercent: undefined,
+    progressLabel: undefined,
+    progressDetail: undefined,
+    progressStatus: undefined,
     persisted: true,
   };
 }
@@ -210,6 +216,10 @@ function createLocalJob(file: File, mode: JobMode, status: JobStatus): JobRecord
     mode,
     fileStatus: 'none',
     hasServerSource: false,
+    progressPercent: mode === 'remediate' ? 0 : undefined,
+    progressLabel: mode === 'remediate' ? 'Waiting to fix' : undefined,
+    progressDetail: undefined,
+    progressStatus: mode === 'remediate' ? 'running' : undefined,
     localFile: file,
     persisted: false,
   };
@@ -250,6 +260,63 @@ function replaceSelectedId(selectedIds: string[], previousId: string, nextId: st
   return selectedIds.map((id) => (id === previousId ? nextId : id));
 }
 
+function applyProgressToJob(job: JobRecord, progress: RemediationProgress): JobRecord {
+  if (job.mode !== 'remediate') return job;
+
+  return {
+    ...job,
+    progressPercent: progress.percent,
+    progressLabel: progress.stage,
+    progressDetail: progress.detail,
+    progressStatus: progress.status,
+  };
+}
+
+function startRemediationProgressPolling(
+  progressJobId: string,
+  set: QueueSet,
+): () => void {
+  let stopped = false;
+  let timer: number | undefined;
+
+  const poll = async () => {
+    if (stopped) return;
+
+    try {
+      const progress = await getRemediationProgress(progressJobId);
+      if (progress) {
+        set((state) => ({
+          jobs: (() => {
+            const currentJob = state.jobs.find((job) => job.id === progressJobId);
+            if (!currentJob) {
+              return state.jobs;
+            }
+
+            return updateJobCollection(state.jobs, applyProgressToJob(currentJob, progress), progressJobId);
+          })(),
+        }));
+      }
+    } catch {
+      // Keep the current visual state if progress polling fails briefly.
+    } finally {
+      if (!stopped) {
+        timer = window.setTimeout(() => {
+          void poll();
+        }, 900);
+      }
+    }
+  };
+
+  void poll();
+
+  return () => {
+    stopped = true;
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+    }
+  };
+}
+
 async function refreshServerJobs(set: QueueSet, get: QueueGet) {
   const current = get().jobs.filter((job) => !job.persisted);
   const serverJobs = (await listFiles()).map(mapStoredFileToJob);
@@ -270,27 +337,41 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
     status: 'uploading',
     updatedAt: nowIso(),
     errorMessage: undefined,
+    progressPercent: queuedJob.mode === 'remediate' ? 4 : undefined,
+    progressLabel: queuedJob.mode === 'remediate' ? 'Uploading file' : undefined,
+    progressDetail: queuedJob.mode === 'remediate' ? queuedJob.fileName : undefined,
+    progressStatus: queuedJob.mode === 'remediate' ? 'running' : undefined,
   };
 
   set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
+
+  let stopProgressPolling: (() => void) | undefined;
 
   try {
     job = {
       ...job,
       status: job.mode === 'remediate' ? 'remediating' : 'analyzing',
       updatedAt: nowIso(),
+      progressPercent: job.mode === 'remediate' ? 8 : undefined,
+      progressLabel: job.mode === 'remediate' ? 'Starting fix' : undefined,
+      progressDetail: undefined,
+      progressStatus: job.mode === 'remediate' ? 'running' : undefined,
     };
 
     set((state) => ({ jobs: updateJobCollection(state.jobs, job) }));
+
+    if (job.mode === 'remediate') {
+      stopProgressPolling = startRemediationProgressPolling(job.id, set);
+    }
 
     const result =
       job.mode === 'grade'
         ? await uploadForAnalyze(job.localFile as File)
         : job.persisted
-          ? await remediateStoredFile(job.id)
+          ? await remediateStoredFile(job.id, job.id)
           : job.localFile
-          ? await uploadForRemediation(job.localFile)
-          : await remediateStoredFile(job.id);
+          ? await uploadForRemediation(job.localFile, job.id)
+          : await remediateStoredFile(job.id, job.id);
 
     const mapped = mapStoredFileToJob(result);
     const nextJob: JobRecord =
@@ -299,7 +380,13 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
             ...mapped,
             localFile: job.localFile,
           }
-        : mapped;
+        : {
+            ...mapped,
+            progressPercent: undefined,
+            progressLabel: undefined,
+            progressDetail: undefined,
+            progressStatus: undefined,
+          };
 
     set((state) => ({
       jobs: updateJobCollection(state.jobs, nextJob, job.id),
@@ -317,6 +404,7 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
       status: 'failed',
       updatedAt: nowIso(),
       errorMessage: message,
+      progressStatus: job.mode === 'remediate' ? 'failed' : undefined,
     };
 
     set((state) => ({
@@ -325,6 +413,7 @@ async function processJob(jobId: string, set: QueueSet, get: QueueGet) {
       storageState: 'error',
     }));
   } finally {
+    stopProgressPolling?.();
     set((state) => ({
       activeJobIds: state.activeJobIds.filter((activeId) => activeId !== jobId),
     }));
@@ -531,6 +620,10 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
               processingStartedAt: queuedAt,
               updatedAt: queuedAt,
               errorMessage: undefined,
+              progressPercent: undefined,
+              progressLabel: undefined,
+              progressDetail: undefined,
+              progressStatus: undefined,
             }
           : job,
       ),
@@ -557,6 +650,10 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
               processingStartedAt: queuedAt,
               updatedAt: queuedAt,
               errorMessage: undefined,
+              progressPercent: 0,
+              progressLabel: 'Waiting to fix',
+              progressDetail: undefined,
+              progressStatus: 'running',
             }
           : job,
       ),

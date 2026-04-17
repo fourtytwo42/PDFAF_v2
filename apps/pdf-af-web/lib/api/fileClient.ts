@@ -1,4 +1,5 @@
 import type { StoredFileSummary } from '../../types/files';
+import type { RemediationProgress } from '../../types/progress';
 
 function errorMessage(message: string): Error {
   return new Error(message);
@@ -45,13 +46,17 @@ export async function uploadForAnalyze(file: File): Promise<StoredFileSummary> {
   return payload.file;
 }
 
-export async function uploadForRemediation(file: File): Promise<StoredFileSummary> {
+export async function uploadForRemediation(
+  file: File,
+  progressJobId?: string,
+): Promise<StoredFileSummary> {
   const formData = new FormData();
   formData.append('file', file, file.name);
 
   const response = await fetch('/api/files?action=remediate', {
     method: 'POST',
     body: formData,
+    headers: progressJobId ? { 'x-pdfaf-progress-job-id': progressJobId } : undefined,
     cache: 'no-store',
   });
 
@@ -63,11 +68,17 @@ export async function uploadForRemediation(file: File): Promise<StoredFileSummar
   return payload.file;
 }
 
-export async function remediateStoredFile(fileId: string): Promise<StoredFileSummary> {
+export async function remediateStoredFile(
+  fileId: string,
+  progressJobId?: string,
+): Promise<StoredFileSummary> {
   const response = await fetch('/api/files?action=remediate', {
     method: 'POST',
     body: JSON.stringify({ fileId }),
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(progressJobId ? { 'x-pdfaf-progress-job-id': progressJobId } : {}),
+    },
     cache: 'no-store',
   });
 
@@ -77,6 +88,22 @@ export async function remediateStoredFile(fileId: string): Promise<StoredFileSum
 
   const payload = await parseJson<{ file: StoredFileSummary }>(response);
   return payload.file;
+}
+
+export async function getRemediationProgress(jobId: string): Promise<RemediationProgress | null> {
+  const response = await fetch(`/api/files/progress/${encodeURIComponent(jobId)}`, {
+    cache: 'no-store',
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  return await parseJson<RemediationProgress>(response);
 }
 
 export async function deleteFile(fileId: string): Promise<void> {

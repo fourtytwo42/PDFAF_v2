@@ -1,5 +1,6 @@
 import type { AnalyzeSummary, NormalizedFinding } from './analyze';
 import type { StoredDeletionReason, StoredFileStatus } from './files';
+import type { RemediationProgressStatus } from './progress';
 import type { RemediationSummary } from './remediation';
 
 export type JobStatus =
@@ -35,6 +36,10 @@ export interface JobRecord {
   expiresAt?: string | null;
   deletedAt?: string | null;
   deletionReason?: StoredDeletionReason;
+  progressPercent?: number;
+  progressLabel?: string;
+  progressDetail?: string;
+  progressStatus?: RemediationProgressStatus;
   localFile?: File;
   persisted: boolean;
 }

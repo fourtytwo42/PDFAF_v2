@@ -38,6 +38,7 @@ const remediateLimiter = rateLimit({
   max: RATE_LIMIT_REMEDIATE_MAX,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: req => req.method !== 'POST',
   handler: (_req, res) => {
     sendApiError(
       res,

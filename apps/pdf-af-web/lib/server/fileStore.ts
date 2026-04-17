@@ -724,7 +724,11 @@ async function parseUpstreamJson(response: Response): Promise<unknown> {
   }
 }
 
-async function postToUpstream(pathname: string, formData: FormData): Promise<unknown> {
+async function postToUpstream(
+  pathname: string,
+  formData: FormData,
+  headers?: HeadersInit,
+): Promise<unknown> {
   const baseUrl = configuredApiBaseUrl();
 
   let response: Response;
@@ -732,6 +736,7 @@ async function postToUpstream(pathname: string, formData: FormData): Promise<unk
     response = await fetch(`${baseUrl}${pathname}`, {
       method: 'POST',
       body: formData,
+      headers,
       cache: 'no-store',
     });
   } catch {
@@ -855,6 +860,7 @@ export async function createRemediationRecord(input: {
   sessionId: string;
   file?: File;
   fileId?: string;
+  progressJobId?: string;
 }): Promise<StoredFileSummary> {
   await ensureServerStorageReady();
   const existingRecord = input.fileId ? await getStoredFile(input.sessionId, input.fileId) : null;
@@ -863,7 +869,9 @@ export async function createRemediationRecord(input: {
   formData.append('file', sourceFile, sourceFile.name);
 
   try {
-    const payload = await postToUpstream('/v1/remediate', formData);
+    const payload = await postToUpstream('/v1/remediate', formData, input.progressJobId
+      ? { 'x-pdfaf-progress-job-id': input.progressJobId }
+      : undefined);
     if (!isRawRemediationResponse(payload)) {
       throw new Error('The PDFAF API returned a malformed remediation payload.');
     }
