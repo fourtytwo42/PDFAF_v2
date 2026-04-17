@@ -66,19 +66,6 @@ export function DownloadIcon(props: IconProps) {
   );
 }
 
-export function ZipIcon(props: IconProps) {
-  return (
-    <BaseIcon {...props}>
-      <path d="M8 3h6l4 4v14H8z" />
-      <path d="M14 3v4h4" />
-      <path d="M12 8h.01" />
-      <path d="M12 11h.01" />
-      <path d="M12 14h.01" />
-      <path d="M11 17h2" />
-    </BaseIcon>
-  );
-}
-
 export function PauseIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>

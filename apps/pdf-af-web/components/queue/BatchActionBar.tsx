@@ -8,7 +8,6 @@ import {
   PlayIcon,
   RetryIcon,
   TrashIcon,
-  ZipIcon,
 } from '../common/AppIcons';
 import { Button } from '../common/Button';
 import { StatusPill } from '../common/StatusPill';
@@ -135,10 +134,10 @@ export function BatchActionBar() {
           variant="ghost"
           onClick={() => void downloadSelectedRemediatedZip()}
           disabled={!hasSelectedRemediatedOutputs}
-          title="Download fixed files as a ZIP"
+          title="Download fixed files"
         >
-          <ZipIcon className="h-4 w-4" />
-          ZIP
+          <DownloadIcon className="h-4 w-4" />
+          Download
         </Button>
         <Button
           variant="ghost"

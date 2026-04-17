@@ -84,6 +84,7 @@ function getDisplaySummary(job: JobRecord) {
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
+  const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const openDetail = useQueueStore((state) => state.openDetail);
@@ -121,9 +122,14 @@ export function QueueTable() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-base font-semibold text-[var(--foreground)]">
+                        <button
+                          type="button"
+                          className="truncate text-left text-base font-semibold text-[var(--foreground)] underline-offset-2 hover:text-[var(--accent-strong)] hover:underline"
+                          onClick={() => void downloadOriginal(job.id)}
+                          title="Download original PDF"
+                        >
                           {job.fileName}
-                        </p>
+                        </button>
                         <div className="mt-1 flex flex-wrap items-center gap-2">
                           <StatusPill label={formatFriendlyStatus(job)} tone={getStatusTone(job)} />
                           {job.remediationResult?.improved ? (
