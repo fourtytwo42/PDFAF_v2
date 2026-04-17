@@ -1,5 +1,12 @@
 'use client';
 
+import {
+  CheckIcon,
+  FileIcon,
+  MagicIcon,
+  MoreIcon,
+  RetryIcon,
+} from '../common/AppIcons';
 import { Button } from '../common/Button';
 import { SectionCard } from '../common/SectionCard';
 import { StatusPill } from '../common/StatusPill';
@@ -19,6 +26,29 @@ function getStatusTone(job: JobRecord): 'accent' | 'danger' | 'success' {
   return 'accent';
 }
 
+function formatFriendlyStatus(job: JobRecord): string {
+  switch (job.status) {
+    case 'idle':
+      return 'Ready';
+    case 'queued_analyze':
+      return 'Waiting to check';
+    case 'queued_remediate':
+      return 'Waiting to fix';
+    case 'uploading':
+      return 'Sending file';
+    case 'analyzing':
+      return 'Checking file';
+    case 'remediating':
+      return 'Fixing file';
+    case 'done':
+      return job.remediationResult ? 'Fixed' : 'Checked';
+    case 'failed':
+      return 'Needs retry';
+    default:
+      return job.status;
+  }
+}
+
 function formatResultSummary(job: JobRecord): string {
   if (job.remediationResult) {
     return `${formatScoreGrade(
@@ -30,19 +60,21 @@ function formatResultSummary(job: JobRecord): string {
     )}`;
   }
 
-  if (!job.findingSummaries || job.findingSummaries.length === 0) {
-    return job.analyzeResult ? 'No actionable findings surfaced in the stored summary.' : 'Not analyzed yet.';
+  if (job.analyzeResult) {
+    return formatScoreGrade(job.analyzeResult.score, job.analyzeResult.grade);
   }
 
-  return job.findingSummaries.map((finding) => finding.title).join(' · ');
+  return 'Ready to check';
 }
 
 function formatFindingsSummary(job: JobRecord): string {
   if (!job.findingSummaries || job.findingSummaries.length === 0) {
-    return job.analyzeResult ? 'none' : 'n/a';
+    return job.analyzeResult ? 'No big problems found' : 'No results yet';
   }
 
-  return job.findingSummaries.slice(0, 3).map((finding) => finding.title).join(' · ');
+  return job.findingSummaries.length === 1
+    ? '1 thing to look at'
+    : `${job.findingSummaries.length} things to look at`;
 }
 
 function getDisplaySummary(job: JobRecord) {
@@ -52,193 +84,111 @@ function getDisplaySummary(job: JobRecord) {
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
-  const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
-  const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const openDetail = useQueueStore((state) => state.openDetail);
-  const removeJob = useQueueStore((state) => state.removeJob);
   const retryJob = useQueueStore((state) => state.retryJob);
   const toggleSelection = useQueueStore((state) => state.toggleSelection);
-  const toggleSelectAllVisible = useQueueStore((state) => state.toggleSelectAllVisible);
-
-  const allSelected = jobs.length > 0 && selectedJobIds.length === jobs.length;
 
   return (
     <SectionCard
-      title="Local Queue"
-      description="Queue"
-      action={<StatusPill label={`${jobs.length} Files`} tone="accent" />}
+      title="Your files"
+      description="Tap a file for more info."
+      action={<StatusPill label={`${jobs.length} files`} tone="accent" />}
     >
-      <div className="space-y-2">
+      <div className="space-y-3">
         <BatchActionBar />
 
-        <div className="overflow-hidden border border-[color:var(--surface-border)] bg-[var(--surface-strong)]">
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-[color:var(--surface-border)] bg-black">
-                  <th className="px-2 py-2 text-left">
-                    <input
-                      aria-label="Select all files"
-                      className="focus-ring h-3.5 w-3.5 border-[color:var(--surface-border)] bg-black"
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={() => toggleSelectAllVisible()}
-                    />
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    File Name
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Size
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Status
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Result
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    PDF Class
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Findings
-                  </th>
-                  <th className="px-2 py-2 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Updated
-                  </th>
-                  <th className="px-2 py-2 text-right text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => {
-                  const isSelected = selectedJobIds.includes(job.id);
-                  const displaySummary = getDisplaySummary(job);
+        <div className="grid gap-3">
+          {jobs.map((job) => {
+            const isSelected = selectedJobIds.includes(job.id);
+            const displaySummary = getDisplaySummary(job);
+            const canRun = ['idle', 'failed', 'done'].includes(job.status);
 
-                  return (
-                    <tr
-                      key={job.id}
-                      className="border-b border-[color:var(--surface-border)] align-top last:border-b-0"
-                    >
-                      <td className="px-2 py-2 align-top">
-                        <input
-                          aria-label={`Select ${job.fileName}`}
-                          className="focus-ring mt-0.5 h-3.5 w-3.5 border-[color:var(--surface-border)] bg-black"
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelection(job.id)}
-                        />
-                      </td>
-                      <td className="px-2 py-2">
-                        <p className="max-w-xl break-all text-xs font-bold text-[var(--foreground)]">
-                        {job.fileName}
+            return (
+              <article key={job.id} className="surface-strong p-4">
+                <div className="flex items-start gap-3">
+                  <input
+                    aria-label={`Select ${job.fileName}`}
+                    className="focus-ring mt-1 h-4 w-4 rounded border-[color:var(--surface-border)]"
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelection(job.id)}
+                  />
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[18px] bg-[var(--accent-soft)] text-[var(--accent)]">
+                    <FileIcon className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-base font-semibold text-[var(--foreground)]">
+                          {job.fileName}
                         </p>
-                        {job.errorMessage ? (
-                          <p className="mt-1 text-[11px] leading-5 text-[var(--danger)]">
-                            {job.errorMessage}
-                          </p>
-                        ) : null}
-                      </td>
-                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
-                        {formatFileSize(job.fileSize)}
-                      </td>
-                      <td className="px-2 py-2">
-                        <div className="flex flex-wrap items-center gap-1">
-                          <StatusPill label={job.status} tone={getStatusTone(job)} />
-                          {job.status === 'queued_analyze' || job.status === 'queued_remediate' ? (
-                            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-                              waiting
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
-                        <div className="flex flex-col gap-1">
-                          <span>{formatResultSummary(job)}</span>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <StatusPill label={formatFriendlyStatus(job)} tone={getStatusTone(job)} />
                           {job.remediationResult?.improved ? (
-                            <StatusPill label="Improved" tone="success" />
+                            <StatusPill label="Better now" tone="success" />
                           ) : null}
                         </div>
-                      </td>
-                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
-                        {displaySummary ? formatPdfClass(displaySummary.pdfClass) : 'Not analyzed'}
-                      </td>
-                      <td className="max-w-sm px-2 py-2 text-xs leading-5 text-[var(--foreground)]">
-                        {formatFindingsSummary(job)}
-                      </td>
-                      <td className="px-2 py-2 text-xs text-[var(--foreground)]">
-                        {formatJobTimestamp(job.updatedAt)}
-                      </td>
-                      <td className="px-2 py-2">
-                        <div className="flex flex-wrap justify-end gap-1">
-                          <Button
-                            variant="primary"
-                            onClick={() => void enqueueAnalyze([job.id])}
-                            disabled={
-                              !['idle', 'failed', 'done'].includes(job.status)
-                            }
-                          >
-                            Grade
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => void enqueueRemediate([job.id])}
-                            disabled={!['idle', 'failed', 'done'].includes(job.status)}
-                          >
-                            Remediate
-                          </Button>
-                          {job.status === 'failed' ? (
-                            <Button
-                              variant="ghost"
-                              onClick={() => void retryJob(job.id)}
-                            >
-                              Retry
-                            </Button>
-                          ) : null}
-                          {job.analyzeResult || job.remediationResult ? (
-                            <Button
-                              variant="ghost"
-                              onClick={() => openDetail(job.id)}
-                            >
-                              View Details
-                            </Button>
-                          ) : null}
-                          <Button
-                            variant="ghost"
-                            onClick={() => void downloadOriginal(job.id)}
-                          >
-                            Download Original
-                          </Button>
-                          {job.remediatedBlobKey ? (
-                            <Button
-                              variant="ghost"
-                              onClick={() => void downloadRemediated(job.id)}
-                            >
-                              Download Remediated
-                            </Button>
-                          ) : null}
-                          <Button
-                            variant="secondary"
-                            onClick={() => void removeJob(job.id)}
-                            disabled={
-                              job.status === 'uploading' ||
-                              job.status === 'analyzing' ||
-                              job.status === 'remediating'
-                            }
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        className="h-10 w-10 shrink-0 p-0"
+                        onClick={() => openDetail(job.id)}
+                        title="See more info"
+                        aria-label={`See more info for ${job.fileName}`}
+                      >
+                        <MoreIcon className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <p className="mt-3 text-lg font-semibold tracking-[-0.02em] text-[var(--foreground)]">
+                      {formatResultSummary(job)}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--muted)]">
+                      {displaySummary ? formatPdfClass(displaySummary.pdfClass) : 'Not checked yet'} ·{' '}
+                      {formatFileSize(job.fileSize)} · {formatJobTimestamp(job.updatedAt)}
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--muted)]">{formatFindingsSummary(job)}</p>
+                    {job.errorMessage ? (
+                      <p className="mt-2 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button
+                        variant="primary"
+                        onClick={() => void enqueueAnalyze([job.id])}
+                        disabled={!canRun}
+                        title="Check this PDF"
+                      >
+                        <CheckIcon className="h-4 w-4" />
+                        Check
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => void enqueueRemediate([job.id])}
+                        disabled={!canRun}
+                        title="Fix this PDF"
+                      >
+                        <MagicIcon className="h-4 w-4" />
+                        Fix
+                      </Button>
+                      {job.status === 'failed' ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => void retryJob(job.id)}
+                          title="Try this file again"
+                        >
+                          <RetryIcon className="h-4 w-4" />
+                          Retry
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </div>
     </SectionCard>

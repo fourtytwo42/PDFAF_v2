@@ -9,11 +9,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    'bg-[var(--accent)] text-black hover:bg-[var(--accent-strong)] border border-[var(--accent)]',
+    'border border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm hover:bg-[var(--accent-strong)]',
   secondary:
-    'bg-[var(--surface-strong)] text-[var(--foreground)] hover:bg-[var(--accent-soft)] border border-[color:var(--surface-border)]',
+    'border border-[color:var(--surface-border)] bg-[var(--surface-strong)] text-[var(--foreground)] shadow-sm hover:bg-[var(--accent-soft)]',
   ghost:
-    'bg-transparent text-[var(--muted)] hover:bg-[var(--accent-soft)] hover:text-[var(--foreground)] border border-[color:var(--surface-border)]',
+    'border border-[color:var(--surface-border)] bg-transparent text-[var(--muted)] hover:bg-[var(--accent-soft)] hover:text-[var(--foreground)]',
 };
 
 export function Button({
@@ -24,7 +24,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      className={`focus-ring inline-flex items-center justify-center px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] transition ${variantClasses[variant]} disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+      className={`focus-ring inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition ${variantClasses[variant]} disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
       {...props}
     >
       {children}

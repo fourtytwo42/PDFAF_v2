@@ -30,9 +30,9 @@ export function QueueWorkspace() {
 
   if (!hydrated || storageState === 'loading') {
     return (
-      <SectionCard title="Workspace" description="Loading queue.">
-        <div className="border border-[color:var(--surface-border)] bg-[var(--surface-strong)] px-3 py-6">
-          <p className="text-xs leading-5 text-[var(--muted)]">Loading local queue...</p>
+      <SectionCard title="Your files" description="Loading your file list.">
+        <div className="surface-strong px-4 py-8">
+          <p className="text-sm leading-6 text-[var(--muted)]">Loading...</p>
         </div>
       </SectionCard>
     );
@@ -42,13 +42,13 @@ export function QueueWorkspace() {
     return (
       <>
         <SectionCard
-          title="Workspace"
-          description="Queue is empty."
+          title="Your files"
+          description="Nothing here yet."
         >
           <div className="grid gap-4">
             <StorageStateMessage />
-            <div className="surface-strong p-3">
-              <p className="text-xs leading-5 text-[var(--muted)]">Add PDFs to begin.</p>
+            <div className="surface-strong p-4">
+              <p className="text-sm leading-6 text-[var(--muted)]">Add a PDF to get started.</p>
             </div>
           </div>
         </SectionCard>
