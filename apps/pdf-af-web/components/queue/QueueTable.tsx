@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   CheckIcon,
+  DownloadIcon,
   FileIcon,
   InfoIcon,
   MagicIcon,
@@ -312,6 +313,26 @@ export function QueueTable() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          className="h-10 w-10 shrink-0 p-0"
+                          onClick={() =>
+                            void (
+                              downloadAction === 'fixed'
+                                ? downloadRemediated(job.id)
+                                : Promise.resolve()
+                            )
+                          }
+                          disabled={downloadAction === 'none'}
+                          title={
+                            downloadAction === 'fixed'
+                              ? 'Download PDF'
+                              : 'No downloadable file is available'
+                          }
+                          aria-label={`Download ${job.fileName}`}
+                        >
+                          <DownloadIcon className="h-4 w-4" />
+                        </Button>
                         <Button
                           variant="ghost"
                           className="h-10 w-10 shrink-0 p-0"
