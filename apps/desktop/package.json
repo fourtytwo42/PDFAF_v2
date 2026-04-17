@@ -1,0 +1,17 @@
+{
+  "name": "pdf-af-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "electron dist/main.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "electron": "^36.3.1",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,5 +1,5 @@
 import { createApp } from './app.js';
-import { PORT } from './config.js';
+import { HOST, PORT } from './config.js';
 import { getDb } from './db/client.js';
 import { startEmbeddedLlmIfEnabled, stopEmbeddedLlm } from './llm/embedLocalLlama.js';
 import { bootstrapOpenAiModelFromServer } from './llm/syncRemoteOpenAiModel.js';
@@ -20,16 +20,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const server = app.listen(PORT, () => {
+  const onListen = () => {
     logInfo({
       message: 'server_listen',
       details: {
+        host: HOST || '0.0.0.0',
         port: PORT,
-        analyze: `http://localhost:${PORT}/v1/analyze`,
-        health: `http://localhost:${PORT}/v1/health`,
+        analyze: `http://${HOST || 'localhost'}:${PORT}/v1/analyze`,
+        health: `http://${HOST || 'localhost'}:${PORT}/v1/health`,
       },
     });
-  });
+  };
+
+  const server = HOST
+    ? app.listen(PORT, HOST, onListen)
+    : app.listen(PORT, onListen);
 
   const shutdown = () => {
     stopEmbeddedLlm();

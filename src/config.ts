@@ -163,6 +163,7 @@ function resolvePythonScriptPath(): string {
 export const PYTHON_SCRIPT_PATH = resolvePythonScriptPath();
 export const DB_PATH = process.env['DB_PATH'] ?? './data/pdfaf.db';
 export const PORT    = parseInt(process.env['PORT'] ?? '6200', 10);
+export const HOST    = process.env['HOST']?.trim() ?? '';
 
 // ─── Phase 2 — deterministic remediation ─────────────────────────────────────
 
