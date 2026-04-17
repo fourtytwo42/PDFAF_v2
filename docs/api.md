@@ -144,4 +144,4 @@ Machine-readable spec: [openapi.yaml](../openapi.yaml). Validate with `pnpm open
 |-------|----------------|
 | Max upload size | `MAX_FILE_SIZE_MB` (100) |
 | Max concurrent analyses | `MAX_CONCURRENT_ANALYSES` (5) |
-| Max base64 PDF in JSON | `REMEDIATION_MAX_BASE64_MB` (10) |
+| Max base64 PDF in JSON | `REMEDIATION_MAX_BASE64_MB` (100) |

@@ -180,7 +180,7 @@ export const REMEDIATION_CATEGORY_THRESHOLD = parseInt(
 );
 
 /** JSON response base64 limit for remediated PDF (MB); larger PDFs require future multipart. */
-export const REMEDIATION_MAX_BASE64_MB = parseInt(process.env['REMEDIATION_MAX_BASE64_MB'] ?? '10', 10);
+export const REMEDIATION_MAX_BASE64_MB = parseInt(process.env['REMEDIATION_MAX_BASE64_MB'] ?? '100', 10);
 
 /** Python mutation subprocess timeout (ms). */
 export const PYTHON_MUTATION_TIMEOUT_MS = parseInt(
