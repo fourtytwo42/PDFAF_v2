@@ -9,6 +9,10 @@ import {
 import { Button } from '../common/Button';
 import { useQueueStore } from '../../stores/queue';
 
+function canRemediate(job: ReturnType<typeof useQueueStore.getState>['jobs'][number]) {
+  return Boolean(job.localFile) || (job.persisted && job.fileStatus === 'available');
+}
+
 export function BatchActionBar() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
@@ -34,7 +38,8 @@ export function BatchActionBar() {
   const hasRemediatableSelection = jobs.some(
     (job) =>
       selectedJobIds.includes(job.id) &&
-      (job.status === 'idle' || job.status === 'failed' || job.status === 'done'),
+      (job.status === 'idle' || job.status === 'failed' || job.status === 'done') &&
+      canRemediate(job),
   );
   const hasSelectedRemediatedOutputs = jobs.some(
     (job) => selectedJobIds.includes(job.id) && job.fileStatus === 'available',

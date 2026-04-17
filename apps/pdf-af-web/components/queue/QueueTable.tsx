@@ -193,6 +193,16 @@ function getRetentionWarning(job: JobRecord): { tone: 'warning' | 'danger'; mess
   return null;
 }
 
+function needsReuploadToFix(job: JobRecord): boolean {
+  return Boolean(
+    job.persisted &&
+      !job.localFile &&
+      job.fileStatus !== 'available' &&
+      job.analyzeResult &&
+      !job.remediationResult,
+  );
+}
+
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
@@ -235,6 +245,7 @@ export function QueueTable() {
             const fixLabel = job.remediationResult ? 'Fix Again' : 'Fix';
             const downloadAction = getPrimaryDownloadAction(job);
             const retentionWarning = getRetentionWarning(job);
+            const requiresReupload = needsReuploadToFix(job);
             const showProcessingState = isProcessing(job) && Boolean(job.processingStartedAt);
             const processingLabel =
               job.status === 'queued_analyze'
@@ -366,6 +377,11 @@ export function QueueTable() {
                     {job.errorMessage ? (
                       <p className="mt-2 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
                     ) : null}
+                    {requiresReupload ? (
+                      <p className="mt-2 text-sm leading-6 text-[var(--warning)]">
+                        This row only kept the check result. Add the PDF again if you want to fix it.
+                      </p>
+                    ) : null}
                     {retentionWarning ? (
                       <p
                         className={`mt-2 text-sm leading-6 ${
@@ -401,7 +417,13 @@ export function QueueTable() {
                         variant="secondary"
                         onClick={() => void enqueueRemediate([job.id])}
                         disabled={!canRun || (job.persisted && !job.localFile && job.fileStatus !== 'available')}
-                        title={job.remediationResult ? 'Fix this PDF again' : 'Fix this PDF'}
+                        title={
+                          requiresReupload
+                            ? 'Add this PDF again to fix it'
+                            : job.remediationResult
+                              ? 'Fix this PDF again'
+                              : 'Fix this PDF'
+                        }
                       >
                         <MagicIcon className="h-4 w-4" />
                         {job.status === 'queued_remediate' || job.status === 'uploading' || job.status === 'remediating'
