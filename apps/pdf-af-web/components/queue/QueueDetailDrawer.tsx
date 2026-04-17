@@ -1,14 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import {
-  CheckIcon,
-  DownloadIcon,
-  MagicIcon,
-  MoreIcon,
-  RetryIcon,
-  TrashIcon,
-} from '../common/AppIcons';
+import { MoreIcon } from '../common/AppIcons';
 import { Button } from '../common/Button';
 import { StatusPill } from '../common/StatusPill';
 import {
@@ -75,12 +68,6 @@ function ExpandSection({
 
 export function QueueDetailDrawer({ job }: { job: QueueJob }) {
   const closeDetail = useQueueStore((state) => state.closeDetail);
-  const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
-  const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
-  const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
-  const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
-  const removeJob = useQueueStore((state) => state.removeJob);
-  const retryJob = useQueueStore((state) => state.retryJob);
 
   const result = getDisplayedResult(job);
   const remediation = job.remediationResult;
@@ -123,50 +110,6 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
       </div>
 
       <div className="max-h-[26rem] space-y-3 overflow-y-auto p-3 md:max-h-[28rem]">
-        <DetailSection title="Quick actions">
-          <div className="flex flex-wrap gap-2">
-            {!job.analyzeResult && !job.remediationResult ? (
-              <Button variant="primary" onClick={() => void enqueueAnalyze([job.id])} title="Check this file">
-                <CheckIcon className="h-4 w-4" />
-                Check
-              </Button>
-            ) : null}
-            <Button variant="secondary" onClick={() => void enqueueRemediate([job.id])} title="Fix this file">
-              <MagicIcon className="h-4 w-4" />
-              {job.remediationResult ? 'Fix Again' : 'Fix'}
-            </Button>
-            {!job.remediatedBlobKey && !job.remediationResult ? (
-              <Button variant="ghost" onClick={() => void downloadOriginal(job.id)} title="Download the original file">
-                <DownloadIcon className="h-4 w-4" />
-                Original
-              </Button>
-            ) : null}
-            {job.remediatedBlobKey ? (
-              <Button variant="ghost" onClick={() => void downloadRemediated(job.id)} title="Download the fixed file">
-                <DownloadIcon className="h-4 w-4" />
-                Fixed
-              </Button>
-            ) : null}
-            {job.status === 'failed' && (job.mode === 'grade' || job.mode === 'remediate') ? (
-              <Button variant="ghost" onClick={() => void retryJob(job.id)} title="Try again">
-                <RetryIcon className="h-4 w-4" />
-                Retry
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              onClick={() => void removeJob(job.id)}
-              disabled={
-                job.status === 'uploading' || job.status === 'analyzing' || job.status === 'remediating'
-              }
-              title="Remove this file"
-            >
-              <TrashIcon className="h-4 w-4" />
-              Remove
-            </Button>
-          </div>
-        </DetailSection>
-
         <DetailSection title="At a glance">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
             <div>
