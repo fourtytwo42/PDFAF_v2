@@ -183,6 +183,16 @@ export function QueueTable() {
   const removeJob = useQueueStore((state) => state.removeJob);
   const retryJob = useQueueStore((state) => state.retryJob);
   const toggleSelection = useQueueStore((state) => state.toggleSelection);
+  const sortedJobs = [...jobs].sort((left, right) => {
+    const leftCreatedAt = new Date(left.createdAt).getTime();
+    const rightCreatedAt = new Date(right.createdAt).getTime();
+
+    if (Number.isNaN(leftCreatedAt) || Number.isNaN(rightCreatedAt)) {
+      return right.id.localeCompare(left.id);
+    }
+
+    return rightCreatedAt - leftCreatedAt;
+  });
 
   return (
     <SectionCard
@@ -194,7 +204,7 @@ export function QueueTable() {
         <BatchActionBar />
 
         <div className="grid gap-3">
-          {jobs.map((job) => {
+          {sortedJobs.map((job) => {
             const isSelected = selectedJobIds.includes(job.id);
             const displaySummary = getDisplaySummary(job);
             const completedDuration = getCompletedDuration(job);
