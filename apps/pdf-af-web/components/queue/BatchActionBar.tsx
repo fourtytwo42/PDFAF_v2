@@ -37,7 +37,7 @@ export function BatchActionBar() {
       (job.status === 'idle' || job.status === 'failed' || job.status === 'done'),
   );
   const hasSelectedRemediatedOutputs = jobs.some(
-    (job) => selectedJobIds.includes(job.id) && Boolean(job.remediatedBlobKey),
+    (job) => selectedJobIds.includes(job.id) && job.fileStatus === 'available',
   );
 
   return (

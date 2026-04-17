@@ -1,4 +1,5 @@
 import type { AnalyzeSummary, NormalizedFinding } from './analyze';
+import type { StoredDeletionReason, StoredFileStatus } from './files';
 import type { RemediationSummary } from './remediation';
 
 export type JobStatus =
@@ -24,20 +25,17 @@ export interface JobRecord {
   status: JobStatus;
   mode: JobMode;
   errorMessage?: string;
-  originalBlobKey: string;
-  remediatedBlobKey?: string;
   analyzeResult?: AnalyzeSummary;
   remediationResult?: RemediationSummary;
   findingSummaries?: NormalizedFinding[];
-}
-
-export interface FileBlobRecord {
-  blobKey: string;
-  jobId: string;
-  kind: 'original' | 'remediated';
-  fileName: string;
-  mimeType: string;
-  blob: Blob;
+  fileStatus: StoredFileStatus;
+  storedFileName?: string | null;
+  storedSizeBytes?: number | null;
+  expiresAt?: string | null;
+  deletedAt?: string | null;
+  deletionReason?: StoredDeletionReason;
+  localFile?: File;
+  persisted: boolean;
 }
 
 export interface FileValidationMessage {
@@ -46,4 +44,4 @@ export interface FileValidationMessage {
   message: string;
 }
 
-export type QueueStorageState = 'ready' | 'loading' | 'unavailable' | 'error';
+export type QueueStorageState = 'ready' | 'loading' | 'error';

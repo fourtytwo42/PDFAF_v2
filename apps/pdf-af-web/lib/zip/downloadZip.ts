@@ -1,5 +1,5 @@
 import { zipSync, strToU8 } from 'fflate';
-import { getRemediatedBlob } from '../storage/pdfafDb';
+import { downloadFile } from '../api/fileClient';
 import type { JobRecord } from '../../types/queue';
 
 function pad(value: number): string {
@@ -47,12 +47,10 @@ export async function downloadSelectedRemediatedZip(jobs: JobRecord[]): Promise<
   let includedCount = 0;
 
   for (const job of jobs) {
-    if (!job.remediatedBlobKey) continue;
+    if (job.fileStatus !== 'available') continue;
 
-    const blobRecord = await getRemediatedBlob(job.id);
-    if (!blobRecord) continue;
-
-    fileEntries[blobRecord.fileName] = await blobToUint8Array(blobRecord.blob);
+    const download = await downloadFile(job.id);
+    fileEntries[download.fileName] = await blobToUint8Array(download.blob);
     includedCount += 1;
   }
 

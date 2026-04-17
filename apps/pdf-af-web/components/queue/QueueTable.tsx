@@ -6,7 +6,6 @@ import {
   FileIcon,
   InfoIcon,
   MagicIcon,
-  RetryIcon,
   TrashIcon,
 } from '../common/AppIcons';
 import { Button } from '../common/Button';
@@ -22,12 +21,6 @@ import { useQueueStore } from '../../stores/queue';
 import type { JobRecord } from '../../types/queue';
 import { BatchActionBar } from './BatchActionBar';
 import { QueueDetailDrawer } from './QueueDetailDrawer';
-
-function getStatusTone(job: JobRecord): 'accent' | 'danger' | 'success' {
-  if (job.status === 'failed') return 'danger';
-  if (job.status === 'done') return 'success';
-  return 'accent';
-}
 
 function formatFriendlyStatus(job: JobRecord): string {
   switch (job.status) {
@@ -52,24 +45,6 @@ function formatFriendlyStatus(job: JobRecord): string {
   }
 }
 
-function formatResultSummary(job: JobRecord): string {
-  if (job.remediationResult) {
-    return `${formatScoreGrade(
-      job.remediationResult.before.score,
-      job.remediationResult.before.grade,
-    )} -> ${formatScoreGrade(
-      job.remediationResult.after.score,
-      job.remediationResult.after.grade,
-    )}`;
-  }
-
-  if (job.analyzeResult) {
-    return formatScoreGrade(job.analyzeResult.score, job.analyzeResult.grade);
-  }
-
-  return 'Ready to check';
-}
-
 function formatFindingsSummary(job: JobRecord): string {
   if (!job.findingSummaries || job.findingSummaries.length === 0) {
     return job.analyzeResult ? 'No big problems found' : 'No results yet';
@@ -86,9 +61,7 @@ function getDisplaySummary(job: JobRecord) {
 }
 
 function getPrimaryDownloadAction(job: JobRecord) {
-  if (job.remediatedBlobKey) return 'fixed';
-  if (job.remediationResult) return 'none';
-  return 'original';
+  return job.fileStatus === 'available' ? 'fixed' : 'none';
 }
 
 function getGradeTone(grade: string) {
@@ -170,18 +143,66 @@ function getCompletedDuration(job: JobRecord): string | null {
   return formatElapsed(finishedAt - startedAt);
 }
 
+function timeRemainingLabel(expiresAt?: string | null): string | null {
+  if (!expiresAt) return null;
+
+  const expiresAtMs = new Date(expiresAt).getTime();
+  if (Number.isNaN(expiresAtMs)) return null;
+
+  const remainingMs = expiresAtMs - Date.now();
+  if (remainingMs <= 0) return 'Expires soon';
+
+  const totalMinutes = Math.floor(remainingMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours <= 0) {
+    return `${minutes}m left`;
+  }
+
+  return `${hours}h ${minutes}m left`;
+}
+
+function getRetentionWarning(job: JobRecord): { tone: 'warning' | 'danger'; message: string } | null {
+  if (job.fileStatus === 'quota_deleted') {
+    return {
+      tone: 'danger',
+      message: 'Deleted from the server because your saved fixed files went over 1 GB.',
+    };
+  }
+
+  if (job.fileStatus === 'expired') {
+    return {
+      tone: 'warning',
+      message: 'This fixed PDF expired after 24 hours and is no longer available to download.',
+    };
+  }
+
+  if (job.fileStatus === 'available' && job.expiresAt) {
+    const expiresAtMs = new Date(job.expiresAt).getTime();
+    const remainingMs = expiresAtMs - Date.now();
+
+    if (remainingMs <= 6 * 60 * 60 * 1000) {
+      return {
+        tone: remainingMs <= 60 * 60 * 1000 ? 'danger' : 'warning',
+        message: `Download soon. Saved fixed PDFs are removed after 24 hours${timeRemainingLabel(job.expiresAt) ? ` (${timeRemainingLabel(job.expiresAt)})` : ''}.`,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
   const detailJobId = useQueueStore((state) => state.detailJobId);
   const closeDetail = useQueueStore((state) => state.closeDetail);
-  const downloadOriginal = useQueueStore((state) => state.downloadOriginal);
   const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
   const enqueueAnalyze = useQueueStore((state) => state.enqueueAnalyze);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
   const openDetail = useQueueStore((state) => state.openDetail);
   const removeJob = useQueueStore((state) => state.removeJob);
-  const retryJob = useQueueStore((state) => state.retryJob);
   const toggleSelection = useQueueStore((state) => state.toggleSelection);
   const sortedJobs = [...jobs].sort((left, right) => {
     const leftCreatedAt = new Date(left.createdAt).getTime();
@@ -213,6 +234,7 @@ export function QueueTable() {
               !job.analyzeResult && !job.remediationResult && (job.status === 'idle' || job.status === 'failed');
             const fixLabel = job.remediationResult ? 'Fix Again' : 'Fix';
             const downloadAction = getPrimaryDownloadAction(job);
+            const retentionWarning = getRetentionWarning(job);
             const showProcessingState = isProcessing(job) && Boolean(job.processingStartedAt);
             const processingLabel =
               job.status === 'queued_analyze'
@@ -252,17 +274,13 @@ export function QueueTable() {
                             void (
                               downloadAction === 'fixed'
                                 ? downloadRemediated(job.id)
-                                : downloadAction === 'original'
-                                  ? downloadOriginal(job.id)
-                                  : Promise.resolve()
+                                : Promise.resolve()
                             )
                           }
                           title={
                             downloadAction === 'fixed'
                               ? 'Download fixed PDF'
-                              : downloadAction === 'original'
-                                ? 'Download original PDF'
-                                : 'No downloadable file is available'
+                              : 'No downloadable file is available'
                           }
                         >
                           {job.fileName}
@@ -348,6 +366,17 @@ export function QueueTable() {
                     {job.errorMessage ? (
                       <p className="mt-2 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
                     ) : null}
+                    {retentionWarning ? (
+                      <p
+                        className={`mt-2 text-sm leading-6 ${
+                          retentionWarning.tone === 'danger'
+                            ? 'text-[var(--danger)]'
+                            : 'text-[var(--warning)]'
+                        }`}
+                      >
+                        {retentionWarning.message}
+                      </p>
+                    ) : null}
                     {showProcessingState && job.processingStartedAt ? (
                       <div className="mt-3 flex items-center gap-2 text-sm font-medium text-[var(--accent-strong)]">
                         <span>{processingLabel}</span>
@@ -371,7 +400,7 @@ export function QueueTable() {
                       <Button
                         variant="secondary"
                         onClick={() => void enqueueRemediate([job.id])}
-                        disabled={!canRun}
+                        disabled={!canRun || (job.persisted && !job.localFile && job.fileStatus !== 'available')}
                         title={job.remediationResult ? 'Fix this PDF again' : 'Fix this PDF'}
                       >
                         <MagicIcon className="h-4 w-4" />
@@ -379,16 +408,6 @@ export function QueueTable() {
                           ? 'Fixing...'
                           : fixLabel}
                       </Button>
-                      {job.status === 'failed' ? (
-                        <Button
-                          variant="ghost"
-                          onClick={() => void retryJob(job.id)}
-                          title="Try this file again"
-                        >
-                          <RetryIcon className="h-4 w-4" />
-                          Retry
-                        </Button>
-                      ) : null}
                     </div>
 
                     {detailJobId === job.id ? <QueueDetailDrawer job={job} /> : null}

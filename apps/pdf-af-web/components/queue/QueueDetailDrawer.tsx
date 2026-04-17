@@ -26,6 +26,21 @@ function getDisplayedResult(job: QueueJob) {
   return job.remediationResult?.after ?? job.analyzeResult;
 }
 
+function formatFileAvailability(job: QueueJob): string {
+  switch (job.fileStatus) {
+    case 'available':
+      return 'Ready to download';
+    case 'expired':
+      return 'Expired';
+    case 'quota_deleted':
+      return 'Deleted for storage limit';
+    case 'failed':
+      return 'Not available';
+    default:
+      return 'Not saved';
+  }
+}
+
 function DetailSection({
   title,
   children,
@@ -146,6 +161,16 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
               <dt className="text-[var(--muted)]">Mode</dt>
               <dd className="mt-1 font-semibold text-[var(--foreground)]">{job.mode ?? 'Not picked'}</dd>
             </div>
+            <div>
+              <dt className="text-[var(--muted)]">Download</dt>
+              <dd className="mt-1 font-semibold text-[var(--foreground)]">{formatFileAvailability(job)}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">Keeps until</dt>
+              <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                {job.expiresAt ? formatJobTimestamp(job.expiresAt) : 'Not saved'}
+              </dd>
+            </div>
           </dl>
         </DetailSection>
 
@@ -153,6 +178,24 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
           <section className="rounded-[22px] border border-[color:rgba(220,38,38,0.18)] bg-[color:rgba(220,38,38,0.08)] p-4">
             <p className="text-sm font-semibold text-[var(--danger)]">Last problem</p>
             <p className="mt-1 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
+          </section>
+        ) : null}
+
+        {job.fileStatus === 'expired' ? (
+          <section className="rounded-[22px] border border-[color:rgba(183,121,31,0.18)] bg-[color:rgba(183,121,31,0.08)] p-4">
+            <p className="text-sm font-semibold text-[var(--warning)]">Saved file expired</p>
+            <p className="mt-1 text-sm leading-6 text-[var(--warning)]">
+              The fixed PDF was removed after 24 hours. The results stay here, but the download is gone.
+            </p>
+          </section>
+        ) : null}
+
+        {job.fileStatus === 'quota_deleted' ? (
+          <section className="rounded-[22px] border border-[color:rgba(220,38,38,0.18)] bg-[color:rgba(220,38,38,0.08)] p-4">
+            <p className="text-sm font-semibold text-[var(--danger)]">Saved file deleted</p>
+            <p className="mt-1 text-sm leading-6 text-[var(--danger)]">
+              This fixed PDF was removed to keep your saved files under 1 GB.
+            </p>
           </section>
         ) : null}
 
