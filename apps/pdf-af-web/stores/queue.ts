@@ -254,6 +254,32 @@ function applyProgressToJob(job: JobRecord, progress: RemediationProgress): JobR
   };
 }
 
+function shouldPreserveRemediationProgress(job: JobRecord): boolean {
+  return (
+    job.mode === 'remediate' &&
+    job.progressStatus === 'running' &&
+    (job.status === 'queued_remediate' || job.status === 'uploading' || job.status === 'remediating')
+  );
+}
+
+function mergeServerJobWithActiveState(serverJob: JobRecord, currentJob?: JobRecord): JobRecord {
+  if (!currentJob || !shouldPreserveRemediationProgress(currentJob)) {
+    return serverJob;
+  }
+
+  return {
+    ...serverJob,
+    mode: currentJob.mode,
+    status: currentJob.status,
+    processingStartedAt: currentJob.processingStartedAt,
+    errorMessage: currentJob.errorMessage,
+    progressPercent: currentJob.progressPercent,
+    progressLabel: currentJob.progressLabel,
+    progressDetail: currentJob.progressDetail,
+    progressStatus: currentJob.progressStatus,
+  };
+}
+
 function startRemediationProgressPolling(
   progressJobId: string,
   set: QueueSet,
@@ -300,8 +326,12 @@ function startRemediationProgressPolling(
 }
 
 async function refreshServerJobs(set: QueueSet, get: QueueGet) {
-  const current = get().jobs.filter((job) => !job.persisted);
-  const serverJobs = (await listFiles()).map(mapStoredFileToJob);
+  const existingJobs = get().jobs;
+  const current = existingJobs.filter((job) => !job.persisted);
+  const currentById = new Map(existingJobs.map((job) => [job.id, job] as const));
+  const serverJobs = (await listFiles())
+    .map(mapStoredFileToJob)
+    .map((serverJob) => mergeServerJobWithActiveState(serverJob, currentById.get(serverJob.id)));
   set({ jobs: sortJobs([...current, ...serverJobs]), storageState: 'ready' });
 }
 
