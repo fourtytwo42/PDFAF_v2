@@ -20,6 +20,7 @@ export interface JobRecord {
   mimeType: string;
   createdAt: string;
   updatedAt: string;
+  processingStartedAt?: string;
   status: JobStatus;
   mode: JobMode;
   errorMessage?: string;

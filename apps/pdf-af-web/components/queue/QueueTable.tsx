@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import {
   CheckIcon,
   FileIcon,
@@ -115,6 +116,37 @@ function GradeBadge({ score, grade }: { score: number; grade: string }) {
   );
 }
 
+function isProcessing(job: JobRecord): boolean {
+  return (
+    job.status === 'queued_analyze' ||
+    job.status === 'queued_remediate' ||
+    job.status === 'uploading' ||
+    job.status === 'analyzing' ||
+    job.status === 'remediating'
+  );
+}
+
+function formatElapsed(valueMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(valueMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function ProcessingTimer({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const start = new Date(startedAt).getTime();
+  if (Number.isNaN(start)) return null;
+
+  return <span>{formatElapsed(now - start)}</span>;
+}
+
 export function QueueTable() {
   const jobs = useQueueStore((state) => state.jobs);
   const selectedJobIds = useQueueStore((state) => state.selectedJobIds);
@@ -147,6 +179,17 @@ export function QueueTable() {
               !job.analyzeResult && !job.remediationResult && (job.status === 'idle' || job.status === 'failed');
             const fixLabel = job.remediationResult ? 'Fix Again' : 'Fix';
             const downloadAction = getPrimaryDownloadAction(job);
+            const showProcessingState = isProcessing(job) && Boolean(job.processingStartedAt);
+            const processingLabel =
+              job.status === 'queued_analyze'
+                ? 'Waiting to check'
+                : job.status === 'queued_remediate'
+                  ? 'Waiting to fix'
+                  : job.status === 'uploading'
+                    ? 'Sending'
+                    : job.status === 'analyzing'
+                      ? 'Checking'
+                      : 'Fixing';
 
             return (
               <article key={job.id} className="surface-strong p-4">
@@ -268,6 +311,13 @@ export function QueueTable() {
                     {job.errorMessage ? (
                       <p className="mt-2 text-sm leading-6 text-[var(--danger)]">{job.errorMessage}</p>
                     ) : null}
+                    {showProcessingState && job.processingStartedAt ? (
+                      <div className="mt-3 flex items-center gap-2 text-sm font-medium text-[var(--accent-strong)]">
+                        <span>{processingLabel}</span>
+                        <span>•</span>
+                        <ProcessingTimer startedAt={job.processingStartedAt} />
+                      </div>
+                    ) : null}
 
                     <div className="mt-4 flex flex-wrap gap-2">
                       {showCheckButton ? (
@@ -288,7 +338,9 @@ export function QueueTable() {
                         title={job.remediationResult ? 'Fix this PDF again' : 'Fix this PDF'}
                       >
                         <MagicIcon className="h-4 w-4" />
-                        {fixLabel}
+                        {job.status === 'queued_remediate' || job.status === 'uploading' || job.status === 'remediating'
+                          ? 'Fixing...'
+                          : fixLabel}
                       </Button>
                       {job.status === 'failed' ? (
                         <Button
