@@ -2,7 +2,6 @@
 
 import { useEffect } from 'react';
 import { BrandBar } from '../branding/BrandBar';
-import { SettingsDialog } from '../settings/SettingsDialog';
 import { QueueWorkspace } from '../queue/QueueWorkspace';
 import { UploadDropzone } from '../upload/UploadDropzone';
 import { useAppSettingsStore } from '../../stores/settings';
@@ -36,7 +35,6 @@ export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
         <UploadDropzone />
         <QueueWorkspace />
       </div>
-      <SettingsDialog defaultApiBaseUrl={defaultApiBaseUrl} />
     </main>
   );
 }
