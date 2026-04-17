@@ -20,10 +20,6 @@ export function BatchActionBar() {
   );
   const removeSelected = useQueueStore((state) => state.removeSelected);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
-  const preferredQueueConcurrency = useQueueStore((state) => state.preferredQueueConcurrency);
-  const setPreferredQueueConcurrency = useQueueStore(
-    (state) => state.setPreferredQueueConcurrency,
-  );
   const toggleSelectAllVisible = useQueueStore((state) => state.toggleSelectAllVisible);
 
   const hasJobs = jobs.length > 0;
@@ -49,19 +45,6 @@ export function BatchActionBar() {
         >
           {allVisibleSelected ? 'Unselect' : 'Select all'}
         </Button>
-        <label className="flex items-center gap-2 rounded-full border border-[color:var(--surface-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--foreground)] shadow-sm">
-          <span>Speed</span>
-          <select
-            className="bg-transparent text-[var(--foreground)] outline-none"
-            value={preferredQueueConcurrency}
-            onChange={(event) => setPreferredQueueConcurrency(Number(event.target.value))}
-            title="How many files to process at once"
-          >
-            <option value={1}>1</option>
-            <option value={2}>2</option>
-            <option value={3}>3</option>
-          </select>
-        </label>
         <Button
           variant="secondary"
           onClick={() => void enqueueRemediate()}

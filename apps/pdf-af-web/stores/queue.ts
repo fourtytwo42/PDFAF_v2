@@ -23,13 +23,10 @@ import type {
   QueueStorageState,
 } from '../types/queue';
 
-const DEFAULT_QUEUE_CONCURRENCY = 2;
-const MIN_QUEUE_CONCURRENCY = 1;
-const MAX_QUEUE_CONCURRENCY = 3;
+const FIXED_QUEUE_CONCURRENCY = 5;
 
 interface QueuePreferences {
   autoRemediateOnAdd: boolean;
-  preferredQueueConcurrency: number;
   queuePaused: boolean;
 }
 
@@ -42,7 +39,6 @@ interface QueueStoreState {
   hydrated: boolean;
   isAddingFiles: boolean;
   autoRemediateOnAdd: boolean;
-  preferredQueueConcurrency: number;
   queuePaused: boolean;
   detailJobId: string | null;
   hydrateFromStorage: () => Promise<void>;
@@ -57,7 +53,6 @@ interface QueueStoreState {
   enqueueAnalyze: (jobIds?: string[]) => Promise<void>;
   enqueueRemediate: (jobIds?: string[]) => Promise<void>;
   setAutoRemediateOnAdd: (enabled: boolean) => void;
-  setPreferredQueueConcurrency: (value: number) => void;
   pauseQueue: () => void;
   resumeQueue: () => void;
   runScheduler: () => Promise<void>;
@@ -96,16 +91,10 @@ function canUseLocalStorage(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
 }
 
-function clampQueueConcurrency(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_QUEUE_CONCURRENCY;
-  return Math.min(MAX_QUEUE_CONCURRENCY, Math.max(MIN_QUEUE_CONCURRENCY, Math.round(value)));
-}
-
 function loadQueuePreferences(): QueuePreferences {
   if (!canUseLocalStorage()) {
     return {
       autoRemediateOnAdd: false,
-      preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
       queuePaused: false,
     };
   }
@@ -115,7 +104,6 @@ function loadQueuePreferences(): QueuePreferences {
     if (!raw) {
       return {
         autoRemediateOnAdd: false,
-        preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
         queuePaused: false,
       };
     }
@@ -123,17 +111,11 @@ function loadQueuePreferences(): QueuePreferences {
     const parsed = JSON.parse(raw) as Partial<QueuePreferences>;
     return {
       autoRemediateOnAdd: parsed.autoRemediateOnAdd === true,
-      preferredQueueConcurrency: clampQueueConcurrency(
-        typeof parsed.preferredQueueConcurrency === 'number'
-          ? parsed.preferredQueueConcurrency
-          : DEFAULT_QUEUE_CONCURRENCY,
-      ),
       queuePaused: parsed.queuePaused === true,
     };
   } catch {
     return {
       autoRemediateOnAdd: false,
-      preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
       queuePaused: false,
     };
   }
@@ -431,7 +413,6 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
   hydrated: false,
   isAddingFiles: false,
   autoRemediateOnAdd: false,
-  preferredQueueConcurrency: DEFAULT_QUEUE_CONCURRENCY,
   queuePaused: false,
   detailJobId: null,
 
@@ -449,7 +430,6 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
         activeJobIds: [],
         storageState: 'ready',
         autoRemediateOnAdd: preferences.autoRemediateOnAdd,
-        preferredQueueConcurrency: preferences.preferredQueueConcurrency,
         queuePaused: preferences.queuePaused,
       });
     } catch (error) {
@@ -588,21 +568,9 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
   setAutoRemediateOnAdd: (enabled) => {
     saveQueuePreferences({
       autoRemediateOnAdd: enabled,
-      preferredQueueConcurrency: get().preferredQueueConcurrency,
       queuePaused: get().queuePaused,
     });
     set({ autoRemediateOnAdd: enabled });
-  },
-
-  setPreferredQueueConcurrency: (value) => {
-    const preferredQueueConcurrency = clampQueueConcurrency(value);
-    saveQueuePreferences({
-      autoRemediateOnAdd: get().autoRemediateOnAdd,
-      preferredQueueConcurrency,
-      queuePaused: get().queuePaused,
-    });
-    set({ preferredQueueConcurrency });
-    void get().runScheduler();
   },
 
   enqueueAnalyze: async (jobIds) => {
@@ -666,7 +634,6 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
   pauseQueue: () => {
     saveQueuePreferences({
       autoRemediateOnAdd: get().autoRemediateOnAdd,
-      preferredQueueConcurrency: get().preferredQueueConcurrency,
       queuePaused: true,
     });
     set({ queuePaused: true });
@@ -675,7 +642,6 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
   resumeQueue: () => {
     saveQueuePreferences({
       autoRemediateOnAdd: get().autoRemediateOnAdd,
-      preferredQueueConcurrency: get().preferredQueueConcurrency,
       queuePaused: false,
     });
     set({ queuePaused: false });
@@ -686,7 +652,7 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     const state = get();
     if (state.queuePaused) return;
 
-    const availableSlots = state.preferredQueueConcurrency - state.activeJobIds.length;
+    const availableSlots = FIXED_QUEUE_CONCURRENCY - state.activeJobIds.length;
     if (availableSlots <= 0) return;
 
     const queuedJobs = state.jobs.filter((job) => isQueued(job) && !state.activeJobIds.includes(job.id));
