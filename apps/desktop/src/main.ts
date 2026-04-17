@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, Menu, Tray, nativeImage } from 'electron';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ type StartupPhase =
   | 'waiting_for_web'
   | 'ready'
   | 'failed'
+  | 'restarting'
   | 'shutting_down';
 
 interface StartupError {
@@ -37,6 +38,24 @@ interface RuntimeState {
   webPort: number | null;
   startupPhase: StartupPhase;
   lastStartupError: StartupError | null;
+  tray: Tray | null;
+  restartInProgress: boolean;
+}
+
+interface RuntimePaths {
+  appDataDir: string;
+  dbDir: string;
+  dbPath: string;
+  filesDir: string;
+  logsDir: string;
+  logFilePath: string;
+  llmDir: string;
+  tempDir: string;
+  stateFilePath: string;
+}
+
+interface DesktopState {
+  hasSeenTrayHint: boolean;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -48,26 +67,17 @@ const apiCwd = repoRoot;
 const webCwd = join(repoRoot, 'apps', 'pdf-af-web');
 const webEntry = join(webCwd, '.next', 'standalone', 'apps', 'pdf-af-web', 'server.js');
 const preloadPath = join(desktopRoot, 'dist', 'preload.js');
+const trayIconPath = join(desktopRoot, 'assets', 'tray.ico');
 const startupTimeoutMs = 60_000;
 const pollIntervalMs = 500;
 const maxTailLines = 40;
+const defaultDesktopState: DesktopState = { hasSeenTrayHint: false };
 
 let mainWindow: BrowserWindow | null = null;
 let logFilePath = '';
 let isQuitting = false;
-
-interface RuntimePaths {
-  appDataDir: string;
-  dbDir: string;
-  dbPath: string;
-  filesDir: string;
-  logsDir: string;
-  logFilePath: string;
-  llmDir: string;
-  tempDir: string;
-}
-
 let runtimePaths: RuntimePaths | null = null;
+let desktopState: DesktopState = { ...defaultDesktopState };
 
 const runtimeState: RuntimeState = {
   apiChild: null,
@@ -76,6 +86,8 @@ const runtimeState: RuntimeState = {
   webPort: null,
   startupPhase: 'idle',
   lastStartupError: null,
+  tray: null,
+  restartInProgress: false,
 };
 
 function baseChildEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
@@ -103,6 +115,7 @@ function resolveRuntimePaths(): RuntimePaths {
     logFilePath: join(logsDir, 'pdfaf-desktop.log'),
     llmDir,
     tempDir,
+    stateFilePath: join(appDataDir, 'desktop-state.json'),
   };
 }
 
@@ -115,6 +128,24 @@ async function ensureRuntimePaths(paths: RuntimePaths): Promise<void> {
     mkdir(paths.llmDir, { recursive: true }),
     mkdir(paths.tempDir, { recursive: true }),
   ]);
+}
+
+async function loadDesktopState(): Promise<void> {
+  if (!runtimePaths) return;
+  try {
+    const raw = await readFile(runtimePaths.stateFilePath, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<DesktopState>;
+    desktopState = {
+      hasSeenTrayHint: parsed.hasSeenTrayHint === true,
+    };
+  } catch {
+    desktopState = { ...defaultDesktopState };
+  }
+}
+
+async function saveDesktopState(): Promise<void> {
+  if (!runtimePaths) return;
+  await writeFile(runtimePaths.stateFilePath, JSON.stringify(desktopState, null, 2), 'utf8');
 }
 
 function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -281,7 +312,7 @@ function spawnManagedChild(
     queueLog('electron', `${name} exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`);
     if (name === 'api') runtimeState.apiChild = null;
     if (name === 'web') runtimeState.webChild = null;
-    if (!isQuitting && runtimeState.startupPhase === 'ready') {
+    if (!isQuitting && !runtimeState.restartInProgress && runtimeState.startupPhase === 'ready') {
       void handleRuntimeFailure(name, managed.stderrTail, `The ${name} process exited unexpectedly.`);
     }
   });
@@ -355,7 +386,25 @@ async function handleRuntimeFailure(
   app.quit();
 }
 
-async function createMainWindow(url: string): Promise<void> {
+function getCurrentWebUrl(): string {
+  if (!runtimeState.webPort) {
+    throw new Error('The web port is not initialized.');
+  }
+  return `http://127.0.0.1:${runtimeState.webPort}`;
+}
+
+async function showMainWindow(): Promise<void> {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+    return;
+  }
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -369,15 +418,28 @@ async function createMainWindow(url: string): Promise<void> {
     },
   });
 
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow?.hide();
+    void showTrayHintIfNeeded();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 
-  await mainWindow.loadURL(url);
+  await mainWindow.loadURL(getCurrentWebUrl());
   mainWindow.show();
+  mainWindow.focus();
 }
 
-async function initializeRuntime(): Promise<void> {
+async function createMainWindow(url: string): Promise<void> {
+  runtimeState.webPort = Number(new URL(url).port);
+  await showMainWindow();
+}
+
+async function startServices(): Promise<void> {
   if (!existsSync(apiEntry)) {
     throw {
       component: 'api',
@@ -436,7 +498,124 @@ async function initializeRuntime(): Promise<void> {
   }
 
   runtimeState.startupPhase = 'ready';
-  await createMainWindow(`http://127.0.0.1:${runtimeState.webPort}`);
+}
+
+async function restartServices(): Promise<void> {
+  if (runtimeState.restartInProgress) return;
+
+  runtimeState.restartInProgress = true;
+  runtimeState.startupPhase = 'restarting';
+  queueLog('electron', 'Restarting managed services');
+  let restartSucceeded = false;
+
+  try {
+    await shutdownChildren();
+    await startServices();
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await mainWindow.loadURL(getCurrentWebUrl());
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+      mainWindow.focus();
+    }
+    restartSucceeded = true;
+  } catch (error) {
+    const startupError = error as StartupError;
+    runtimeState.lastStartupError = startupError;
+    await dialog.showMessageBox({
+      type: 'error',
+      title: 'PDFAF Desktop service restart failed',
+      message: `PDFAF Desktop could not restart its ${startupError.component} service.`,
+      detail: [
+        startupError.message,
+        '',
+        'Last stderr lines:',
+        ...(startupError.stderrTail.length > 0 ? startupError.stderrTail : ['(no stderr output captured)']),
+        '',
+        `Log file: ${logFilePath}`,
+      ].join('\n'),
+    });
+  } finally {
+    runtimeState.restartInProgress = false;
+    if (!restartSucceeded) {
+      runtimeState.startupPhase = runtimeState.apiChild || runtimeState.webChild ? 'failed' : 'idle';
+    }
+  }
+}
+
+function buildTrayMenu(): Menu {
+  return Menu.buildFromTemplate([
+    {
+      label: 'Open App',
+      click: () => {
+        void showMainWindow();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Restart Services',
+      click: () => {
+        void restartServices();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Exit',
+      click: () => {
+        void exitApplication();
+      },
+    },
+  ]);
+}
+
+function createTrayIcon(): void {
+  if (runtimeState.tray) return;
+
+  const trayImage = existsSync(trayIconPath)
+    ? nativeImage.createFromPath(trayIconPath)
+    : nativeImage.createFromDataURL(
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAx0lEQVR4AY2RsQ3CQBBFnxMHEMABnMAJnMAGnMAJnMABHMAJxwSJP0l2ghJp2SZv7r2dnXve6+5ShlDNQkS9RrkmaRjA2ckb2z9CbYuK7VUyWWtaFgjA5a6W3V6sbjMqYNri7JjBdP4zCZh98oOw3XK7oUNwnR5jh1OrCiAtDfJxQgWVa5iTZ8u4K4DkWt9Nso1gpGnoR0AV4yStM8+gPe8IIwRgz5rEhP1MO9mNfVGLyH8s12Mg3ylGjM2D0T4drm2oAQ0s69c4+jQ5s5rY8Y7A7q8f7l0x1F5gQhSt6XJgAAAABJRU5ErkJggg==',
+      );
+  runtimeState.tray = new Tray(trayImage);
+  runtimeState.tray.setToolTip('PDFAF');
+  runtimeState.tray.setContextMenu(buildTrayMenu());
+  runtimeState.tray.on('double-click', () => {
+    void showMainWindow();
+  });
+}
+
+function destroyTray(): void {
+  runtimeState.tray?.destroy();
+  runtimeState.tray = null;
+}
+
+async function showTrayHintIfNeeded(): Promise<void> {
+  if (desktopState.hasSeenTrayHint) return;
+
+  desktopState.hasSeenTrayHint = true;
+  await saveDesktopState();
+  await dialog.showMessageBox({
+    type: 'info',
+    title: 'PDFAF is still running',
+    message: 'PDFAF moved to the notification area.',
+    detail: 'Double-click the tray icon to reopen the app. Use the tray menu when you want to exit.',
+  });
+}
+
+async function exitApplication(): Promise<void> {
+  if (isQuitting) return;
+  isQuitting = true;
+  destroyTray();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+  }
+  app.quit();
+}
+
+async function initializeRuntime(): Promise<void> {
+  await startServices();
+  await createMainWindow(getCurrentWebUrl());
 }
 
 async function bootstrap(): Promise<void> {
@@ -447,20 +626,7 @@ async function bootstrap(): Promise<void> {
   }
 
   app.on('second-instance', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    if (!mainWindow.isVisible()) {
-      mainWindow.show();
-    }
-    mainWindow.focus();
-  });
-
-  app.on('window-all-closed', () => {
-    if (!isQuitting) {
-      app.quit();
-    }
+    void showMainWindow();
   });
 
   app.on('before-quit', () => {
@@ -470,14 +636,16 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   runtimePaths = resolveRuntimePaths();
   await ensureRuntimePaths(runtimePaths);
+  await loadDesktopState();
   logFilePath = runtimePaths.logFilePath;
   queueLog('electron', 'Desktop runtime booting');
   queueLog('electron', `Desktop app data dir: ${runtimePaths.appDataDir}`);
+  createTrayIcon();
 
   try {
     await initializeRuntime();
   } catch (error) {
-    const startupError = (error as StartupError);
+    const startupError = error as StartupError;
     await shutdownChildren();
     await showFatalStartupError(startupError);
     app.quit();
@@ -496,11 +664,11 @@ void bootstrap().catch(async (error) => {
 });
 
 process.on('SIGINT', () => {
-  app.quit();
+  void exitApplication();
 });
 
 process.on('SIGTERM', () => {
-  app.quit();
+  void exitApplication();
 });
 
 app.on('will-quit', (event) => {
@@ -509,6 +677,7 @@ app.on('will-quit', (event) => {
   }
 
   event.preventDefault();
+  destroyTray();
   void shutdownChildren().finally(() => {
     app.exit();
   });
