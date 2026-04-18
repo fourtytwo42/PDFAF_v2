@@ -13,6 +13,7 @@ import {
   getOpenAiCompatBaseUrl,
 } from '../src/config.js';
 import { initSchema } from '../src/db/schema.js';
+import { startEmbeddedLlmIfEnabled, stopEmbeddedLlm } from '../src/llm/embedLocalLlama.js';
 import { mergeSequentialSemanticSummaries } from '../src/routes/remediate.js';
 import {
   applyPostRemediationAltRepair,
@@ -605,6 +606,10 @@ async function main(): Promise<void> {
     throw new Error('No manifest entries matched the requested cohort/file filters.');
   }
 
+  if (args.semanticEnabled) {
+    await startEmbeddedLlmIfEnabled();
+  }
+
   const runId = makeRunId();
   const outRoot = args.outDir
     ? resolve(args.outDir)
@@ -617,126 +622,130 @@ async function main(): Promise<void> {
   const analyzeRows: AnalyzeBenchmarkRow[] = [];
   const remediateRows: RemediateBenchmarkRow[] = [];
 
-  for (const entry of selectedEntries) {
-    process.stdout.write(`[${entry.id}] ${entry.filename} ... `);
-    try {
-      const analyze = await runAnalyzeStep(entry);
-      analyzeRows.push(analyze.row);
+  try {
+    for (const entry of selectedEntries) {
+      process.stdout.write(`[${entry.id}] ${entry.filename} ... `);
+      try {
+        const analyze = await runAnalyzeStep(entry);
+        analyzeRows.push(analyze.row);
 
-      if (args.mode === 'analyze') {
-        console.log(`analyzed ${analyze.result.score}/${analyze.result.grade}`);
-        continue;
-      }
+        if (args.mode === 'analyze') {
+          console.log(`analyzed ${analyze.result.score}/${analyze.result.grade}`);
+          continue;
+        }
 
-      let remediateRow = await runRemediationStep(
-        entry,
-        analyze.result,
-        analyze.snapshot,
-        args.semanticEnabled,
-        args.mode,
-        args.writePdfs,
-        runDir,
-      );
-      remediateRows.push(remediateRow);
-      console.log(
-        `remediated ${remediateRow.beforeScore}/${remediateRow.beforeGrade} -> ${remediateRow.afterScore}/${remediateRow.afterGrade}`,
-      );
-    } catch (error) {
-      console.log(`error: ${sanitizeError(error)}`);
-      analyzeRows.push(makeAnalyzeErrorRow(entry, error));
-      if (args.mode !== 'analyze') {
-        remediateRows.push({
-          id: entry.id,
-          file: entry.file,
-          cohort: entry.cohort,
-          sourceType: entry.sourceType,
-          intent: entry.intent,
-          ...(entry.notes ? { notes: entry.notes } : {}),
-          beforeScore: null,
-          beforeGrade: null,
-          beforePdfClass: null,
-          beforeCategories: [],
-          beforeVerificationLevel: null,
-          beforeManualReviewRequired: null,
-          beforeManualReviewReasons: [],
-          beforeScoreCapsApplied: [],
-          beforeStructuralClassification: null,
-          beforeFailureProfile: null,
-          afterScore: null,
-          afterGrade: null,
-          afterPdfClass: null,
-          afterCategories: [],
-          afterVerificationLevel: null,
-          afterManualReviewRequired: null,
-          afterManualReviewReasons: [],
-          afterScoreCapsApplied: [],
-          afterStructuralClassification: null,
-          afterFailureProfile: null,
-          reanalyzedScore: null,
-          reanalyzedGrade: null,
-          reanalyzedPdfClass: null,
-          reanalyzedCategories: [],
-          reanalyzedVerificationLevel: null,
-          reanalyzedManualReviewRequired: null,
-          reanalyzedManualReviewReasons: [],
-          reanalyzedScoreCapsApplied: [],
-          reanalyzedStructuralClassification: null,
-          reanalyzedFailureProfile: null,
-          delta: null,
-          appliedTools: [],
-          rounds: [],
-          analysisBeforeMs: null,
-          remediationDurationMs: null,
-          wallRemediateMs: null,
-          analysisAfterMs: null,
-          totalPipelineMs: null,
-          error: sanitizeError(error),
-        });
+        const remediateRow = await runRemediationStep(
+          entry,
+          analyze.result,
+          analyze.snapshot,
+          args.semanticEnabled,
+          args.mode,
+          args.writePdfs,
+          runDir,
+        );
+        remediateRows.push(remediateRow);
+        console.log(
+          `remediated ${remediateRow.beforeScore}/${remediateRow.beforeGrade} -> ${remediateRow.afterScore}/${remediateRow.afterGrade}`,
+        );
+      } catch (error) {
+        console.log(`error: ${sanitizeError(error)}`);
+        analyzeRows.push(makeAnalyzeErrorRow(entry, error));
+        if (args.mode !== 'analyze') {
+          remediateRows.push({
+            id: entry.id,
+            file: entry.file,
+            cohort: entry.cohort,
+            sourceType: entry.sourceType,
+            intent: entry.intent,
+            ...(entry.notes ? { notes: entry.notes } : {}),
+            beforeScore: null,
+            beforeGrade: null,
+            beforePdfClass: null,
+            beforeCategories: [],
+            beforeVerificationLevel: null,
+            beforeManualReviewRequired: null,
+            beforeManualReviewReasons: [],
+            beforeScoreCapsApplied: [],
+            beforeStructuralClassification: null,
+            beforeFailureProfile: null,
+            afterScore: null,
+            afterGrade: null,
+            afterPdfClass: null,
+            afterCategories: [],
+            afterVerificationLevel: null,
+            afterManualReviewRequired: null,
+            afterManualReviewReasons: [],
+            afterScoreCapsApplied: [],
+            afterStructuralClassification: null,
+            afterFailureProfile: null,
+            reanalyzedScore: null,
+            reanalyzedGrade: null,
+            reanalyzedPdfClass: null,
+            reanalyzedCategories: [],
+            reanalyzedVerificationLevel: null,
+            reanalyzedManualReviewRequired: null,
+            reanalyzedManualReviewReasons: [],
+            reanalyzedScoreCapsApplied: [],
+            reanalyzedStructuralClassification: null,
+            reanalyzedFailureProfile: null,
+            delta: null,
+            appliedTools: [],
+            rounds: [],
+            analysisBeforeMs: null,
+            remediationDurationMs: null,
+            wallRemediateMs: null,
+            analysisAfterMs: null,
+            totalPipelineMs: null,
+            error: sanitizeError(error),
+          });
+        }
       }
     }
+
+    const manifest = makeManifestSnapshot({
+      runId,
+      generatedAt,
+      manifestPath,
+      corpusRoot,
+      mode: args.mode,
+      semanticEnabled: args.semanticEnabled,
+      writePdfs: args.writePdfs,
+      selectedEntries,
+    });
+    const summary = buildBenchmarkSummary({
+      runId,
+      generatedAt,
+      mode: args.mode,
+      semanticEnabled: args.semanticEnabled,
+      writePdfs: args.writePdfs,
+      selectedFileIds: selectedEntries.map(entry => entry.id),
+      manifestEntries: entries.length,
+      analyzeRows,
+      remediateRows,
+    });
+    const summaryMarkdown = renderBenchmarkSummaryMarkdown(summary);
+    const bundle: BenchmarkArtifactBundle = {
+      manifest,
+      analyzeResults: analyzeRows,
+      remediateResults: remediateRows,
+      summary,
+    };
+    const validation = validateBenchmarkArtifacts(bundle);
+    if (!validation.ok) {
+      throw new Error(`Benchmark artifact validation failed:\n- ${validation.errors.join('\n- ')}`);
+    }
+
+    await mkdir(runDir, { recursive: true });
+    await writeJson(join(runDir, 'manifest.snapshot.json'), manifest);
+    await writeJson(join(runDir, 'analyze.results.json'), analyzeRows);
+    await writeJson(join(runDir, 'remediate.results.json'), remediateRows);
+    await writeJson(join(runDir, 'summary.json'), summary);
+    await writeFile(join(runDir, 'summary.md'), summaryMarkdown, 'utf8');
+
+    console.log(`Wrote benchmark run to ${runDir}`);
+  } finally {
+    stopEmbeddedLlm();
   }
-
-  const manifest = makeManifestSnapshot({
-    runId,
-    generatedAt,
-    manifestPath,
-    corpusRoot,
-    mode: args.mode,
-    semanticEnabled: args.semanticEnabled,
-    writePdfs: args.writePdfs,
-    selectedEntries,
-  });
-  const summary = buildBenchmarkSummary({
-    runId,
-    generatedAt,
-    mode: args.mode,
-    semanticEnabled: args.semanticEnabled,
-    writePdfs: args.writePdfs,
-    selectedFileIds: selectedEntries.map(entry => entry.id),
-    manifestEntries: entries.length,
-    analyzeRows,
-    remediateRows,
-  });
-  const summaryMarkdown = renderBenchmarkSummaryMarkdown(summary);
-  const bundle: BenchmarkArtifactBundle = {
-    manifest,
-    analyzeResults: analyzeRows,
-    remediateResults: remediateRows,
-    summary,
-  };
-  const validation = validateBenchmarkArtifacts(bundle);
-  if (!validation.ok) {
-    throw new Error(`Benchmark artifact validation failed:\n- ${validation.errors.join('\n- ')}`);
-  }
-
-  await mkdir(runDir, { recursive: true });
-  await writeJson(join(runDir, 'manifest.snapshot.json'), manifest);
-  await writeJson(join(runDir, 'analyze.results.json'), analyzeRows);
-  await writeJson(join(runDir, 'remediate.results.json'), remediateRows);
-  await writeJson(join(runDir, 'summary.json'), summary);
-  await writeFile(join(runDir, 'summary.md'), summaryMarkdown, 'utf8');
-
-  console.log(`Wrote benchmark run to ${runDir}`);
 }
 
 main().catch(error => {

@@ -4,7 +4,7 @@
 
 Stage 6 implementation is complete in code, tests, API surface, and reporting.
 
-Full-corpus semantic acceptance is not closed from this environment because no OpenAI-compatible semantic endpoint was configured on 2026-04-18. In this workspace, `OPENAI_COMPAT_BASE_URL` was unset, so the 50-file Stage 5→6 semantic benchmark and acceptance artifacts could not be regenerated truthfully.
+Full-corpus semantic acceptance is not closed from this environment because no semantic runtime was configured on 2026-04-18. In this workspace, `OPENAI_COMPAT_BASE_URL` was unset and `PDFAF_RUN_LOCAL_LLM` was not enabled, so the 50-file Stage 5→6 semantic benchmark and acceptance artifacts could not be regenerated truthfully at that time.
 
 ## What Stage 6 Added
 
@@ -38,6 +38,11 @@ Run the full Stage 5→6 semantic benchmark in an environment with semantic acce
 - `Output/experiment-corpus-baseline/run-stage6-full/`
 - `Output/experiment-corpus-baseline/comparison-stage6-full-vs-stage5/`
 - `Output/experiment-corpus-baseline/stage6-acceptance/`
+
+The semantic runtime may be either:
+
+- an external OpenAI-compatible endpoint exposed through `OPENAI_COMPAT_BASE_URL`
+- the embedded local `llama.cpp` path enabled with `PDFAF_RUN_LOCAL_LLM=1`
 
 The acceptance bar remains:
 

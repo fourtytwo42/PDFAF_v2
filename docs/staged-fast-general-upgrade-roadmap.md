@@ -289,7 +289,7 @@ Add only the next set of generic repairs that are justified by the experiment da
   - `pnpm exec tsc --noEmit`
   - `pnpm exec swagger-cli validate openapi.yaml`
   - targeted semantic/report/benchmark/integration Vitest coverage
-- Formal full-corpus Stage 5→6 acceptance is still pending a configured semantic endpoint in the runtime environment. This environment did not have `OPENAI_COMPAT_BASE_URL`, so a truthful semantic full-run acceptance package could not be regenerated here on 2026-04-18.
+- Formal full-corpus Stage 5→6 acceptance is still pending a configured semantic runtime in the benchmark environment. On 2026-04-18 this shell had neither `OPENAI_COMPAT_BASE_URL` set nor `PDFAF_RUN_LOCAL_LLM=1`, so the semantic full-run acceptance package could not be regenerated here at that time.
 
 ### Goal
 
