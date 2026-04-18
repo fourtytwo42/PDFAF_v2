@@ -4,14 +4,20 @@ Use this checklist before sharing a Windows desktop build outside the team.
 
 ## Build outputs
 
-- Run `pnpm desktop:package:win`.
+- Run the bounded release steps in order:
+  - `pnpm desktop:package:prep`
+  - `pnpm desktop:package:unpacked`
+  - `pnpm desktop:release:verify`
+  - `pnpm desktop:package:nsis`
+  - `pnpm desktop:artifacts:write`
 - Confirm `apps/desktop/dist-packaged/` contains:
   - `PDFAF-Setup-<version>-x64.exe`
   - `PDFAF-Setup-<version>-x64.exe.blockmap`
   - `win-unpacked/`
   - `SHA256SUMS.txt`
   - `release-metadata.json`
-- Confirm `pnpm desktop:release:verify` passes.
+- Confirm `pnpm desktop:web-runtime:verify` passes before packaging.
+- Confirm `pnpm desktop:release:verify` passes against `win-unpacked` before the NSIS step.
 
 ## Fresh machine install
 
@@ -33,7 +39,8 @@ Use this checklist before sharing a Windows desktop build outside the team.
 ## Persistence and local AI
 
 - Analyze a PDF and confirm persisted desktop storage survives restart.
-- Install local AI, wait for validation, then restart the app.
+- Confirm a fresh install does not ship GGUF, `mmproj`, or `llama-server` model assets in packaged resources.
+- Install local AI after app install from the in-app Settings flow, wait for validation, then restart the app.
 - Confirm local AI state survives restart.
 - Disable, enable, and remove local AI from the settings UI.
 - Use `Reset Local AI` and confirm only local-AI artifacts are removed.

@@ -4,11 +4,27 @@
 
 Use `pnpm desktop:package:win` to produce the Windows release artifacts under `apps/desktop/dist-packaged/`.
 
+For bounded local verification, run:
+
+- `pnpm desktop:package:prep`
+- `pnpm desktop:package:unpacked`
+- `pnpm desktop:release:verify`
+- `pnpm desktop:package:nsis`
+- `pnpm desktop:artifacts:write`
+
 The Stage 6 packaging flow produces:
 
 - an NSIS installer
 - a `win-unpacked` directory for local QA
 - `SHA256SUMS.txt` for generated release artifacts
+
+The installer ships the desktop app and bundled base runtime only. It does **not** ship local AI model assets.
+
+Local AI stays optional and is downloaded after install by the app itself into user data:
+
+- `llama-server`
+- the GGUF model
+- `mmproj`
 
 ## Uninstall and data retention
 

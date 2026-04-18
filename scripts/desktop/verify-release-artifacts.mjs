@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +44,7 @@ async function waitForUrl(url, timeoutMs = 60000) {
     try {
       const response = await fetch(url);
       if (response.ok || response.status === 503) {
-        return;
+        return Date.now() - start;
       }
     } catch {
       // continue polling
@@ -68,29 +68,37 @@ async function stopChild(child) {
   });
 }
 
+async function directorySize(path) {
+  const entries = await readdir(path, { withFileTypes: true });
+  let total = 0;
+  for (const entry of entries) {
+    const entryPath = join(path, entry.name);
+    if (entry.isDirectory()) {
+      total += await directorySize(entryPath);
+      continue;
+    }
+    if (entry.isFile()) {
+      total += (await stat(entryPath)).size;
+    }
+  }
+  return total;
+}
+
 async function main() {
-  const packageJson = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
-  const installerName = `PDFAF-Setup-${packageJson.version}-x64.exe`;
   const requiredArtifacts = [
-    join(distRoot, installerName),
-    join(distRoot, `${installerName}.blockmap`),
-    join(distRoot, 'SHA256SUMS.txt'),
-    join(distRoot, 'release-metadata.json'),
+    join(unpackedRoot, 'PDFAF.exe'),
     join(runtimeRoot, 'manifest.json'),
     join(resourcesRoot, 'release', 'build-metadata.json'),
     join(runtimeRoot, 'node', 'node.exe'),
     join(runtimeRoot, 'python', 'python.exe'),
     join(runtimeRoot, 'qpdf', 'bin', 'qpdf.exe'),
+    join(webRuntimeRoot, 'manifest.json'),
     join(webRuntimeRoot, 'node_modules'),
     join(appRoot, 'dist', 'server.js'),
     join(webRuntimeRoot, 'apps', 'pdf-af-web', 'server.js'),
+    join(webRuntimeRoot, 'apps', 'pdf-af-web', '.next'),
   ];
   await Promise.all(requiredArtifacts.map((path) => requirePath(path)));
-
-  const releaseMetadata = JSON.parse(await readFile(join(distRoot, 'release-metadata.json'), 'utf8'));
-  if (!Array.isArray(releaseMetadata.artifacts) || releaseMetadata.artifacts.length === 0) {
-    throw new Error('release-metadata.json did not contain artifact checksums.');
-  }
 
   const nodeBin = join(runtimeRoot, 'node', 'node.exe');
   const apiEntry = join(appRoot, 'dist', 'server.js');
@@ -128,8 +136,11 @@ async function main() {
     windowsHide: true,
   });
 
+  let apiStartupMs = 0;
+  let webStartupMs = 0;
+
   try {
-    await waitForUrl(`http://127.0.0.1:${apiPort}/v1/health`);
+    apiStartupMs = await waitForUrl(`http://127.0.0.1:${apiPort}/v1/health`);
     const webChild = spawn(nodeBin, [webEntry], {
       cwd: webCwd,
       env: {
@@ -142,7 +153,7 @@ async function main() {
     });
 
     try {
-      await waitForUrl(`http://127.0.0.1:${webPort}/`);
+      webStartupMs = await waitForUrl(`http://127.0.0.1:${webPort}/`);
     } finally {
       await stopChild(webChild);
     }
@@ -150,7 +161,30 @@ async function main() {
     await stopChild(apiChild);
   }
 
-  process.stdout.write('[desktop-release] Verified packaged runtime and release artifacts.\n');
+  const releaseMetadataPath = join(distRoot, 'release-metadata.json');
+  const checksumPath = join(distRoot, 'SHA256SUMS.txt');
+  const packagedArtifacts = [];
+  try {
+    await requirePath(releaseMetadataPath);
+    packagedArtifacts.push('release-metadata.json');
+  } catch {}
+  try {
+    await requirePath(checksumPath);
+    packagedArtifacts.push('SHA256SUMS.txt');
+  } catch {}
+
+  const summary = {
+    webRuntimeSizeMb: Number(((await directorySize(webRuntimeRoot)) / (1024 * 1024)).toFixed(2)),
+    webRuntimeTopLevel: (await readdir(webRuntimeRoot, { withFileTypes: true }))
+      .map((entry) => `${entry.name}${entry.isDirectory() ? '/' : ''}`)
+      .sort(),
+    apiStartupMs,
+    webStartupMs,
+    packagedArtifacts,
+  };
+
+  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  process.stdout.write('[desktop-release] Verified packaged win-unpacked runtime.\n');
 }
 
 main().catch((error) => {
