@@ -5,6 +5,7 @@ import type {
   Finding,
   OcrPipelineSummary,
   PlanningSummary,
+  RemediationOutcomeSummary,
   StructuralConfidenceGuardSummary,
 } from '../../types.js';
 
@@ -16,6 +17,7 @@ export interface HtmlReportOptions {
   ocrPipeline?: OcrPipelineSummary | null;
   planningSummary?: PlanningSummary | null;
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary | null;
+  remediationOutcomeSummary?: RemediationOutcomeSummary | null;
 }
 
 function esc(s: string): string {
@@ -143,6 +145,26 @@ function structuralConfidenceBullets(summary?: StructuralConfidenceGuardSummary 
   lines.push(`<li><strong>Structural-confidence rollbacks:</strong> ${summary.rollbackCount}</li>`);
   if (summary.lastRollbackReason) {
     lines.push(`<li><strong>Last rollback reason:</strong> ${esc(summary.lastRollbackReason)}</li>`);
+  }
+  return lines.join('');
+}
+
+function remediationOutcomeBullets(summary?: RemediationOutcomeSummary | null): string {
+  if (!summary) return '';
+  const lines: string[] = [];
+  lines.push(`<li><strong>Document outcome:</strong> ${esc(summary.documentStatus)}</li>`);
+  lines.push(`<li><strong>Targeted families:</strong> ${esc(summary.targetedFamilies.join(' | ') || 'none')}</li>`);
+  for (const family of summary.familySummaries) {
+    lines.push(
+      `<li><strong>${esc(family.family)}:</strong> ${esc(
+        `${family.status} (${family.beforeSignalCount}->${family.afterSignalCount})`,
+      )}</li>`,
+    );
+    if (family.residualSignals.length > 0) {
+      lines.push(
+        `<li><strong>${esc(family.family)} residuals:</strong> ${esc(family.residualSignals.join(' | '))}</li>`,
+      );
+    }
   }
   return lines.join('');
 }
@@ -287,6 +309,10 @@ export function generateHtmlReport(
     ${options?.structuralConfidenceGuard
       ? `<ul>${structuralConfidenceBullets(options.structuralConfidenceGuard)}</ul>`
       : ''}
+  </section>
+  <section>
+    <h2>Remediation outcomes</h2>
+    <ul>${remediationOutcomeBullets(options?.remediationOutcomeSummary) || '<li>No Stage 5 remediation outcome metadata present.</li>'}</ul>
   </section>
   <section>
     <h2>Category scores</h2>

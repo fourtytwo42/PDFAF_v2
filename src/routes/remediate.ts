@@ -25,6 +25,7 @@ import {
 import { analyzePdf } from '../services/pdfAnalyzer.js';
 import { remediatePdf } from '../services/remediation/orchestrator.js';
 import { applyPostRemediationAltRepair } from '../services/remediation/altStructureRepair.js';
+import { buildRemediationOutcomeSummary } from '../services/remediation/outcomeSummary.js';
 import { applySemanticRepairs } from '../services/semantic/semanticService.js';
 import { applySemanticHeadingRepairs } from '../services/semantic/headingSemantic.js';
 import { applySemanticPromoteHeadingRepairs } from '../services/semantic/promoteHeadingSemantic.js';
@@ -400,6 +401,21 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       remediatedPdfTooLarge: enc.remediatedPdfTooLarge,
       remediationDurationMs: totalDuration,
       improved: outAfter.score > remediation.before.score,
+      ...(buildRemediationOutcomeSummary({
+        before: remediation.before,
+        after: outAfter,
+        appliedTools: appliedToolsOut,
+        planningSummary: remediation.planningSummary,
+      })
+        ? {
+            remediationOutcomeSummary: buildRemediationOutcomeSummary({
+              before: remediation.before,
+              after: outAfter,
+              appliedTools: appliedToolsOut,
+              planningSummary: remediation.planningSummary,
+            }),
+          }
+        : {}),
       ...(semanticRequested && semanticSummary ? { semantic: semanticSummary } : {}),
       ...(semanticHeadingsRequested && semanticHeadingsSummary
         ? { semanticHeadings: semanticHeadingsSummary }
@@ -469,6 +485,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           ocrPipeline: remediation.ocrPipeline,
           planningSummary: remediation.planningSummary,
           structuralConfidenceGuard: remediation.structuralConfidenceGuard,
+          remediationOutcomeSummary: body.remediationOutcomeSummary,
         },
       );
       const maxReport = 512 * 1024;

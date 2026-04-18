@@ -161,6 +161,32 @@ describe('generateHtmlReport', () => {
         rollbackCount: 1,
         lastRollbackReason: 'stage_regressed_structural_confidence(high->medium)',
       },
+      remediationOutcomeSummary: {
+        documentStatus: 'partially_fixed',
+        targetedFamilies: ['annotations', 'tagged_content'],
+        familySummaries: [
+          {
+            family: 'annotations',
+            targeted: true,
+            status: 'fixed',
+            beforeSignalCount: 4,
+            afterSignalCount: 0,
+            appliedTools: ['tag_unowned_annotations'],
+            skippedTools: [],
+            residualSignals: [],
+          },
+          {
+            family: 'tagged_content',
+            targeted: true,
+            status: 'partially_fixed',
+            beforeSignalCount: 3,
+            afterSignalCount: 1,
+            appliedTools: ['remap_orphan_mcids_as_artifacts'],
+            skippedTools: [],
+            residualSignals: ['orphan_mcids'],
+          },
+        ],
+      },
     });
     expect(html).toContain('structure_bootstrap');
     expect(html).toContain('annotation_link_normalization');
@@ -168,6 +194,9 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('set_figure_alt_text:semantic_deferred');
     expect(html).toContain('Structural-confidence rollbacks');
     expect(html).toContain('stage_regressed_structural_confidence(high-&gt;medium)');
+    expect(html).toContain('Remediation outcomes');
+    expect(html).toContain('partially_fixed');
+    expect(html).toContain('tagged_content residuals');
   });
 
   it('includes applied tools when requested', () => {

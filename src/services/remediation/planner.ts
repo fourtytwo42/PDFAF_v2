@@ -333,6 +333,19 @@ export function planForRemediation(
     (snapshot.detectionProfile?.tableSignals.irregularTableCount ?? 0) > 0 ||
     (snapshot.detectionProfile?.tableSignals.stronglyIrregularTableCount ?? 0) > 0 ||
     (snapshot.detectionProfile?.tableSignals.directCellUnderTableCount ?? 0) > 0;
+  const hasListSignals =
+    (snapshot.detectionProfile?.listSignals.listItemMisplacedCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.listSignals.lblBodyMisplacedCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.listSignals.listsWithoutItems ?? 0) > 0;
+  const hasTaggedContentSignals =
+    (snapshot.detectionProfile?.pdfUaSignals.orphanMcidCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.pdfUaSignals.suspectedPathPaintOutsideMc ?? 0) > 0 ||
+    (snapshot.detectionProfile?.pdfUaSignals.taggedAnnotationRiskCount ?? 0) > 0;
+  const headingNeedsRepair =
+    categoryFailing('heading_structure') ||
+    analysis.failureProfile?.deterministicIssues.includes('heading_structure') === true ||
+    analysis.failureProfile?.manualOnlyIssues.includes('heading_structure') === true;
+  const structureConfidenceHigh = analysis.structuralClassification?.confidence === 'high';
   const structurePrimary =
     analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
     analysis.failureProfile?.primaryFailureFamily === 'mixed_structural';
@@ -344,10 +357,30 @@ export function planForRemediation(
     if (toolName === 'repair_annotation_alt_text' && !hasAnnotationSignals) {
       return { allowed: false, reason: 'missing_precondition' };
     }
+    if (
+      (toolName === 'tag_unowned_annotations'
+      || toolName === 'normalize_annotation_tab_order'
+      || toolName === 'repair_native_link_structure')
+      && !hasAnnotationSignals
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
     if (toolName === 'repair_native_reading_order' && !(categoryFailing('reading_order') || hasReadingOrderSignals)) {
       return { allowed: false, reason: 'missing_precondition' };
     }
-    if ((toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells') && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals))) {
+    if (toolName === 'repair_list_li_wrong_parent' && !hasListSignals) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if ((toolName === 'wrap_singleton_orphan_mcid' || toolName === 'remap_orphan_mcids_as_artifacts') && !hasTaggedContentSignals) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (toolName === 'normalize_heading_hierarchy' && !headingNeedsRepair) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      (toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
+      && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals) && structureConfidenceHigh)
+    ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
     if ((toolName === 'replace_bookmarks_from_headings' || toolName === 'add_page_outline_bookmarks') && !categoryFailing('bookmarks')) {

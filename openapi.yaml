@@ -234,6 +234,8 @@ components:
           $ref: '#/components/schemas/PlanningSummary'
         structuralConfidenceGuard:
           $ref: '#/components/schemas/StructuralConfidenceGuardSummary'
+        remediationOutcomeSummary:
+          $ref: '#/components/schemas/RemediationOutcomeSummary'
         htmlReport:
           type: [string, 'null']
           description: Present when options.htmlReport was true; null if report exceeded size cap.
@@ -284,6 +286,69 @@ components:
           type: integer
         lastRollbackReason:
           type: [string, 'null']
+
+    RemediationOutcomeSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        documentStatus:
+          $ref: '#/components/schemas/RemediationOutcomeStatus'
+        targetedFamilies:
+          type: array
+          items:
+            $ref: '#/components/schemas/StructuralRepairFamily'
+        familySummaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/RemediationOutcomeFamilySummary'
+
+    RemediationOutcomeFamilySummary:
+      type: object
+      additionalProperties: true
+      properties:
+        family:
+          $ref: '#/components/schemas/StructuralRepairFamily'
+        targeted:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/RemediationOutcomeStatus'
+        beforeSignalCount:
+          type: integer
+        afterSignalCount:
+          type: integer
+        appliedTools:
+          type: array
+          items:
+            type: string
+        skippedTools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              toolName:
+                type: string
+              reason:
+                type: string
+                enum:
+                  - route_not_active
+                  - missing_precondition
+                  - already_succeeded
+                  - reliability_filtered
+                  - semantic_deferred
+                  - category_not_failing
+        residualSignals:
+          type: array
+          items:
+            type: string
+
+    StructuralRepairFamily:
+      type: string
+      enum: [lists, tables, annotations, tagged_content, headings]
+
+    RemediationOutcomeStatus:
+      type: string
+      enum: [fixed, partially_fixed, needs_manual_review, unsafe_to_autofix]
 
     VerificationLevel:
       type: string

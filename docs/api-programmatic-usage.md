@@ -123,11 +123,20 @@ Typical fields in the response:
 - `improved`
 - `appliedTools`
 - `rounds`
+- `planningSummary`
+- `structuralConfidenceGuard`
+- `remediationOutcomeSummary`
 - `remediationDurationMs`
 - `remediatedPdfBase64`
 - `remediatedPdfTooLarge`
 
 If `remediatedPdfTooLarge` is `true`, the repair still ran, but the PDF was too large to return inline as Base64.
+
+Stage 5 adds `remediationOutcomeSummary` as an additive summary of the structural repair result. It reports:
+
+- document-level outcome: `fixed`, `partially_fixed`, `needs_manual_review`, or `unsafe_to_autofix`
+- targeted structural families
+- per-family before/after signal counts and residual signals
 
 ## Remediation Options
 

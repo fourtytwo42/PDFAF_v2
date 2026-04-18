@@ -7,6 +7,7 @@ import type {
   FailureProfile,
   OcrPipelineSummary,
   PlanningSummary,
+  RemediationOutcomeSummary,
   RemediationRoundSummary,
   ScoreCapApplied,
   SemanticRemediationSummary,
@@ -112,6 +113,7 @@ export interface RemediateBenchmarkRow {
   rounds: RemediationRoundSummary[];
   ocrPipeline?: OcrPipelineSummary;
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary;
+  remediationOutcomeSummary?: RemediationOutcomeSummary;
   semantic?: SemanticRemediationSummary;
   semanticHeadings?: SemanticRemediationSummary;
   semanticPromoteHeadings?: SemanticRemediationSummary;
@@ -188,6 +190,8 @@ export interface BenchmarkRunSummary {
     primaryRouteDistribution: Record<string, number>;
     skippedToolReasonFrequency: Array<FrequencyRow>;
     scheduledToolFrequency: Array<FrequencyRow>;
+    outcomeStatusDistribution: Record<string, number>;
+    outcomeFamilyStatusFrequency: Array<FrequencyRow>;
     topSlowestRemediateFiles: Array<FileMetricRow>;
     topHighestDeltaFiles: Array<FileDeltaRow>;
     topLowestDeltaFiles: Array<FileDeltaRow>;
@@ -561,6 +565,16 @@ function scheduledToolNames(row: RemediateBenchmarkRow): string[] {
   return row.error ? [] : row.planningSummary?.scheduledTools ?? [];
 }
 
+function remediationOutcomeStatuses(row: RemediateBenchmarkRow): string[] {
+  return row.error || !row.remediationOutcomeSummary ? [] : [row.remediationOutcomeSummary.documentStatus];
+}
+
+function remediationOutcomeFamilyStatuses(row: RemediateBenchmarkRow): string[] {
+  return row.error || !row.remediationOutcomeSummary
+    ? []
+    : row.remediationOutcomeSummary.familySummaries.map(summary => `${summary.family}:${summary.status}`);
+}
+
 export function buildBenchmarkSummary(input: {
   runId: string;
   generatedAt: string;
@@ -694,6 +708,12 @@ export function buildBenchmarkSummary(input: {
           ),
           scheduledToolFrequency: frequencyRows(
             remediateSuccessRows.flatMap(scheduledToolNames),
+          ),
+          outcomeStatusDistribution: distribution(
+            remediateSuccessRows.flatMap(remediationOutcomeStatuses),
+          ),
+          outcomeFamilyStatusFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(remediationOutcomeFamilyStatuses),
           ),
           topSlowestRemediateFiles: remediateSuccessRows
             .map(row => ({
@@ -858,6 +878,8 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
     lines.push(`- **Remediation primary routes:** ${markdownDistribution(summary.remediate.primaryRouteDistribution)}`);
     lines.push(`- **Remediation skipped-tool reasons:** ${markdownFrequency(summary.remediate.skippedToolReasonFrequency)}`);
     lines.push(`- **Remediation scheduled tools:** ${markdownFrequency(summary.remediate.scheduledToolFrequency)}`);
+    lines.push(`- **Remediation outcome status:** ${markdownDistribution(summary.remediate.outcomeStatusDistribution)}`);
+    lines.push(`- **Remediation outcome families:** ${markdownFrequency(summary.remediate.outcomeFamilyStatusFrequency)}`);
   }
   lines.push('');
   lines.push('## Per Cohort');

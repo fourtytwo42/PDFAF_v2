@@ -18,6 +18,7 @@ import {
   applyPostRemediationAltRepair,
   remediatePdf,
 } from '../src/services/remediation/orchestrator.js';
+import { buildRemediationOutcomeSummary } from '../src/services/remediation/outcomeSummary.js';
 import { applySemanticHeadingRepairs } from '../src/services/semantic/headingSemantic.js';
 import { applySemanticPromoteHeadingRepairs } from '../src/services/semantic/promoteHeadingSemantic.js';
 import { applySemanticRepairs } from '../src/services/semantic/semanticService.js';
@@ -453,6 +454,12 @@ async function runRemediationStep(
     const effectiveAfter = finalAnalysis;
     const wallRemediateMs = performance.now() - remediationStart;
     const totalPipelineMs = performance.now() - totalStart;
+    const remediationOutcomeSummary = buildRemediationOutcomeSummary({
+      before: remediation.before,
+      after: effectiveAfter,
+      appliedTools: remediation.appliedTools,
+      planningSummary: remediation.planningSummary,
+    });
 
     return {
       id: entry.id,
@@ -502,6 +509,7 @@ async function runRemediationStep(
       ...(remediation.structuralConfidenceGuard
         ? { structuralConfidenceGuard: remediation.structuralConfidenceGuard }
         : {}),
+      ...(remediationOutcomeSummary ? { remediationOutcomeSummary } : {}),
       ...(semantic ? { semantic } : {}),
       ...(semanticHeadings ? { semanticHeadings } : {}),
       ...(semanticPromoteHeadings ? { semanticPromoteHeadings } : {}),

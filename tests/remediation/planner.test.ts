@@ -480,6 +480,136 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('set_document_title');
   });
 
+  it('requires high structural confidence before scheduling table header repairs', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [{ hasHeaders: false, headerCount: 0, totalCells: 4, page: 0, structRef: '11_0' }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 0,
+          suspectedPathPaintOutsideMc: 0,
+          taggedAnnotationRiskCount: 0,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 1,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const base = score(snap, META);
+    const analysis = withRoutingContext(
+      withCategoryScores(base, { table_markup: 50 }),
+      {
+        detectionProfile: snap.detectionProfile,
+        structuralClassification: {
+          structureClass: 'native_tagged',
+          contentProfile: {
+            pageBucket: '1-5',
+            dominantContent: 'text',
+            hasStructureTree: true,
+            hasBookmarks: false,
+            hasFigures: false,
+            hasTables: true,
+            hasForms: false,
+            annotationRisk: false,
+            taggedContentRisk: false,
+            listStructureRisk: false,
+          },
+          fontRiskProfile: {
+            riskLevel: 'low',
+            riskyFontCount: 0,
+            missingUnicodeFontCount: 0,
+            unembeddedFontCount: 0,
+            ocrTextLayerSuspected: false,
+          },
+          confidence: 'medium',
+        },
+      },
+    );
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('repair_native_table_headers');
+    expect(names).not.toContain('set_table_header_cells');
+    expect(plan.planningSummary?.skippedTools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolName: 'repair_native_table_headers', reason: 'missing_precondition' }),
+      ]),
+    );
+  });
+
+  it('avoids heading normalization unless heading structure debt is present', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      headings: [
+        { level: 1, text: 'Intro', page: 0, structRef: '1_0' },
+        { level: 2, text: 'Body', page: 0, structRef: '2_0' },
+      ],
+    };
+    const analysis = withRoutingContext(score(snap, META), {
+      structuralClassification: {
+        structureClass: 'native_tagged',
+        contentProfile: {
+          pageBucket: '1-5',
+          dominantContent: 'text',
+          hasStructureTree: true,
+          hasBookmarks: false,
+          hasFigures: false,
+          hasTables: false,
+          hasForms: false,
+          annotationRisk: false,
+          taggedContentRisk: false,
+          listStructureRisk: false,
+        },
+        fontRiskProfile: {
+          riskLevel: 'low',
+          riskyFontCount: 0,
+          missingUnicodeFontCount: 0,
+          unembeddedFontCount: 0,
+          ocrTextLayerSuspected: false,
+        },
+        confidence: 'high',
+      },
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('normalize_heading_hierarchy');
+  });
+
   it('stops repeating set_figure_alt_text after PDFAF_MAX_FIGURE_ALT_MUTATIONS_PER_RUN successes', async () => {
     const prev = process.env['PDFAF_MAX_FIGURE_ALT_MUTATIONS_PER_RUN'];
     process.env['PDFAF_MAX_FIGURE_ALT_MUTATIONS_PER_RUN'] = '1';

@@ -34,6 +34,7 @@ import type {
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
 import { buildDefaultParams, planForRemediation } from './planner.js';
+import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import * as metadataTools from './tools/metadata.js';
 import { applyPostRemediationAltRepair } from './altStructureRepair.js';
@@ -612,6 +613,11 @@ export async function executePlaybook(
     const maxBytes = REMEDIATION_MAX_BASE64_MB * 1024 * 1024;
     const tooLarge = currentBuffer.length > maxBytes;
     const ocrPipeline = buildOcrPipelineSummary(appliedTools);
+    const remediationOutcomeSummary = buildRemediationOutcomeSummary({
+      before,
+      after: currentAnalysis,
+      appliedTools,
+    });
     const remediation: RemediationResult = {
       before,
       after: currentAnalysis,
@@ -629,6 +635,7 @@ export async function executePlaybook(
       remediationDurationMs: Date.now() - started,
       improved: false,
       ...(ocrPipeline ? { ocrPipeline } : {}),
+      ...(remediationOutcomeSummary ? { remediationOutcomeSummary } : {}),
     };
     return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };
   }
@@ -772,6 +779,11 @@ export async function executePlaybook(
   }
 
   const ocrPb = buildOcrPipelineSummary(appliedTools);
+  const remediationOutcomeSummary = buildRemediationOutcomeSummary({
+    before,
+    after: currentAnalysis,
+    appliedTools,
+  });
   const remediation: RemediationResult = {
     before,
     after: currentAnalysis,
@@ -785,6 +797,7 @@ export async function executePlaybook(
       ? { structuralConfidenceGuard: summarizeStructuralConfidenceGuard(appliedTools) }
       : {}),
     ...(ocrPb ? { ocrPipeline: ocrPb } : {}),
+    ...(remediationOutcomeSummary ? { remediationOutcomeSummary } : {}),
   };
 
   return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };
@@ -1105,6 +1118,12 @@ export async function remediatePdf(
   }
 
   const ocrMain = buildOcrPipelineSummary(appliedTools);
+  const remediationOutcomeSummary = buildRemediationOutcomeSummary({
+    before,
+    after: currentAnalysis,
+    appliedTools,
+    planningSummary,
+  });
   const remediation: RemediationResult = {
     before,
     after: currentAnalysis,
@@ -1119,6 +1138,7 @@ export async function remediatePdf(
       ? { structuralConfidenceGuard: summarizeStructuralConfidenceGuard(appliedTools) }
       : {}),
     ...(ocrMain ? { ocrPipeline: ocrMain } : {}),
+    ...(remediationOutcomeSummary ? { remediationOutcomeSummary } : {}),
   };
 
   return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };

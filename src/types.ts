@@ -554,6 +554,39 @@ export interface StructuralConfidenceGuardSummary {
   lastRollbackReason?: string | null;
 }
 
+export type StructuralRepairFamily =
+  | 'lists'
+  | 'tables'
+  | 'annotations'
+  | 'tagged_content'
+  | 'headings';
+
+export type RemediationOutcomeStatus =
+  | 'fixed'
+  | 'partially_fixed'
+  | 'needs_manual_review'
+  | 'unsafe_to_autofix';
+
+export interface RemediationOutcomeFamilySummary {
+  family: StructuralRepairFamily;
+  targeted: boolean;
+  status: RemediationOutcomeStatus;
+  beforeSignalCount: number;
+  afterSignalCount: number;
+  appliedTools: string[];
+  skippedTools: Array<{
+    toolName: string;
+    reason: PlanningSkipReason;
+  }>;
+  residualSignals: string[];
+}
+
+export interface RemediationOutcomeSummary {
+  documentStatus: RemediationOutcomeStatus;
+  targetedFamilies: StructuralRepairFamily[];
+  familySummaries: RemediationOutcomeFamilySummary[];
+}
+
 export interface RemediationResult {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -577,6 +610,8 @@ export interface RemediationResult {
   planningSummary?: PlanningSummary;
   /** Present when Stage 4 structural-confidence safeguards observed or reverted confidence regressions. */
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary;
+  /** Present when Stage 5 deterministic structural outcome classification metadata is available. */
+  remediationOutcomeSummary?: RemediationOutcomeSummary;
   /** Present when `htmlReport: true` was requested in remediate options. */
   htmlReport?: string | null;
 }

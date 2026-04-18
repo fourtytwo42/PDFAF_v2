@@ -226,6 +226,20 @@ Make repair selection cheaper, safer, and more explainable.
 
 ## Stage 5: Generic Structural Repair Expansion
 
+### Status
+
+- Closed as of 2026-04-18.
+- Implemented the Stage 5 deterministic structural expansion already hinted by the planner/tooling: list legality, high-confidence table header repair, annotation ownership/tab-order normalization, orphan-MCID cleanup, and deterministic heading normalization.
+- Kept Stage 4 structural-confidence rollback safeguards active across the expanded repair set and post-pass structural mutations.
+- Added additive `remediationOutcomeSummary` output across the remediate API, HTML report, and experiment-corpus benchmark rows.
+- Benchmarked on the full 50-file corpus with direct Stage 4→5 comparison artifacts under `Output/experiment-corpus-baseline/comparison-stage5-full-vs-stage4/`.
+- Closed with a Stage 5 acceptance audit under `Output/experiment-corpus-baseline/stage5-acceptance/`.
+- The accepted Stage 5 audit records `accepted confidence regressions = 0` and an outcome distribution of `fixed:14`, `partially_fixed:7`, `needs_manual_review:4`, `unsafe_to_autofix:25`.
+- The accepted Stage 5 comparison package shows lower remediation runtime than Stage 4 on the accepted full-run comparison:
+  - remediation wall-runtime median delta `-188.16 ms`
+  - remediation wall-runtime p95 delta `-51.99 ms`
+- Stage 5 remains an honest bounded-repair stage: unresolved structural debt is now surfaced explicitly rather than being silently retried or overclaimed.
+
 ### Goal
 
 Add only the next set of generic repairs that are justified by the experiment data.
