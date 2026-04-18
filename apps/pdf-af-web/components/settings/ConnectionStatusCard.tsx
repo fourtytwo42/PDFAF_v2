@@ -151,6 +151,22 @@ export function ConnectionStatusCard() {
     };
   }, [connection.summary?.localLlm?.runtime?.loaded, connection.summary?.localLlm?.runtime?.phase, hasDesktopBridge, healthLocalLlm, localAiError, localAiState]);
 
+  const llmConfiguredLabel = useMemo(() => {
+    if (connection.summary?.llmMode === 'local' && connection.summary.localLlm?.installed) {
+      return connection.summary.localLlm.enabled ? 'Yes' : 'Disabled';
+    }
+    return connection.summary?.llmConfigured ? 'Yes' : 'No';
+  }, [connection.summary]);
+
+  const llmReachableLabel = useMemo(() => {
+    if (connection.summary?.llmMode === 'local' && connection.summary.localLlm?.installed) {
+      if (connection.summary.localLlm.runtime?.loaded) return 'Loaded';
+      if (connection.summary.localLlm.runtime?.phase === 'starting') return 'Loading';
+      return 'On demand';
+    }
+    return connection.summary?.llmReachable ? 'Yes' : 'No';
+  }, [connection.summary]);
+
   return (
     <SectionCard
       title="Api"
@@ -244,7 +260,7 @@ export function ConnectionStatusCard() {
               <div>
                 <dt className="text-[var(--muted)]">LLM Configured</dt>
                 <dd className="mt-0.5 font-bold text-[var(--foreground)]">
-                  {connection.summary.llmConfigured ? 'Yes' : 'No'}
+                  {llmConfiguredLabel}
                 </dd>
               </div>
               <div>
@@ -256,7 +272,7 @@ export function ConnectionStatusCard() {
               <div>
                 <dt className="text-[var(--muted)]">LLM Reachable</dt>
                 <dd className="mt-0.5 font-bold text-[var(--foreground)]">
-                  {connection.summary.llmReachable ? 'Yes' : 'No'}
+                  {llmReachableLabel}
                 </dd>
               </div>
               <div>

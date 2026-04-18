@@ -203,10 +203,16 @@ healthRouter.get('/', async (_req, res) => {
     }
   }
 
-  const llmConfigured = Boolean(getOpenAiCompatBaseUrl().trim());
+  const localLlmState = readLocalLlmState();
+  const remoteLlmConfigured = Boolean(getOpenAiCompatBaseUrl().trim());
+  const localLlmConfigured =
+    localLlmState.activeMode === 'local' && localLlmState.installed && localLlmState.enabled;
+  const llmConfigured = remoteLlmConfigured || localLlmConfigured;
   let llmReachable = false;
-  if (llmConfigured) {
+  if (remoteLlmConfigured) {
     llmReachable = await probeLlmReachable();
+  } else if (localLlmConfigured) {
+    llmReachable = localLlmState.runtime.loaded || localLlmState.runtime.phase === 'starting';
   }
 
   const coreOk =
@@ -224,10 +230,9 @@ healthRouter.get('/', async (_req, res) => {
     if (fonttools !== 'ok') degradedReasons.push('fonttools');
     if (!dbCheck.ok) degradedReasons.push('database');
   }
-  if (llmConfigured && !llmReachable) {
+  if (remoteLlmConfigured && !llmReachable) {
     degradedReasons.push('llm_unreachable');
   }
-  const localLlmState = readLocalLlmState();
 
   let status: 'ok' | 'degraded' | 'down' = 'ok';
   if (!dbCheck.ok) {
