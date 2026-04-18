@@ -7,8 +7,18 @@ type LocalLlmInstallStatus =
   | 'failed'
   | 'removing';
 
+type LocalLlmInstallStep =
+  | 'idle'
+  | 'downloading_runtime'
+  | 'downloading_model'
+  | 'verifying'
+  | 'finalizing'
+  | 'removing';
+
 interface LocalLlmPublicState {
   status: LocalLlmInstallStatus;
+  currentStep: LocalLlmInstallStep;
+  currentArtifact: string | null;
   enabled: boolean;
   available: boolean;
   lastError: string | null;

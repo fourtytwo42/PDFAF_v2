@@ -15,6 +15,7 @@ export function ConnectionStatusCard() {
   const refreshHealth = useAppSettingsStore((state) => state.refreshHealth);
   const openSettings = useAppSettingsStore((state) => state.openSettings);
   const { hasDesktopBridge, state: localAiState, error: localAiError } = useDesktopLocalAiState();
+  const healthLocalLlm = connection.summary?.localLlm;
 
   const statusTone =
     connection.status === 'connected'
@@ -36,9 +37,17 @@ export function ConnectionStatusCard() {
 
   const localAiSummary = useMemo(() => {
     if (!hasDesktopBridge) {
+      if (healthLocalLlm?.installed) {
+        return {
+          label: healthLocalLlm.enabled
+            ? 'Local AI is installed and ready for remediation.'
+            : 'Local AI is installed but disabled. Remediation requires local AI to be enabled.',
+          tone: healthLocalLlm.enabled ? 'success' as const : 'warning' as const,
+        };
+      }
       return {
-        label: 'Local AI unavailable in web mode.',
-        tone: 'neutral' as const,
+        label: 'Local AI is required for remediation. Run installer repair or reinstall to provision it.',
+        tone: 'warning' as const,
       };
     }
 
@@ -50,26 +59,49 @@ export function ConnectionStatusCard() {
     }
 
     if (localAiState.status === 'downloading') {
-      const downloadedMb = (localAiState.downloadedBytes / (1024 * 1024)).toFixed(1);
+      const downloadedLabel =
+        localAiState.currentStep === 'downloading_model'
+          ? `${(localAiState.downloadedBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+          : `${(localAiState.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
       const totalLabel = localAiState.totalBytes
-        ? `${(localAiState.totalBytes / (1024 * 1024)).toFixed(1)} MB`
+        ? localAiState.currentStep === 'downloading_model'
+          ? `${(localAiState.totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+          : `${(localAiState.totalBytes / (1024 * 1024)).toFixed(1)} MB`
         : 'unknown total';
+      const phaseLabel =
+        localAiState.currentStep === 'downloading_runtime'
+          ? 'Downloading local AI runtime'
+          : 'Downloading local AI model';
       return {
-        label: `Local AI download in progress: ${downloadedMb} MB of ${totalLabel}.`,
+        label: `${phaseLabel}: ${downloadedLabel} of ${totalLabel}${localAiState.currentArtifact ? ` (${localAiState.currentArtifact})` : ''}.`,
+        tone: 'accent' as const,
+      };
+    }
+
+    if (localAiState.currentStep === 'verifying') {
+      return {
+        label: 'Verifying local AI files.',
+        tone: 'accent' as const,
+      };
+    }
+
+    if (localAiState.currentStep === 'finalizing') {
+      return {
+        label: 'Finalizing local AI setup.',
         tone: 'accent' as const,
       };
     }
 
     if (localAiState.status === 'installed' && localAiState.enabled) {
       return {
-        label: 'Local AI installed and enabled.',
+        label: 'Local AI is installed and ready for remediation.',
         tone: 'success' as const,
       };
     }
 
     if (localAiState.status === 'installed') {
       return {
-        label: 'Local AI installed but disabled.',
+        label: 'Local AI is installed but disabled. Remediation requires it to be enabled.',
         tone: 'warning' as const,
       };
     }
@@ -89,10 +121,10 @@ export function ConnectionStatusCard() {
     }
 
     return {
-      label: 'Local AI not installed yet.',
-      tone: 'neutral' as const,
+      label: 'Local AI is required for remediation and is not installed yet.',
+      tone: 'warning' as const,
     };
-  }, [hasDesktopBridge, localAiError, localAiState]);
+  }, [hasDesktopBridge, healthLocalLlm, localAiError, localAiState]);
 
   return (
     <SectionCard

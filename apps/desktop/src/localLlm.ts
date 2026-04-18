@@ -25,6 +25,14 @@ export type LocalLlmInstallStatus =
   | 'failed'
   | 'removing';
 
+export type LocalLlmInstallStep =
+  | 'idle'
+  | 'downloading_runtime'
+  | 'downloading_model'
+  | 'verifying'
+  | 'finalizing'
+  | 'removing';
+
 export interface LocalLlmPaths {
   rootDir: string;
   binDir: string;
@@ -38,6 +46,8 @@ export interface LocalLlmPaths {
 
 export interface LocalLlmState {
   status: LocalLlmInstallStatus;
+  currentStep: LocalLlmInstallStep;
+  currentArtifact: string | null;
   enabled: boolean;
   artifactVersion: {
     llamaCppRelease: string;
@@ -79,6 +89,8 @@ const DEFAULT_MMPROJ_FILE = localLlmArtifactManifest.artifacts.mmproj.filename;
 
 const defaultState: LocalLlmState = {
   status: 'not_installed',
+  currentStep: 'idle',
+  currentArtifact: null,
   enabled: false,
   artifactVersion: {
     llamaCppRelease: localLlmArtifactManifest.artifacts.llamaServer.version,
@@ -205,6 +217,8 @@ export class LocalLlmManager {
       this.#state = {
         ...this.#state,
         status: this.#state.lastError ? 'failed' : 'not_installed',
+        currentStep: 'idle',
+        currentArtifact: null,
         enabled: false,
         lastValidatedAt: null,
       };
@@ -258,6 +272,8 @@ export class LocalLlmManager {
     this.#state = {
       ...this.#state,
       status: 'downloading',
+      currentStep: 'downloading_runtime',
+      currentArtifact: localLlmArtifactManifest.artifacts.llamaServer.filename,
       lastError: null,
       downloadedBytes: 0,
       totalBytes: null,
@@ -289,12 +305,35 @@ export class LocalLlmManager {
       ];
 
       for (const artifact of artifacts) {
+        this.#state = {
+          ...this.#state,
+          currentStep:
+            artifact.manifest.id === 'llama-server'
+              ? 'downloading_runtime'
+              : 'downloading_model',
+          currentArtifact: artifact.manifest.filename,
+          downloadedBytes: 0,
+          totalBytes: artifact.manifest.size,
+        };
+        this.#emit();
         await this.#downloadArtifact(artifact, signal);
         if (artifact.kind === 'zip') {
+          this.#state = {
+            ...this.#state,
+            currentStep: 'finalizing',
+            currentArtifact: artifact.manifest.filename,
+          };
+          this.#emit();
           await this.#installLlamaZip(artifact.destinationPath);
         }
       }
 
+      this.#state = {
+        ...this.#state,
+        currentStep: 'verifying',
+        currentArtifact: 'local AI files',
+      };
+      this.#emit();
       const valid = await this.validateInstalled();
       if (!valid) {
         throw new Error('Downloaded local AI artifacts failed validation.');
@@ -303,6 +342,8 @@ export class LocalLlmManager {
       this.#state = {
         ...this.#state,
         status: 'installed',
+        currentStep: 'idle',
+        currentArtifact: null,
         enabled: true,
         lastError: null,
         downloadedBytes: 0,
@@ -320,6 +361,8 @@ export class LocalLlmManager {
         this.#state = {
           ...this.#state,
           status: 'not_installed',
+          currentStep: 'idle',
+          currentArtifact: null,
           enabled: false,
           lastError: null,
           downloadedBytes: 0,
@@ -330,6 +373,8 @@ export class LocalLlmManager {
         this.#state = {
           ...this.#state,
           status: 'failed',
+          currentStep: 'idle',
+          currentArtifact: null,
           enabled: false,
           lastError: message,
           downloadedBytes: 0,
@@ -358,6 +403,8 @@ export class LocalLlmManager {
     this.#state = {
       ...this.#state,
       status: 'removing',
+      currentStep: 'removing',
+      currentArtifact: 'local AI files',
       enabled: false,
       lastError: null,
       downloadedBytes: 0,
@@ -377,6 +424,8 @@ export class LocalLlmManager {
     this.#state = {
       ...defaultState,
       status: 'not_installed',
+      currentStep: 'idle',
+      currentArtifact: null,
       enabled: false,
       artifactVersion: { ...defaultState.artifactVersion },
     };

@@ -14,14 +14,14 @@ function formatBytes(bytes: number | null): string {
 }
 
 function statusLabel(state: DesktopLocalLlmState | null, hasDesktopBridge: boolean): string {
-  if (!hasDesktopBridge) return 'Web only';
+  if (!hasDesktopBridge) return 'Desktop unavailable';
   if (!state) return 'Checking';
   if (state.status === 'downloading') return 'Installing';
-  if (state.status === 'installed' && state.enabled) return 'Local installed';
-  if (state.status === 'installed') return 'Local disabled';
+  if (state.status === 'installed' && state.enabled) return 'Ready';
+  if (state.status === 'installed') return 'Disabled';
   if (state.status === 'failed') return 'Install failed';
   if (state.status === 'removing') return 'Removing';
-  return 'Local not installed';
+  return 'Required';
 }
 
 function statusTone(
@@ -74,7 +74,7 @@ export function LocalAiSettingsCard() {
             Local AI
           </p>
           <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-            Install the bundled local model runtime for offline semantic remediation.
+            Local AI is required for remediation. Repair or reinstall it here if setup did not finish cleanly.
           </p>
         </div>
         <StatusPill label={statusLabel(state, hasDesktopBridge)} tone={statusTone(state, hasDesktopBridge)} />
@@ -82,7 +82,7 @@ export function LocalAiSettingsCard() {
 
       {!hasDesktopBridge ? (
         <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
-          Local AI installation is available only in the Windows desktop app.
+          The desktop bridge is unavailable. Use the Windows installer repair flow to provision required local AI files.
         </p>
       ) : (
         <>
@@ -90,7 +90,7 @@ export function LocalAiSettingsCard() {
             <div>
               <dt className="text-[var(--muted)]">Mode</dt>
               <dd className="mt-0.5 font-bold text-[var(--foreground)]">
-                {state?.enabled ? 'Local enabled' : 'Remote / disabled'}
+                {state?.enabled ? 'Local enabled' : 'Required but unavailable'}
               </dd>
             </div>
             <div>
@@ -115,7 +115,11 @@ export function LocalAiSettingsCard() {
 
           {progressLabel ? (
             <p className="mt-3 border border-[color:rgba(21,112,239,0.18)] bg-[var(--accent-soft)] px-2 py-2 text-xs text-[var(--accent-strong)]">
-              {progressLabel}
+              {state?.currentStep === 'downloading_runtime'
+                ? `Downloading local AI runtime: ${progressLabel}`
+                : state?.currentStep === 'downloading_model'
+                  ? `Downloading local AI model: ${progressLabel}`
+                  : progressLabel}
             </p>
           ) : null}
 
@@ -134,7 +138,7 @@ export function LocalAiSettingsCard() {
 
             {state?.status !== 'downloading' && state?.status !== 'installed' ? (
               <Button variant="primary" disabled={busy} onClick={() => void runAction(() => desktopBridge!.install())}>
-                {state?.status === 'failed' ? 'Retry Install' : 'Install Local AI'}
+                {state?.status === 'failed' ? 'Retry Required AI Install' : 'Install Required AI'}
               </Button>
             ) : null}
 

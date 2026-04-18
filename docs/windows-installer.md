@@ -18,7 +18,7 @@ The Stage 6 packaging flow produces:
 - a `win-unpacked` directory for local QA
 - `SHA256SUMS.txt` for generated release artifacts
 
-The installer ships the desktop app and bundled base runtime only. It does **not** ship local AI model assets.
+The installer ships the desktop app and bundled base runtime only. It does **not** embed local AI model assets in the installer archive.
 
 It does ship:
 
@@ -27,11 +27,13 @@ It does ship:
 - the packaged web runtime
 - bundled Node, Python, and `qpdf`
 
-Local AI stays optional and is downloaded after install by the app itself into user data:
+Local AI is required for a remediation-ready install. The NSIS installer now runs a second provisioning phase after base files are copied and downloads local AI into user data:
 
 - `llama-server`
 - the GGUF model
 - `mmproj`
+
+That download phase uses the same manifest-backed verification flow as the desktop app and must complete before setup finishes.
 
 ## Uninstall and data retention
 
