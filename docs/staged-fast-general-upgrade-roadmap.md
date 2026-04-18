@@ -272,7 +272,7 @@ Add only the next set of generic repairs that are justified by the experiment da
 
 ### Status
 
-- Implemented as of 2026-04-18.
+- Closed as of 2026-04-18.
 - Hardened all existing semantic lanes under a shared Stage 6 gate layer:
   - `semantic`
   - `semanticHeadings`
@@ -289,7 +289,22 @@ Add only the next set of generic repairs that are justified by the experiment da
   - `pnpm exec tsc --noEmit`
   - `pnpm exec swagger-cli validate openapi.yaml`
   - targeted semantic/report/benchmark/integration Vitest coverage
-- Formal full-corpus Stage 5→6 acceptance is still pending a configured semantic runtime in the benchmark environment. On 2026-04-18 this shell had neither `OPENAI_COMPAT_BASE_URL` set nor `PDFAF_RUN_LOCAL_LLM=1`, so the semantic full-run acceptance package could not be regenerated here at that time.
+- Accepted on the full 50-file corpus using the embedded local `llama.cpp` runtime with artifacts under:
+  - `Output/experiment-corpus-baseline/run-stage6-full/`
+  - `Output/experiment-corpus-baseline/comparison-stage6-full-vs-stage5/`
+  - `Output/experiment-corpus-baseline/stage6-acceptance/`
+- Accepted Stage 6 audit signals:
+  - `acceptedConfidenceRegressionCount = 0`
+  - `semanticOnlyTrustedPassCount = 0`
+  - semantic applied outcomes present: `promote_headings:applied = 2`, `figures:applied = 1`
+- Accepted Stage 5→6 comparison signals:
+  - remediation after-score mean delta `+0.52`
+  - remediation reanalyzed mean delta `+0.50`
+  - remediation wall-runtime median delta `+879.57 ms`
+  - remediation wall-runtime p95 delta `-450.30 ms`
+  - `20-figure-ownership` remediation delta mean `+1.40`
+  - `50-long-report-mixed` remediation delta mean `+1.25`
+- Accepted as a gated semantic stage: semantic lanes now produce bounded, explainable improvements without semantic-only trusted passes or accepted structural-confidence regressions.
 
 ### Goal
 

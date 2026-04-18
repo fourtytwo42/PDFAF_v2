@@ -2,9 +2,13 @@
 
 ## Status
 
-Stage 6 implementation is complete in code, tests, API surface, and reporting.
+Stage 6 is closed in code, tests, API surface, reporting, and corpus acceptance.
 
-Full-corpus semantic acceptance is not closed from this environment because no semantic runtime was configured on 2026-04-18. In this workspace, `OPENAI_COMPAT_BASE_URL` was unset and `PDFAF_RUN_LOCAL_LLM` was not enabled, so the 50-file Stage 5→6 semantic benchmark and acceptance artifacts could not be regenerated truthfully at that time.
+The accepted Stage 6 full-corpus run used the embedded local `llama.cpp` runtime with `PDFAF_RUN_LOCAL_LLM=1`. The accepted artifacts are:
+
+- `Output/experiment-corpus-baseline/run-stage6-full/`
+- `Output/experiment-corpus-baseline/comparison-stage6-full-vs-stage5/`
+- `Output/experiment-corpus-baseline/stage6-acceptance/`
 
 ## What Stage 6 Added
 
@@ -30,27 +34,33 @@ Full-corpus semantic acceptance is not closed from this environment because no s
 - `pnpm exec tsc --noEmit`
 - `pnpm exec swagger-cli validate openapi.yaml`
 - `pnpm exec vitest run tests/reporter/htmlReport.test.ts tests/integration/remediate.test.ts tests/benchmark/experimentCorpus.test.ts tests/benchmark/stage5Acceptance.test.ts tests/benchmark/stage6Acceptance.test.ts tests/semantic/semanticService.test.ts tests/semantic/headingSemantic.test.ts tests/semantic/promoteHeadingSemantic.test.ts tests/semantic/untaggedHeadingSemantic.test.ts tests/semantic/semanticPolicy.test.ts`
+- `PDFAF_RUN_LOCAL_LLM=1 pnpm exec tsx scripts/experiment-corpus-benchmark.ts --mode full --semantic --out Output/experiment-corpus-baseline/run-stage6-full`
+- `pnpm exec tsx scripts/compare-experiment-corpus-runs.ts Output/experiment-corpus-baseline/run-stage5-full Output/experiment-corpus-baseline/run-stage6-full Output/experiment-corpus-baseline/comparison-stage6-full-vs-stage5`
+- `pnpm exec tsx scripts/stage6-acceptance-audit.ts Output/experiment-corpus-baseline/run-stage5-full Output/experiment-corpus-baseline/run-stage6-full Output/experiment-corpus-baseline/comparison-stage6-full-vs-stage5 Output/experiment-corpus-baseline/stage6-acceptance`
 
-## Remaining Acceptance Step
+## Accepted Results
 
-Run the full Stage 5→6 semantic benchmark in an environment with semantic access configured, then publish:
+- `acceptedConfidenceRegressionCount = 0`
+- `semanticOnlyTrustedPassCount = 0`
+- semantic applied outcomes are present in the accepted audit:
+  - `promote_headings:applied = 2`
+  - `figures:applied = 1`
+- Stage 5→6 remediation comparison:
+  - after-score mean delta `+0.52`
+  - reanalyzed mean delta `+0.50`
+  - wall-runtime median delta `+879.57 ms`
+  - wall-runtime p95 delta `-450.30 ms`
+- cohort movement:
+  - `20-figure-ownership` remediation delta mean `+1.40`
+  - `50-long-report-mixed` remediation delta mean `+1.25`
 
-- `Output/experiment-corpus-baseline/run-stage6-full/`
-- `Output/experiment-corpus-baseline/comparison-stage6-full-vs-stage5/`
-- `Output/experiment-corpus-baseline/stage6-acceptance/`
+These results satisfy the Stage 6 acceptance bar:
 
-The semantic runtime may be either:
-
-- an external OpenAI-compatible endpoint exposed through `OPENAI_COMPAT_BASE_URL`
-- the embedded local `llama.cpp` path enabled with `PDFAF_RUN_LOCAL_LLM=1`
-
-The acceptance bar remains:
-
-- figure-heavy and mixed cohorts improve without broad runtime inflation
-- accepted structural-confidence regressions remain `0`
-- semantic-only trusted passes remain `0`
-- long-report p95 remains bounded
+- figure-heavy and mixed cohorts improved
+- accepted structural-confidence regressions remained `0`
+- semantic-only trusted passes remained `0`
+- long-report remediation `p95` stayed bounded and improved versus Stage 5
 
 ## Next Stage
 
-After the Stage 6 corpus run is completed and accepted, Stage 7 is the next active stage: performance hardening.
+Stage 7 is now the next active stage: performance hardening.

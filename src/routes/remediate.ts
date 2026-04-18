@@ -62,7 +62,22 @@ export function mergeSequentialSemanticSummaries(
     ['error', 'llm_timeout', 'regression_reverted', 'unsupported_pdf', 'no_target_improvement'].includes(p.skippedReason),
   );
   const last = parts[parts.length - 1]!;
-  const skippedReason = fatal?.skippedReason ?? last.skippedReason;
+  const anyApplied = parts.some(part => part.changeStatus === 'applied');
+  const anyNoChange = parts.some(part => part.changeStatus === 'no_change');
+  const skippedReason =
+    anyApplied
+      ? 'completed'
+      : fatal?.skippedReason
+        ?? (anyNoChange ? 'completed_no_changes' : last.skippedReason);
+  const changeStatus =
+    anyApplied
+      ? 'applied'
+      : fatal?.changeStatus
+        ?? (anyNoChange ? 'no_change' : last.changeStatus);
+  const gateReason =
+    anyApplied && !fatal
+      ? 'gate_passed'
+      : fatal?.gate.reason ?? last.gate.reason;
   return buildSemanticSummary({
     lane: parts[0]!.lane,
     skippedReason,
@@ -74,7 +89,7 @@ export function mergeSequentialSemanticSummaries(
     batches: parts.flatMap(p => p.batches),
     gate: buildSemanticGateSummary({
       passed: parts.some(p => p.gate.passed),
-      reason: fatal?.gate.reason ?? last.gate.reason,
+      reason: gateReason,
       details: [...new Set(parts.flatMap(p => p.gate.details))],
       candidateCountBefore: parts[0]!.gate.candidateCountBefore,
       candidateCountAfter: last.gate.candidateCountAfter,
@@ -82,8 +97,8 @@ export function mergeSequentialSemanticSummaries(
       targetCategoryScoreBefore: parts[0]!.gate.targetCategoryScoreBefore ?? null,
       targetCategoryScoreAfter: last.gate.targetCategoryScoreAfter ?? null,
     }),
-    changeStatus: fatal?.changeStatus ?? last.changeStatus,
-    ...(fatal?.errorMessage ? { errorMessage: fatal.errorMessage } : {}),
+    changeStatus,
+    ...(!anyApplied && fatal?.errorMessage ? { errorMessage: fatal.errorMessage } : {}),
     trustDowngraded: parts.some(p => p.trustDowngraded === true),
   });
 }
