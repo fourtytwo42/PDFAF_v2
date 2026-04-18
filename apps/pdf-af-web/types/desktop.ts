@@ -53,6 +53,7 @@ declare global {
       localAi: DesktopLocalAiBridge;
       support: DesktopSupportBridge;
     };
+    __pdfafLocalAiState__?: DesktopLocalLlmState | null;
   }
 }
 

@@ -9,8 +9,15 @@ function resolveDesktopLocalAiBridge(): DesktopLocalAiBridge | undefined {
   return window.pdfafDesktop?.localAi;
 }
 
+function resolveDesktopLocalAiFallbackState(): DesktopLocalLlmState | null {
+  if (typeof window === 'undefined') return null;
+  return window.__pdfafLocalAiState__ ?? null;
+}
+
+const fallbackStateEventName = 'pdfaf:local-ai-state';
+
 export function useDesktopLocalAiState() {
-  const [state, setState] = useState<DesktopLocalLlmState | null>(null);
+  const [state, setState] = useState<DesktopLocalLlmState | null>(() => resolveDesktopLocalAiFallbackState());
   const [error, setError] = useState<string | null>(null);
   const [desktopBridge, setDesktopBridge] = useState<DesktopLocalAiBridge | undefined>(() => resolveDesktopLocalAiBridge());
 
@@ -37,6 +44,25 @@ export function useDesktopLocalAiState() {
       active = false;
       window.clearInterval(interval);
       window.clearTimeout(timeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    const initialState = resolveDesktopLocalAiFallbackState();
+    if (initialState) {
+      setState(initialState);
+      setError(null);
+    }
+
+    const onState = (event: Event) => {
+      const nextState = (event as CustomEvent<DesktopLocalLlmState | null>).detail;
+      setState(nextState ?? null);
+      setError(null);
+    };
+
+    window.addEventListener(fallbackStateEventName, onState as EventListener);
+    return () => {
+      window.removeEventListener(fallbackStateEventName, onState as EventListener);
     };
   }, []);
 

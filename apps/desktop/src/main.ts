@@ -630,6 +630,15 @@ async function exportSupportBundle(): Promise<string> {
 function broadcastLocalLlmState(state: LocalLlmPublicState): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('pdfaf:local-llm:changed', state);
+  const serializedState = JSON.stringify(state).replace(/</g, '\\u003c');
+  void mainWindow.webContents
+    .executeJavaScript(
+      `window.__pdfafLocalAiState__ = ${serializedState}; window.dispatchEvent(new CustomEvent('pdfaf:local-ai-state', { detail: window.__pdfafLocalAiState__ }));`,
+      true,
+    )
+    .catch(() => {
+      // The page may not be ready yet; a later broadcast will refresh the state.
+    });
 }
 
 function registerLocalLlmIpc(): void {
