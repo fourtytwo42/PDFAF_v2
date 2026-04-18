@@ -94,7 +94,7 @@ export function useDesktopLocalAiState() {
 
   return {
     desktopBridge,
-    hasDesktopBridge: Boolean(desktopBridge),
+    hasDesktopBridge: Boolean(desktopBridge || state),
     state,
     error,
     setState,
