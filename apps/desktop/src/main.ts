@@ -1037,15 +1037,17 @@ async function bootstrap(): Promise<void> {
     return;
   }
   createTrayIcon();
+  if (localLlmManager) {
+    localLlmManager.ensureInstalledInBackground(async () => {
+      queueLog('electron', 'Local AI finished installing in background; restarting services.');
+      if (runtimeState.startupPhase === 'ready') {
+        await restartServices();
+      }
+    });
+  }
 
   try {
     await initializeRuntime();
-    if (localLlmManager) {
-      localLlmManager.ensureInstalledInBackground(async () => {
-        queueLog('electron', 'Local AI finished installing in background; restarting services.');
-        await restartServices();
-      });
-    }
   } catch (error) {
     const startupError = error as StartupError;
     await shutdownChildren();

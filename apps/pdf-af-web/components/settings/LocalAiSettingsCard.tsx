@@ -76,7 +76,7 @@ export function LocalAiSettingsCard() {
             Local AI
           </p>
           <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-            Local AI downloads automatically after the desktop app starts. Until it finishes, remediation is unavailable and you can only grade PDFs.
+            Local AI downloads automatically after the desktop app starts. Until it finishes, remediation is unavailable and you can only grade PDFs. After install, the model loads on the first remediation request and unloads after 5 minutes idle.
           </p>
         </div>
         <StatusPill label={statusLabel(state, hasDesktopBridge)} tone={statusTone(state, hasDesktopBridge)} />
@@ -93,6 +93,12 @@ export function LocalAiSettingsCard() {
               <dt className="text-[var(--muted)]">Mode</dt>
               <dd className="mt-0.5 font-bold text-[var(--foreground)]">
                 {state?.enabled ? 'Local enabled' : 'Required but unavailable'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">RAM state</dt>
+              <dd className="mt-0.5 font-bold text-[var(--foreground)]">
+                {state?.status === 'installed' && state.enabled ? 'Loads on demand' : 'Not ready'}
               </dd>
             </div>
             <div>

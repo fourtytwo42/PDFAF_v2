@@ -32,6 +32,7 @@ import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untagg
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
 import type { RemediationResult, SemanticRemediationSummary } from '../types.js';
+import { prepareEmbeddedLlmForRemediation } from '../llm/embedLocalLlama.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
 export function mergeSequentialSemanticSummaries(
@@ -169,6 +170,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
   const routeStarted = Date.now();
 
   try {
+    const localLlmWarmupPromise = prepareEmbeddedLlmForRemediation().catch(() => false);
     logInfo({
       message: 'remediate_request_received',
       requestId: res.locals.requestId,
@@ -218,11 +220,12 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       parsedOptions.semanticPromoteHeadingTimeoutMs ?? parsedOptions.semanticTimeoutMs;
     const untaggedTimeout =
       parsedOptions.semanticUntaggedHeadingTimeoutMs ?? parsedOptions.semanticTimeoutMs;
+    const llmReady = await localLlmWarmupPromise;
 
     if (semanticRequested) {
       await reportProgress(92, 'Describing figures');
       const scoreRef = remediation.after.score;
-      if (!getOpenAiCompatBaseUrl()) {
+      if (!llmReady && !getOpenAiCompatBaseUrl()) {
         semanticSummary = {
           skippedReason: 'no_llm_config',
           durationMs: 0,
@@ -265,7 +268,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     if (semanticPromoteHeadingsRequested) {
       await reportProgress(94, 'Organizing headings');
       const scoreRef = outAfter.score;
-      if (!getOpenAiCompatBaseUrl()) {
+      if (!llmReady && !getOpenAiCompatBaseUrl()) {
         semanticPromoteHeadingsSummary = {
           skippedReason: 'no_llm_config',
           durationMs: 0,
@@ -304,7 +307,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     if (semanticHeadingsRequested) {
       await reportProgress(95.5, 'Refining heading levels');
       const scoreRef = outAfter.score;
-      if (!getOpenAiCompatBaseUrl()) {
+      if (!llmReady && !getOpenAiCompatBaseUrl()) {
         semanticHeadingsSummary = {
           skippedReason: 'no_llm_config',
           durationMs: 0,
@@ -332,7 +335,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     if (semanticUntaggedHeadingsRequested) {
       await reportProgress(96.5, 'Adding missing headings');
       const scoreRef = outAfter.score;
-      if (!getOpenAiCompatBaseUrl()) {
+      if (!llmReady && !getOpenAiCompatBaseUrl()) {
         semanticUntaggedHeadingsSummary = {
           skippedReason: 'no_llm_config',
           durationMs: 0,

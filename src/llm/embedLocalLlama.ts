@@ -15,6 +15,13 @@ import {
 import { logError, logInfo, logWarn } from '../logging.js';
 
 let llamaChild: ChildProcess | null = null;
+let llamaReadyPromise: Promise<void> | null = null;
+let llamaIdleTimer: NodeJS.Timeout | null = null;
+let activeBaseV1: string | null = null;
+let activeModelId: string | null = null;
+let localLlmPhase: 'idle' | 'starting' | 'ready' = 'idle';
+let lastUsedAt: string | null = null;
+let unloadAfterMs = 5 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
@@ -60,22 +67,98 @@ async function waitForModelsJson(baseV1: string, apiKey: string): Promise<{ firs
   return { firstModelId: null };
 }
 
+function clearIdleTimer(): void {
+  if (!llamaIdleTimer) return;
+  clearTimeout(llamaIdleTimer);
+  llamaIdleTimer = null;
+}
+
+function clearLocalLlmEnv(): void {
+  if (activeBaseV1 && process.env['OPENAI_COMPAT_BASE_URL'] === activeBaseV1) {
+    delete process.env['OPENAI_COMPAT_BASE_URL'];
+  }
+  if (process.env['OPENAI_COMPAT_API_KEY'] === 'local') {
+    delete process.env['OPENAI_COMPAT_API_KEY'];
+  }
+  if (activeModelId && process.env['OPENAI_COMPAT_MODEL'] === activeModelId) {
+    delete process.env['OPENAI_COMPAT_MODEL'];
+  }
+  activeBaseV1 = null;
+  activeModelId = null;
+}
+
+function scheduleIdleShutdown(): void {
+  if (!llamaChild || llamaChild.killed) return;
+  clearIdleTimer();
+  llamaIdleTimer = setTimeout(() => {
+    logInfo({
+      message: 'embed_llm_idle_unload',
+      details: {
+        unloadAfterMs,
+        lastUsedAt,
+      },
+    });
+    stopEmbeddedLlm();
+  }, unloadAfterMs);
+  llamaIdleTimer.unref?.();
+}
+
+function markLlmUsage(): void {
+  lastUsedAt = new Date().toISOString();
+  if (llamaChild && !llamaChild.killed) {
+    scheduleIdleShutdown();
+  }
+}
+
+export function getEmbeddedLlmRuntimeState(): {
+  phase: 'idle' | 'starting' | 'ready';
+  loaded: boolean;
+  lastUsedAt: string | null;
+  unloadAfterMs: number;
+} {
+  return {
+    phase: localLlmPhase,
+    loaded: Boolean(llamaChild && !llamaChild.killed && activeBaseV1),
+    lastUsedAt,
+    unloadAfterMs,
+  };
+}
+
+export function setEmbeddedLlmIdleUnloadMs(ms: number): void {
+  unloadAfterMs = ms;
+  if (llamaChild && !llamaChild.killed) {
+    scheduleIdleShutdown();
+  }
+}
+
 /**
  * If `PDFAF_RUN_LOCAL_LLM=1` and `OPENAI_COMPAT_BASE_URL` is unset, spawn `llama-server` (Gemma 4 E2B instruct
  * GGUF defaults: `unsloth/gemma-4-E2B-it-GGUF` + `gemma-4-E2B-it-Q4_K_M.gguf`, same weights family as
  * `google/gemma-4-E2B-it`) and point OpenAI-compat env at it. First HF fetch can take many minutes.
  */
-export async function startEmbeddedLlmIfEnabled(): Promise<void> {
-  if (!runLocalLlmEnabled()) return;
+export async function ensureEmbeddedLlmReadyIfEnabled(): Promise<boolean> {
+  if (!runLocalLlmEnabled()) return false;
 
   if ((process.env['OPENAI_COMPAT_BASE_URL'] ?? '').trim()) {
     logInfo({
       message: 'embed_llm_skipped',
       details: { reason: 'OPENAI_COMPAT_BASE_URL is already set' },
     });
-    return;
+    return false;
   }
 
+  if (llamaChild && activeBaseV1) {
+    markLlmUsage();
+    return true;
+  }
+
+  if (llamaReadyPromise) {
+    await llamaReadyPromise;
+    markLlmUsage();
+    return Boolean(activeBaseV1);
+  }
+
+  localLlmPhase = 'starting';
   const host = '127.0.0.1';
   const port = PDFAF_LLAMA_PORT;
   mkdirSync(PDFAF_LLAMA_WORKDIR, { recursive: true });
@@ -115,7 +198,8 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
         localModelReady,
       },
     });
-    return;
+    localLlmPhase = 'idle';
+    return false;
   }
   const args = localModelReady
     ? [
@@ -151,61 +235,92 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
         'deepseek',
       ];
 
-  logInfo({
-    message: 'embed_llm_spawn',
-    details: {
-      bin: LLAMA_SERVER_BIN,
-      repo: GEMMA4_HF_REPO,
-      gguf: GEMMA4_GGUF_FILE,
-      mmproj: localModelReady ? GEMMA4_MMPROJ_FILE : '(auto)',
-      localModelReady,
-      port,
-      cwd: PDFAF_LLAMA_WORKDIR,
-    },
-  });
-
-  llamaChild = spawn(LLAMA_SERVER_BIN, args, {
-    stdio: 'inherit',
-    env: { ...process.env },
-    cwd: PDFAF_LLAMA_WORKDIR,
-  });
-
-  llamaChild.on('error', err => {
-    logError({ message: 'embed_llm_spawn_failed', error: String(err) });
-  });
-
-  llamaChild.on('exit', (code, signal) => {
-    logInfo({ message: 'embed_llm_exit', details: { code, signal } });
-    llamaChild = null;
-  });
-
-  const baseV1 = `http://${host}:${port}/v1`;
-  const apiKey = (process.env['OPENAI_COMPAT_API_KEY'] ?? '').trim() || 'local';
-
-  const { firstModelId } = await waitForModelsJson(baseV1, apiKey);
-  if (!firstModelId) {
-    logError({
-      message: 'embed_llm_timeout',
-      details: { baseV1, timeoutMs: PDFAF_LLAMA_READY_TIMEOUT_MS },
+  llamaReadyPromise = (async () => {
+    logInfo({
+      message: 'embed_llm_spawn',
+      details: {
+        bin: LLAMA_SERVER_BIN,
+        repo: GEMMA4_HF_REPO,
+        gguf: GEMMA4_GGUF_FILE,
+        mmproj: localModelReady ? GEMMA4_MMPROJ_FILE : '(auto)',
+        localModelReady,
+        port,
+        cwd: PDFAF_LLAMA_WORKDIR,
+      },
     });
-    stopEmbeddedLlm();
-    throw new Error(
-      `Embedded llama-server did not become ready at ${baseV1}/models within ${PDFAF_LLAMA_READY_TIMEOUT_MS}ms. Install llama.cpp llama-server and ensure HF access, or set OPENAI_COMPAT_BASE_URL to an external endpoint.`,
-    );
+
+    llamaChild = spawn(LLAMA_SERVER_BIN, args, {
+      stdio: 'inherit',
+      env: { ...process.env },
+      cwd: PDFAF_LLAMA_WORKDIR,
+    });
+
+    llamaChild.on('error', err => {
+      logError({ message: 'embed_llm_spawn_failed', error: String(err) });
+    });
+
+    llamaChild.on('exit', (code, signal) => {
+      logInfo({ message: 'embed_llm_exit', details: { code, signal } });
+      clearIdleTimer();
+      llamaChild = null;
+      localLlmPhase = 'idle';
+      clearLocalLlmEnv();
+    });
+
+    const baseV1 = `http://${host}:${port}/v1`;
+    const apiKey = (process.env['OPENAI_COMPAT_API_KEY'] ?? '').trim() || 'local';
+
+    const { firstModelId } = await waitForModelsJson(baseV1, apiKey);
+    if (!firstModelId) {
+      logError({
+        message: 'embed_llm_timeout',
+        details: { baseV1, timeoutMs: PDFAF_LLAMA_READY_TIMEOUT_MS },
+      });
+      stopEmbeddedLlm();
+      throw new Error(
+        `Embedded llama-server did not become ready at ${baseV1}/models within ${PDFAF_LLAMA_READY_TIMEOUT_MS}ms. Install llama.cpp llama-server and ensure HF access, or set OPENAI_COMPAT_BASE_URL to an external endpoint.`,
+      );
+    }
+
+    activeBaseV1 = baseV1;
+    activeModelId = firstModelId;
+    process.env['OPENAI_COMPAT_BASE_URL'] = baseV1;
+    process.env['OPENAI_COMPAT_API_KEY'] = apiKey;
+    process.env['OPENAI_COMPAT_MODEL'] = firstModelId;
+    localLlmPhase = 'ready';
+    markLlmUsage();
+
+    logInfo({
+      message: 'embed_llm_ready',
+      details: { baseV1, model: process.env['OPENAI_COMPAT_MODEL'] },
+    });
+  })();
+
+  try {
+    await llamaReadyPromise;
+    return Boolean(activeBaseV1);
+  } finally {
+    llamaReadyPromise = null;
+    if (!activeBaseV1) {
+      localLlmPhase = 'idle';
+    }
   }
+}
 
-  process.env['OPENAI_COMPAT_BASE_URL'] = baseV1;
-  process.env['OPENAI_COMPAT_API_KEY'] = apiKey;
-  // Always use the id from llama-server (GGUF basename), not a HF Transformers id like google/gemma-4-E2B-it.
-  process.env['OPENAI_COMPAT_MODEL'] = firstModelId;
+export async function startEmbeddedLlmIfEnabled(): Promise<void> {
+  await ensureEmbeddedLlmReadyIfEnabled();
+}
 
-  logInfo({
-    message: 'embed_llm_ready',
-    details: { baseV1, model: process.env['OPENAI_COMPAT_MODEL'] },
-  });
+export async function prepareEmbeddedLlmForRemediation(): Promise<boolean> {
+  if (getEmbeddedLlmRuntimeState().loaded) {
+    markLlmUsage();
+    return true;
+  }
+  return await ensureEmbeddedLlmReadyIfEnabled();
 }
 
 export function stopEmbeddedLlm(): void {
+  clearIdleTimer();
   if (!llamaChild || llamaChild.killed) return;
   try {
     llamaChild.kill('SIGTERM');
@@ -213,4 +328,6 @@ export function stopEmbeddedLlm(): void {
     /* ignore */
   }
   llamaChild = null;
+  localLlmPhase = 'idle';
+  clearLocalLlmEnv();
 }

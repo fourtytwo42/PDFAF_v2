@@ -18,6 +18,7 @@ import {
 } from '../config.js';
 import { getDb } from '../db/client.js';
 import { remediationStatsLast24h } from '../metrics.js';
+import { getEmbeddedLlmRuntimeState } from '../llm/embedLocalLlama.js';
 
 export const healthRouter: IRouter = Router();
 
@@ -124,6 +125,12 @@ function readLocalLlmState(): {
   modelPresent: boolean;
   mmprojPath: string;
   mmprojPresent: boolean;
+  runtime: {
+    phase: 'idle' | 'starting' | 'ready';
+    loaded: boolean;
+    lastUsedAt: string | null;
+    unloadAfterMs: number;
+  };
 } {
   const envInstalled = process.env['PDFAF_LOCAL_LLM_INSTALLED'] === '1';
   const envEnabled = process.env['PDFAF_LOCAL_LLM_ENABLED'] === '1';
@@ -151,6 +158,7 @@ function readLocalLlmState(): {
     modelPresent,
     mmprojPath: GEMMA4_MMPROJ_FILE,
     mmprojPresent,
+    runtime: getEmbeddedLlmRuntimeState(),
   };
 }
 

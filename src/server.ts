@@ -1,12 +1,11 @@
 import { createApp } from './app.js';
 import { HOST, PORT } from './config.js';
 import { getDb } from './db/client.js';
-import { startEmbeddedLlmIfEnabled, stopEmbeddedLlm } from './llm/embedLocalLlama.js';
+import { stopEmbeddedLlm } from './llm/embedLocalLlama.js';
 import { bootstrapOpenAiModelFromServer } from './llm/syncRemoteOpenAiModel.js';
 import { logError, logInfo } from './logging.js';
 
 async function main(): Promise<void> {
-  await startEmbeddedLlmIfEnabled();
   await bootstrapOpenAiModelFromServer();
 
   const app = createApp();

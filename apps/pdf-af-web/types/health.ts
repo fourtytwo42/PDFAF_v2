@@ -12,6 +12,12 @@ export interface LocalLlmHealthSummary {
   modelPresent: boolean;
   mmprojPath: string;
   mmprojPresent: boolean;
+  runtime?: {
+    phase: 'idle' | 'starting' | 'ready';
+    loaded: boolean;
+    lastUsedAt: string | null;
+    unloadAfterMs: number;
+  };
 }
 
 export interface DesktopLocalLlmState {

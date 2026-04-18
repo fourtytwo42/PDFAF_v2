@@ -32,6 +32,14 @@ function mapHealthResponse(payload: RawHealthResponse): HealthSummary {
           modelPresent: Boolean(payload.dependencies.llm.local.modelPresent),
           mmprojPath: payload.dependencies.llm.local.mmprojPath ?? '',
           mmprojPresent: Boolean(payload.dependencies.llm.local.mmprojPresent),
+          runtime: payload.dependencies.llm.local.runtime
+            ? {
+                phase: payload.dependencies.llm.local.runtime.phase ?? 'idle',
+                loaded: Boolean(payload.dependencies.llm.local.runtime.loaded),
+                lastUsedAt: payload.dependencies.llm.local.runtime.lastUsedAt ?? null,
+                unloadAfterMs: Number(payload.dependencies.llm.local.runtime.unloadAfterMs ?? 0),
+              }
+            : undefined,
         }
       : undefined,
     databaseOk: payload.dependencies?.database?.ok,

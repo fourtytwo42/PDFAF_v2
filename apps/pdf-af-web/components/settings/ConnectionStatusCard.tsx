@@ -50,13 +50,17 @@ export function ConnectionStatusCard() {
       if (healthLocalLlm?.installed) {
         return {
           label: healthLocalLlm.enabled
-            ? 'Local AI is installed and ready for remediation.'
+            ? healthLocalLlm.runtime?.loaded
+              ? 'Local AI is installed and loaded. Remediation is ready.'
+              : healthLocalLlm.runtime?.phase === 'starting'
+                ? 'Local AI is loading into memory for remediation.'
+                : 'Local AI is installed. It loads on the first remediation request and unloads after 5 minutes of inactivity.'
             : 'Local AI is installed but disabled. Remediation requires local AI to be enabled.',
           tone: healthLocalLlm.enabled ? 'success' as const : 'warning' as const,
         };
       }
       return {
-        label: 'Local AI is required for remediation. Run installer repair or reinstall to provision it.',
+        label: 'Local AI is downloading automatically in the background. Until it finishes, you can only grade PDFs.',
         tone: 'warning' as const,
       };
     }
@@ -111,7 +115,11 @@ export function ConnectionStatusCard() {
 
     if (localAiState.status === 'installed' && localAiState.enabled) {
       return {
-        label: 'Local AI is installed and ready for remediation.',
+        label: connection.summary?.localLlm?.runtime?.loaded
+          ? 'Local AI is installed and loaded. Remediation is ready.'
+          : connection.summary?.localLlm?.runtime?.phase === 'starting'
+            ? 'Local AI is loading into memory for remediation.'
+            : 'Local AI is installed. It will load on the first remediation request and unload after 5 minutes of inactivity.',
         tone: 'success' as const,
       };
     }
@@ -138,10 +146,10 @@ export function ConnectionStatusCard() {
     }
 
     return {
-      label: 'Local AI is downloading automatically in the background when the desktop app starts. Until it finishes, you can only grade PDFs.',
+      label: 'Local AI is downloading automatically in the background. Until it finishes, you can only grade PDFs.',
       tone: 'warning' as const,
     };
-  }, [hasDesktopBridge, healthLocalLlm, localAiError, localAiState]);
+  }, [connection.summary?.localLlm?.runtime?.loaded, connection.summary?.localLlm?.runtime?.phase, hasDesktopBridge, healthLocalLlm, localAiError, localAiState]);
 
   return (
     <SectionCard
@@ -261,6 +269,18 @@ export function ConnectionStatusCard() {
                     : 'Not installed'}
                 </dd>
               </div>
+              {connection.summary.localLlm?.runtime ? (
+                <div>
+                  <dt className="text-[var(--muted)]">Model In RAM</dt>
+                  <dd className="mt-0.5 font-bold text-[var(--foreground)]">
+                    {connection.summary.localLlm.runtime.loaded
+                      ? 'Loaded'
+                      : connection.summary.localLlm.runtime.phase === 'starting'
+                        ? 'Loading'
+                        : 'Idle'}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           ) : (
             <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
