@@ -27,6 +27,10 @@ const baseAnalysis = (over: Partial<AnalysisResult> = {}): AnalysisResult =>
         score: 60,
         weight: 0.13,
         severity: 'moderate',
+        evidence: 'manual_review_required',
+        verificationLevel: 'manual_review_required',
+        manualReviewRequired: true,
+        manualReviewReasons: ['Alt text ownership risk detected.'],
         findings: [],
       },
       {
@@ -35,10 +39,24 @@ const baseAnalysis = (over: Partial<AnalysisResult> = {}): AnalysisResult =>
         score: 95,
         weight: 0.13,
         severity: 'minor',
+        evidence: 'verified',
+        verificationLevel: 'verified',
         findings: [],
       },
     ],
     analysisDurationMs: 10,
+    verificationLevel: 'manual_review_required',
+    manualReviewRequired: true,
+    manualReviewReasons: ['Alt text ownership risk detected.'],
+    scoreCapsApplied: [
+      {
+        category: 'alt_text',
+        cap: 89,
+        rawScore: 100,
+        finalScore: 89,
+        reason: 'Alt text quality or ownership evidence is not fully machine-verifiable.',
+      },
+    ],
     ...over,
   }) as AnalysisResult;
 
@@ -50,6 +68,8 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('evil&lt;script&gt;');
     expect(html).toContain('>B<');
     expect(html).toContain('1.1.1');
+    expect(html).toContain('Verification summary');
+    expect(html).toContain('manual_review_required');
     expect(html.length).toBeLessThan(100_000);
   });
 

@@ -26,6 +26,28 @@ function findingsBlocking(findings: Finding[]): Finding[] {
   return findings.filter(f => f.severity === 'critical' || f.severity === 'moderate');
 }
 
+function verificationBullets(after: AnalysisResult): string {
+  const lines: string[] = [];
+  lines.push(`<li><strong>Verification level:</strong> ${esc(after.verificationLevel ?? 'verified')}</li>`);
+  lines.push(`<li><strong>Manual review required:</strong> ${(after.manualReviewRequired ?? false) ? 'yes' : 'no'}</li>`);
+  if ((after.manualReviewReasons ?? []).length > 0) {
+    lines.push(
+      `<li><strong>Manual review reasons:</strong> ${esc((after.manualReviewReasons ?? []).join(' | '))}</li>`,
+    );
+  }
+  const caps = after.scoreCapsApplied ?? [];
+  if (caps.length > 0) {
+    lines.push(
+      `<li><strong>Score caps applied:</strong> ${esc(
+        caps.map(cap => `${cap.category} ${cap.rawScore}→${cap.finalScore} (cap ${cap.cap})`).join(' | '),
+      )}</li>`,
+    );
+  } else {
+    lines.push('<li><strong>Score caps applied:</strong> none</li>');
+  }
+  return lines.join('');
+}
+
 /**
  * Self-contained HTML accessibility summary (inline CSS, no CDN).
  * Safe for embedding: filenames and messages are escaped.
@@ -148,6 +170,10 @@ export function generateHtmlReport(
   </header>
   ${compareSection}
   ${ocrNotice}
+  <section>
+    <h2>Verification summary</h2>
+    <ul>${verificationBullets(afterRef)}</ul>
+  </section>
   <section>
     <h2>Category scores</h2>
     <table>

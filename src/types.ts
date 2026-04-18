@@ -6,6 +6,8 @@ export type PdfClass  = 'native_tagged' | 'native_untagged' | 'scanned' | 'mixed
 export type CategoryKey = keyof typeof SCORING_WEIGHTS;
 export type Severity  = 'critical' | 'moderate' | 'minor' | 'pass';
 export type Grade     = 'A' | 'B' | 'C' | 'D' | 'F';
+export type EvidenceLevel = 'verified' | 'heuristic' | 'inferred_after_fix' | 'manual_review_required';
+export type VerificationLevel = 'verified' | 'mixed' | 'heuristic' | 'manual_review_required';
 
 // ─── Structure tree node (minimal, for reading order check) ──────────────────
 
@@ -182,6 +184,17 @@ export interface Finding {
   message: string;
   count?: number;
   page?: number;
+  evidence?: EvidenceLevel;
+  manualReviewRequired?: boolean;
+  manualReviewReason?: string;
+}
+
+export interface ScoreCapApplied {
+  category: CategoryKey;
+  cap: number;
+  rawScore: number;
+  finalScore: number;
+  reason: string;
 }
 
 // ─── Per-category scored result ───────────────────────────────────────────────
@@ -193,6 +206,11 @@ export interface ScoredCategory {
   applicable: boolean;
   severity: Severity;
   findings: Finding[];
+  evidence?: EvidenceLevel;
+  verificationLevel?: VerificationLevel;
+  manualReviewRequired?: boolean;
+  manualReviewReasons?: string[];
+  scoreCapsApplied?: ScoreCapApplied[];
 }
 
 // ─── Final analysis result (API response shape) ───────────────────────────────
@@ -208,6 +226,10 @@ export interface AnalysisResult {
   categories: ScoredCategory[];
   findings: Finding[];              // all findings sorted by severity desc
   analysisDurationMs: number;
+  verificationLevel?: VerificationLevel;
+  manualReviewRequired?: boolean;
+  manualReviewReasons?: string[];
+  scoreCapsApplied?: ScoreCapApplied[];
 }
 
 // ─── Intermediate types from sub-services ────────────────────────────────────

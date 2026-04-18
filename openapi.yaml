@@ -166,8 +166,46 @@ components:
 
     AnalysisResult:
       type: object
-      description: Full graded analysis (see TypeScript `AnalysisResult` in the repository).
+      description: Full graded analysis with additive verification/evidence metadata.
       additionalProperties: true
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        filename:
+          type: string
+        pageCount:
+          type: integer
+        pdfClass:
+          type: string
+        score:
+          type: number
+        grade:
+          type: string
+        analysisDurationMs:
+          type: number
+        verificationLevel:
+          $ref: '#/components/schemas/VerificationLevel'
+        manualReviewRequired:
+          type: boolean
+        manualReviewReasons:
+          type: array
+          items:
+            type: string
+        scoreCapsApplied:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoreCapApplied'
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredCategory'
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
 
     RemediationResult:
       type: object
@@ -189,6 +227,85 @@ components:
         htmlReport:
           type: [string, 'null']
           description: Present when options.htmlReport was true; null if report exceeded size cap.
+
+    VerificationLevel:
+      type: string
+      enum: [verified, mixed, heuristic, manual_review_required]
+
+    EvidenceLevel:
+      type: string
+      enum: [verified, heuristic, inferred_after_fix, manual_review_required]
+
+    ScoreCapApplied:
+      type: object
+      additionalProperties: true
+      properties:
+        category:
+          type: string
+        cap:
+          type: number
+        rawScore:
+          type: number
+        finalScore:
+          type: number
+        reason:
+          type: string
+
+    Finding:
+      type: object
+      additionalProperties: true
+      properties:
+        category:
+          type: string
+        severity:
+          type: string
+        wcag:
+          type: string
+        message:
+          type: string
+        count:
+          type: integer
+        page:
+          type: integer
+        evidence:
+          $ref: '#/components/schemas/EvidenceLevel'
+        manualReviewRequired:
+          type: boolean
+        manualReviewReason:
+          type: string
+
+    ScoredCategory:
+      type: object
+      additionalProperties: true
+      properties:
+        key:
+          type: string
+        score:
+          type: number
+        weight:
+          type: number
+        applicable:
+          type: boolean
+        severity:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/EvidenceLevel'
+        verificationLevel:
+          $ref: '#/components/schemas/VerificationLevel'
+        manualReviewRequired:
+          type: boolean
+        manualReviewReasons:
+          type: array
+          items:
+            type: string
+        scoreCapsApplied:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoreCapApplied'
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
 
     HealthResponse:
       type: object

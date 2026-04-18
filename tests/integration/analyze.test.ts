@@ -65,6 +65,10 @@ describe('POST /v1/analyze', () => {
     expect(body).toHaveProperty('findings');
     expect(body).toHaveProperty('pdfClass');
     expect(body).toHaveProperty('analysisDurationMs');
+    expect(body).toHaveProperty('verificationLevel');
+    expect(body).toHaveProperty('manualReviewRequired');
+    expect(body).toHaveProperty('manualReviewReasons');
+    expect(body).toHaveProperty('scoreCapsApplied');
 
     expect(['A','B','C','D','F']).toContain(body.grade);
     expect(body.score).toBeGreaterThanOrEqual(0);
@@ -80,6 +84,9 @@ describe('POST /v1/analyze', () => {
       expect(cat).toHaveProperty('applicable');
       expect(cat).toHaveProperty('severity');
       expect(cat).toHaveProperty('findings');
+      expect(cat).toHaveProperty('evidence');
+      expect(cat).toHaveProperty('verificationLevel');
+      expect(cat).toHaveProperty('manualReviewRequired');
     }
 
     // Should complete in reasonable time

@@ -1,5 +1,5 @@
 import { SCORING_WEIGHTS, GRADE_THRESHOLDS } from '../../config.js';
-import type { DocumentSnapshot, AnalysisResult, ScoredCategory, Finding, Grade } from '../../types.js';
+import type { DocumentSnapshot, AnalysisResult, ScoredCategory, Grade } from '../../types.js';
 import { scoreTextExtractability } from './categories/textExtractability.js';
 import { scoreTitleLanguage }      from './categories/titleLanguage.js';
 import { scoreHeadingStructure }   from './categories/headingStructure.js';
@@ -11,6 +11,7 @@ import { scoreColorContrast }      from './categories/colorContrast.js';
 import { scoreLinkQuality }        from './categories/linkQuality.js';
 import { scoreReadingOrder }       from './categories/readingOrder.js';
 import { scoreFormAccessibility }  from './categories/formAccessibility.js';
+import { finalizeScoringEvidence } from './finalizeEvidence.js';
 
 // Pure function. Zero I/O. Zero async.
 export function score(
@@ -32,12 +33,14 @@ export function score(
     scoreFormAccessibility(snap),
   ];
 
+  const finalized = finalizeScoringEvidence(snap, rawCategories);
+
   // 2. Redistribute weight of N/A categories proportionally to applicable ones
-  const applicable   = rawCategories.filter(c => c.applicable);
+  const applicable   = finalized.categories.filter(c => c.applicable);
   const naWeight     = rawCategories.filter(c => !c.applicable).reduce((s, c) => s + c.weight, 0);
   const applicableBaseWeight = applicable.reduce((s, c) => s + c.weight, 0);
 
-  const categories = rawCategories.map(cat => {
+  const categories = finalized.categories.map(cat => {
     if (!cat.applicable) return cat;
     const scaleFactor = applicableBaseWeight > 0
       ? (cat.weight + naWeight * (cat.weight / applicableBaseWeight))
@@ -53,11 +56,6 @@ export function score(
   const finalScore = Math.round(Math.min(100, Math.max(0, rawScore)));
   const grade      = deriveGrade(finalScore);
 
-  // 4. Flatten & sort all findings (critical first)
-  const allFindings: Finding[] = categories
-    .flatMap(c => c.findings)
-    .sort(findingSortOrder);
-
   return {
     id: meta.id,
     timestamp: meta.timestamp,
@@ -67,8 +65,12 @@ export function score(
     score: finalScore,
     grade,
     categories,
-    findings: allFindings,
+    findings: finalized.findings,
     analysisDurationMs: meta.analysisDurationMs,
+    verificationLevel: finalized.verificationLevel,
+    manualReviewRequired: finalized.manualReviewRequired,
+    manualReviewReasons: finalized.manualReviewReasons,
+    scoreCapsApplied: finalized.scoreCapsApplied,
   };
 }
 
@@ -80,17 +82,6 @@ function deriveGrade(score: number): Grade {
   if (score >= GRADE_THRESHOLDS.C) return 'C';
   if (score >= GRADE_THRESHOLDS.D) return 'D';
   return 'F';
-}
-
-const SEVERITY_ORDER: Record<string, number> = {
-  critical: 0,
-  moderate: 1,
-  minor:    2,
-  pass:     3,
-};
-
-function findingSortOrder(a: Finding, b: Finding): number {
-  return (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4);
 }
 
 function roundTo4(n: number): number {

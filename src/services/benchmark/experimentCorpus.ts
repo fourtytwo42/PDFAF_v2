@@ -5,7 +5,9 @@ import type {
   AppliedRemediationTool,
   OcrPipelineSummary,
   RemediationRoundSummary,
+  ScoreCapApplied,
   SemanticRemediationSummary,
+  VerificationLevel,
 } from '../../types.js';
 
 export const EXPERIMENT_CORPUS_COHORTS = [
@@ -49,6 +51,10 @@ export interface AnalyzeBenchmarkRow {
   findings: AnalysisResult['findings'];
   analysisDurationMs: number | null;
   wallAnalyzeMs: number | null;
+  verificationLevel?: VerificationLevel;
+  manualReviewRequired?: boolean;
+  manualReviewReasons?: string[];
+  scoreCapsApplied?: ScoreCapApplied[];
   error?: string;
 }
 
@@ -62,12 +68,24 @@ export interface RemediateBenchmarkRow {
   beforeScore: number | null;
   beforeGrade: string | null;
   beforePdfClass: string | null;
+  beforeVerificationLevel?: VerificationLevel | null;
+  beforeManualReviewRequired?: boolean | null;
+  beforeManualReviewReasons?: string[];
+  beforeScoreCapsApplied?: ScoreCapApplied[];
   afterScore: number | null;
   afterGrade: string | null;
   afterPdfClass: string | null;
+  afterVerificationLevel?: VerificationLevel | null;
+  afterManualReviewRequired?: boolean | null;
+  afterManualReviewReasons?: string[];
+  afterScoreCapsApplied?: ScoreCapApplied[];
   reanalyzedScore: number | null;
   reanalyzedGrade: string | null;
   reanalyzedPdfClass: string | null;
+  reanalyzedVerificationLevel?: VerificationLevel | null;
+  reanalyzedManualReviewRequired?: boolean | null;
+  reanalyzedManualReviewReasons?: string[];
+  reanalyzedScoreCapsApplied?: ScoreCapApplied[];
   delta: number | null;
   appliedTools: AppliedRemediationTool[];
   rounds: RemediationRoundSummary[];
@@ -107,6 +125,8 @@ export interface BenchmarkRunSummary {
     pdfClassDistribution: Record<string, number>;
     weakestCategories: Array<FrequencyRow>;
     topFindingMessages: Array<FrequencyRow>;
+    manualReviewRequiredCount: number;
+    scoreCapsByCategory: Array<FrequencyRow>;
     topSlowestAnalyzeFiles: Array<FileMetricRow>;
   };
   remediate: {
@@ -124,6 +144,10 @@ export interface BenchmarkRunSummary {
     pdfClassDistributionBefore: Record<string, number>;
     pdfClassDistributionAfter: Record<string, number>;
     pdfClassDistributionReanalyzed: Record<string, number>;
+    beforeManualReviewRequiredCount: number;
+    afterManualReviewRequiredCount: number;
+    reanalyzedManualReviewRequiredCount: number;
+    afterScoreCapsByCategory: Array<FrequencyRow>;
     topSlowestRemediateFiles: Array<FileMetricRow>;
     topHighestDeltaFiles: Array<FileDeltaRow>;
     topLowestDeltaFiles: Array<FileDeltaRow>;
@@ -177,6 +201,8 @@ export interface CohortSummary {
   totalPipelineMs: SummaryStats;
   weakestCategories: Array<FrequencyRow>;
   topFindingMessages: Array<FrequencyRow>;
+  manualReviewRequiredCount: number;
+  scoreCapsByCategory: Array<FrequencyRow>;
 }
 
 export interface ManifestSnapshot {
@@ -356,6 +382,10 @@ function topFindingMessages(row: AnalyzeBenchmarkRow): string[] {
   return row.findings.map(finding => finding.message);
 }
 
+function scoreCapCategoryKeys(caps?: ScoreCapApplied[]): string[] {
+  return (caps ?? []).map(cap => cap.category);
+}
+
 export function buildBenchmarkSummary(input: {
   runId: string;
   generatedAt: string;
@@ -403,6 +433,8 @@ export function buildBenchmarkSummary(input: {
       pdfClassDistribution: distribution(analyzeSuccessRows.map(row => row.pdfClass)),
       weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
       topFindingMessages: frequencyRows(analyzeSuccessRows.flatMap(topFindingMessages)),
+      manualReviewRequiredCount: analyzeSuccessRows.filter(row => row.manualReviewRequired === true).length,
+      scoreCapsByCategory: frequencyRows(analyzeSuccessRows.flatMap(row => scoreCapCategoryKeys(row.scoreCapsApplied))),
       topSlowestAnalyzeFiles: analyzeSuccessRows
         .map(row => ({
           id: row.id,
@@ -429,6 +461,12 @@ export function buildBenchmarkSummary(input: {
           pdfClassDistributionBefore: distribution(remediateSuccessRows.map(row => row.beforePdfClass)),
           pdfClassDistributionAfter: distribution(remediateSuccessRows.map(row => row.afterPdfClass)),
           pdfClassDistributionReanalyzed: distribution(remediateSuccessRows.map(row => row.reanalyzedPdfClass)),
+          beforeManualReviewRequiredCount: remediateSuccessRows.filter(row => row.beforeManualReviewRequired === true).length,
+          afterManualReviewRequiredCount: remediateSuccessRows.filter(row => row.afterManualReviewRequired === true).length,
+          reanalyzedManualReviewRequiredCount: remediateSuccessRows.filter(row => row.reanalyzedManualReviewRequired === true).length,
+          afterScoreCapsByCategory: frequencyRows(
+            remediateSuccessRows.flatMap(row => scoreCapCategoryKeys(row.afterScoreCapsApplied)),
+          ),
           topSlowestRemediateFiles: remediateSuccessRows
             .map(row => ({
               id: row.id,
@@ -486,6 +524,8 @@ function buildCohortSummary(analyzeRows: AnalyzeBenchmarkRow[], remediateRows: R
     totalPipelineMs: summarizeStats(remediateSuccessRows.map(row => row.totalPipelineMs ?? 0)),
     weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
     topFindingMessages: frequencyRows(analyzeSuccessRows.flatMap(topFindingMessages)),
+    manualReviewRequiredCount: analyzeSuccessRows.filter(row => row.manualReviewRequired === true).length,
+    scoreCapsByCategory: frequencyRows(analyzeSuccessRows.flatMap(row => scoreCapCategoryKeys(row.scoreCapsApplied))),
   };
 }
 
@@ -539,6 +579,8 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
   lines.push(`- **Analyze pdfClass:** ${markdownDistribution(summary.analyze.pdfClassDistribution)}`);
   lines.push(`- **Weakest categories:** ${markdownFrequency(summary.analyze.weakestCategories)}`);
   lines.push(`- **Top findings:** ${markdownFrequency(summary.analyze.topFindingMessages)}`);
+  lines.push(`- **Analyze manual-review count:** ${summary.analyze.manualReviewRequiredCount}`);
+  lines.push(`- **Analyze score caps:** ${markdownFrequency(summary.analyze.scoreCapsByCategory)}`);
   if (summary.remediate) {
     lines.push(`- **Remediation before scores:** ${formatStats(summary.remediate.beforeScore)}`);
     lines.push(`- **Remediation after scores:** ${formatStats(summary.remediate.afterScore)}`);
@@ -548,6 +590,8 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
     lines.push(`- **Remediation runtime (wall):** ${formatStats(summary.remediate.wallRemediateMs)}`);
     lines.push(`- **Post-write analyze runtime:** ${formatStats(summary.remediate.analysisAfterMs)}`);
     lines.push(`- **Total pipeline runtime:** ${formatStats(summary.remediate.totalPipelineMs)}`);
+    lines.push(`- **Remediation manual review (before/after/reanalyzed):** ${summary.remediate.beforeManualReviewRequiredCount} / ${summary.remediate.afterManualReviewRequiredCount} / ${summary.remediate.reanalyzedManualReviewRequiredCount}`);
+    lines.push(`- **Remediation score caps:** ${markdownFrequency(summary.remediate.afterScoreCapsByCategory)}`);
   }
   lines.push('');
   lines.push('## Per Cohort');
@@ -570,6 +614,8 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
       totalPipelineMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
       weakestCategories: [],
       topFindingMessages: [],
+      manualReviewRequiredCount: 0,
+      scoreCapsByCategory: [],
     };
     lines.push(
       `| ${cohort} | ${row.fileCount} | ${row.analyzeScore.count ? row.analyzeScore.mean.toFixed(1) : 'n/a'} | ${row.wallAnalyzeMs.p95.toFixed(0)} | ${row.remediationDelta.count ? row.remediationDelta.mean.toFixed(1) : 'n/a'} | ${row.totalPipelineMs.p95.toFixed(0)} |`,

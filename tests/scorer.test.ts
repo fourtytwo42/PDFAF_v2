@@ -154,9 +154,10 @@ describe('textExtractability', () => {
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'text_extractability')!;
     expect(cat.score).toBe(100);
+    expect(cat.evidence).toBe('verified');
   });
 
-  it('adds OCR finding when Producer suggests OCRmyPDF; score stays 100 with default cap', () => {
+  it('caps OCR-derived text extractability below a full-confidence pass', () => {
     const snap = makeSnap({
       pdfClass: 'native_tagged',
       textCharCount: 5000,
@@ -170,8 +171,12 @@ describe('textExtractability', () => {
     });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'text_extractability')!;
-    expect(cat.score).toBe(100);
+    expect(cat.score).toBe(89);
+    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.manualReviewRequired).toBe(true);
     expect(cat.findings.some(f => f.message.includes('OCR'))).toBe(true);
+    expect(result.manualReviewRequired).toBe(true);
+    expect(result.scoreCapsApplied?.some(cap => cap.category === 'text_extractability')).toBe(true);
   });
 
   it('returns capped score for tagged Marked native_tagged when pdf.js extracts no text', () => {
@@ -351,6 +356,7 @@ describe('altText', () => {
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'alt_text')!;
     expect(cat.score).toBe(100);
+    expect(cat.evidence).toBe('verified');
   });
 
   it('scores 0 when no figures have alt text (untagged class; small native_tagged floor is separate)', () => {
@@ -403,6 +409,7 @@ describe('altText', () => {
     const cat = result.categories.find(c => c.key === 'alt_text')!;
     expect(cat.score).toBeLessThan(100);
     expect(cat.findings.some(f => f.message.includes('generic'))).toBe(true);
+    expect(cat.evidence).toBe('heuristic');
   });
 
   it('scores non-link annotations missing /Contents when there are no figures', () => {
@@ -466,6 +473,7 @@ describe('annotationAccessibility signals', () => {
     const cat = result.categories.find(c => c.key === 'reading_order')!;
     expect(cat.score).toBeLessThanOrEqual(50);
     expect(cat.findings.some(f => f.message.includes('/Tabs'))).toBe(true);
+    expect(cat.manualReviewRequired).toBe(true);
   });
 
   it('penalises pdf_ua for tagged-content audit orphan MCIDs (Acrobat TaggedCont proxy)', () => {
@@ -550,6 +558,7 @@ describe('annotationAccessibility signals', () => {
     const cat = result.categories.find(c => c.key === 'reading_order')!;
     expect(cat.score).toBeLessThan(100);
     expect(cat.findings.some(f => f.message.includes('StructParent'))).toBe(true);
+    expect(cat.manualReviewRequired).toBe(true);
   });
 
   it('penalises link_quality for /Link missing /StructParent (distinct from ParentTree)', () => {
@@ -696,5 +705,50 @@ describe('findings ordering', () => {
     for (let i = 1; i < severities.length; i++) {
       expect(ORDER.indexOf(severities[i]!)).toBeGreaterThanOrEqual(ORDER.indexOf(severities[i - 1]!));
     }
+  });
+});
+
+describe('stage 1 evidence model', () => {
+  it('marks heuristic reading-order fallback without a structure tree and caps it below full confidence', () => {
+    const snap = makeSnap({
+      structureTree: null,
+      headings: [
+        { level: 1, text: 'Intro', page: 0 },
+        { level: 2, text: 'Body', page: 1 },
+      ],
+      paragraphStructElems: [],
+      pdfClass: 'native_tagged',
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBe(89);
+    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.manualReviewRequired).toBe(true);
+    expect(result.verificationLevel).toBe('manual_review_required');
+  });
+
+  it('surfaces color contrast as manual-review-required even when it is not applicable', () => {
+    const result = score(makeSnap(), META);
+    const cat = result.categories.find(c => c.key === 'color_contrast')!;
+    expect(cat.applicable).toBe(false);
+    expect(cat.evidence).toBe('heuristic');
+    expect(cat.manualReviewRequired).toBe(true);
+    expect(result.manualReviewReasons?.some(reason => reason.includes('Color contrast'))).toBe(true);
+  });
+
+  it('marks alt-text ownership risks as manual-review-required and caps high scores', () => {
+    const snap = makeSnap({
+      figures: [{ hasAlt: true, altText: 'Chart', isArtifact: false, page: 1 }],
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 1,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'alt_text')!;
+    expect(cat.score).toBe(89);
+    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.manualReviewRequired).toBe(true);
   });
 });
