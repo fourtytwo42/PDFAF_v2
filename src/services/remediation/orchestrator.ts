@@ -19,6 +19,7 @@ import { createToolOutcomeStore, type ToolOutcomeStore } from '../learning/toolO
 import type {
   AnalysisResult,
   AppliedRemediationTool,
+  ClassificationConfidence,
   DocumentSnapshot,
   OcrPipelineSummary,
   PlanningSummary,
@@ -29,6 +30,7 @@ import type {
   RemediationRoundSummary,
   RemediationStagePlan,
   RemediatePdfOutcome,
+  StructuralConfidenceGuardSummary,
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
 import { buildDefaultParams, planForRemediation } from './planner.js';
@@ -83,6 +85,70 @@ function keepOcrStageDespiteScoreDrop(
   return ocr?.toolName === 'ocr_scanned_pdf' && ocr.outcome === 'applied';
 }
 
+const STRUCTURAL_CONFIDENCE_RANK: Record<ClassificationConfidence, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
+
+export function compareStructuralConfidence(
+  before: AnalysisResult,
+  after: AnalysisResult,
+): { regressed: boolean; reason: string | null } {
+  const beforeConfidence = before.structuralClassification?.confidence;
+  const afterConfidence = after.structuralClassification?.confidence;
+  if (!beforeConfidence || !afterConfidence) {
+    return { regressed: false, reason: null };
+  }
+  if (STRUCTURAL_CONFIDENCE_RANK[afterConfidence] >= STRUCTURAL_CONFIDENCE_RANK[beforeConfidence]) {
+    return { regressed: false, reason: null };
+  }
+  return {
+    regressed: true,
+    reason: `stage_regressed_structural_confidence(${beforeConfidence}->${afterConfidence})`,
+  };
+}
+
+export function shouldRejectStageResult(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+}): { reject: boolean; reason: string | null } {
+  if (input.after.score < input.before.score && !keepOcrStageDespiteScoreDrop(input.stage, input.stageApplied)) {
+    return {
+      reject: true,
+      reason: `stage_regressed_score(${input.after.score})`,
+    };
+  }
+  if (input.after.score > input.before.score) {
+    const confidence = compareStructuralConfidence(input.before, input.after);
+    if (confidence.regressed) {
+      return {
+        reject: true,
+        reason: confidence.reason,
+      };
+    }
+  }
+  return {
+    reject: false,
+    reason: null,
+  };
+}
+
+function summarizeStructuralConfidenceGuard(
+  tools: AppliedRemediationTool[],
+): StructuralConfidenceGuardSummary | undefined {
+  const rollbackRows = tools.filter(
+    tool => tool.details?.startsWith('stage_regressed_structural_confidence(') === true,
+  );
+  if (rollbackRows.length === 0) return undefined;
+  return {
+    rollbackCount: rollbackRows.length,
+    lastRollbackReason: rollbackRows[rollbackRows.length - 1]?.details ?? null,
+  };
+}
+
 function buildOcrPipelineSummary(tools: AppliedRemediationTool[]): OcrPipelineSummary | undefined {
   const ocrRows = tools.filter(t => t.toolName === 'ocr_scanned_pdf');
   if (ocrRows.length === 0) return undefined;
@@ -101,6 +167,94 @@ function buildOcrPipelineSummary(tools: AppliedRemediationTool[]): OcrPipelineSu
 
 async function bufferSha256(buf: Buffer): Promise<string> {
   return createHash('sha256').update(buf).digest('hex');
+}
+
+async function reanalyzeBufferForMutation(
+  buf: Buffer,
+  filename: string,
+  prefix: string,
+): Promise<Awaited<ReturnType<typeof analyzePdf>>> {
+  const tmpPath = join(tmpdir(), `${prefix}-${randomUUID()}.pdf`);
+  await writeFile(tmpPath, buf);
+  try {
+    return await analyzePdf(tmpPath, filename);
+  } finally {
+    await unlink(tmpPath).catch(() => {});
+  }
+}
+
+async function applyGuardedPostPass(args: {
+  filename: string;
+  toolName: string;
+  stage: number;
+  round: number;
+  details: string;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  nextBuffer: Buffer;
+  appliedTools: AppliedRemediationTool[];
+  tempPrefix: string;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  const {
+    filename,
+    toolName,
+    stage,
+    round,
+    details,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer,
+    appliedTools,
+    tempPrefix,
+  } = args;
+  if (nextBuffer.equals(currentBuffer)) {
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
+
+  const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix);
+  const confidenceGuard = compareStructuralConfidence(currentAnalysis, analyzed.result);
+  if (analyzed.result.score > currentAnalysis.score && confidenceGuard.regressed) {
+    appliedTools.push({
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: currentAnalysis.score,
+      delta: 0,
+      outcome: 'rejected',
+      details: confidenceGuard.reason ?? 'stage_regressed_structural_confidence',
+    });
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
+
+  appliedTools.push({
+    toolName,
+    stage,
+    round,
+    scoreBefore: currentAnalysis.score,
+    scoreAfter: analyzed.result.score,
+    delta: analyzed.result.score - currentAnalysis.score,
+    outcome: 'applied',
+    details,
+  });
+  return {
+    buffer: nextBuffer,
+    analysis: analyzed.result,
+    snapshot: analyzed.snapshot,
+    accepted: true,
+  };
 }
 
 export async function runSingleTool(
@@ -237,38 +391,28 @@ async function applyAccessibilityStructureEnsure(args: {
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
   let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
   const { filename, signal, round } = args;
-
-  const reanalyzeFinal = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
-    const tmpPath = join(tmpdir(), `pdfaf-struct-${randomUUID()}.pdf`);
-    await writeFile(tmpPath, buf);
-    try {
-      return await analyzePdf(tmpPath, filename);
-    } finally {
-      await unlink(tmpPath).catch(() => {});
-    }
-  };
-
-  const scoreBeforeFin = currentAnalysis.score;
   const { buffer: fb, result: fr } = await runPythonMutationBatch(
     currentBuffer,
     [{ op: 'ensure_accessibility_tagging', params: { pdfClass: currentSnapshot.pdfClass } }],
     { signal },
   );
   if (fr.success && fr.applied.length > 0) {
-    currentBuffer = fb;
-    const an = await reanalyzeFinal(currentBuffer);
-    currentAnalysis = an.result;
-    currentSnapshot = an.snapshot;
-    appliedTools.push({
+    const accepted = await applyGuardedPostPass({
+      filename,
       toolName: 'ensure_accessibility_tagging',
       stage: 11,
       round,
-      scoreBefore: scoreBeforeFin,
-      scoreAfter: currentAnalysis.score,
-      delta: currentAnalysis.score - scoreBeforeFin,
-      outcome: 'applied',
       details: 'post_pass_icija_structure',
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      nextBuffer: fb,
+      appliedTools,
+      tempPrefix: 'pdfaf-struct',
     });
+    currentBuffer = accepted.buffer;
+    currentAnalysis = accepted.analysis;
+    currentSnapshot = accepted.snapshot;
   }
 
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
@@ -287,36 +431,25 @@ async function applyIcjiaDocumentFinalization(args: {
   let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
   const { filename, signal, round } = args;
 
-  const reanalyzeFinal = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
-    const tmpPath = join(tmpdir(), `pdfaf-fin-${randomUUID()}.pdf`);
-    await writeFile(tmpPath, buf);
-    try {
-      return await analyzePdf(tmpPath, filename);
-    } finally {
-      await unlink(tmpPath).catch(() => {});
-    }
-  };
-
   if (!currentSnapshot.metadata.title?.trim()) {
     const title = filename.replace(/\.pdf$/i, '').slice(0, 500);
-    const scoreBeforeT = currentAnalysis.score;
     const next = await metadataTools.setDocumentTitle(currentBuffer, title);
-    if (!next.equals(currentBuffer)) {
-      currentBuffer = next;
-      const an = await reanalyzeFinal(currentBuffer);
-      currentAnalysis = an.result;
-      currentSnapshot = an.snapshot;
-      appliedTools.push({
-        toolName: 'set_document_title',
-        stage: 11,
-        round,
-        scoreBefore: scoreBeforeT,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeT,
-        outcome: 'applied',
-        details: 'post_pass_missing_metadata_title',
-      });
-    }
+    const accepted = await applyGuardedPostPass({
+      filename,
+      toolName: 'set_document_title',
+      stage: 11,
+      round,
+      details: 'post_pass_missing_metadata_title',
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      nextBuffer: next,
+      appliedTools,
+      tempPrefix: 'pdfaf-fin',
+    });
+    currentBuffer = accepted.buffer;
+    currentAnalysis = accepted.analysis;
+    currentSnapshot = accepted.snapshot;
   }
 
   if (
@@ -324,7 +457,6 @@ async function applyIcjiaDocumentFinalization(args: {
     currentSnapshot.pageCount >= BOOKMARKS_PAGE_THRESHOLD &&
     currentSnapshot.bookmarks.length === 0
   ) {
-    const scoreBeforeBm = currentAnalysis.score;
     const br1 = await runPythonMutationBatch(
       currentBuffer,
       [{ op: 'replace_bookmarks_from_headings', params: { force: true } }],
@@ -347,65 +479,69 @@ async function applyIcjiaDocumentFinalization(args: {
       }
     }
     if (bmApplied) {
-      currentBuffer = bmBuf;
-      const an = await reanalyzeFinal(currentBuffer);
-      currentAnalysis = an.result;
-      currentSnapshot = an.snapshot;
-      appliedTools.push({
+      const accepted = await applyGuardedPostPass({
+        filename,
         toolName: 'post_pass_bookmarks',
         stage: 11,
         round,
-        scoreBefore: scoreBeforeBm,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeBm,
-        outcome: 'applied',
         details: 'outline_or_headings_bookmarks',
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        nextBuffer: bmBuf,
+        appliedTools,
+        tempPrefix: 'pdfaf-fin',
       });
+      currentBuffer = accepted.buffer;
+      currentAnalysis = accepted.analysis;
+      currentSnapshot = accepted.snapshot;
     }
   }
 
   if (shouldTryUrwType1Embed(currentSnapshot)) {
-    const scoreBeforeUrw = currentAnalysis.score;
     const urw = await runPythonMutationBatch(
       currentBuffer,
       [{ op: 'embed_urw_type1_substitutes', params: {} }],
       { signal },
     );
     if (urw.result.success && urw.result.applied.includes('embed_urw_type1_substitutes')) {
-      currentBuffer = urw.buffer;
-      const an = await reanalyzeFinal(currentBuffer);
-      currentAnalysis = an.result;
-      currentSnapshot = an.snapshot;
-      appliedTools.push({
+      const accepted = await applyGuardedPostPass({
+        filename,
         toolName: 'embed_urw_type1_substitutes',
         stage: 11,
         round,
-        scoreBefore: scoreBeforeUrw,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeUrw,
-        outcome: 'applied',
         details: 'urw_base35_embed_legacy_type1',
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        nextBuffer: urw.buffer,
+        appliedTools,
+        tempPrefix: 'pdfaf-fin',
       });
+      currentBuffer = accepted.buffer;
+      currentAnalysis = accepted.analysis;
+      currentSnapshot = accepted.snapshot;
     }
   }
 
   const gsBuf = await embedFontsWithGhostscript(currentBuffer, currentSnapshot);
-  if (gsBuf && !gsBuf.equals(currentBuffer)) {
-    const scoreBeforeGs = currentAnalysis.score;
-    currentBuffer = gsBuf;
-    const an = await reanalyzeFinal(currentBuffer);
-    currentAnalysis = an.result;
-    currentSnapshot = an.snapshot;
-    appliedTools.push({
+  if (gsBuf) {
+    const accepted = await applyGuardedPostPass({
+      filename,
       toolName: 'embed_fonts_ghostscript',
       stage: 12,
       round,
-      scoreBefore: scoreBeforeGs,
-      scoreAfter: currentAnalysis.score,
-      delta: currentAnalysis.score - scoreBeforeGs,
-      outcome: 'applied',
       details: 'optional_gs_font_embed',
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      nextBuffer: gsBuf,
+      appliedTools,
+      tempPrefix: 'pdfaf-fin',
     });
+    currentBuffer = accepted.buffer;
+    currentAnalysis = accepted.analysis;
+    currentSnapshot = accepted.snapshot;
   }
 
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
@@ -440,28 +576,28 @@ export async function executePlaybook(
     currentBuffer = st0.buffer;
     currentAnalysis = st0.analysis;
     currentSnapshot = st0.snapshot;
-    const scoreBefore0 = currentAnalysis.score;
     const alt0 = await applyPostRemediationAltRepair(
       currentBuffer,
       filename,
       currentAnalysis,
       currentSnapshot,
     );
-    if (!alt0.buffer.equals(currentBuffer)) {
-      currentBuffer = alt0.buffer;
-      currentAnalysis = alt0.analysis;
-      currentSnapshot = alt0.snapshot;
-      appliedTools.push({
-        toolName: 'repair_alt_text_structure',
-        stage: 9,
-        round: 1,
-        scoreBefore: scoreBefore0,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBefore0,
-        outcome: 'applied',
-        details: 'nested_alt_cleanup',
-      });
-    }
+    const altAccepted = await applyGuardedPostPass({
+      filename,
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: 1,
+      details: 'nested_alt_cleanup',
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      nextBuffer: alt0.buffer,
+      appliedTools,
+      tempPrefix: 'pdfaf-alt',
+    });
+    currentBuffer = altAccepted.buffer;
+    currentAnalysis = altAccepted.analysis;
+    currentSnapshot = altAccepted.snapshot;
     const fin0 = await applyIcjiaDocumentFinalization({
       filename,
       round: 1,
@@ -499,6 +635,7 @@ export async function executePlaybook(
 
   for (const stage of stages) {
     const stageStartBuffer = currentBuffer;
+    const stageStartAnalysis = currentAnalysis;
     const stageStartScore = currentAnalysis.score;
     const stageApplied: AppliedRemediationTool[] = [];
 
@@ -532,9 +669,15 @@ export async function executePlaybook(
       await unlink(tmp).catch(() => {});
     }
 
-    if (analyzed.result.score < stageStartScore && !keepOcrStageDespiteScoreDrop(stage, stageApplied)) {
+    const stageDecision = shouldRejectStageResult({
+      before: stageStartAnalysis,
+      after: analyzed.result,
+      stage,
+      stageApplied,
+    });
+
+    if (stageDecision.reject) {
       currentBuffer = stageStartBuffer;
-      const regressedScore = analyzed.result.score;
       const restorePath = join(tmpdir(), `pdfaf-pb-restore-${randomUUID()}.pdf`);
       await writeFile(restorePath, stageStartBuffer);
       try {
@@ -546,7 +689,7 @@ export async function executePlaybook(
       }
       for (const a of stageApplied) {
         a.outcome = 'rejected';
-        a.details = `stage_regressed_score(${regressedScore})`;
+        a.details = stageDecision.reason ?? 'stage_rejected';
         a.scoreAfter = currentAnalysis.score;
         a.delta = currentAnalysis.score - stageStartScore;
       }
@@ -638,6 +781,9 @@ export async function executePlaybook(
     rounds,
     remediationDurationMs: Date.now() - started,
     improved,
+    ...(summarizeStructuralConfidenceGuard(appliedTools)
+      ? { structuralConfidenceGuard: summarizeStructuralConfidenceGuard(appliedTools) }
+      : {}),
     ...(ocrPb ? { ocrPipeline: ocrPb } : {}),
   };
 
@@ -723,6 +869,7 @@ export async function remediatePdf(
         `Pass ${round}, step ${stage.stageNumber}`,
       );
       const stageStartBuffer = currentBuffer;
+      const stageStartAnalysis = currentAnalysis;
       const stageStartScore = currentAnalysis.score;
       const stageApplied: AppliedRemediationTool[] = [];
 
@@ -751,9 +898,15 @@ export async function remediatePdf(
         await unlink(tmp).catch(() => {});
       }
 
-      if (analyzed.result.score < stageStartScore && !keepOcrStageDespiteScoreDrop(stage, stageApplied)) {
+      const stageDecision = shouldRejectStageResult({
+        before: stageStartAnalysis,
+        after: analyzed.result,
+        stage,
+        stageApplied,
+      });
+
+      if (stageDecision.reject) {
         currentBuffer = stageStartBuffer;
-        const regressedScore = analyzed.result.score;
         const restorePath = join(tmpdir(), `pdfaf-rem-restore-${randomUUID()}.pdf`);
         await writeFile(restorePath, stageStartBuffer);
         try {
@@ -765,7 +918,7 @@ export async function remediatePdf(
         }
         for (const a of stageApplied) {
           a.outcome = 'rejected';
-          a.details = `stage_regressed_score(${regressedScore})`;
+          a.details = stageDecision.reason ?? 'stage_rejected';
           a.scoreAfter = currentAnalysis.score;
           a.delta = currentAnalysis.score - stageStartScore;
         }
@@ -825,7 +978,6 @@ export async function remediatePdf(
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
   if (currentSnapshot.isTagged || currentSnapshot.structureTree !== null) {
     await reportProgress(78, 'Cleaning up alt text');
-    const scoreBefore = currentAnalysis.score;
     const alt = await applyPostRemediationAltRepair(
       currentBuffer,
       filename,
@@ -833,37 +985,28 @@ export async function remediatePdf(
       currentSnapshot,
       { signal: options?.signal },
     );
-    if (!alt.buffer.equals(currentBuffer)) {
-      currentBuffer = alt.buffer;
-      currentAnalysis = alt.analysis;
-      currentSnapshot = alt.snapshot;
-      appliedTools.push({
-        toolName: 'repair_alt_text_structure',
-        stage: 9,
-        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-        scoreBefore,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBefore,
-        outcome: 'applied',
-        details: 'nested_alt_cleanup',
-      });
-    }
+    const altAccepted = await applyGuardedPostPass({
+      filename,
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      details: 'nested_alt_cleanup',
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      nextBuffer: alt.buffer,
+      appliedTools,
+      tempPrefix: 'pdfaf-alt',
+    });
+    currentBuffer = altAccepted.buffer;
+    currentAnalysis = altAccepted.analysis;
+    currentSnapshot = altAccepted.snapshot;
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
   // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
   if (currentSnapshot.isTagged) {
     await reportProgress(84, 'Running final cleanup');
-    const reanalyzeAfterBuffer = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
-      const tmpPath = join(tmpdir(), `pdfaf-post-${randomUUID()}.pdf`);
-      await writeFile(tmpPath, buf);
-      try {
-        return await analyzePdf(tmpPath, filename);
-      } finally {
-        await unlink(tmpPath).catch(() => {});
-      }
-    };
-
     // OCRmyPDF often preserves PDF/UA XMP but strips /ViewerPreferences; Acrobat then fails DocTitle.
     // Re-run identification whenever UA metadata is missing *or* OCR rewrote the file.
     const ocrRewrotePdf = appliedTools.some(
@@ -879,21 +1022,22 @@ export async function remediatePdf(
         { signal: options?.signal },
       );
       if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
-        const scoreBeforeUa = currentAnalysis.score;
-        currentBuffer = stamped;
-        const uaAn = await reanalyzeAfterBuffer(currentBuffer);
-        currentAnalysis = uaAn.result;
-        currentSnapshot = uaAn.snapshot;
-        appliedTools.push({
+        const accepted = await applyGuardedPostPass({
+          filename,
           toolName: 'set_pdfua_identification',
           stage: 10,
           round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-          scoreBefore: scoreBeforeUa,
-          scoreAfter: currentAnalysis.score,
-          delta: currentAnalysis.score - scoreBeforeUa,
-          outcome: 'applied',
           details: 'post_pass_pdfua_xmp',
+          currentBuffer,
+          currentAnalysis,
+          currentSnapshot,
+          nextBuffer: stamped,
+          appliedTools,
+          tempPrefix: 'pdfaf-post',
         });
+        currentBuffer = accepted.buffer;
+        currentAnalysis = accepted.analysis;
+        currentSnapshot = accepted.snapshot;
       }
     }
 
@@ -906,21 +1050,23 @@ export async function remediatePdf(
         { signal: options?.signal },
       );
       if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
-      const scoreBeforeDr = currentAnalysis.score;
-      currentBuffer = drained;
-      const drAn = await reanalyzeAfterBuffer(currentBuffer);
-      currentAnalysis = drAn.result;
-      currentSnapshot = drAn.snapshot;
-      appliedTools.push({
+      const accepted = await applyGuardedPostPass({
+        filename,
         toolName: 'remap_orphan_mcids_as_artifacts',
         stage: 10,
         round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-        scoreBefore: scoreBeforeDr,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeDr,
-        outcome: 'applied',
         details: `post_pass_orphan_drain_${pass + 1}`,
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        nextBuffer: drained,
+        appliedTools,
+        tempPrefix: 'pdfaf-post',
       });
+      currentBuffer = accepted.buffer;
+      currentAnalysis = accepted.analysis;
+      currentSnapshot = accepted.snapshot;
+      if (!accepted.accepted) break;
     }
   }
 
@@ -969,6 +1115,9 @@ export async function remediatePdf(
     remediationDurationMs: Date.now() - started,
     improved: currentAnalysis.score > before.score,
     ...(planningSummary ? { planningSummary } : {}),
+    ...(summarizeStructuralConfidenceGuard(appliedTools)
+      ? { structuralConfidenceGuard: summarizeStructuralConfidenceGuard(appliedTools) }
+      : {}),
     ...(ocrMain ? { ocrPipeline: ocrMain } : {}),
   };
 

@@ -10,6 +10,7 @@ import type {
   RemediationRoundSummary,
   ScoreCapApplied,
   SemanticRemediationSummary,
+  StructuralConfidenceGuardSummary,
   StructuralClassification,
   VerificationLevel,
 } from '../../types.js';
@@ -110,6 +111,7 @@ export interface RemediateBenchmarkRow {
   appliedTools: AppliedRemediationTool[];
   rounds: RemediationRoundSummary[];
   ocrPipeline?: OcrPipelineSummary;
+  structuralConfidenceGuard?: StructuralConfidenceGuardSummary;
   semantic?: SemanticRemediationSummary;
   semanticHeadings?: SemanticRemediationSummary;
   semanticPromoteHeadings?: SemanticRemediationSummary;

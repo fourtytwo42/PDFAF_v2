@@ -215,6 +215,15 @@ Make repair selection cheaper, safer, and more explainable.
 - The planner can explain why each tool ran or was skipped.
 - The corpus shows higher remediation consistency across cohorts, not just individual files.
 
+### Status
+
+- Implemented on top of the Stage 2 failure profile and Stage 3 bounded detection outputs.
+- Planner behavior now routes through deterministic route families with additive `planningSummary` output across API, reporting, and benchmark artifacts.
+- Benchmarked on the full 50-file corpus with direct Stage 3→4 comparison artifacts under `Output/experiment-corpus-baseline/comparison-stage4-full-vs-stage3/`.
+- Closed with a Stage 4 acceptance audit under `Output/experiment-corpus-baseline/stage4-acceptance/`.
+- Stage 4 now rejects score-improving stage results when they would lower `structuralClassification.confidence`; accepted confidence-regression survivors are required to remain at `0`.
+- Accepted as a routing-and-safeguards stage; broader structural repair expansion remains deferred to Stage 5.
+
 ## Stage 5: Generic Structural Repair Expansion
 
 ### Goal

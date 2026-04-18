@@ -232,6 +232,8 @@ components:
           type: boolean
         planningSummary:
           $ref: '#/components/schemas/PlanningSummary'
+        structuralConfidenceGuard:
+          $ref: '#/components/schemas/StructuralConfidenceGuardSummary'
         htmlReport:
           type: [string, 'null']
           description: Present when options.htmlReport was true; null if report exceeded size cap.
@@ -273,6 +275,15 @@ components:
                   - category_not_failing
         semanticDeferred:
           type: boolean
+
+    StructuralConfidenceGuardSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        rollbackCount:
+          type: integer
+        lastRollbackReason:
+          type: [string, 'null']
 
     VerificationLevel:
       type: string

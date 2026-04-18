@@ -499,6 +499,9 @@ async function runRemediationStep(
       appliedTools: remediation.appliedTools,
       rounds: remediation.rounds,
       ...(remediation.ocrPipeline ? { ocrPipeline: remediation.ocrPipeline } : {}),
+      ...(remediation.structuralConfidenceGuard
+        ? { structuralConfidenceGuard: remediation.structuralConfidenceGuard }
+        : {}),
       ...(semantic ? { semantic } : {}),
       ...(semanticHeadings ? { semanticHeadings } : {}),
       ...(semanticPromoteHeadings ? { semanticPromoteHeadings } : {}),

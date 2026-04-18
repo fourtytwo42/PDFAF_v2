@@ -549,6 +549,11 @@ export interface PlanningSummary {
   semanticDeferred: boolean;
 }
 
+export interface StructuralConfidenceGuardSummary {
+  rollbackCount: number;
+  lastRollbackReason?: string | null;
+}
+
 export interface RemediationResult {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -570,6 +575,8 @@ export interface RemediationResult {
   semanticUntaggedHeadings?: SemanticRemediationSummary;
   /** Present when the deterministic planner was used or when playbook replay fell back to the planner. */
   planningSummary?: PlanningSummary;
+  /** Present when Stage 4 structural-confidence safeguards observed or reverted confidence regressions. */
+  structuralConfidenceGuard?: StructuralConfidenceGuardSummary;
   /** Present when `htmlReport: true` was requested in remediate options. */
   htmlReport?: string | null;
 }

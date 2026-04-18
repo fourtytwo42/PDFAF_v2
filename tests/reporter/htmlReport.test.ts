@@ -157,11 +157,17 @@ describe('generateHtmlReport', () => {
         skippedTools: [{ toolName: 'set_figure_alt_text', reason: 'semantic_deferred' }],
         semanticDeferred: true,
       },
+      structuralConfidenceGuard: {
+        rollbackCount: 1,
+        lastRollbackReason: 'stage_regressed_structural_confidence(high->medium)',
+      },
     });
     expect(html).toContain('structure_bootstrap');
     expect(html).toContain('annotation_link_normalization');
     expect(html).toContain('bootstrap_struct_tree');
     expect(html).toContain('set_figure_alt_text:semantic_deferred');
+    expect(html).toContain('Structural-confidence rollbacks');
+    expect(html).toContain('stage_regressed_structural_confidence(high-&gt;medium)');
   });
 
   it('includes applied tools when requested', () => {

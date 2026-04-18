@@ -53,6 +53,52 @@ function makeStage3Row(id: string, cohort: RemediateBenchmarkRow['cohort']): Rem
       { key: 'pdf_ua_compliance', score: 95, weight: 1, applicable: true, severity: 'minor', findings: [] },
       { key: 'table_markup', score: 100, weight: 1, applicable: true, severity: 'pass', findings: [] },
     ],
+    beforeStructuralClassification: {
+      structureClass: 'native_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: true,
+        hasBookmarks: false,
+        hasFigures: false,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: false,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'high',
+    },
+    afterStructuralClassification: {
+      structureClass: 'native_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: true,
+        hasBookmarks: false,
+        hasFigures: false,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: false,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'high',
+    },
     afterDetectionProfile: {
       readingOrderSignals: {
         missingStructureTree: false,
@@ -99,6 +145,29 @@ function makeStage3Row(id: string, cohort: RemediateBenchmarkRow['cohort']): Rem
       { key: 'pdf_ua_compliance', score: 95, weight: 1, applicable: true, severity: 'minor', findings: [] },
       { key: 'table_markup', score: 100, weight: 1, applicable: true, severity: 'pass', findings: [] },
     ],
+    reanalyzedStructuralClassification: {
+      structureClass: 'native_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: true,
+        hasBookmarks: false,
+        hasFigures: false,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: false,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'high',
+    },
     reanalyzedDetectionProfile: {
       readingOrderSignals: {
         missingStructureTree: false,
@@ -155,6 +224,10 @@ function makeStage4Row(
 ): RemediateBenchmarkRow {
   return {
     ...makeStage3Row(id, cohort),
+    structuralConfidenceGuard: {
+      rollbackCount: id === 'doc-1' ? 1 : 0,
+      lastRollbackReason: id === 'doc-1' ? 'stage_regressed_structural_confidence(high->medium)' : null,
+    },
     planningSummary: {
       primaryRoute,
       secondaryRoutes: primaryRoute === 'metadata_foundation' ? [] : ['annotation_link_normalization'],
@@ -197,6 +270,9 @@ describe('stage4 acceptance audit', () => {
     expect(audit.summary.routeDistribution.structure_bootstrap).toBe(1);
     expect(audit.summary.stage3SurvivorCount).toBe(2);
     expect(audit.summary.stage3SurvivorsWithSpecificRoutes).toBe(1);
+    expect(audit.summary.confidenceRegressionRollbackCount).toBe(1);
+    expect(audit.summary.filesWithConfidenceRegressionRollback).toBe(1);
+    expect(audit.summary.acceptedConfidenceRegressionCount).toBe(0);
     expect(audit.summary.nearPassCount).toBe(2);
     expect(audit.summary.nearPassAvoidedCount).toBe(1);
     expect(audit.cohorts['10-short-near-pass']?.nearPassAvoidedCount).toBe(1);
@@ -204,6 +280,7 @@ describe('stage4 acceptance audit', () => {
 
     const markdown = renderStage4AcceptanceMarkdown(audit);
     expect(markdown).toContain('# Stage 4 acceptance audit');
+    expect(markdown).toContain('Structural-confidence rollback count');
     expect(markdown).toContain('Route Distribution');
     expect(markdown).toContain('Stage 3 Survivor Routes');
     expect(markdown).toContain('Near-Pass Routing');

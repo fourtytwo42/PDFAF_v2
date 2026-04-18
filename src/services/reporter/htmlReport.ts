@@ -5,6 +5,7 @@ import type {
   Finding,
   OcrPipelineSummary,
   PlanningSummary,
+  StructuralConfidenceGuardSummary,
 } from '../../types.js';
 
 export interface HtmlReportOptions {
@@ -14,6 +15,7 @@ export interface HtmlReportOptions {
   /** When set, shows a prominent human-review notice (OCR scores are not PAC-equivalent). */
   ocrPipeline?: OcrPipelineSummary | null;
   planningSummary?: PlanningSummary | null;
+  structuralConfidenceGuard?: StructuralConfidenceGuardSummary | null;
 }
 
 function esc(s: string): string {
@@ -131,6 +133,16 @@ function planningBullets(summary?: PlanningSummary | null): string {
         summary.skippedTools.map(row => `${row.toolName}:${row.reason}`).join(' | '),
       )}</li>`,
     );
+  }
+  return lines.join('');
+}
+
+function structuralConfidenceBullets(summary?: StructuralConfidenceGuardSummary | null): string {
+  if (!summary) return '';
+  const lines: string[] = [];
+  lines.push(`<li><strong>Structural-confidence rollbacks:</strong> ${summary.rollbackCount}</li>`);
+  if (summary.lastRollbackReason) {
+    lines.push(`<li><strong>Last rollback reason:</strong> ${esc(summary.lastRollbackReason)}</li>`);
   }
   return lines.join('');
 }
@@ -272,6 +284,9 @@ export function generateHtmlReport(
   <section>
     <h2>Planner routing</h2>
     <ul>${planningBullets(options?.planningSummary) || '<li>No Stage 4 planner metadata present.</li>'}</ul>
+    ${options?.structuralConfidenceGuard
+      ? `<ul>${structuralConfidenceBullets(options.structuralConfidenceGuard)}</ul>`
+      : ''}
   </section>
   <section>
     <h2>Category scores</h2>

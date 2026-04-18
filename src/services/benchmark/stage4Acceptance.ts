@@ -8,6 +8,7 @@ import type {
 import type { BenchmarkComparison } from './compareRuns.js';
 import type {
   CategoryKey,
+  ClassificationConfidence,
   DetectionProfile,
   PlanningSummary,
   RemediationRoute,
@@ -95,6 +96,10 @@ export interface Stage4AcceptanceAudit {
     nearPassAvoidedCount: number;
     stage3SurvivorCount: number;
     stage3SurvivorsWithSpecificRoutes: number;
+    confidenceRegressionRollbackCount: number;
+    filesWithConfidenceRegressionRollback: number;
+    acceptedConfidenceRegressionCount: number;
+    acceptedConfidenceRegressionFileIds: string[];
     scoreMeanDelta: number | null;
     reanalyzedMeanDelta: number | null;
   };
@@ -116,6 +121,12 @@ function mean(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
+
+const CONFIDENCE_RANK: Record<ClassificationConfidence, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
 
 function categoryScore(
   categories: ScoredCategory[] | undefined,
@@ -225,6 +236,14 @@ function avoidedStructuralSemanticRoutes(summary?: PlanningSummary | null): bool
   return routes.every(route => NON_STRUCTURAL_ROUTES.has(route));
 }
 
+function confidenceRegressed(
+  before: ClassificationConfidence | null | undefined,
+  after: ClassificationConfidence | null | undefined,
+): boolean {
+  if (!before || !after) return false;
+  return CONFIDENCE_RANK[after] < CONFIDENCE_RANK[before];
+}
+
 export function buildStage4AcceptanceAudit(input: {
   stage3RunDir: string;
   stage4RunDir: string;
@@ -239,6 +258,18 @@ export function buildStage4AcceptanceAudit(input: {
   const routeDistribution = new Map<string, number>();
   const skippedReasons: string[] = [];
   const nearPassCases: Stage4NearPassCase[] = [];
+  const confidenceRollbackRows = stage4Rows.filter(
+    row => (row.structuralConfidenceGuard?.rollbackCount ?? 0) > 0,
+  );
+  const acceptedConfidenceRegressionFileIds = stage4Rows
+    .filter(row =>
+      (row.afterScore ?? Number.NEGATIVE_INFINITY) > (row.beforeScore ?? Number.NEGATIVE_INFINITY)
+      && confidenceRegressed(
+        row.beforeStructuralClassification?.confidence,
+        row.reanalyzedStructuralClassification?.confidence ?? row.afterStructuralClassification?.confidence,
+      ))
+    .map(row => row.id)
+    .sort((a, b) => a.localeCompare(b));
 
   for (const row of stage4Rows) {
     const summary = row.planningSummary;
@@ -349,6 +380,13 @@ export function buildStage4AcceptanceAudit(input: {
       stage3SurvivorsWithSpecificRoutes: stage3SurvivorRoutes.filter(row =>
         row.primaryRoute === 'structure_bootstrap' || row.primaryRoute === 'annotation_link_normalization',
       ).length,
+      confidenceRegressionRollbackCount: confidenceRollbackRows.reduce(
+        (sum, row) => sum + (row.structuralConfidenceGuard?.rollbackCount ?? 0),
+        0,
+      ),
+      filesWithConfidenceRegressionRollback: confidenceRollbackRows.length,
+      acceptedConfidenceRegressionCount: acceptedConfidenceRegressionFileIds.length,
+      acceptedConfidenceRegressionFileIds,
       scoreMeanDelta: input.comparison.remediate?.afterMeanDelta ?? null,
       reanalyzedMeanDelta: input.comparison.remediate?.reanalyzedMeanDelta ?? null,
     },
@@ -377,10 +415,16 @@ export function renderStage4AcceptanceMarkdown(audit: Stage4AcceptanceAudit): st
   lines.push(`- **Near-pass files avoiding structural/semantic routes:** ${audit.summary.nearPassAvoidedCount}`);
   lines.push(`- **Stage 3 survivor count:** ${audit.summary.stage3SurvivorCount}`);
   lines.push(`- **Stage 3 survivors routed specifically to structure/annotation:** ${audit.summary.stage3SurvivorsWithSpecificRoutes}`);
+  lines.push(`- **Structural-confidence rollback count:** ${audit.summary.confidenceRegressionRollbackCount}`);
+  lines.push(`- **Files with structural-confidence rollback:** ${audit.summary.filesWithConfidenceRegressionRollback}`);
+  lines.push(`- **Accepted score-improving confidence regressions:** ${audit.summary.acceptedConfidenceRegressionCount}`);
   lines.push(`- **Remediation after-score mean delta vs Stage 3:** ${(audit.summary.scoreMeanDelta ?? 0).toFixed(2)}`);
   lines.push(`- **Remediation reanalyzed mean delta vs Stage 3:** ${(audit.summary.reanalyzedMeanDelta ?? 0).toFixed(2)}`);
   lines.push(`- **Remediation wall median delta vs Stage 3:** ${(audit.runtime.wallMedianDeltaMs ?? 0).toFixed(2)} ms`);
   lines.push(`- **Remediation wall p95 delta vs Stage 3:** ${(audit.runtime.wallP95DeltaMs ?? 0).toFixed(2)} ms`);
+  if (audit.summary.acceptedConfidenceRegressionFileIds.length > 0) {
+    lines.push(`- **Accepted confidence-regression files:** ${audit.summary.acceptedConfidenceRegressionFileIds.join(', ')}`);
+  }
   lines.push('');
   lines.push('## Route Distribution');
   lines.push('');
