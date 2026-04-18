@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { BrandBar } from '../branding/BrandBar';
 import { QueueWorkspace } from '../queue/QueueWorkspace';
 import { ConnectionStatusCard } from '../settings/ConnectionStatusCard';
+import { LocalAiDownloadToast } from '../settings/LocalAiDownloadToast';
 import { SettingsDialog } from '../settings/SettingsDialog';
 import { UploadDropzone } from '../upload/UploadDropzone';
 import { useQueueStore } from '../../stores/queue';
@@ -30,6 +31,7 @@ export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
         <UploadDropzone />
         <QueueWorkspace />
         <SettingsDialog defaultApiBaseUrl={defaultApiBaseUrl} />
+        <LocalAiDownloadToast />
       </div>
     </main>
   );
