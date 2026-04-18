@@ -405,9 +405,37 @@ We should not say the upgraded engine works until:
 - the long-report and mixed cohorts improve without a large p95 runtime blow-up
 - no stage depended on file-family-specific logic to reach those results
 
-## Immediate Next Actions
+### Status
 
-1. Add a benchmark manifest and batch runner over [Input/experiment-corpus](/home/hendo420/PDFAF_v2/Input/experiment-corpus).
-2. Capture the Stage 0 baseline for all 50 PDFs.
-3. Implement Stage 1 first: evidence model, score caps, and additive reporting fields.
-4. Do not expand remediation breadth until the baseline and honest scoring work are complete.
+- Implemented as a final evaluation-only stage with an explicit `stage8FinalGate` audit and per-file final dispositions.
+- Final artifacts generated under:
+  - `Output/experiment-corpus-baseline/run-stage8-full/`
+  - `Output/experiment-corpus-baseline/comparison-stage8-full-vs-stage0/`
+  - `Output/experiment-corpus-baseline/stage8-final-gate/`
+- Stage 8 is closed, and the upgraded engine did **not** pass the final experiment gate.
+- Final gate result:
+  - `reached100Count = 0`
+  - `reachedACount = 30`
+  - `materiallyImprovedCount = 0`
+  - `honestBoundedUnsafeToAutofixCount = 18`
+  - `notMateriallyImprovedCount = 2`
+- Trust and honesty gates still held at the final run:
+  - `acceptedConfidenceRegressionCount = 0`
+  - `semanticOnlyTrustedPassCount = 0`
+- Runtime remained bounded versus the practical Stage 0 baseline:
+  - analyze median/p95 `808.65 / 1632.81 ms -> 741.33 / 1509.99 ms`
+  - remediate median/p95 `8550.67 / 96755.42 ms -> 8564.47 / 90232.21 ms`
+- Final conclusion: the staged engine is more honest and operationally bounded, but it does not meet the original Stage 8 bar of converting a majority of the corpus to `100/100`.
+
+## Final State
+
+All eight roadmap stages are now complete as stages of record.
+
+The final outcome is mixed:
+
+- Stages 0 through 7 closed successfully.
+- Stage 8 closed as an honest final experiment gate.
+- The final engine passed the trust and runtime guardrails.
+- The final engine did not pass the original majority-`100/100` corpus bar.
+
+Future work, if any, should start from the Stage 8 final artifacts rather than reopening this staged roadmap with revised success criteria.
