@@ -23,6 +23,11 @@ import { chatCompletionToolCall } from './openAiCompatClient.js';
 import { isLlmTimeoutOrAbortError } from './llmBatchGuard.js';
 import type { SemanticRepairOutput } from './semanticService.js';
 import { logInfo } from '../../logging.js';
+import {
+  buildSemanticGateSummary,
+  buildSemanticSummary,
+  evaluateSemanticMutation,
+} from './semanticPolicy.js';
 
 export interface SemanticHeadingRepairInput {
   buffer: Buffer;
@@ -212,15 +217,18 @@ export async function applySemanticHeadingRepairs(
   const started = Date.now();
   const { buffer, filename, analysis, snapshot, options } = input;
   const scoreBefore = analysis.score;
+  const hs = analysis.categories.find(c => c.key === 'heading_structure');
 
   const empty = (
     reason: SemanticRemediationSummary['skippedReason'],
+    gate: ReturnType<typeof buildSemanticGateSummary>,
     err?: string,
   ): SemanticRepairOutput => ({
     buffer,
     analysis,
     snapshot,
-    summary: {
+    summary: buildSemanticSummary({
+      lane: 'headings',
       skippedReason: reason,
       durationMs: Date.now() - started,
       proposalsAccepted: 0,
@@ -228,17 +236,36 @@ export async function applySemanticHeadingRepairs(
       scoreBefore,
       scoreAfter: scoreBefore,
       batches: [],
+      gate,
+      changeStatus: reason === 'completed_no_changes' ? 'no_change' : 'skipped',
       errorMessage: err,
-    },
+    }),
   });
 
   if (snapshot.pdfClass === 'scanned') {
-    return empty('scanned_pdf');
+    return empty(
+      'scanned_pdf',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'scanned_pdf',
+        details: ['semantic heading refinement disabled for scanned PDFs'],
+        targetCategoryKey: 'heading_structure',
+        targetCategoryScoreBefore: hs?.score ?? null,
+      }),
+    );
   }
 
-  const hs = analysis.categories.find(c => c.key === 'heading_structure');
   if (!hs?.applicable || hs.score >= REMEDIATION_CATEGORY_THRESHOLD) {
-    return empty('heading_structure_sufficient');
+    return empty(
+      'heading_structure_sufficient',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'heading_structure_sufficient',
+        details: ['heading_structure category already meets deterministic threshold'],
+        targetCategoryKey: 'heading_structure',
+        targetCategoryScoreBefore: hs?.score ?? null,
+      }),
+    );
   }
 
   const candidates = buildHeadingCandidates(snapshot);
@@ -253,7 +280,16 @@ export async function applySemanticHeadingRepairs(
     },
   });
   if (candidates.length === 0) {
-    return empty('no_candidates');
+    return empty(
+      'no_candidates',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'no_candidates',
+        details: ['no residual tagged heading candidates remain after deterministic normalization'],
+        targetCategoryKey: 'heading_structure',
+        targetCategoryScoreBefore: hs.score,
+      }),
+    );
   }
 
   const title = snapshot.metadata.title ?? snapshot.structTitle ?? null;
@@ -279,7 +315,8 @@ export async function applySemanticHeadingRepairs(
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'headings',
         skippedReason: 'llm_timeout',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -287,8 +324,17 @@ export async function applySemanticHeadingRepairs(
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'llm_timeout',
+          details: ['semantic heading gate passed but LLM call timed out'],
+          candidateCountBefore: candidates.length,
+          targetCategoryKey: 'heading_structure',
+          targetCategoryScoreBefore: hs.score,
+        }),
+        changeStatus: 'skipped',
         errorMessage: batchSummaries.find(b => isLlmTimeoutOrAbortError(b.error))?.error,
-      },
+      }),
     };
   }
 
@@ -321,7 +367,8 @@ export async function applySemanticHeadingRepairs(
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'headings',
         skippedReason: 'completed_no_changes',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -329,7 +376,18 @@ export async function applySemanticHeadingRepairs(
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
-      },
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'no_confident_heading_proposals',
+          details: ['semantic heading gate passed but no proposals survived filtering'],
+          candidateCountBefore: candidates.length,
+          candidateCountAfter: candidates.length,
+          targetCategoryKey: 'heading_structure',
+          targetCategoryScoreBefore: hs.score,
+          targetCategoryScoreAfter: hs.score,
+        }),
+        changeStatus: 'no_change',
+      }),
     };
   }
 
@@ -343,7 +401,8 @@ export async function applySemanticHeadingRepairs(
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'headings',
         skippedReason: 'error',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -351,8 +410,19 @@ export async function applySemanticHeadingRepairs(
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'mutation_error',
+          details: ['semantic heading gate passed but Python mutation failed'],
+          candidateCountBefore: candidates.length,
+          candidateCountAfter: candidates.length,
+          targetCategoryKey: 'heading_structure',
+          targetCategoryScoreBefore: hs.score,
+          targetCategoryScoreAfter: hs.score,
+        }),
+        changeStatus: 'skipped',
         errorMessage: JSON.stringify(result.failed),
-      },
+      }),
     };
   }
 
@@ -368,21 +438,40 @@ export async function applySemanticHeadingRepairs(
     await unlink(tmpPath).catch(() => {});
   }
 
-  if (nextAnalysis.score < scoreBefore - SEMANTIC_REGRESSION_TOLERANCE) {
+  const nextCandidates = buildHeadingCandidates(nextSnapshot);
+  const decision = evaluateSemanticMutation({
+    lane: 'headings',
+    beforeAnalysis: analysis,
+    afterAnalysis: nextAnalysis,
+    beforeSnapshot: snapshot,
+    afterSnapshot: nextSnapshot,
+    targetCategoryKey: 'heading_structure',
+    candidateCountBefore: candidates.length,
+    candidateCountAfter: nextCandidates.length,
+    proposalsAccepted: mutations.length,
+    proposalsRejected: rejected,
+    batches: batchSummaries,
+    durationMs: Date.now() - started,
+    regressionTolerance: SEMANTIC_REGRESSION_TOLERANCE,
+  });
+  if (!decision.accepted) {
     return {
       buffer,
       analysis,
       snapshot,
-      summary: {
-        skippedReason: 'regression_reverted',
+      summary: buildSemanticSummary({
+        lane: 'headings',
+        skippedReason: decision.skippedReason,
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
         proposalsRejected: rejected + merged.size,
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
-        errorMessage: 'regression_reverted',
-      },
+        gate: decision.gate,
+        changeStatus: decision.changeStatus,
+        errorMessage: decision.errorMessage,
+      }),
     };
   }
 
@@ -390,7 +479,8 @@ export async function applySemanticHeadingRepairs(
     buffer: mutated,
     analysis: nextAnalysis,
     snapshot: nextSnapshot,
-    summary: {
+    summary: buildSemanticSummary({
+      lane: 'headings',
       skippedReason: 'completed',
       durationMs: Date.now() - started,
       proposalsAccepted: mutations.length,
@@ -398,6 +488,8 @@ export async function applySemanticHeadingRepairs(
       scoreBefore,
       scoreAfter: nextAnalysis.score,
       batches: batchSummaries,
-    },
+      gate: decision.gate,
+      changeStatus: 'applied',
+    }),
   };
 }

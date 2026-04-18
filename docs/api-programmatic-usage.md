@@ -126,6 +126,10 @@ Typical fields in the response:
 - `planningSummary`
 - `structuralConfidenceGuard`
 - `remediationOutcomeSummary`
+- `semantic`
+- `semanticHeadings`
+- `semanticPromoteHeadings`
+- `semanticUntaggedHeadings`
 - `remediationDurationMs`
 - `remediatedPdfBase64`
 - `remediatedPdfTooLarge`
@@ -137,6 +141,22 @@ Stage 5 adds `remediationOutcomeSummary` as an additive summary of the structura
 - document-level outcome: `fixed`, `partially_fixed`, `needs_manual_review`, or `unsafe_to_autofix`
 - targeted structural families
 - per-family before/after signal counts and residual signals
+
+Stage 6 extends the optional semantic summaries additively. When a semantic lane is requested, the response can include:
+
+- `semantic` for figure wording and decorative/informative decisions
+- `semanticHeadings` for tagged heading-level refinement
+- `semanticPromoteHeadings` for paragraph-to-heading promotion
+- `semanticUntaggedHeadings` for the restricted untagged-heading lane
+
+Each semantic summary reports:
+
+- `lane`
+- `gate` with pass/fail reason, candidate counts, and target-category before/after scores
+- `changeStatus`: `skipped`, `no_change`, `applied`, or `reverted`
+- proposal counts accepted/rejected
+- `skippedReason`
+- `trustDowngraded` when semantic output was kept but final trust stayed capped pending deterministic corroboration
 
 ## Remediation Options
 
@@ -177,6 +197,8 @@ curl -sS -X POST http://127.0.0.1:6200/v1/remediate \
     "semanticHeadings": true
   }'
 ```
+
+Semantic remains explicit opt-in by default. If the server has no OpenAI-compatible semantic endpoint configured, requested semantic lanes are reported as skipped with `skippedReason: "no_llm_config"` instead of failing the whole remediation request.
 
 ## Saving the Remediated PDF
 

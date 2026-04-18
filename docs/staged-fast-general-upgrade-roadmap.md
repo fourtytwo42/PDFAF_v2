@@ -270,6 +270,27 @@ Add only the next set of generic repairs that are justified by the experiment da
 
 ## Stage 6: Gated Semantic Improvement
 
+### Status
+
+- Implemented as of 2026-04-18.
+- Hardened all existing semantic lanes under a shared Stage 6 gate layer:
+  - `semantic`
+  - `semanticHeadings`
+  - `semanticPromoteHeadings`
+  - `semanticUntaggedHeadings`
+- Semantic execution remains explicit opt-in by default; requested lanes now emit additive gate/result summaries instead of ad hoc skip behavior.
+- Semantic apply/revert decisions now reuse Stage 4 rollback protections:
+  - score-regression revert
+  - structural-confidence-regression revert
+  - no-target-improvement revert
+- Accepted semantic changes no longer promote a semantic-only result to a fully trusted pass; final verification stays capped unless deterministic evidence corroborates the fix.
+- Added additive semantic summary output across the remediate API, HTML report, OpenAPI surface, experiment-corpus benchmark rows, and the Stage 6 acceptance audit tooling.
+- Verification is complete for source changes:
+  - `pnpm exec tsc --noEmit`
+  - `pnpm exec swagger-cli validate openapi.yaml`
+  - targeted semantic/report/benchmark/integration Vitest coverage
+- Formal full-corpus Stage 5→6 acceptance is still pending a configured semantic endpoint in the runtime environment. This environment did not have `OPENAI_COMPAT_BASE_URL`, so a truthful semantic full-run acceptance package could not be regenerated here on 2026-04-18.
+
 ### Goal
 
 Use semantic passes only where they improve results without turning the engine slow or overconfident.

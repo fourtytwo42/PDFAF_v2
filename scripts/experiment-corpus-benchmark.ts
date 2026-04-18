@@ -20,6 +20,7 @@ import {
 } from '../src/services/remediation/orchestrator.js';
 import { buildRemediationOutcomeSummary } from '../src/services/remediation/outcomeSummary.js';
 import { applySemanticHeadingRepairs } from '../src/services/semantic/headingSemantic.js';
+import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../src/services/semantic/semanticPolicy.js';
 import { applySemanticPromoteHeadingRepairs } from '../src/services/semantic/promoteHeadingSemantic.js';
 import { applySemanticRepairs } from '../src/services/semantic/semanticService.js';
 import { applySemanticUntaggedHeadingRepairs } from '../src/services/semantic/untaggedHeadingSemantic.js';
@@ -261,7 +262,12 @@ async function runSemanticSequence(input: {
   let currentSnapshot = input.snapshot;
   const signal = AbortSignal.timeout(600_000);
 
-  const emptySummary = (score: number, skippedReason: SemanticRemediationSummary['skippedReason']): SemanticRemediationSummary => ({
+  const emptySummary = (
+    lane: SemanticRemediationSummary['lane'],
+    score: number,
+    skippedReason: SemanticRemediationSummary['skippedReason'],
+  ): SemanticRemediationSummary => buildSemanticSummary({
+    lane,
     skippedReason,
     durationMs: 0,
     proposalsAccepted: 0,
@@ -269,18 +275,23 @@ async function runSemanticSequence(input: {
     scoreBefore: score,
     scoreAfter: score,
     batches: [],
+    gate: buildSemanticGateSummary({
+      passed: false,
+      reason: skippedReason,
+      details: ['semantic benchmark lane skipped before execution'],
+    }),
+    changeStatus: 'skipped',
   });
 
   if (!getOpenAiCompatBaseUrl()) {
-    const noLlm = emptySummary(currentAnalysis.score, 'no_llm_config');
     return {
       buffer: currentBuffer,
       analysis: currentAnalysis,
       snapshot: currentSnapshot,
-      semantic: noLlm,
-      semanticHeadings: noLlm,
-      semanticPromoteHeadings: noLlm,
-      semanticUntaggedHeadings: noLlm,
+      semantic: emptySummary('figures', currentAnalysis.score, 'no_llm_config'),
+      semanticHeadings: emptySummary('headings', currentAnalysis.score, 'no_llm_config'),
+      semanticPromoteHeadings: emptySummary('promote_headings', currentAnalysis.score, 'no_llm_config'),
+      semanticUntaggedHeadings: emptySummary('untagged_headings', currentAnalysis.score, 'no_llm_config'),
     };
   }
 
@@ -355,6 +366,19 @@ async function runSemanticSequence(input: {
     currentBuffer = alt.buffer;
     currentAnalysis = alt.analysis;
     currentSnapshot = alt.snapshot;
+  }
+
+  const trustAdjusted = enforceSemanticTrust({
+    before: input.analysis,
+    after: currentAnalysis,
+    summaries: [semanticSummary, heading.summary, promoteSummary, untagged.summary],
+  });
+  currentAnalysis = trustAdjusted.analysis;
+  if (trustAdjusted.trustDowngraded) {
+    if (semanticSummary.changeStatus === 'applied') semanticSummary.trustDowngraded = true;
+    if (heading.summary.changeStatus === 'applied') heading.summary.trustDowngraded = true;
+    if (promoteSummary.changeStatus === 'applied') promoteSummary.trustDowngraded = true;
+    if (untagged.summary.changeStatus === 'applied') untagged.summary.trustDowngraded = true;
   }
 
   return {

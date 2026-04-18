@@ -30,6 +30,7 @@ import { applySemanticRepairs } from '../services/semantic/semanticService.js';
 import { applySemanticHeadingRepairs } from '../services/semantic/headingSemantic.js';
 import { applySemanticPromoteHeadingRepairs } from '../services/semantic/promoteHeadingSemantic.js';
 import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untaggedHeadingSemantic.js';
+import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../services/semantic/semanticPolicy.js';
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
 import type { RemediationResult, SemanticRemediationSummary } from '../types.js';
@@ -40,7 +41,8 @@ export function mergeSequentialSemanticSummaries(
   parts: SemanticRemediationSummary[],
 ): SemanticRemediationSummary {
   if (parts.length === 0) {
-    return {
+    return buildSemanticSummary({
+      lane: 'figures',
       skippedReason: 'completed_no_changes',
       durationMs: 0,
       proposalsAccepted: 0,
@@ -48,14 +50,21 @@ export function mergeSequentialSemanticSummaries(
       scoreBefore: scoreBeforeBlock,
       scoreAfter: scoreBeforeBlock,
       batches: [],
-    };
+      gate: buildSemanticGateSummary({
+        passed: false,
+        reason: 'no_passes',
+        details: ['no semantic passes executed'],
+      }),
+      changeStatus: 'no_change',
+    });
   }
   const fatal = parts.find(p =>
-    ['error', 'llm_timeout', 'regression_reverted', 'unsupported_pdf'].includes(p.skippedReason),
+    ['error', 'llm_timeout', 'regression_reverted', 'unsupported_pdf', 'no_target_improvement'].includes(p.skippedReason),
   );
   const last = parts[parts.length - 1]!;
   const skippedReason = fatal?.skippedReason ?? last.skippedReason;
-  return {
+  return buildSemanticSummary({
+    lane: parts[0]!.lane,
     skippedReason,
     durationMs: parts.reduce((s, p) => s + p.durationMs, 0),
     proposalsAccepted: parts.reduce((s, p) => s + p.proposalsAccepted, 0),
@@ -63,8 +72,20 @@ export function mergeSequentialSemanticSummaries(
     scoreBefore: scoreBeforeBlock,
     scoreAfter: last.scoreAfter,
     batches: parts.flatMap(p => p.batches),
+    gate: buildSemanticGateSummary({
+      passed: parts.some(p => p.gate.passed),
+      reason: fatal?.gate.reason ?? last.gate.reason,
+      details: [...new Set(parts.flatMap(p => p.gate.details))],
+      candidateCountBefore: parts[0]!.gate.candidateCountBefore,
+      candidateCountAfter: last.gate.candidateCountAfter,
+      targetCategoryKey: parts[0]!.gate.targetCategoryKey ?? null,
+      targetCategoryScoreBefore: parts[0]!.gate.targetCategoryScoreBefore ?? null,
+      targetCategoryScoreAfter: last.gate.targetCategoryScoreAfter ?? null,
+    }),
+    changeStatus: fatal?.changeStatus ?? last.changeStatus,
     ...(fatal?.errorMessage ? { errorMessage: fatal.errorMessage } : {}),
-  };
+    trustDowngraded: parts.some(p => p.trustDowngraded === true),
+  });
 }
 
 export const remediateRouter: IRouter = Router();
@@ -224,7 +245,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       await reportProgress(92, 'Describing figures');
       const scoreRef = remediation.after.score;
       if (!getOpenAiCompatBaseUrl()) {
-        semanticSummary = {
+        semanticSummary = buildSemanticSummary({
+          lane: 'figures',
           skippedReason: 'no_llm_config',
           durationMs: 0,
           proposalsAccepted: 0,
@@ -232,7 +254,14 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           scoreBefore: scoreRef,
           scoreAfter: scoreRef,
           batches: [],
-        };
+          gate: buildSemanticGateSummary({
+            passed: false,
+            reason: 'no_llm_config',
+            details: ['no OpenAI-compatible endpoint configured for semantic figures'],
+            targetCategoryKey: 'alt_text',
+          }),
+          changeStatus: 'skipped',
+        });
       } else {
         const figureParts: SemanticRemediationSummary[] = [];
         for (let pass = 0; pass < SEMANTIC_REMEDIATE_FIGURE_PASSES; pass++) {
@@ -267,7 +296,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       await reportProgress(94, 'Organizing headings');
       const scoreRef = outAfter.score;
       if (!getOpenAiCompatBaseUrl()) {
-        semanticPromoteHeadingsSummary = {
+        semanticPromoteHeadingsSummary = buildSemanticSummary({
+          lane: 'promote_headings',
           skippedReason: 'no_llm_config',
           durationMs: 0,
           proposalsAccepted: 0,
@@ -275,7 +305,14 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           scoreBefore: scoreRef,
           scoreAfter: scoreRef,
           batches: [],
-        };
+          gate: buildSemanticGateSummary({
+            passed: false,
+            reason: 'no_llm_config',
+            details: ['no OpenAI-compatible endpoint configured for promote-heading semantics'],
+            targetCategoryKey: 'heading_structure',
+          }),
+          changeStatus: 'skipped',
+        });
       } else {
         const promoteParts: SemanticRemediationSummary[] = [];
         for (let pass = 0; pass < SEMANTIC_REMEDIATE_PROMOTE_PASSES; pass++) {
@@ -306,7 +343,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       await reportProgress(95.5, 'Refining heading levels');
       const scoreRef = outAfter.score;
       if (!getOpenAiCompatBaseUrl()) {
-        semanticHeadingsSummary = {
+        semanticHeadingsSummary = buildSemanticSummary({
+          lane: 'headings',
           skippedReason: 'no_llm_config',
           durationMs: 0,
           proposalsAccepted: 0,
@@ -314,7 +352,14 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           scoreBefore: scoreRef,
           scoreAfter: scoreRef,
           batches: [],
-        };
+          gate: buildSemanticGateSummary({
+            passed: false,
+            reason: 'no_llm_config',
+            details: ['no OpenAI-compatible endpoint configured for heading semantics'],
+            targetCategoryKey: 'heading_structure',
+          }),
+          changeStatus: 'skipped',
+        });
       } else {
         const head = await applySemanticHeadingRepairs({
           buffer: outBuffer,
@@ -334,7 +379,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       await reportProgress(96.5, 'Adding missing headings');
       const scoreRef = outAfter.score;
       if (!getOpenAiCompatBaseUrl()) {
-        semanticUntaggedHeadingsSummary = {
+        semanticUntaggedHeadingsSummary = buildSemanticSummary({
+          lane: 'untagged_headings',
           skippedReason: 'no_llm_config',
           durationMs: 0,
           proposalsAccepted: 0,
@@ -342,7 +388,14 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           scoreBefore: scoreRef,
           scoreAfter: scoreRef,
           batches: [],
-        };
+          gate: buildSemanticGateSummary({
+            passed: false,
+            reason: 'no_llm_config',
+            details: ['no OpenAI-compatible endpoint configured for untagged heading semantics'],
+            targetCategoryKey: 'heading_structure',
+          }),
+          changeStatus: 'skipped',
+        });
       } else {
         const untag = await applySemanticUntaggedHeadingRepairs({
           buffer: outBuffer,
@@ -382,6 +435,24 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           },
         ];
       }
+    }
+
+    const trustAdjusted = enforceSemanticTrust({
+      before: remediation.before,
+      after: outAfter,
+      summaries: [
+        semanticSummary,
+        semanticHeadingsSummary,
+        semanticPromoteHeadingsSummary,
+        semanticUntaggedHeadingsSummary,
+      ],
+    });
+    outAfter = trustAdjusted.analysis;
+    if (trustAdjusted.trustDowngraded) {
+      if (semanticSummary?.changeStatus === 'applied') semanticSummary.trustDowngraded = true;
+      if (semanticHeadingsSummary?.changeStatus === 'applied') semanticHeadingsSummary.trustDowngraded = true;
+      if (semanticPromoteHeadingsSummary?.changeStatus === 'applied') semanticPromoteHeadingsSummary.trustDowngraded = true;
+      if (semanticUntaggedHeadingsSummary?.changeStatus === 'applied') semanticUntaggedHeadingsSummary.trustDowngraded = true;
     }
 
     const enc = encodePdfBase64(outBuffer);
@@ -486,6 +557,12 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           planningSummary: remediation.planningSummary,
           structuralConfidenceGuard: remediation.structuralConfidenceGuard,
           remediationOutcomeSummary: body.remediationOutcomeSummary,
+          semanticSummaries: [
+            body.semantic,
+            body.semanticHeadings,
+            body.semanticPromoteHeadings,
+            body.semanticUntaggedHeadings,
+          ].filter((summary): summary is SemanticRemediationSummary => summary != null),
         },
       );
       const maxReport = 512 * 1024;

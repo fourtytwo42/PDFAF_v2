@@ -107,6 +107,8 @@ describe('POST /v1/remediate', () => {
     expect(res.status).toBe(200);
     expect(res.body.semantic).toBeDefined();
     expect(res.body.semantic.skippedReason).toBe('no_llm_config');
+    expect(res.body.semantic.changeStatus).toBe('skipped');
+    expect(res.body.semantic.gate.reason).toBe('no_llm_config');
   }, 120_000);
 
   it('includes semanticHeadings summary when requested without LLM base URL', async () => {
@@ -123,6 +125,7 @@ describe('POST /v1/remediate', () => {
     expect(res.status).toBe(200);
     expect(res.body.semanticHeadings).toBeDefined();
     expect(res.body.semanticHeadings.skippedReason).toBe('no_llm_config');
+    expect(res.body.semanticHeadings.gate.reason).toBe('no_llm_config');
   }, 120_000);
 
   it('accepts semanticHeadingTimeoutMs in options', async () => {
@@ -152,6 +155,7 @@ describe('POST /v1/remediate', () => {
     expect(res.status).toBe(200);
     expect(res.body.semanticPromoteHeadings).toBeDefined();
     expect(res.body.semanticPromoteHeadings.skippedReason).toBe('no_llm_config');
+    expect(res.body.semanticPromoteHeadings.gate.reason).toBe('no_llm_config');
   }, 120_000);
 
   it('accepts semanticPromoteHeadingTimeoutMs in options', async () => {
@@ -181,6 +185,7 @@ describe('POST /v1/remediate', () => {
     expect(res.status).toBe(200);
     expect(res.body.semanticUntaggedHeadings).toBeDefined();
     expect(res.body.semanticUntaggedHeadings.skippedReason).toBe('no_llm_config');
+    expect(res.body.semanticUntaggedHeadings.gate.reason).toBe('no_llm_config');
   }, 120_000);
 
   it('accepts semanticUntaggedHeadingTimeoutMs in options', async () => {

@@ -498,9 +498,28 @@ export type SemanticSkippedReason =
   | 'completed'
   | 'completed_no_changes'
   | 'regression_reverted'
+  | 'no_target_improvement'
+  | 'gate_blocked'
   | 'llm_timeout'
   | 'unsupported_pdf'
   | 'error';
+
+export type SemanticLane =
+  | 'figures'
+  | 'headings'
+  | 'promote_headings'
+  | 'untagged_headings';
+
+export interface SemanticGateSummary {
+  passed: boolean;
+  reason: string;
+  details: string[];
+  candidateCountBefore: number;
+  candidateCountAfter: number;
+  targetCategoryKey?: CategoryKey | null;
+  targetCategoryScoreBefore?: number | null;
+  targetCategoryScoreAfter?: number | null;
+}
 
 export interface SemanticBatchSummary {
   batchIndex: number;
@@ -515,6 +534,7 @@ export interface SemanticBatchSummary {
 }
 
 export interface SemanticRemediationSummary {
+  lane: SemanticLane;
   skippedReason: SemanticSkippedReason;
   durationMs: number;
   proposalsAccepted: number;
@@ -522,6 +542,9 @@ export interface SemanticRemediationSummary {
   scoreBefore: number;
   scoreAfter: number;
   batches: SemanticBatchSummary[];
+  gate: SemanticGateSummary;
+  changeStatus: 'skipped' | 'no_change' | 'applied' | 'reverted';
+  trustDowngraded?: boolean;
   errorMessage?: string;
 }
 

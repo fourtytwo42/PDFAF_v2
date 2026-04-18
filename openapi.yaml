@@ -230,6 +230,14 @@ components:
           type: number
         improved:
           type: boolean
+        semantic:
+          $ref: '#/components/schemas/SemanticRemediationSummary'
+        semanticHeadings:
+          $ref: '#/components/schemas/SemanticRemediationSummary'
+        semanticPromoteHeadings:
+          $ref: '#/components/schemas/SemanticRemediationSummary'
+        semanticUntaggedHeadings:
+          $ref: '#/components/schemas/SemanticRemediationSummary'
         planningSummary:
           $ref: '#/components/schemas/PlanningSummary'
         structuralConfidenceGuard:
@@ -349,6 +357,104 @@ components:
     RemediationOutcomeStatus:
       type: string
       enum: [fixed, partially_fixed, needs_manual_review, unsafe_to_autofix]
+
+    SemanticRemediationSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        lane:
+          $ref: '#/components/schemas/SemanticLane'
+        skippedReason:
+          type: string
+          enum:
+            - not_requested
+            - no_llm_config
+            - alt_text_sufficient
+            - heading_structure_sufficient
+            - no_candidates
+            - scanned_pdf
+            - completed
+            - completed_no_changes
+            - regression_reverted
+            - no_target_improvement
+            - gate_blocked
+            - llm_timeout
+            - unsupported_pdf
+            - error
+        durationMs:
+          type: number
+        proposalsAccepted:
+          type: integer
+        proposalsRejected:
+          type: integer
+        scoreBefore:
+          type: number
+        scoreAfter:
+          type: number
+        batches:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticBatchSummary'
+        gate:
+          $ref: '#/components/schemas/SemanticGateSummary'
+        changeStatus:
+          type: string
+          enum: [skipped, no_change, applied, reverted]
+        trustDowngraded:
+          type: boolean
+        errorMessage:
+          type: string
+
+    SemanticLane:
+      type: string
+      enum: [figures, headings, promote_headings, untagged_headings]
+
+    SemanticGateSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        passed:
+          type: boolean
+        reason:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+        candidateCountBefore:
+          type: integer
+        candidateCountAfter:
+          type: integer
+        targetCategoryKey:
+          type: [string, 'null']
+        targetCategoryScoreBefore:
+          type: [number, 'null']
+        targetCategoryScoreAfter:
+          type: [number, 'null']
+
+    SemanticBatchSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        batchIndex:
+          type: integer
+        figureIds:
+          type: array
+          items:
+            type: string
+        headingStructRefs:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+        endpoint:
+          type: string
+          enum: [primary, fallback]
+        proposalCount:
+          type: integer
+        error:
+          type: string
 
     VerificationLevel:
       type: string

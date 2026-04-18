@@ -192,6 +192,9 @@ export interface BenchmarkRunSummary {
     scheduledToolFrequency: Array<FrequencyRow>;
     outcomeStatusDistribution: Record<string, number>;
     outcomeFamilyStatusFrequency: Array<FrequencyRow>;
+    semanticLaneUsageFrequency: Array<FrequencyRow>;
+    semanticLaneSkipReasonFrequency: Array<FrequencyRow>;
+    semanticLaneChangeStatusFrequency: Array<FrequencyRow>;
     topSlowestRemediateFiles: Array<FileMetricRow>;
     topHighestDeltaFiles: Array<FileDeltaRow>;
     topLowestDeltaFiles: Array<FileDeltaRow>;
@@ -575,6 +578,28 @@ function remediationOutcomeFamilyStatuses(row: RemediateBenchmarkRow): string[] 
     : row.remediationOutcomeSummary.familySummaries.map(summary => `${summary.family}:${summary.status}`);
 }
 
+function semanticLaneUsage(row: RemediateBenchmarkRow): string[] {
+  if (row.error) return [];
+  const summaries = [row.semantic, row.semanticHeadings, row.semanticPromoteHeadings, row.semanticUntaggedHeadings];
+  return summaries.filter((summary): summary is SemanticRemediationSummary => summary != null).map(summary => summary.lane);
+}
+
+function semanticLaneSkipReasons(row: RemediateBenchmarkRow): string[] {
+  if (row.error) return [];
+  const summaries = [row.semantic, row.semanticHeadings, row.semanticPromoteHeadings, row.semanticUntaggedHeadings];
+  return summaries
+    .filter((summary): summary is SemanticRemediationSummary => summary != null)
+    .map(summary => `${summary.lane}:${summary.skippedReason}`);
+}
+
+function semanticLaneChangeStatuses(row: RemediateBenchmarkRow): string[] {
+  if (row.error) return [];
+  const summaries = [row.semantic, row.semanticHeadings, row.semanticPromoteHeadings, row.semanticUntaggedHeadings];
+  return summaries
+    .filter((summary): summary is SemanticRemediationSummary => summary != null)
+    .map(summary => `${summary.lane}:${summary.changeStatus}`);
+}
+
 export function buildBenchmarkSummary(input: {
   runId: string;
   generatedAt: string;
@@ -714,6 +739,15 @@ export function buildBenchmarkSummary(input: {
           ),
           outcomeFamilyStatusFrequency: frequencyRows(
             remediateSuccessRows.flatMap(remediationOutcomeFamilyStatuses),
+          ),
+          semanticLaneUsageFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(semanticLaneUsage),
+          ),
+          semanticLaneSkipReasonFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(semanticLaneSkipReasons),
+          ),
+          semanticLaneChangeStatusFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(semanticLaneChangeStatuses),
           ),
           topSlowestRemediateFiles: remediateSuccessRows
             .map(row => ({
@@ -880,6 +914,9 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
     lines.push(`- **Remediation scheduled tools:** ${markdownFrequency(summary.remediate.scheduledToolFrequency)}`);
     lines.push(`- **Remediation outcome status:** ${markdownDistribution(summary.remediate.outcomeStatusDistribution)}`);
     lines.push(`- **Remediation outcome families:** ${markdownFrequency(summary.remediate.outcomeFamilyStatusFrequency)}`);
+    lines.push(`- **Semantic lanes used:** ${markdownFrequency(summary.remediate.semanticLaneUsageFrequency)}`);
+    lines.push(`- **Semantic lane skip reasons:** ${markdownFrequency(summary.remediate.semanticLaneSkipReasonFrequency)}`);
+    lines.push(`- **Semantic lane change status:** ${markdownFrequency(summary.remediate.semanticLaneChangeStatusFrequency)}`);
   }
   lines.push('');
   lines.push('## Per Cohort');

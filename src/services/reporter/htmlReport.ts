@@ -6,6 +6,7 @@ import type {
   OcrPipelineSummary,
   PlanningSummary,
   RemediationOutcomeSummary,
+  SemanticRemediationSummary,
   StructuralConfidenceGuardSummary,
 } from '../../types.js';
 
@@ -18,6 +19,7 @@ export interface HtmlReportOptions {
   planningSummary?: PlanningSummary | null;
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary | null;
   remediationOutcomeSummary?: RemediationOutcomeSummary | null;
+  semanticSummaries?: SemanticRemediationSummary[];
 }
 
 function esc(s: string): string {
@@ -169,6 +171,24 @@ function remediationOutcomeBullets(summary?: RemediationOutcomeSummary | null): 
   return lines.join('');
 }
 
+function semanticBullets(summaries?: SemanticRemediationSummary[]): string {
+  if (!summaries || summaries.length === 0) return '';
+  const lines: string[] = [];
+  for (const summary of summaries) {
+    lines.push(
+      `<li><strong>${esc(summary.lane)}:</strong> ${esc(
+        `${summary.skippedReason} / ${summary.changeStatus} / accepted ${summary.proposalsAccepted} / rejected ${summary.proposalsRejected}${summary.trustDowngraded ? ' / trust_capped' : ''}`,
+      )}</li>`,
+    );
+    lines.push(
+      `<li><strong>${esc(summary.lane)} gate:</strong> ${esc(
+        `${summary.gate.reason} (${summary.gate.candidateCountBefore}->${summary.gate.candidateCountAfter})`,
+      )}</li>`,
+    );
+  }
+  return lines.join('');
+}
+
 /**
  * Self-contained HTML accessibility summary (inline CSS, no CDN).
  * Safe for embedding: filenames and messages are escaped.
@@ -313,6 +333,10 @@ export function generateHtmlReport(
   <section>
     <h2>Remediation outcomes</h2>
     <ul>${remediationOutcomeBullets(options?.remediationOutcomeSummary) || '<li>No Stage 5 remediation outcome metadata present.</li>'}</ul>
+  </section>
+  <section>
+    <h2>Semantic passes</h2>
+    <ul>${semanticBullets(options?.semanticSummaries) || '<li>No Stage 6 semantic metadata present.</li>'}</ul>
   </section>
   <section>
     <h2>Category scores</h2>

@@ -28,6 +28,11 @@ import { chatCompletionToolCall } from './openAiCompatClient.js';
 import { isLlmTimeoutOrAbortError } from './llmBatchGuard.js';
 import { renderPageToJpegDataUrl } from './pdfPageRender.js';
 import { logInfo } from '../../logging.js';
+import {
+  buildSemanticGateSummary,
+  buildSemanticSummary,
+  evaluateSemanticMutation,
+} from './semanticPolicy.js';
 
 export interface SemanticRepairInput {
   buffer: Buffer;
@@ -319,41 +324,61 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   const started = Date.now();
   const { buffer, filename, analysis, snapshot, options } = input;
   const scoreBefore = analysis.score;
-
-  const emptySummary = (
+  const altCat = analysis.categories.find(c => c.key === 'alt_text');
+  const finishEmpty = (
     reason: SemanticRemediationSummary['skippedReason'],
+    gate: ReturnType<typeof buildSemanticGateSummary>,
     err?: string,
-  ): SemanticRemediationSummary => ({
-    skippedReason: reason,
-    durationMs: Date.now() - started,
-    proposalsAccepted: 0,
-    proposalsRejected: 0,
-    scoreBefore,
-    scoreAfter: scoreBefore,
-    batches: [],
-    errorMessage: err,
+  ): SemanticRepairOutput => ({
+    buffer,
+    analysis,
+    snapshot,
+    summary: buildSemanticSummary({
+      lane: 'figures',
+      skippedReason: reason,
+      durationMs: Date.now() - started,
+      proposalsAccepted: 0,
+      proposalsRejected: 0,
+      scoreBefore,
+      scoreAfter: scoreBefore,
+      batches: [],
+      gate,
+      changeStatus: reason === 'completed_no_changes' ? 'no_change' : 'skipped',
+      errorMessage: err,
+    }),
   });
 
   if (snapshot.pdfClass === 'scanned') {
-    return {
-      buffer,
-      analysis,
-      snapshot,
-      summary: emptySummary('scanned_pdf'),
-    };
+    return finishEmpty(
+      'scanned_pdf',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'scanned_pdf',
+        details: ['semantic figures disabled for scanned PDFs'],
+        targetCategoryKey: 'alt_text',
+        targetCategoryScoreBefore: altCat?.score ?? null,
+      }),
+    );
   }
 
-  const altCat = analysis.categories.find(c => c.key === 'alt_text');
   if (!altCat?.applicable || altCat.score >= REMEDIATION_CATEGORY_THRESHOLD) {
-    return {
-      buffer,
-      analysis,
-      snapshot,
-      summary: emptySummary('alt_text_sufficient'),
-    };
+    return finishEmpty(
+      'alt_text_sufficient',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'alt_text_sufficient',
+        details: ['alt_text category already meets deterministic threshold'],
+        targetCategoryKey: 'alt_text',
+        targetCategoryScoreBefore: altCat?.score ?? null,
+      }),
+    );
   }
 
   const candidates = buildFigureCandidates(snapshot);
+  const unresolvedStructureDebt =
+    (snapshot.acrobatStyleAltRisks?.nonFigureWithAltCount ?? 0)
+    + (snapshot.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0)
+    + (snapshot.acrobatStyleAltRisks?.orphanedAltEmptyElementCount ?? 0);
   logInfo({
     message: 'semantic_figures_candidate_scan',
     details: {
@@ -361,16 +386,35 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
       scoreBefore,
       altCategoryScore: altCat.score,
       candidateCount: candidates.length,
+      unresolvedStructureDebt,
       pageCount: analysis.pageCount,
     },
   });
   if (candidates.length === 0) {
-    return {
-      buffer,
-      analysis,
-      snapshot,
-      summary: emptySummary('no_candidates'),
-    };
+    return finishEmpty(
+      'no_candidates',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'no_candidates',
+        details: ['no residual figure candidates need semantic wording or decorative review'],
+        candidateCountBefore: 0,
+        targetCategoryKey: 'alt_text',
+        targetCategoryScoreBefore: altCat.score,
+      }),
+    );
+  }
+  if (unresolvedStructureDebt > 0) {
+    return finishEmpty(
+      'gate_blocked',
+      buildSemanticGateSummary({
+        passed: false,
+        reason: 'figure_structure_debt',
+        details: ['figure semantic gate blocked by unresolved figure ownership or alt structure debt'],
+        candidateCountBefore: candidates.length,
+        targetCategoryKey: 'alt_text',
+        targetCategoryScoreBefore: altCat.score,
+      }),
+    );
   }
 
   const layout = await analyzeLayout(buffer).catch(() => ({
@@ -385,7 +429,6 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   const title = snapshot.metadata.title ?? snapshot.structTitle ?? null;
   const domain = detectDomain(title, textSample(snapshot));
   const language = snapshot.lang ?? snapshot.metadata.language ?? 'en-US';
-
   const uniquePages = [...new Set(candidates.map(c => c.page))];
   const pageImages = new Map<number, string>();
   for (const p of uniquePages) {
@@ -419,7 +462,8 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'figures',
         skippedReason: 'llm_timeout',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -427,35 +471,44 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'llm_timeout',
+          details: ['semantic figure gate passed but LLM call timed out'],
+          candidateCountBefore: candidates.length,
+          targetCategoryKey: 'alt_text',
+          targetCategoryScoreBefore: altCat.score,
+        }),
+        changeStatus: 'skipped',
         errorMessage: batchSummaries.find(b => isLlmTimeoutOrAbortError(b.error))?.error,
-      },
+      }),
     };
   }
 
   const merged = new Map<string, LlmProposal>();
   for (const br of batchResults) {
-    for (const p of br.proposals) {
-      if (!candidates.some(c => c.id === p.id)) continue;
-      merged.set(p.id, p);
+    for (const proposal of br.proposals) {
+      if (!candidates.some(candidate => candidate.id === proposal.id)) continue;
+      merged.set(proposal.id, proposal);
     }
   }
 
   const accepted: LlmProposal[] = [];
   let rejected = 0;
-  for (const p of merged.values()) {
-    if (p.confidence < SEMANTIC_MIN_FIGURE_CONFIDENCE) {
+  for (const proposal of merged.values()) {
+    if (proposal.confidence < SEMANTIC_MIN_FIGURE_CONFIDENCE) {
       rejected++;
       continue;
     }
-    accepted.push(p);
+    accepted.push(proposal);
   }
-
   if (accepted.length === 0) {
     return {
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'figures',
         skippedReason: 'completed_no_changes',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -463,29 +516,40 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
-      },
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'no_confident_figure_proposals',
+          details: ['figure semantic gate passed but no proposals survived confidence filtering'],
+          candidateCountBefore: candidates.length,
+          candidateCountAfter: candidates.length,
+          targetCategoryKey: 'alt_text',
+          targetCategoryScoreBefore: altCat.score,
+          targetCategoryScoreAfter: altCat.score,
+        }),
+        changeStatus: 'no_change',
+      }),
     };
   }
 
   const mutations: PythonMutation[] = [];
-  for (const p of accepted) {
-    const cand = candidates.find(c => c.id === p.id);
-    if (!cand) continue;
-    if (p.isDecorative) {
-      mutations.push({ op: 'mark_figure_decorative', params: { structRef: cand.structRef } });
-    } else {
-      const alt = p.altText.trim().slice(0, 200);
-      if (!alt) continue;
-      mutations.push({ op: 'set_figure_alt_text', params: { structRef: cand.structRef, altText: alt } });
+  for (const proposal of accepted) {
+    const candidate = candidates.find(row => row.id === proposal.id);
+    if (!candidate) continue;
+    if (proposal.isDecorative) {
+      mutations.push({ op: 'mark_figure_decorative', params: { structRef: candidate.structRef } });
+      continue;
     }
+    const alt = proposal.altText.trim().slice(0, 200);
+    if (!alt) continue;
+    mutations.push({ op: 'set_figure_alt_text', params: { structRef: candidate.structRef, altText: alt } });
   }
-
   if (mutations.length === 0) {
     return {
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'figures',
         skippedReason: 'completed_no_changes',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -493,7 +557,18 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
-      },
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'no_mutations_built',
+          details: ['accepted figure proposals did not produce concrete PDF mutations'],
+          candidateCountBefore: candidates.length,
+          candidateCountAfter: candidates.length,
+          targetCategoryKey: 'alt_text',
+          targetCategoryScoreBefore: altCat.score,
+          targetCategoryScoreAfter: altCat.score,
+        }),
+        changeStatus: 'no_change',
+      }),
     };
   }
 
@@ -501,13 +576,13 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   });
-
   if (!result.success) {
     return {
       buffer,
       analysis,
       snapshot,
-      summary: {
+      summary: buildSemanticSummary({
+        lane: 'figures',
         skippedReason: 'error',
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
@@ -515,8 +590,19 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
+        gate: buildSemanticGateSummary({
+          passed: true,
+          reason: 'mutation_error',
+          details: ['figure semantic gate passed but Python mutation failed'],
+          candidateCountBefore: candidates.length,
+          candidateCountAfter: candidates.length,
+          targetCategoryKey: 'alt_text',
+          targetCategoryScoreBefore: altCat.score,
+          targetCategoryScoreAfter: altCat.score,
+        }),
+        changeStatus: 'skipped',
         errorMessage: JSON.stringify(result.failed),
-      },
+      }),
     };
   }
 
@@ -545,21 +631,40 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     await unlink(tmpPath).catch(() => {});
   }
 
-  if (nextAnalysis.score < scoreBefore - SEMANTIC_REGRESSION_TOLERANCE) {
+  const nextCandidates = buildFigureCandidates(nextSnapshot);
+  const decision = evaluateSemanticMutation({
+    lane: 'figures',
+    beforeAnalysis: analysis,
+    afterAnalysis: nextAnalysis,
+    beforeSnapshot: snapshot,
+    afterSnapshot: nextSnapshot,
+    targetCategoryKey: 'alt_text',
+    candidateCountBefore: candidates.length,
+    candidateCountAfter: nextCandidates.length,
+    proposalsAccepted: accepted.length,
+    proposalsRejected: rejected,
+    batches: batchSummaries,
+    durationMs: Date.now() - started,
+    regressionTolerance: SEMANTIC_REGRESSION_TOLERANCE,
+  });
+  if (!decision.accepted) {
     return {
       buffer,
       analysis,
       snapshot,
-      summary: {
-        skippedReason: 'regression_reverted',
+      summary: buildSemanticSummary({
+        lane: 'figures',
+        skippedReason: decision.skippedReason,
         durationMs: Date.now() - started,
         proposalsAccepted: 0,
         proposalsRejected: rejected + accepted.length,
         scoreBefore,
         scoreAfter: scoreBefore,
         batches: batchSummaries,
-        errorMessage: 'regression_reverted',
-      },
+        gate: decision.gate,
+        changeStatus: decision.changeStatus,
+        errorMessage: decision.errorMessage,
+      }),
     };
   }
 
@@ -567,7 +672,8 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     buffer: bufferForAnalyze,
     analysis: nextAnalysis,
     snapshot: nextSnapshot,
-    summary: {
+    summary: buildSemanticSummary({
+      lane: 'figures',
       skippedReason: 'completed',
       durationMs: Date.now() - started,
       proposalsAccepted: accepted.length,
@@ -575,6 +681,8 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
       scoreBefore,
       scoreAfter: nextAnalysis.score,
       batches: batchSummaries,
-    },
+      gate: decision.gate,
+      changeStatus: 'applied',
+    }),
   };
 }

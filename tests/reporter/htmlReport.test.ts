@@ -187,6 +187,30 @@ describe('generateHtmlReport', () => {
           },
         ],
       },
+      semanticSummaries: [
+        {
+          lane: 'figures',
+          skippedReason: 'completed',
+          durationMs: 125,
+          proposalsAccepted: 2,
+          proposalsRejected: 1,
+          scoreBefore: 72,
+          scoreAfter: 76,
+          batches: [],
+          gate: {
+            passed: true,
+            reason: 'gate_passed',
+            details: ['category:60->75'],
+            candidateCountBefore: 3,
+            candidateCountAfter: 1,
+            targetCategoryKey: 'alt_text',
+            targetCategoryScoreBefore: 60,
+            targetCategoryScoreAfter: 75,
+          },
+          changeStatus: 'applied',
+          trustDowngraded: true,
+        },
+      ],
     });
     expect(html).toContain('structure_bootstrap');
     expect(html).toContain('annotation_link_normalization');
@@ -197,6 +221,9 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('Remediation outcomes');
     expect(html).toContain('partially_fixed');
     expect(html).toContain('tagged_content residuals');
+    expect(html).toContain('Semantic passes');
+    expect(html).toContain('figures');
+    expect(html).toContain('trust_capped');
   });
 
   it('includes applied tools when requested', () => {
