@@ -2,6 +2,8 @@
 
 This folder is the working 50-file benchmark corpus for the staged PDFAF v2 upgrade.
 
+`manifest.json` in this folder is the canonical machine-readable source of truth for benchmark scripts. This README is the human summary.
+
 ## Purpose
 
 The corpus exists to force every engine improvement to prove three things at the same time:
@@ -105,4 +107,4 @@ The selection follows the cohort model described in the v1 roadmap and uses name
 
 Do not change this corpus casually.
 
-If a file is added, removed, or replaced, update this manifest and treat it as a benchmark-surface change. The point of this set is to let us measure engine progress honestly across stages.
+If a file is added, removed, or replaced, update `manifest.json` and this README, then treat it as a benchmark-surface change. The point of this set is to let us measure engine progress honestly across stages.

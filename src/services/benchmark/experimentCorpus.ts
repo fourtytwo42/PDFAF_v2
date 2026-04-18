@@ -1,0 +1,665 @@
+import { access, readFile } from 'node:fs/promises';
+import { join, resolve, dirname } from 'node:path';
+import type {
+  AnalysisResult,
+  AppliedRemediationTool,
+  OcrPipelineSummary,
+  RemediationRoundSummary,
+  SemanticRemediationSummary,
+} from '../../types.js';
+
+export const EXPERIMENT_CORPUS_COHORTS = [
+  '00-fixtures',
+  '10-short-near-pass',
+  '20-figure-ownership',
+  '30-structure-reading-order',
+  '40-font-extractability',
+  '50-long-report-mixed',
+] as const;
+
+export type ExperimentCorpusCohort = (typeof EXPERIMENT_CORPUS_COHORTS)[number];
+export type ExperimentCorpusSourceType = 'fixture' | 'original' | 'remediated_checkpoint';
+
+export interface ExperimentCorpusManifestEntry {
+  id: string;
+  file: string;
+  cohort: ExperimentCorpusCohort;
+  sourceType: ExperimentCorpusSourceType;
+  intent: string;
+  notes?: string;
+}
+
+export interface ExperimentCorpusEntry extends ExperimentCorpusManifestEntry {
+  absolutePath: string;
+  filename: string;
+}
+
+export interface AnalyzeBenchmarkRow {
+  id: string;
+  file: string;
+  cohort: ExperimentCorpusCohort;
+  sourceType: ExperimentCorpusSourceType;
+  intent: string;
+  notes?: string;
+  score: number | null;
+  grade: string | null;
+  pdfClass: string | null;
+  pageCount: number | null;
+  categories: AnalysisResult['categories'];
+  findings: AnalysisResult['findings'];
+  analysisDurationMs: number | null;
+  wallAnalyzeMs: number | null;
+  error?: string;
+}
+
+export interface RemediateBenchmarkRow {
+  id: string;
+  file: string;
+  cohort: ExperimentCorpusCohort;
+  sourceType: ExperimentCorpusSourceType;
+  intent: string;
+  notes?: string;
+  beforeScore: number | null;
+  beforeGrade: string | null;
+  beforePdfClass: string | null;
+  afterScore: number | null;
+  afterGrade: string | null;
+  afterPdfClass: string | null;
+  reanalyzedScore: number | null;
+  reanalyzedGrade: string | null;
+  reanalyzedPdfClass: string | null;
+  delta: number | null;
+  appliedTools: AppliedRemediationTool[];
+  rounds: RemediationRoundSummary[];
+  ocrPipeline?: OcrPipelineSummary;
+  semantic?: SemanticRemediationSummary;
+  semanticHeadings?: SemanticRemediationSummary;
+  semanticPromoteHeadings?: SemanticRemediationSummary;
+  semanticUntaggedHeadings?: SemanticRemediationSummary;
+  analysisBeforeMs: number | null;
+  remediationDurationMs: number | null;
+  wallRemediateMs: number | null;
+  analysisAfterMs: number | null;
+  totalPipelineMs: number | null;
+  error?: string;
+}
+
+export interface BenchmarkRunSummary {
+  runId: string;
+  generatedAt: string;
+  mode: 'analyze' | 'remediate' | 'full';
+  semanticEnabled: boolean;
+  writePdfs: boolean;
+  selectedFileIds: string[];
+  counts: {
+    manifestEntries: number;
+    selectedEntries: number;
+    analyzeSuccess: number;
+    analyzeErrors: number;
+    remediateSuccess: number;
+    remediateErrors: number;
+  };
+  analyze: {
+    score: SummaryStats;
+    analysisDurationMs: SummaryStats;
+    wallAnalyzeMs: SummaryStats;
+    gradeDistribution: Record<string, number>;
+    pdfClassDistribution: Record<string, number>;
+    weakestCategories: Array<FrequencyRow>;
+    topFindingMessages: Array<FrequencyRow>;
+    topSlowestAnalyzeFiles: Array<FileMetricRow>;
+  };
+  remediate: {
+    beforeScore: SummaryStats;
+    afterScore: SummaryStats;
+    reanalyzedScore: SummaryStats;
+    delta: SummaryStats;
+    remediationDurationMs: SummaryStats;
+    wallRemediateMs: SummaryStats;
+    analysisAfterMs: SummaryStats;
+    totalPipelineMs: SummaryStats;
+    gradeDistributionBefore: Record<string, number>;
+    gradeDistributionAfter: Record<string, number>;
+    gradeDistributionReanalyzed: Record<string, number>;
+    pdfClassDistributionBefore: Record<string, number>;
+    pdfClassDistributionAfter: Record<string, number>;
+    pdfClassDistributionReanalyzed: Record<string, number>;
+    topSlowestRemediateFiles: Array<FileMetricRow>;
+    topHighestDeltaFiles: Array<FileDeltaRow>;
+    topLowestDeltaFiles: Array<FileDeltaRow>;
+  } | null;
+  cohorts: Record<string, CohortSummary>;
+}
+
+export interface SummaryStats {
+  count: number;
+  mean: number;
+  median: number;
+  p95: number;
+  min: number;
+  max: number;
+}
+
+export interface FrequencyRow {
+  key: string;
+  count: number;
+}
+
+export interface FileMetricRow {
+  id: string;
+  file: string;
+  cohort: ExperimentCorpusCohort;
+  metricMs: number;
+}
+
+export interface FileDeltaRow {
+  id: string;
+  file: string;
+  cohort: ExperimentCorpusCohort;
+  delta: number;
+  beforeScore: number | null;
+  afterScore: number | null;
+  reanalyzedScore: number | null;
+}
+
+export interface CohortSummary {
+  fileCount: number;
+  analyzeSuccess: number;
+  analyzeErrors: number;
+  remediateSuccess: number;
+  remediateErrors: number;
+  analyzeScore: SummaryStats;
+  analyzeDurationMs: SummaryStats;
+  wallAnalyzeMs: SummaryStats;
+  remediationDelta: SummaryStats;
+  remediationDurationMs: SummaryStats;
+  wallRemediateMs: SummaryStats;
+  totalPipelineMs: SummaryStats;
+  weakestCategories: Array<FrequencyRow>;
+  topFindingMessages: Array<FrequencyRow>;
+}
+
+export interface ManifestSnapshot {
+  runId: string;
+  generatedAt: string;
+  manifestPath: string;
+  corpusRoot: string;
+  mode: 'analyze' | 'remediate' | 'full';
+  semanticEnabled: boolean;
+  writePdfs: boolean;
+  selectedEntries: ExperimentCorpusManifestEntry[];
+}
+
+export interface BenchmarkArtifactBundle {
+  manifest: ManifestSnapshot;
+  analyzeResults: AnalyzeBenchmarkRow[];
+  remediateResults: RemediateBenchmarkRow[];
+  summary: BenchmarkRunSummary;
+}
+
+export interface BenchmarkValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
+const KNOWN_COHORT_SET = new Set<string>(EXPERIMENT_CORPUS_COHORTS);
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+export async function loadExperimentCorpusManifest(
+  manifestPath: string,
+  options?: { checkFiles?: boolean },
+): Promise<ExperimentCorpusEntry[]> {
+  const raw = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown;
+  return validateExperimentCorpusManifest(raw, {
+    corpusRoot: dirname(manifestPath),
+    checkFiles: options?.checkFiles ?? true,
+  });
+}
+
+export async function validateExperimentCorpusManifest(
+  raw: unknown,
+  options: { corpusRoot: string; checkFiles?: boolean },
+): Promise<ExperimentCorpusEntry[]> {
+  if (!Array.isArray(raw)) {
+    throw new Error('Experiment corpus manifest must be a JSON array.');
+  }
+
+  const entries: ExperimentCorpusEntry[] = [];
+  const seenIds = new Set<string>();
+  const seenFiles = new Set<string>();
+  const checkFiles = options.checkFiles ?? true;
+
+  for (const [index, item] of raw.entries()) {
+    const obj = asObject(item);
+    if (!obj) throw new Error(`Manifest entry ${index} must be an object.`);
+
+    const id = String(obj['id'] ?? '').trim();
+    const file = String(obj['file'] ?? '').trim();
+    const cohort = String(obj['cohort'] ?? '').trim();
+    const sourceType = String(obj['sourceType'] ?? '').trim();
+    const intent = String(obj['intent'] ?? '').trim();
+    const notesRaw = obj['notes'];
+    const notes = typeof notesRaw === 'string' && notesRaw.trim() ? notesRaw.trim() : undefined;
+
+    if (!id) throw new Error(`Manifest entry ${index} is missing id.`);
+    if (!file) throw new Error(`Manifest entry ${id} is missing file.`);
+    if (!KNOWN_COHORT_SET.has(cohort)) {
+      throw new Error(`Manifest entry ${id} has unknown cohort "${cohort}".`);
+    }
+    if (!['fixture', 'original', 'remediated_checkpoint'].includes(sourceType)) {
+      throw new Error(`Manifest entry ${id} has unknown sourceType "${sourceType}".`);
+    }
+    if (!intent) throw new Error(`Manifest entry ${id} is missing intent.`);
+    if (seenIds.has(id)) throw new Error(`Manifest contains duplicate id "${id}".`);
+    if (seenFiles.has(file)) throw new Error(`Manifest contains duplicate file "${file}".`);
+    seenIds.add(id);
+    seenFiles.add(file);
+
+    const absolutePath = resolve(options.corpusRoot, file);
+    if (checkFiles) {
+      try {
+        await access(absolutePath);
+      } catch {
+        throw new Error(`Manifest entry ${id} points to missing file "${absolutePath}".`);
+      }
+    }
+    entries.push({
+      id,
+      file,
+      cohort: cohort as ExperimentCorpusCohort,
+      sourceType: sourceType as ExperimentCorpusSourceType,
+      intent,
+      ...(notes ? { notes } : {}),
+      absolutePath,
+      filename: file.split('/').pop() ?? file,
+    });
+  }
+
+  if (entries.length !== 50) {
+    throw new Error(`Experiment corpus manifest must resolve exactly 50 entries, got ${entries.length}.`);
+  }
+
+  return entries;
+}
+
+export function mean(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+export function median(values: number[]): number {
+  return percentile(values, 50);
+}
+
+export function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil((p / 100) * sorted.length);
+  const index = Math.min(sorted.length - 1, Math.max(0, rank - 1));
+  return sorted[index] ?? 0;
+}
+
+export function summarizeStats(values: number[]): SummaryStats {
+  if (values.length === 0) {
+    return { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 };
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    mean: mean(sorted),
+    median: median(sorted),
+    p95: percentile(sorted, 95),
+    min: sorted[0] ?? 0,
+    max: sorted[sorted.length - 1] ?? 0,
+  };
+}
+
+function frequencyRows(values: string[], limit = 10): Array<FrequencyRow> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([key, count]) => ({ key, count }));
+}
+
+function distribution(values: Array<string | null | undefined>): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    if (!value) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return Object.fromEntries(
+    [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  );
+}
+
+function weakestCategoryKeys(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  const applicable = row.categories.filter(category => category.applicable);
+  if (applicable.length === 0) return [];
+  const minScore = Math.min(...applicable.map(category => category.score));
+  return applicable
+    .filter(category => category.score === minScore)
+    .map(category => category.key);
+}
+
+function topFindingMessages(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  return row.findings.map(finding => finding.message);
+}
+
+export function buildBenchmarkSummary(input: {
+  runId: string;
+  generatedAt: string;
+  mode: 'analyze' | 'remediate' | 'full';
+  semanticEnabled: boolean;
+  writePdfs: boolean;
+  selectedFileIds: string[];
+  manifestEntries: number;
+  analyzeRows: AnalyzeBenchmarkRow[];
+  remediateRows: RemediateBenchmarkRow[];
+}): BenchmarkRunSummary {
+  const analyzeSuccessRows = input.analyzeRows.filter(row => !row.error && row.score !== null);
+  const analyzeErrorRows = input.analyzeRows.filter(row => row.error);
+  const remediateSuccessRows = input.remediateRows.filter(row => !row.error && row.beforeScore !== null);
+  const remediateErrorRows = input.remediateRows.filter(row => row.error);
+
+  const cohortSummaries = Object.fromEntries(
+    EXPERIMENT_CORPUS_COHORTS.map(cohort => {
+      const analyzeRows = input.analyzeRows.filter(row => row.cohort === cohort);
+      const remediateRows = input.remediateRows.filter(row => row.cohort === cohort);
+      return [cohort, buildCohortSummary(analyzeRows, remediateRows)];
+    }),
+  );
+
+  return {
+    runId: input.runId,
+    generatedAt: input.generatedAt,
+    mode: input.mode,
+    semanticEnabled: input.semanticEnabled,
+    writePdfs: input.writePdfs,
+    selectedFileIds: input.selectedFileIds,
+    counts: {
+      manifestEntries: input.manifestEntries,
+      selectedEntries: input.selectedFileIds.length,
+      analyzeSuccess: analyzeSuccessRows.length,
+      analyzeErrors: analyzeErrorRows.length,
+      remediateSuccess: remediateSuccessRows.length,
+      remediateErrors: remediateErrorRows.length,
+    },
+    analyze: {
+      score: summarizeStats(analyzeSuccessRows.map(row => row.score ?? 0)),
+      analysisDurationMs: summarizeStats(analyzeSuccessRows.map(row => row.analysisDurationMs ?? 0)),
+      wallAnalyzeMs: summarizeStats(analyzeSuccessRows.map(row => row.wallAnalyzeMs ?? 0)),
+      gradeDistribution: distribution(analyzeSuccessRows.map(row => row.grade)),
+      pdfClassDistribution: distribution(analyzeSuccessRows.map(row => row.pdfClass)),
+      weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
+      topFindingMessages: frequencyRows(analyzeSuccessRows.flatMap(topFindingMessages)),
+      topSlowestAnalyzeFiles: analyzeSuccessRows
+        .map(row => ({
+          id: row.id,
+          file: row.file,
+          cohort: row.cohort,
+          metricMs: row.wallAnalyzeMs ?? 0,
+        }))
+        .sort((a, b) => b.metricMs - a.metricMs)
+        .slice(0, 10),
+    },
+    remediate: input.remediateRows.length > 0
+      ? {
+          beforeScore: summarizeStats(remediateSuccessRows.map(row => row.beforeScore ?? 0)),
+          afterScore: summarizeStats(remediateSuccessRows.map(row => row.afterScore ?? 0)),
+          reanalyzedScore: summarizeStats(remediateSuccessRows.map(row => row.reanalyzedScore ?? 0).filter(value => value > 0)),
+          delta: summarizeStats(remediateSuccessRows.map(row => row.delta ?? 0)),
+          remediationDurationMs: summarizeStats(remediateSuccessRows.map(row => row.remediationDurationMs ?? 0)),
+          wallRemediateMs: summarizeStats(remediateSuccessRows.map(row => row.wallRemediateMs ?? 0)),
+          analysisAfterMs: summarizeStats(remediateSuccessRows.map(row => row.analysisAfterMs ?? 0).filter(value => value > 0)),
+          totalPipelineMs: summarizeStats(remediateSuccessRows.map(row => row.totalPipelineMs ?? 0)),
+          gradeDistributionBefore: distribution(remediateSuccessRows.map(row => row.beforeGrade)),
+          gradeDistributionAfter: distribution(remediateSuccessRows.map(row => row.afterGrade)),
+          gradeDistributionReanalyzed: distribution(remediateSuccessRows.map(row => row.reanalyzedGrade)),
+          pdfClassDistributionBefore: distribution(remediateSuccessRows.map(row => row.beforePdfClass)),
+          pdfClassDistributionAfter: distribution(remediateSuccessRows.map(row => row.afterPdfClass)),
+          pdfClassDistributionReanalyzed: distribution(remediateSuccessRows.map(row => row.reanalyzedPdfClass)),
+          topSlowestRemediateFiles: remediateSuccessRows
+            .map(row => ({
+              id: row.id,
+              file: row.file,
+              cohort: row.cohort,
+              metricMs: row.totalPipelineMs ?? 0,
+            }))
+            .sort((a, b) => b.metricMs - a.metricMs)
+            .slice(0, 10),
+          topHighestDeltaFiles: remediateSuccessRows
+            .map(row => ({
+              id: row.id,
+              file: row.file,
+              cohort: row.cohort,
+              delta: row.delta ?? 0,
+              beforeScore: row.beforeScore,
+              afterScore: row.afterScore,
+              reanalyzedScore: row.reanalyzedScore,
+            }))
+            .sort((a, b) => b.delta - a.delta)
+            .slice(0, 10),
+          topLowestDeltaFiles: remediateSuccessRows
+            .map(row => ({
+              id: row.id,
+              file: row.file,
+              cohort: row.cohort,
+              delta: row.delta ?? 0,
+              beforeScore: row.beforeScore,
+              afterScore: row.afterScore,
+              reanalyzedScore: row.reanalyzedScore,
+            }))
+            .sort((a, b) => a.delta - b.delta)
+            .slice(0, 10),
+        }
+      : null,
+    cohorts: cohortSummaries,
+  };
+}
+
+function buildCohortSummary(analyzeRows: AnalyzeBenchmarkRow[], remediateRows: RemediateBenchmarkRow[]): CohortSummary {
+  const analyzeSuccessRows = analyzeRows.filter(row => !row.error && row.score !== null);
+  const remediateSuccessRows = remediateRows.filter(row => !row.error && row.beforeScore !== null);
+  return {
+    fileCount: analyzeRows.length,
+    analyzeSuccess: analyzeSuccessRows.length,
+    analyzeErrors: analyzeRows.length - analyzeSuccessRows.length,
+    remediateSuccess: remediateSuccessRows.length,
+    remediateErrors: remediateRows.length - remediateSuccessRows.length,
+    analyzeScore: summarizeStats(analyzeSuccessRows.map(row => row.score ?? 0)),
+    analyzeDurationMs: summarizeStats(analyzeSuccessRows.map(row => row.analysisDurationMs ?? 0)),
+    wallAnalyzeMs: summarizeStats(analyzeSuccessRows.map(row => row.wallAnalyzeMs ?? 0)),
+    remediationDelta: summarizeStats(remediateSuccessRows.map(row => row.delta ?? 0)),
+    remediationDurationMs: summarizeStats(remediateSuccessRows.map(row => row.remediationDurationMs ?? 0)),
+    wallRemediateMs: summarizeStats(remediateSuccessRows.map(row => row.wallRemediateMs ?? 0)),
+    totalPipelineMs: summarizeStats(remediateSuccessRows.map(row => row.totalPipelineMs ?? 0)),
+    weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
+    topFindingMessages: frequencyRows(analyzeSuccessRows.flatMap(topFindingMessages)),
+  };
+}
+
+function formatStats(stats: SummaryStats): string {
+  if (stats.count === 0) return 'n/a';
+  return `mean ${stats.mean.toFixed(1)} · median ${stats.median.toFixed(1)} · p95 ${stats.p95.toFixed(1)}`;
+}
+
+function markdownDistribution(dist: Record<string, number>): string {
+  const entries = Object.entries(dist);
+  if (entries.length === 0) return 'n/a';
+  return entries.map(([key, count]) => `${key}:${count}`).join(', ');
+}
+
+function markdownFrequency(rows: Array<FrequencyRow>): string {
+  if (rows.length === 0) return 'n/a';
+  return rows.map(row => `${row.key} (${row.count})`).join('; ');
+}
+
+function markdownTopFileMetrics(rows: Array<FileMetricRow>): string[] {
+  return rows.length
+    ? rows.map(row => `- \`${row.file}\` (${row.cohort}) — ${row.metricMs.toFixed(0)} ms`)
+    : ['- none'];
+}
+
+function markdownTopDeltas(rows: Array<FileDeltaRow>): string[] {
+  return rows.length
+    ? rows.map(row => `- \`${row.file}\` (${row.cohort}) — Δ ${row.delta >= 0 ? '+' : ''}${row.delta}`)
+    : ['- none'];
+}
+
+export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): string {
+  const lines: string[] = [];
+  lines.push('# Experiment corpus benchmark summary');
+  lines.push('');
+  lines.push(`- **Run ID:** \`${summary.runId}\``);
+  lines.push(`- **Generated:** ${summary.generatedAt}`);
+  lines.push(`- **Mode:** \`${summary.mode}\``);
+  lines.push(`- **Semantic enabled:** ${summary.semanticEnabled ? 'yes' : 'no'}`);
+  lines.push(`- **Write PDFs:** ${summary.writePdfs ? 'yes' : 'no'}`);
+  lines.push(`- **Selected files:** ${summary.counts.selectedEntries} / ${summary.counts.manifestEntries}`);
+  lines.push('');
+  lines.push('## Overall');
+  lines.push('');
+  lines.push(`- **Analyze success/errors:** ${summary.counts.analyzeSuccess} / ${summary.counts.analyzeErrors}`);
+  lines.push(`- **Remediate success/errors:** ${summary.counts.remediateSuccess} / ${summary.counts.remediateErrors}`);
+  lines.push(`- **Analyze scores:** ${formatStats(summary.analyze.score)}`);
+  lines.push(`- **Analyze runtime (` + '`analysisDurationMs`' + `):** ${formatStats(summary.analyze.analysisDurationMs)}`);
+  lines.push(`- **Analyze runtime (wall):** ${formatStats(summary.analyze.wallAnalyzeMs)}`);
+  lines.push(`- **Analyze grades:** ${markdownDistribution(summary.analyze.gradeDistribution)}`);
+  lines.push(`- **Analyze pdfClass:** ${markdownDistribution(summary.analyze.pdfClassDistribution)}`);
+  lines.push(`- **Weakest categories:** ${markdownFrequency(summary.analyze.weakestCategories)}`);
+  lines.push(`- **Top findings:** ${markdownFrequency(summary.analyze.topFindingMessages)}`);
+  if (summary.remediate) {
+    lines.push(`- **Remediation before scores:** ${formatStats(summary.remediate.beforeScore)}`);
+    lines.push(`- **Remediation after scores:** ${formatStats(summary.remediate.afterScore)}`);
+    lines.push(`- **Reanalyzed scores:** ${formatStats(summary.remediate.reanalyzedScore)}`);
+    lines.push(`- **Score delta:** ${formatStats(summary.remediate.delta)}`);
+    lines.push(`- **Remediation runtime (` + '`remediationDurationMs`' + `):** ${formatStats(summary.remediate.remediationDurationMs)}`);
+    lines.push(`- **Remediation runtime (wall):** ${formatStats(summary.remediate.wallRemediateMs)}`);
+    lines.push(`- **Post-write analyze runtime:** ${formatStats(summary.remediate.analysisAfterMs)}`);
+    lines.push(`- **Total pipeline runtime:** ${formatStats(summary.remediate.totalPipelineMs)}`);
+  }
+  lines.push('');
+  lines.push('## Per Cohort');
+  lines.push('');
+  lines.push('| Cohort | Files | Analyze score | Analyze p95 wall ms | Remediate delta | Remediate p95 total ms |');
+  lines.push('| --- | ---: | --- | ---: | --- | ---: |');
+  for (const cohort of EXPERIMENT_CORPUS_COHORTS) {
+    const row = summary.cohorts[cohort] ?? {
+      fileCount: 0,
+      analyzeSuccess: 0,
+      analyzeErrors: 0,
+      remediateSuccess: 0,
+      remediateErrors: 0,
+      analyzeScore: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      analyzeDurationMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      wallAnalyzeMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      remediationDelta: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      remediationDurationMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      wallRemediateMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      totalPipelineMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      weakestCategories: [],
+      topFindingMessages: [],
+    };
+    lines.push(
+      `| ${cohort} | ${row.fileCount} | ${row.analyzeScore.count ? row.analyzeScore.mean.toFixed(1) : 'n/a'} | ${row.wallAnalyzeMs.p95.toFixed(0)} | ${row.remediationDelta.count ? row.remediationDelta.mean.toFixed(1) : 'n/a'} | ${row.totalPipelineMs.p95.toFixed(0)} |`,
+    );
+  }
+  lines.push('');
+  lines.push('## Slowest Analyze Files');
+  lines.push('');
+  lines.push(...markdownTopFileMetrics(summary.analyze.topSlowestAnalyzeFiles));
+  lines.push('');
+  if (summary.remediate) {
+    lines.push('## Slowest Remediate Files');
+    lines.push('');
+    lines.push(...markdownTopFileMetrics(summary.remediate.topSlowestRemediateFiles));
+    lines.push('');
+    lines.push('## Highest Delta Files');
+    lines.push('');
+    lines.push(...markdownTopDeltas(summary.remediate.topHighestDeltaFiles));
+    lines.push('');
+    lines.push('## Lowest Delta Files');
+    lines.push('');
+    lines.push(...markdownTopDeltas(summary.remediate.topLowestDeltaFiles));
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+export function validateBenchmarkArtifacts(bundle: BenchmarkArtifactBundle): BenchmarkValidationResult {
+  const errors: string[] = [];
+  const selectedIds = bundle.manifest.selectedEntries.map(entry => entry.id);
+  if (selectedIds.length !== bundle.summary.counts.selectedEntries) {
+    errors.push('Selected entry count does not match summary.selectedEntries.');
+  }
+
+  const analyzeRowIds = new Set(bundle.analyzeResults.map(row => row.id));
+  for (const id of selectedIds) {
+    if (!analyzeRowIds.has(id)) errors.push(`Missing analyze row for manifest entry "${id}".`);
+  }
+
+  if (bundle.summary.counts.analyzeSuccess + bundle.summary.counts.analyzeErrors !== bundle.analyzeResults.length) {
+    errors.push('Analyze summary counts do not match analyze result rows.');
+  }
+
+  if (bundle.remediateResults.length > 0) {
+    const remediateRowIds = new Set(bundle.remediateResults.map(row => row.id));
+    for (const id of selectedIds) {
+      if (!remediateRowIds.has(id)) errors.push(`Missing remediate row for manifest entry "${id}".`);
+    }
+    if (!bundle.summary.remediate) {
+      errors.push('Remediate results exist but summary.remediate is null.');
+    }
+    if (bundle.summary.counts.remediateSuccess + bundle.summary.counts.remediateErrors !== bundle.remediateResults.length) {
+      errors.push('Remediate summary counts do not match remediate result rows.');
+    }
+  } else if (bundle.summary.remediate !== null) {
+    errors.push('Summary.remediate must be null when there are no remediate rows.');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function makeManifestSnapshot(input: {
+  runId: string;
+  generatedAt: string;
+  manifestPath: string;
+  corpusRoot: string;
+  mode: 'analyze' | 'remediate' | 'full';
+  semanticEnabled: boolean;
+  writePdfs: boolean;
+  selectedEntries: ExperimentCorpusEntry[];
+}): ManifestSnapshot {
+  return {
+    runId: input.runId,
+    generatedAt: input.generatedAt,
+    manifestPath: input.manifestPath,
+    corpusRoot: input.corpusRoot,
+    mode: input.mode,
+    semanticEnabled: input.semanticEnabled,
+    writePdfs: input.writePdfs,
+    selectedEntries: input.selectedEntries.map(({ absolutePath, filename, ...entry }) => entry),
+  };
+}
+
+export function defaultExperimentCorpusPaths(): {
+  manifestPath: string;
+  corpusRoot: string;
+} {
+  const corpusRoot = join(process.cwd(), 'Input', 'experiment-corpus');
+  return {
+    corpusRoot,
+    manifestPath: join(corpusRoot, 'manifest.json'),
+  };
+}

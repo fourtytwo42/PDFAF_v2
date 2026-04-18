@@ -1,0 +1,358 @@
+[
+  {
+    "id": "fixture-adam2",
+    "file": "00-fixtures/ADAM2.pdf",
+    "cohort": "00-fixtures",
+    "sourceType": "fixture",
+    "intent": "mixed_baseline_fixture",
+    "notes": "Legacy baseline PDF already used in the repo."
+  },
+  {
+    "id": "fixture-teams-original",
+    "file": "00-fixtures/Microsoft_Teams_Quickstart (1).pdf",
+    "cohort": "00-fixtures",
+    "sourceType": "fixture",
+    "intent": "teams_original_checkpoint",
+    "notes": "Original Teams sample used to compare figure and alt-text improvements."
+  },
+  {
+    "id": "fixture-teams-remediated",
+    "file": "00-fixtures/Microsoft_Teams_Quickstart (1)-remediated.pdf",
+    "cohort": "00-fixtures",
+    "sourceType": "remediated_checkpoint",
+    "intent": "teams_remediated_checkpoint",
+    "notes": "Remediated checkpoint from v1 used for regression comparison."
+  },
+  {
+    "id": "fixture-teams-targeted-wave1",
+    "file": "00-fixtures/Microsoft_Teams_Quickstart (1)-targeted-figures-wave1-b2.pdf",
+    "cohort": "00-fixtures",
+    "sourceType": "remediated_checkpoint",
+    "intent": "teams_targeted_figures_checkpoint",
+    "notes": "Intermediate targeted-figure checkpoint from v1."
+  },
+  {
+    "id": "fixture-accessible",
+    "file": "00-fixtures/pdfaf_fixture_accessible.pdf",
+    "cohort": "00-fixtures",
+    "sourceType": "fixture",
+    "intent": "accessible_fixture",
+    "notes": "Small accessible control fixture."
+  },
+  {
+    "id": "fixture-inaccessible",
+    "file": "00-fixtures/pdfaf_fixture_inaccessible.pdf",
+    "cohort": "00-fixtures",
+    "sourceType": "fixture",
+    "intent": "inaccessible_fixture",
+    "notes": "Small inaccessible control fixture."
+  },
+  {
+    "id": "short-3981",
+    "file": "10-short-near-pass/3981-Illinois Bill of Rights for Victims and Witnesses of Violent Crime _Polish_.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4074",
+    "file": "10-short-near-pass/4074-Audit shows improvement in record accuracy timeliness completeness.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4101",
+    "file": "10-short-near-pass/4101-Implementing restorative justice A guide for schools.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4176",
+    "file": "10-short-near-pass/4176-Illinois Offense and Arrest Trends Property Index Arrests 19992008.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4189",
+    "file": "10-short-near-pass/4189-Study measures impact of government services on juvenile community reentry.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4192",
+    "file": "10-short-near-pass/4192-InfoNet database reveals Illinois domestic violence victim demographics trends.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4214",
+    "file": "10-short-near-pass/4214-Illinois Crime Victim Trends Reported Elder Abuse 20002009.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "short-4660",
+    "file": "10-short-near-pass/4660-Civil Rights Discrimination Complaint Form.pdf",
+    "cohort": "10-short-near-pass",
+    "sourceType": "original",
+    "intent": "short_near_pass"
+  },
+  {
+    "id": "figure-4082",
+    "file": "20-figure-ownership/4082-State survey results quantify crime victimization patterns.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4184",
+    "file": "20-figure-ownership/4184-Child sex exploitation study probes extent of victimization in Illinois.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4188",
+    "file": "20-figure-ownership/4188-Corrections data illustrate juvenile incarceration trends in Illinois.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4194",
+    "file": "20-figure-ownership/4194-Childrens risk of homicide Victimization from birth to age 14 1965 to 1995.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4466",
+    "file": "20-figure-ownership/4466-Victim Need Report_ Service Providers_ Perspectives on the Needs of Crime Victims and Service Gaps.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4609",
+    "file": "20-figure-ownership/4609-Domestic Violence Trends in Illinois_ Victimization Characteristics_ Help-Seeking_ and Service Utilization.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4702",
+    "file": "20-figure-ownership/4702-2022 Victim Needs Assessment.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4753",
+    "file": "20-figure-ownership/4753-2022 Domestic Violence Fatality Review Committee Annual Report.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4754",
+    "file": "20-figure-ownership/4754-2023 Domestic Violence Fatality Review Committee Annual Report.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "figure-4755",
+    "file": "20-figure-ownership/4755-2024 Domestic Violence Fatality Review Committee Biennial Report.pdf",
+    "cohort": "20-figure-ownership",
+    "sourceType": "original",
+    "intent": "figure_ownership"
+  },
+  {
+    "id": "structure-3661",
+    "file": "30-structure-reading-order/3661-A Generation of Change 30 Years of Criminal Justice in Illinois.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-3775",
+    "file": "30-structure-reading-order/3775-Criminal Justice Plan for the State of Illinois.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-3994",
+    "file": "30-structure-reading-order/3994-Community Policing in Chicago The Chicago Alternative Policing Strategy _CAPS_ Year Ten.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4076",
+    "file": "30-structure-reading-order/4076-Juvenile Justice Data 2004 Annual Report APPENDIX H Data Tables.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4078",
+    "file": "30-structure-reading-order/4078-Community reentry challenges daunt exoffenders quest for a fresh start.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4108",
+    "file": "30-structure-reading-order/4108-Juvenile pretrial process.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4122",
+    "file": "30-structure-reading-order/4122-Criminal justice system The pretrial process.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4131",
+    "file": "30-structure-reading-order/4131-Redeploy Illinois 2nd Judicial Circuit Pilot Site Impact and Implementation Evaluation Report.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4207",
+    "file": "30-structure-reading-order/4207-Families and Reentry Unpacking How Social Support Matters.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "structure-4438",
+    "file": "30-structure-reading-order/4438-Inventorying Employment Restrictions Task Force Final Report.pdf",
+    "cohort": "30-structure-reading-order",
+    "sourceType": "original",
+    "intent": "reading_order"
+  },
+  {
+    "id": "font-3437",
+    "file": "40-font-extractability/3437-Information Networks Expanding.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-3448",
+    "file": "40-font-extractability/3448-Flow of Funds in Illinois Criminal Justice System.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-3529",
+    "file": "40-font-extractability/3529-Information Technology for Criminal Justice.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-4035",
+    "file": "40-font-extractability/4035-Comparison of official and unofficial sources of criminal history record information.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-4057",
+    "file": "40-font-extractability/4057-2006 Criminal History Records _CHRI_ Audit Report.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-4156",
+    "file": "40-font-extractability/4156-2009 Annual Report Motor Vehicle Theft Prevention Council.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-4172",
+    "file": "40-font-extractability/4172-Illinois Drug Trends Drug Crime Lab Submissions 19972007.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "font-4699",
+    "file": "40-font-extractability/4699-Criminal History Record Checks for Federally Assisted Housing Applications_ Annual Report.pdf",
+    "cohort": "40-font-extractability",
+    "sourceType": "original",
+    "intent": "font_extractability"
+  },
+  {
+    "id": "long-4146",
+    "file": "50-long-report-mixed/4146-ICJIA 2008 Annual Report.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4470",
+    "file": "50-long-report-mixed/4470-Co-occurring Mental Health and Substance Use Disorders of Women in Prison_ An Evaluation of the WestCare Foundation_s Dual Diagnosis Program in Illinois.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4516",
+    "file": "50-long-report-mixed/4516-An Exploratory Study of the Discretionary Use of Electronic Monitoring for Individuals Upon Release to Mandatory Supervised Release _MSR_ in Illinois.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4606",
+    "file": "50-long-report-mixed/4606-Illinois Criminal Justice Information Authority 2018 Annual Report.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4608",
+    "file": "50-long-report-mixed/4608-Law Enforcement Response to Mental Health Crisis Incidents_ A Survey of Illinois Police and Sheriff_s Departments.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4680",
+    "file": "50-long-report-mixed/4680-Alternative Sentencing for Drug Offenses_ An Evaluation of the First Offender Call Unified for Success _FOCUS_ Program.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4683",
+    "file": "50-long-report-mixed/4683-Illinois Higher Education in Prison Task Force 2022 Report.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  },
+  {
+    "id": "long-4700",
+    "file": "50-long-report-mixed/4700-R3 2022 Annual Report.pdf",
+    "cohort": "50-long-report-mixed",
+    "sourceType": "original",
+    "intent": "long_report_mixed"
+  }
+]
