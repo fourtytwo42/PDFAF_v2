@@ -83,7 +83,7 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
               API base URL
             </span>
             <input
-              className="focus-ring w-full border border-[color:var(--surface-border)] bg-black px-3 py-2 text-xs text-[var(--foreground)]"
+              className="focus-ring w-full border border-[color:var(--surface-border)] bg-[var(--surface-strong)] px-3 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted)] caret-[var(--foreground)]"
               value={draftValue}
               onChange={(event) => setDraftValue(event.target.value)}
               placeholder="http://localhost:6200"
