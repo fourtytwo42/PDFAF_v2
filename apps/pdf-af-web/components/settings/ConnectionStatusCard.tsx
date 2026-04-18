@@ -1,9 +1,11 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Button } from '../common/Button';
 import { SectionCard } from '../common/SectionCard';
 import { StatusPill } from '../common/StatusPill';
 import { formatLastChecked } from '../../lib/format/formatters';
+import { useDesktopLocalAiState } from '../../lib/hooks/useDesktopLocalAiState';
 import { useAppSettingsStore } from '../../stores/settings';
 
 export function ConnectionStatusCard() {
@@ -12,6 +14,7 @@ export function ConnectionStatusCard() {
   const lastCheckedAt = useAppSettingsStore((state) => state.lastHealthCheckedAt);
   const refreshHealth = useAppSettingsStore((state) => state.refreshHealth);
   const openSettings = useAppSettingsStore((state) => state.openSettings);
+  const { hasDesktopBridge, state: localAiState, error: localAiError } = useDesktopLocalAiState();
 
   const statusTone =
     connection.status === 'connected'
@@ -29,7 +32,67 @@ export function ConnectionStatusCard() {
         ? 'Checking'
         : connection.status === 'misconfigured'
           ? 'Misconfigured'
-          : 'Unreachable';
+        : 'Unreachable';
+
+  const localAiSummary = useMemo(() => {
+    if (!hasDesktopBridge) {
+      return {
+        label: 'Local AI unavailable in web mode.',
+        tone: 'neutral' as const,
+      };
+    }
+
+    if (!localAiState) {
+      return {
+        label: 'Local AI status: checking desktop runtime.',
+        tone: 'accent' as const,
+      };
+    }
+
+    if (localAiState.status === 'downloading') {
+      const downloadedMb = (localAiState.downloadedBytes / (1024 * 1024)).toFixed(1);
+      const totalLabel = localAiState.totalBytes
+        ? `${(localAiState.totalBytes / (1024 * 1024)).toFixed(1)} MB`
+        : 'unknown total';
+      return {
+        label: `Local AI download in progress: ${downloadedMb} MB of ${totalLabel}.`,
+        tone: 'accent' as const,
+      };
+    }
+
+    if (localAiState.status === 'installed' && localAiState.enabled) {
+      return {
+        label: 'Local AI installed and enabled.',
+        tone: 'success' as const,
+      };
+    }
+
+    if (localAiState.status === 'installed') {
+      return {
+        label: 'Local AI installed but disabled.',
+        tone: 'warning' as const,
+      };
+    }
+
+    if (localAiState.status === 'failed') {
+      return {
+        label: localAiState.lastError ?? localAiError ?? 'Local AI install failed.',
+        tone: 'danger' as const,
+      };
+    }
+
+    if (localAiState.status === 'removing') {
+      return {
+        label: 'Local AI removal in progress.',
+        tone: 'accent' as const,
+      };
+    }
+
+    return {
+      label: 'Local AI not installed yet.',
+      tone: 'neutral' as const,
+    };
+  }, [hasDesktopBridge, localAiError, localAiState]);
 
   return (
     <SectionCard
@@ -65,6 +128,17 @@ export function ConnectionStatusCard() {
               {connection.error.httpStatus ? ` (HTTP ${connection.error.httpStatus})` : ''}
             </p>
           ) : null}
+          <p className={`mt-2 px-2 py-2 text-xs leading-5 ${
+            localAiSummary.tone === 'danger'
+              ? 'border border-[color:rgba(255,114,114,0.28)] bg-[color:rgba(255,114,114,0.08)] text-[var(--danger)]'
+              : localAiSummary.tone === 'success'
+                ? 'border border-[color:rgba(29,170,118,0.24)] bg-[color:rgba(29,170,118,0.08)] text-[var(--success)]'
+                : localAiSummary.tone === 'warning'
+                  ? 'border border-[color:rgba(255,184,78,0.26)] bg-[color:rgba(255,184,78,0.10)] text-[var(--warning)]'
+                  : 'border border-[color:rgba(21,112,239,0.18)] bg-[var(--accent-soft)] text-[var(--accent-strong)]'
+          }`}>
+            {localAiSummary.label}
+          </p>
         </div>
 
         <div className="surface-strong p-3">

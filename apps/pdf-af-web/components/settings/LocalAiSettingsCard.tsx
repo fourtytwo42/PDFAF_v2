@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { DesktopLocalLlmState } from '../../types/health';
+import { useDesktopLocalAiState } from '../../lib/hooks/useDesktopLocalAiState';
 import { Button } from '../common/Button';
 import { StatusPill } from '../common/StatusPill';
 
@@ -37,35 +38,9 @@ function statusTone(
 }
 
 export function LocalAiSettingsCard() {
-  const [state, setState] = useState<DesktopLocalLlmState | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const desktopBridge = typeof window !== 'undefined' ? window.pdfafDesktop?.localAi : undefined;
-  const hasDesktopBridge = Boolean(desktopBridge);
-
-  useEffect(() => {
-    if (!desktopBridge) return;
-
-    let active = true;
-    void desktopBridge.getState().then((nextState) => {
-      if (active) {
-        setState(nextState);
-      }
-    }).catch((error: unknown) => {
-      if (active) {
-        setActionError(error instanceof Error ? error.message : 'Could not read local AI state.');
-      }
-    });
-
-    const unsubscribe = desktopBridge.subscribe((nextState) => {
-      setState(nextState);
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [desktopBridge]);
+  const { desktopBridge, hasDesktopBridge, state, error, setState, setError } = useDesktopLocalAiState();
 
   const progressLabel = useMemo(() => {
     if (!state || state.status !== 'downloading') return null;
@@ -78,6 +53,7 @@ export function LocalAiSettingsCard() {
   const runAction = async (action: () => Promise<DesktopLocalLlmState | null>) => {
     setBusy(true);
     setActionError(null);
+    setError(null);
     try {
       const nextState = await action();
       if (nextState) {
@@ -143,9 +119,9 @@ export function LocalAiSettingsCard() {
             </p>
           ) : null}
 
-          {state?.lastError || actionError ? (
+          {state?.lastError || actionError || error ? (
             <p className="mt-3 border border-[color:rgba(255,114,114,0.28)] bg-[color:rgba(255,114,114,0.08)] px-2 py-2 text-xs text-[var(--danger)]">
-              {actionError ?? state?.lastError}
+              {actionError ?? state?.lastError ?? error}
             </p>
           ) : null}
 

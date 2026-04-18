@@ -44,6 +44,7 @@ async function main() {
   await requirePath(join(appRoot, '.next'));
   await requirePath(nodeModulesRoot);
   await requirePath(manifestPath);
+  await requirePath(join(nodeModulesRoot, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'));
 
   for (const packageName of requiredPackages) {
     await requirePath(join(nodeModulesRoot, ...packageName.split('/')));

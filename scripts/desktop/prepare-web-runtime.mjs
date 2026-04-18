@@ -14,12 +14,12 @@ const publicRoot = join(webRoot, 'public');
 const outputRoot = join(repoRoot, 'apps', 'desktop', '.web-runtime-packaged');
 const outputNodeModulesRoot = join(outputRoot, 'node_modules');
 const outputAppRoot = join(outputRoot, 'apps', 'pdf-af-web');
-const outputAppNodeModulesRoot = join(outputAppRoot, 'node_modules');
 const outputStatic = join(outputAppRoot, '.next', 'static');
 const outputPublic = join(outputAppRoot, 'public');
 const outputManifestPath = join(outputRoot, 'manifest.json');
 
 const webRequire = createRequire(join(webRoot, 'package.json'));
+const repoRequire = createRequire(join(repoRoot, 'package.json'));
 
 function packagePath(rootPath, packageName) {
   return join(rootPath, ...packageName.split('/'));
@@ -73,6 +73,33 @@ async function tryResolvePackageDir(packageName, packageRequire) {
   }
 }
 
+async function resolveRuntimePackageDir(packageName, packageRequire) {
+  const preferredPackageDir = await tryResolvePackageDir(packageName, packageRequire);
+
+  if (packageName !== 'better-sqlite3') {
+    return preferredPackageDir;
+  }
+
+  const preferredBinaryPath = preferredPackageDir
+    ? join(preferredPackageDir, 'build', 'Release', 'better_sqlite3.node')
+    : null;
+
+  if (preferredBinaryPath && await pathExists(preferredBinaryPath)) {
+    return preferredPackageDir;
+  }
+
+  const fallbackPackageDir = await tryResolvePackageDir(packageName, repoRequire);
+  const fallbackBinaryPath = fallbackPackageDir
+    ? join(fallbackPackageDir, 'build', 'Release', 'better_sqlite3.node')
+    : null;
+
+  if (fallbackPackageDir && fallbackBinaryPath && await pathExists(fallbackBinaryPath)) {
+    return fallbackPackageDir;
+  }
+
+  return preferredPackageDir;
+}
+
 async function collectRuntimePackageGraph(entryPackages) {
   const visited = new Set();
   const packageDirs = new Map();
@@ -86,7 +113,7 @@ async function collectRuntimePackageGraph(entryPackages) {
     const current = pending.shift();
     if (!current || visited.has(current.packageName)) continue;
 
-    const packageDir = await tryResolvePackageDir(current.packageName, current.packageRequire);
+    const packageDir = await resolveRuntimePackageDir(current.packageName, current.packageRequire);
     if (!packageDir) {
       if (current.optional) {
         continue;
@@ -160,17 +187,13 @@ async function main() {
 
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputNodeModulesRoot, { recursive: true });
-  await mkdir(outputAppNodeModulesRoot, { recursive: true });
+  await mkdir(outputAppRoot, { recursive: true });
 
   const packageGraph = await collectRuntimePackageGraph(directDependencyNames);
   const materializedPackageNames = [...packageGraph.keys()].sort();
 
   for (const packageName of materializedPackageNames) {
     await materializePackage(packageName, packageGraph.get(packageName), outputNodeModulesRoot);
-  }
-
-  for (const packageName of directDependencyNames) {
-    await materializePackage(packageName, packagePath(outputNodeModulesRoot, packageName), outputAppNodeModulesRoot);
   }
 
   await cp(join(standaloneAppRoot, 'server.js'), join(outputAppRoot, 'server.js'), { force: true });

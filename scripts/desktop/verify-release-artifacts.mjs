@@ -54,6 +54,26 @@ async function waitForUrl(url, timeoutMs = 60000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+async function fetchJson(url, timeoutMs = 30000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (response.ok) {
+        return {
+          payload: await response.json(),
+          elapsedMs: Date.now() - start,
+        };
+      }
+    } catch {
+      // continue polling
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  }
+
+  throw new Error(`Timed out waiting for JSON response from ${url}`);
+}
+
 async function stopChild(child) {
   if (!child || child.exitCode !== null) return;
   await new Promise((resolveStop) => {
@@ -143,6 +163,7 @@ async function main() {
 
   let apiStartupMs = 0;
   let webStartupMs = 0;
+  let filesRouteMs = 0;
 
   try {
     apiStartupMs = await waitForUrl(`http://127.0.0.1:${apiPort}/v1/health`);
@@ -160,6 +181,11 @@ async function main() {
 
     try {
       webStartupMs = await waitForUrl(`http://127.0.0.1:${webPort}/`);
+      const filesResponse = await fetchJson(`http://127.0.0.1:${webPort}/api/files`);
+      filesRouteMs = filesResponse.elapsedMs;
+      if (!Array.isArray(filesResponse.payload?.files)) {
+        throw new Error('Packaged files API returned an unexpected payload.');
+      }
     } finally {
       await stopChild(webChild);
     }
@@ -190,6 +216,7 @@ async function main() {
       .sort(),
     apiStartupMs,
     webStartupMs,
+    filesRouteMs,
     packagedArtifacts,
   };
 
