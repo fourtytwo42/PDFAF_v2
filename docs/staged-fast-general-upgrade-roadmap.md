@@ -100,6 +100,14 @@ Make scoring more trustworthy before expanding repairs.
 - The experiment corpus produces more honest outputs without large runtime growth.
 - API/output compatibility is preserved for existing `score`, `grade`, `categories`, and `findings`.
 
+### Status
+
+- Implemented and calibrated.
+- Benchmarked against the pre-Stage-1 baseline with formal comparison artifacts under `Output/experiment-corpus-baseline/comparison-stage1-analyze/` and `Output/experiment-corpus-baseline/comparison-stage1-full/`.
+- Closed with a Stage 1 acceptance audit under `Output/experiment-corpus-baseline/stage1-acceptance/`.
+- Acceptance result: `suspicious-overbroad = 0`, so no additional Stage 1 calibration patch was required.
+- Stage 2 entry remains read-only classification and failure profiling; planner/routing changes stay out of scope until Stage 2.
+
 ## Stage 2: Fast Structural Classification And Failure Profiling
 
 ### Goal
