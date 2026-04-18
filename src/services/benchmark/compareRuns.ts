@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import type { BenchmarkRunSummary, FrequencyRow, SummaryStats } from './experimentCorpus.js';
+import type { BenchmarkRunSummary, CostBenefitSummary, FrequencyRow, RuntimeAggregateRow, SummaryStats } from './experimentCorpus.js';
 
 export interface BenchmarkComparison {
   beforeRunId: string;
@@ -28,6 +28,10 @@ export interface BenchmarkComparison {
     afterManualReviewRequiredDelta: number;
     reanalyzedManualReviewRequiredDelta: number;
     scoreCapFrequencyDelta: Array<FrequencyDeltaRow>;
+    stageRuntimeMedianDeltaMs: Array<RuntimeDeltaRow>;
+    toolRuntimeMedianDeltaMs: Array<RuntimeDeltaRow>;
+    semanticLaneRuntimeMedianDeltaMs: Array<RuntimeDeltaRow>;
+    costBenefitDelta: CostBenefitDelta;
   } | null;
   cohorts: Record<string, CohortComparison>;
 }
@@ -39,6 +43,7 @@ export interface CohortComparison {
   scoreCapFrequencyDelta: Array<FrequencyDeltaRow>;
   remediationDeltaMeanDelta: number;
   remediationRuntimeMedianDeltaMs: number;
+  costBenefitDelta: CostBenefitDelta;
 }
 
 export interface FrequencyDeltaRow {
@@ -46,6 +51,18 @@ export interface FrequencyDeltaRow {
   before: number;
   after: number;
   delta: number;
+}
+
+export interface RuntimeDeltaRow {
+  key: string;
+  beforeMedianMs: number;
+  afterMedianMs: number;
+  deltaMedianMs: number;
+}
+
+export interface CostBenefitDelta {
+  scoreDeltaPerSecond: number | null;
+  confidenceDeltaPerSecond: number | null;
 }
 
 function frequencyMap(rows: Array<FrequencyRow> | undefined): Map<string, number> {
@@ -69,6 +86,29 @@ function compareFrequencyRows(
 
 function statDelta(before: SummaryStats, after: SummaryStats, field: keyof SummaryStats): number {
   return (after[field] as number) - (before[field] as number);
+}
+
+function runtimeDeltaRows(
+  before: Array<RuntimeAggregateRow> | undefined,
+  after: Array<RuntimeAggregateRow> | undefined,
+): Array<RuntimeDeltaRow> {
+  const beforeMap = new Map((before ?? []).map(row => [row.key, row]));
+  const afterMap = new Map((after ?? []).map(row => [row.key, row]));
+  return [...new Set([...beforeMap.keys(), ...afterMap.keys()])]
+    .sort((a, b) => a.localeCompare(b))
+    .map(key => ({
+      key,
+      beforeMedianMs: beforeMap.get(key)?.medianMs ?? 0,
+      afterMedianMs: afterMap.get(key)?.medianMs ?? 0,
+      deltaMedianMs: (afterMap.get(key)?.medianMs ?? 0) - (beforeMap.get(key)?.medianMs ?? 0),
+    }));
+}
+
+function costBenefitDelta(before: CostBenefitSummary | undefined, after: CostBenefitSummary | undefined): CostBenefitDelta {
+  return {
+    scoreDeltaPerSecond: (after?.scoreDeltaPerSecond ?? 0) - (before?.scoreDeltaPerSecond ?? 0),
+    confidenceDeltaPerSecond: (after?.confidenceDeltaPerSecond ?? 0) - (before?.confidenceDeltaPerSecond ?? 0),
+  };
 }
 
 export function compareBenchmarkSummaries(before: BenchmarkRunSummary, after: BenchmarkRunSummary): BenchmarkComparison {
@@ -109,6 +149,19 @@ export function compareBenchmarkSummaries(before: BenchmarkRunSummary, after: Be
             before.remediate.afterScoreCapsByCategory,
             after.remediate.afterScoreCapsByCategory,
           ),
+          stageRuntimeMedianDeltaMs: runtimeDeltaRows(
+            before.remediate.stageRuntimeFrequency,
+            after.remediate.stageRuntimeFrequency,
+          ),
+          toolRuntimeMedianDeltaMs: runtimeDeltaRows(
+            before.remediate.toolRuntimeFrequency,
+            after.remediate.toolRuntimeFrequency,
+          ),
+          semanticLaneRuntimeMedianDeltaMs: runtimeDeltaRows(
+            before.remediate.semanticLaneRuntimeFrequency,
+            after.remediate.semanticLaneRuntimeFrequency,
+          ),
+          costBenefitDelta: costBenefitDelta(before.remediate.costBenefit, after.remediate.costBenefit),
         }
       : null,
     cohorts: Object.fromEntries(
@@ -130,6 +183,7 @@ export function compareBenchmarkSummaries(before: BenchmarkRunSummary, after: Be
               (afterCohort?.remediationDelta.mean ?? 0) - (beforeCohort?.remediationDelta.mean ?? 0),
             remediationRuntimeMedianDeltaMs:
               (afterCohort?.wallRemediateMs.median ?? 0) - (beforeCohort?.wallRemediateMs.median ?? 0),
+            costBenefitDelta: costBenefitDelta(beforeCohort?.costBenefit, afterCohort?.costBenefit),
           }];
         }),
     ),
@@ -160,14 +214,16 @@ export function renderBenchmarkComparisonMarkdown(comparison: BenchmarkCompariso
     lines.push(`- **Remediation runtime p95 delta:** ${comparison.remediate.wallP95DeltaMs.toFixed(2)} ms`);
     lines.push(`- **Remediation manual-review delta (before/after/reanalyzed): ${comparison.remediate.beforeManualReviewRequiredDelta} / ${comparison.remediate.afterManualReviewRequiredDelta} / ${comparison.remediate.reanalyzedManualReviewRequiredDelta}`);
     lines.push(`- **Remediation score-cap delta:** ${comparison.remediate.scoreCapFrequencyDelta.length ? comparison.remediate.scoreCapFrequencyDelta.map(row => `${row.key}:${row.delta >= 0 ? '+' : ''}${row.delta}`).join(', ') : 'none'}`);
+    lines.push(`- **Remediation score/sec delta:** ${comparison.remediate.costBenefitDelta.scoreDeltaPerSecond?.toFixed(3) ?? 'n/a'}`);
+    lines.push(`- **Remediation confidence/sec delta:** ${comparison.remediate.costBenefitDelta.confidenceDeltaPerSecond?.toFixed(3) ?? 'n/a'}`);
   }
   lines.push('');
   lines.push('## Per Cohort');
   lines.push('');
-  lines.push('| Cohort | Analyze mean Δ | Analyze runtime median Δ ms | Manual-review Δ | Remediation delta mean Δ | Remediation runtime median Δ ms |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| Cohort | Analyze mean Δ | Analyze runtime median Δ ms | Manual-review Δ | Remediation delta mean Δ | Remediation runtime median Δ ms | Score/sec Δ |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const [cohort, row] of Object.entries(comparison.cohorts)) {
-    lines.push(`| ${cohort} | ${row.analyzeMeanDelta.toFixed(2)} | ${row.analyzeRuntimeMedianDeltaMs.toFixed(2)} | ${row.manualReviewRequiredDelta} | ${row.remediationDeltaMeanDelta.toFixed(2)} | ${row.remediationRuntimeMedianDeltaMs.toFixed(2)} |`);
+    lines.push(`| ${cohort} | ${row.analyzeMeanDelta.toFixed(2)} | ${row.analyzeRuntimeMedianDeltaMs.toFixed(2)} | ${row.manualReviewRequiredDelta} | ${row.remediationDeltaMeanDelta.toFixed(2)} | ${row.remediationRuntimeMedianDeltaMs.toFixed(2)} | ${row.costBenefitDelta.scoreDeltaPerSecond?.toFixed(3) ?? 'n/a'} |`);
   }
   lines.push('');
   return lines.join('\n');

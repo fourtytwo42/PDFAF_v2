@@ -125,6 +125,18 @@ function buildFigureCandidates(snapshot: DocumentSnapshot): FigureCandidate[] {
   return out;
 }
 
+function countEligibleFigureCandidates(snapshot: DocumentSnapshot): number {
+  let count = 0;
+  for (const fig of snapshot.figures) {
+    if (fig.isArtifact) continue;
+    if (!fig.structRef) continue;
+    const needs = !fig.hasAlt || !fig.altText?.trim() || isGenericAlt(fig.altText);
+    if (!needs) continue;
+    count++;
+  }
+  return count;
+}
+
 function expandFigBboxForCaptionProximity(fig: [number, number, number, number]): [number, number, number, number] {
   const pad = 64;
   return [fig[0] - pad, fig[1] - pad, fig[2] + pad, fig[3] + pad];
@@ -322,9 +334,34 @@ Rules:
  */
 export async function applySemanticRepairs(input: SemanticRepairInput): Promise<SemanticRepairOutput> {
   const started = Date.now();
+  let gateMs = 0;
+  let candidateMs = 0;
+  let llmMs = 0;
+  let mutationMs = 0;
+  let verifyMs = 0;
   const { buffer, filename, analysis, snapshot, options } = input;
   const scoreBefore = analysis.score;
   const altCat = analysis.categories.find(c => c.key === 'alt_text');
+  const totalEligibleCandidates = countEligibleFigureCandidates(snapshot);
+  const runtimeFor = (
+    skippedReason: SemanticRemediationSummary['skippedReason'],
+    changeStatus: SemanticRemediationSummary['changeStatus'],
+    candidateCountBefore: number,
+    candidateCountAfter: number,
+  ) => ({
+    lane: 'figures' as const,
+    totalMs: Date.now() - started,
+    gateMs,
+    candidateMs,
+    llmMs,
+    mutationMs,
+    verifyMs,
+    candidateCountBefore,
+    candidateCountAfter,
+    candidateCapHit: totalEligibleCandidates > candidateCountBefore && candidateCountBefore > 0,
+    skippedReason,
+    changeStatus,
+  });
   const finishEmpty = (
     reason: SemanticRemediationSummary['skippedReason'],
     gate: ReturnType<typeof buildSemanticGateSummary>,
@@ -343,12 +380,20 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
       scoreAfter: scoreBefore,
       batches: [],
       gate,
+      runtime: runtimeFor(
+        reason,
+        reason === 'completed_no_changes' ? 'no_change' : 'skipped',
+        gate.candidateCountBefore ?? 0,
+        gate.candidateCountAfter ?? gate.candidateCountBefore ?? 0,
+      ),
       changeStatus: reason === 'completed_no_changes' ? 'no_change' : 'skipped',
       errorMessage: err,
     }),
   });
 
+  const gateStarted = Date.now();
   if (snapshot.pdfClass === 'scanned') {
+    gateMs += Date.now() - gateStarted;
     return finishEmpty(
       'scanned_pdf',
       buildSemanticGateSummary({
@@ -362,6 +407,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   }
 
   if (!altCat?.applicable || altCat.score >= REMEDIATION_CATEGORY_THRESHOLD) {
+    gateMs += Date.now() - gateStarted;
     return finishEmpty(
       'alt_text_sufficient',
       buildSemanticGateSummary({
@@ -374,6 +420,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     );
   }
 
+  const candidateStarted = Date.now();
   const candidates = buildFigureCandidates(snapshot);
   const unresolvedStructureDebt =
     (snapshot.acrobatStyleAltRisks?.nonFigureWithAltCount ?? 0)
@@ -391,6 +438,8 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     },
   });
   if (candidates.length === 0) {
+    candidateMs += Date.now() - candidateStarted;
+    gateMs += Date.now() - gateStarted;
     return finishEmpty(
       'no_candidates',
       buildSemanticGateSummary({
@@ -404,6 +453,8 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     );
   }
   if (unresolvedStructureDebt > 0) {
+    candidateMs += Date.now() - candidateStarted;
+    gateMs += Date.now() - gateStarted;
     return finishEmpty(
       'gate_blocked',
       buildSemanticGateSummary({
@@ -435,8 +486,11 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     const dataUrl = await renderPageToJpegDataUrl(buffer, p + 1);
     if (dataUrl) pageImages.set(p, dataUrl);
   }
+  candidateMs += Date.now() - candidateStarted;
+  gateMs += Date.now() - gateStarted;
 
   const figureBatches = chunk(candidates, SEMANTIC_FIGURE_BATCH_SIZE);
+  const llmStarted = Date.now();
   const batchResults = await runBatchesWithConcurrency(
     figureBatches,
     SEMANTIC_REQUEST_CONCURRENCY,
@@ -455,6 +509,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
         i,
       ),
   );
+  llmMs += Date.now() - llmStarted;
 
   const batchSummaries: SemanticBatchSummary[] = batchResults.map(r => r.summary);
   if (batchSummaries.some(b => isLlmTimeoutOrAbortError(b.error))) {
@@ -479,6 +534,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
           targetCategoryKey: 'alt_text',
           targetCategoryScoreBefore: altCat.score,
         }),
+        runtime: runtimeFor('llm_timeout', 'skipped', candidates.length, candidates.length),
         changeStatus: 'skipped',
         errorMessage: batchSummaries.find(b => isLlmTimeoutOrAbortError(b.error))?.error,
       }),
@@ -526,6 +582,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
           targetCategoryScoreBefore: altCat.score,
           targetCategoryScoreAfter: altCat.score,
         }),
+        runtime: runtimeFor('completed_no_changes', 'no_change', candidates.length, candidates.length),
         changeStatus: 'no_change',
       }),
     };
@@ -572,11 +629,13 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
     };
   }
 
+  const mutationStarted = Date.now();
   const { buffer: mutated, result } = await runPythonMutationBatch(buffer, mutations, {
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   });
   if (!result.success) {
+    mutationMs += Date.now() - mutationStarted;
     return {
       buffer,
       analysis,
@@ -600,6 +659,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
           targetCategoryScoreBefore: altCat.score,
           targetCategoryScoreAfter: altCat.score,
         }),
+        runtime: runtimeFor('error', 'skipped', candidates.length, candidates.length),
         changeStatus: 'skipped',
         errorMessage: JSON.stringify(result.failed),
       }),
@@ -618,7 +678,9 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   if (repairAlt.result.success) {
     bufferForAnalyze = repairAlt.buffer;
   }
+  mutationMs += Date.now() - mutationStarted;
 
+  const verifyStarted = Date.now();
   const tmpPath = join(tmpdir(), `pdfaf-sem-${randomUUID()}.pdf`);
   await writeFile(tmpPath, bufferForAnalyze);
   let nextAnalysis: AnalysisResult;
@@ -630,6 +692,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   } finally {
     await unlink(tmpPath).catch(() => {});
   }
+  verifyMs += Date.now() - verifyStarted;
 
   const nextCandidates = buildFigureCandidates(nextSnapshot);
   const decision = evaluateSemanticMutation({
@@ -662,6 +725,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
         scoreAfter: scoreBefore,
         batches: batchSummaries,
         gate: decision.gate,
+        runtime: runtimeFor(decision.skippedReason, decision.changeStatus, candidates.length, candidates.length),
         changeStatus: decision.changeStatus,
         errorMessage: decision.errorMessage,
       }),
@@ -682,6 +746,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
       scoreAfter: nextAnalysis.score,
       batches: batchSummaries,
       gate: decision.gate,
+      runtime: runtimeFor('completed', 'applied', candidates.length, nextCandidates.length),
       changeStatus: 'applied',
     }),
   };

@@ -33,7 +33,7 @@ import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untagg
 import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../services/semantic/semanticPolicy.js';
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
-import type { RemediationResult, SemanticRemediationSummary } from '../types.js';
+import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
 export function mergeSequentialSemanticSummaries(
@@ -101,6 +101,39 @@ export function mergeSequentialSemanticSummaries(
     ...(!anyApplied && fatal?.errorMessage ? { errorMessage: fatal.errorMessage } : {}),
     trustDowngraded: parts.some(p => p.trustDowngraded === true),
   });
+}
+
+function runtimeCounts(values: string[]): RuntimeCountRow[] {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function mergeRuntimeSummary(
+  deterministic: RemediationRuntimeSummary | undefined,
+  afterRuntime: RemediationResult['after']['runtimeSummary'] | undefined,
+  semanticSummaries: SemanticRemediationSummary[],
+): RemediationRuntimeSummary | undefined {
+  if (!deterministic && semanticSummaries.length === 0 && !afterRuntime) return undefined;
+  const semanticSkipReasons = runtimeCounts(
+    semanticSummaries.map(summary => `${summary.lane}:${summary.skippedReason}`),
+  );
+  return {
+    analysisBefore: deterministic?.analysisBefore ?? null,
+    analysisAfter: afterRuntime ?? null,
+    deterministicTotalMs: deterministic?.deterministicTotalMs ?? 0,
+    stageTimings: deterministic?.stageTimings ?? [],
+    toolTimings: deterministic?.toolTimings ?? [],
+    semanticLaneTimings: semanticSummaries.flatMap(summary => summary.runtime ? [summary.runtime] : []),
+    boundedWork: {
+      semanticCandidateCapsHit: semanticSummaries.filter(summary => summary.runtime?.candidateCapHit).length,
+      deterministicEarlyExitCount: deterministic?.boundedWork.deterministicEarlyExitCount ?? 0,
+      deterministicEarlyExitReasons: deterministic?.boundedWork.deterministicEarlyExitReasons ?? [],
+      semanticSkipReasons,
+    },
+  };
 }
 
 export const remediateRouter: IRouter = Router();
@@ -478,6 +511,17 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       (semanticHeadingsSummary?.durationMs ?? 0) +
       (semanticPromoteHeadingsSummary?.durationMs ?? 0) +
       (semanticUntaggedHeadingsSummary?.durationMs ?? 0);
+    const semanticSummaries = [
+      semanticSummary,
+      semanticHeadingsSummary,
+      semanticPromoteHeadingsSummary,
+      semanticUntaggedHeadingsSummary,
+    ].filter((summary): summary is SemanticRemediationSummary => summary != null);
+    const runtimeSummary = mergeRuntimeSummary(
+      remediation.runtimeSummary,
+      outAfter.runtimeSummary,
+      semanticSummaries,
+    );
 
     const body: RemediationResult = {
       ...remediation,
@@ -487,6 +531,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       remediatedPdfTooLarge: enc.remediatedPdfTooLarge,
       remediationDurationMs: totalDuration,
       improved: outAfter.score > remediation.before.score,
+      ...(runtimeSummary ? { runtimeSummary } : {}),
       ...(buildRemediationOutcomeSummary({
         before: remediation.before,
         after: outAfter,
@@ -572,12 +617,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           planningSummary: remediation.planningSummary,
           structuralConfidenceGuard: remediation.structuralConfidenceGuard,
           remediationOutcomeSummary: body.remediationOutcomeSummary,
-          semanticSummaries: [
-            body.semantic,
-            body.semanticHeadings,
-            body.semanticPromoteHeadings,
-            body.semanticUntaggedHeadings,
-          ].filter((summary): summary is SemanticRemediationSummary => summary != null),
+          semanticSummaries,
         },
       );
       const maxReport = 512 * 1024;

@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,10 +26,14 @@ import type {
   PlanningSummary,
   PlannedRemediationTool,
   Playbook,
+  RemediationBoundedWorkSummary,
   RemediationPlan,
   RemediationResult,
   RemediationRoundSummary,
+  RemediationRuntimeSummary,
+  RemediationStageRuntimeSummary,
   RemediationStagePlan,
+  RemediationToolRuntimeSummary,
   RemediatePdfOutcome,
   StructuralConfidenceGuardSummary,
 } from '../../types.js';
@@ -166,6 +171,50 @@ function buildOcrPipelineSummary(tools: AppliedRemediationTool[]): OcrPipelineSu
   };
 }
 
+function frequencyRows(values: string[]): Array<RemediationBoundedWorkSummary['deterministicEarlyExitReasons'][number]> {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function emptyRuntimeSummary(before: AnalysisResult): RemediationRuntimeSummary {
+  return {
+    analysisBefore: before.runtimeSummary ?? null,
+    analysisAfter: null,
+    deterministicTotalMs: 0,
+    stageTimings: [],
+    toolTimings: [],
+    semanticLaneTimings: [],
+    boundedWork: {
+      semanticCandidateCapsHit: 0,
+      deterministicEarlyExitCount: 0,
+      deterministicEarlyExitReasons: [],
+      semanticSkipReasons: [],
+    },
+  };
+}
+
+function pushStageTiming(
+  runtimeSummary: RemediationRuntimeSummary,
+  input: Omit<RemediationStageRuntimeSummary, 'key'>,
+): void {
+  runtimeSummary.stageTimings.push({
+    ...input,
+    key: `${input.source}:stage${input.stageNumber}`,
+  });
+}
+
+function noteEarlyExit(runtimeSummary: RemediationRuntimeSummary, reason: string): void {
+  const reasons = [
+    ...runtimeSummary.boundedWork.deterministicEarlyExitReasons.flatMap(row => Array(row.count).fill(row.key)),
+    reason,
+  ];
+  runtimeSummary.boundedWork.deterministicEarlyExitCount = reasons.length;
+  runtimeSummary.boundedWork.deterministicEarlyExitReasons = frequencyRows(reasons);
+}
+
 async function bufferSha256(buf: Buffer): Promise<string> {
   return createHash('sha256').update(buf).digest('hex');
 }
@@ -195,6 +244,7 @@ async function applyGuardedPostPass(args: {
   currentSnapshot: DocumentSnapshot;
   nextBuffer: Buffer;
   appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
   tempPrefix: string;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
   const {
@@ -208,8 +258,10 @@ async function applyGuardedPostPass(args: {
     currentSnapshot,
     nextBuffer,
     appliedTools,
+    runtimeSummary,
     tempPrefix,
   } = args;
+  const started = performance.now();
   if (nextBuffer.equals(currentBuffer)) {
     return {
       buffer: currentBuffer,
@@ -220,6 +272,7 @@ async function applyGuardedPostPass(args: {
   }
 
   const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix);
+  const durationMs = performance.now() - started;
   const confidenceGuard = compareStructuralConfidence(currentAnalysis, analyzed.result);
   if (analyzed.result.score > currentAnalysis.score && confidenceGuard.regressed) {
     appliedTools.push({
@@ -231,6 +284,16 @@ async function applyGuardedPostPass(args: {
       delta: 0,
       outcome: 'rejected',
       details: confidenceGuard.reason ?? 'stage_regressed_structural_confidence',
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: 'rejected',
     });
     return {
       buffer: currentBuffer,
@@ -249,6 +312,16 @@ async function applyGuardedPostPass(args: {
     delta: analyzed.result.score - currentAnalysis.score,
     outcome: 'applied',
     details,
+    durationMs,
+    source: 'post_pass',
+  });
+  runtimeSummary?.toolTimings.push({
+    toolName,
+    stage,
+    round,
+    source: 'post_pass',
+    durationMs,
+    outcome: 'applied',
   });
   return {
     buffer: nextBuffer,
@@ -262,23 +335,32 @@ export async function runSingleTool(
   buffer: Buffer,
   tool: PlannedRemediationTool,
   _snapshot: DocumentSnapshot,
-): Promise<{ buffer: Buffer; outcome: AppliedRemediationTool['outcome']; details?: string }> {
+): Promise<{ buffer: Buffer; outcome: AppliedRemediationTool['outcome']; details?: string; durationMs: number }> {
   const { toolName, params } = tool;
   const beforeHash = await bufferSha256(buffer);
+  const started = performance.now();
 
   try {
     switch (toolName) {
       case 'set_document_title': {
         const title = String(params['title'] ?? '').trim();
-        if (!title) return { buffer, outcome: 'no_effect', details: 'empty_title' };
+        if (!title) return { buffer, outcome: 'no_effect', details: 'empty_title', durationMs: performance.now() - started };
         const next = await metadataTools.setDocumentTitle(buffer, title);
-        return { buffer: next, outcome: (await bufferSha256(next)) !== beforeHash ? 'applied' : 'no_effect' };
+        return {
+          buffer: next,
+          outcome: (await bufferSha256(next)) !== beforeHash ? 'applied' : 'no_effect',
+          durationMs: performance.now() - started,
+        };
       }
       case 'set_document_language': {
         const lang = String(params['language'] ?? '').trim();
-        if (!lang) return { buffer, outcome: 'no_effect', details: 'empty_language' };
+        if (!lang) return { buffer, outcome: 'no_effect', details: 'empty_language', durationMs: performance.now() - started };
         const next = await metadataTools.setDocumentLanguage(buffer, lang);
-        return { buffer: next, outcome: (await bufferSha256(next)) !== beforeHash ? 'applied' : 'no_effect' };
+        return {
+          buffer: next,
+          outcome: (await bufferSha256(next)) !== beforeHash ? 'applied' : 'no_effect',
+          durationMs: performance.now() - started,
+        };
       }
       case 'set_pdfua_identification': {
         const lang = String(params['language'] ?? 'en-US').trim();
@@ -286,23 +368,23 @@ export async function runSingleTool(
           { op: 'set_pdfua_identification', params: { language: lang } },
         ]);
         if (!result.success) {
-          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed) };
+          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
         if (result.applied.length === 0) {
-          return { buffer, outcome: 'no_effect' };
+          return { buffer, outcome: 'no_effect', durationMs: performance.now() - started };
         }
-        return { buffer: next, outcome: 'applied' };
+        return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
       }
       case 'ocr_scanned_pdf': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
         const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
         if (!result.success) {
-          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed) };
+          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
         if (result.applied.length === 0) {
-          return { buffer, outcome: 'no_effect' };
+          return { buffer, outcome: 'no_effect', durationMs: performance.now() - started };
         }
-        return { buffer: next, outcome: 'applied' };
+        return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
       }
       case 'bootstrap_struct_tree':
       case 'repair_structure_conformance':
@@ -329,18 +411,18 @@ export async function runSingleTool(
         const mutations: PythonMutation[] = [{ op: toolName, params }];
         const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
         if (!result.success) {
-          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed) };
+          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
         if (result.applied.length === 0) {
-          return { buffer, outcome: 'no_effect' };
+          return { buffer, outcome: 'no_effect', durationMs: performance.now() - started };
         }
-        return { buffer: next, outcome: 'applied' };
+        return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
       }
       default:
-        return { buffer, outcome: 'rejected', details: 'not_implemented' };
+        return { buffer, outcome: 'rejected', details: 'not_implemented', durationMs: performance.now() - started };
     }
   } catch (e) {
-    return { buffer, outcome: 'failed', details: (e as Error).message };
+    return { buffer, outcome: 'failed', details: (e as Error).message, durationMs: performance.now() - started };
   }
 }
 
@@ -389,9 +471,11 @@ async function applyAccessibilityStructureEnsure(args: {
   currentAnalysis: AnalysisResult;
   currentSnapshot: DocumentSnapshot;
   appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
-  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
   const { filename, signal, round } = args;
+  const stageStarted = performance.now();
   const { buffer: fb, result: fr } = await runPythonMutationBatch(
     currentBuffer,
     [{ op: 'ensure_accessibility_tagging', params: { pdfClass: currentSnapshot.pdfClass } }],
@@ -409,11 +493,23 @@ async function applyAccessibilityStructureEnsure(args: {
       currentSnapshot,
       nextBuffer: fb,
       appliedTools,
+      runtimeSummary,
       tempPrefix: 'pdfaf-struct',
     });
     currentBuffer = accepted.buffer;
     currentAnalysis = accepted.analysis;
     currentSnapshot = accepted.snapshot;
+  }
+
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 11,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: currentAnalysis.runtimeSummary?.totalMs ?? currentAnalysis.analysisDurationMs,
+    });
   }
 
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
@@ -428,9 +524,11 @@ async function applyIcjiaDocumentFinalization(args: {
   currentAnalysis: AnalysisResult;
   currentSnapshot: DocumentSnapshot;
   appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
-  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
   const { filename, signal, round } = args;
+  const stageStarted = performance.now();
 
   if (!currentSnapshot.metadata.title?.trim()) {
     const title = filename.replace(/\.pdf$/i, '').slice(0, 500);
@@ -446,6 +544,7 @@ async function applyIcjiaDocumentFinalization(args: {
       currentSnapshot,
       nextBuffer: next,
       appliedTools,
+      runtimeSummary,
       tempPrefix: 'pdfaf-fin',
     });
     currentBuffer = accepted.buffer;
@@ -491,6 +590,7 @@ async function applyIcjiaDocumentFinalization(args: {
         currentSnapshot,
         nextBuffer: bmBuf,
         appliedTools,
+        runtimeSummary,
         tempPrefix: 'pdfaf-fin',
       });
       currentBuffer = accepted.buffer;
@@ -535,14 +635,26 @@ async function applyIcjiaDocumentFinalization(args: {
       details: 'optional_gs_font_embed',
       currentBuffer,
       currentAnalysis,
-      currentSnapshot,
-      nextBuffer: gsBuf,
-      appliedTools,
-      tempPrefix: 'pdfaf-fin',
-    });
+        currentSnapshot,
+        nextBuffer: gsBuf,
+        appliedTools,
+        runtimeSummary,
+        tempPrefix: 'pdfaf-fin',
+      });
     currentBuffer = accepted.buffer;
     currentAnalysis = accepted.analysis;
     currentSnapshot = accepted.snapshot;
+  }
+
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 12,
+      round,
+      source: 'post_pass',
+      toolCount: appliedTools.filter(tool => tool.source === 'post_pass' && tool.round === round && (tool.stage === 11 || tool.stage === 12)).length,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: currentAnalysis.runtimeSummary?.totalMs ?? currentAnalysis.analysisDurationMs,
+    });
   }
 
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
@@ -560,6 +672,7 @@ export async function executePlaybook(
 ): Promise<RemediatePdfOutcome> {
   const started = Date.now();
   const before = initialAnalysis;
+  const runtimeSummary = emptyRuntimeSummary(before);
   let currentBuffer = buffer;
   let currentAnalysis = initialAnalysis;
   let currentSnapshot = initialSnapshot;
@@ -573,6 +686,7 @@ export async function executePlaybook(
       currentAnalysis,
       currentSnapshot,
       appliedTools,
+      runtimeSummary,
     });
     currentBuffer = st0.buffer;
     currentAnalysis = st0.analysis;
@@ -594,6 +708,7 @@ export async function executePlaybook(
       currentSnapshot,
       nextBuffer: alt0.buffer,
       appliedTools,
+      runtimeSummary,
       tempPrefix: 'pdfaf-alt',
     });
     currentBuffer = altAccepted.buffer;
@@ -606,6 +721,7 @@ export async function executePlaybook(
       currentAnalysis,
       currentSnapshot,
       appliedTools,
+      runtimeSummary,
     });
     currentBuffer = fin0.buffer;
     currentAnalysis = fin0.analysis;
@@ -634,6 +750,11 @@ export async function executePlaybook(
       ],
       remediationDurationMs: Date.now() - started,
       improved: false,
+      runtimeSummary: {
+        ...runtimeSummary,
+        analysisAfter: currentAnalysis.runtimeSummary ?? null,
+        deterministicTotalMs: Date.now() - started,
+      },
       ...(ocrPipeline ? { ocrPipeline } : {}),
       ...(remediationOutcomeSummary ? { remediationOutcomeSummary } : {}),
     };
@@ -645,6 +766,7 @@ export async function executePlaybook(
     const stageStartAnalysis = currentAnalysis;
     const stageStartScore = currentAnalysis.score;
     const stageApplied: AppliedRemediationTool[] = [];
+    const stageStarted = performance.now();
 
     let buf = currentBuffer;
     for (const step of stage.tools) {
@@ -653,7 +775,7 @@ export async function executePlaybook(
         ...step.params,
       };
       const tool: PlannedRemediationTool = { ...step, params };
-      const { buffer: next, outcome, details } = await runSingleTool(buf, tool, currentSnapshot);
+      const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, tool, currentSnapshot);
       buf = next;
       stageApplied.push({
         toolName: tool.toolName,
@@ -664,6 +786,16 @@ export async function executePlaybook(
         delta: 0,
         outcome,
         details,
+        durationMs,
+        source: 'playbook',
+      });
+      runtimeSummary.toolTimings.push({
+        toolName: tool.toolName,
+        stage: stage.stageNumber,
+        round: 1,
+        source: 'playbook',
+        durationMs,
+        outcome,
       });
     }
 
@@ -709,6 +841,14 @@ export async function executePlaybook(
         a.delta = analyzed.result.score - stageStartScore;
       }
     }
+    pushStageTiming(runtimeSummary, {
+      stageNumber: stage.stageNumber,
+      round: 1,
+      source: 'playbook',
+      toolCount: stage.tools.length,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs,
+    });
     appliedTools.push(...stageApplied);
   }
 
@@ -720,6 +860,7 @@ export async function executePlaybook(
       currentAnalysis,
       currentSnapshot,
       appliedTools,
+      runtimeSummary,
     });
     currentBuffer = st.buffer;
     currentAnalysis = st.analysis;
@@ -730,6 +871,7 @@ export async function executePlaybook(
     const scoreBefore = currentAnalysis.score;
     const alt = await applyPostRemediationAltRepair(currentBuffer, filename, currentAnalysis, currentSnapshot);
     if (!alt.buffer.equals(currentBuffer)) {
+      const durationMs = 0;
       currentBuffer = alt.buffer;
       currentAnalysis = alt.analysis;
       currentSnapshot = alt.snapshot;
@@ -742,6 +884,8 @@ export async function executePlaybook(
         delta: currentAnalysis.score - scoreBefore,
         outcome: 'applied',
         details: 'nested_alt_cleanup',
+        durationMs,
+        source: 'post_pass',
       });
     }
   }
@@ -753,6 +897,7 @@ export async function executePlaybook(
     currentAnalysis,
     currentSnapshot,
     appliedTools,
+    runtimeSummary,
   });
   currentBuffer = finPb.buffer;
   currentAnalysis = finPb.analysis;
@@ -793,6 +938,11 @@ export async function executePlaybook(
     rounds,
     remediationDurationMs: Date.now() - started,
     improved,
+    runtimeSummary: {
+      ...runtimeSummary,
+      analysisAfter: currentAnalysis.runtimeSummary ?? null,
+      deterministicTotalMs: Date.now() - started,
+    },
     ...(summarizeStructuralConfidenceGuard(appliedTools)
       ? { structuralConfidenceGuard: summarizeStructuralConfidenceGuard(appliedTools) }
       : {}),
@@ -831,6 +981,7 @@ export async function remediatePdf(
   const toolOutcomeStore = options?.toolOutcomeStore ?? createToolOutcomeStore(getDb());
 
   const before = initialAnalysis;
+  const runtimeSummary = emptyRuntimeSummary(before);
   let currentBuffer = buffer;
   let currentAnalysis = initialAnalysis;
   let currentSnapshot = initialSnapshot;
@@ -850,7 +1001,7 @@ export async function remediatePdf(
       activePlaybook,
     );
     recordToolOutcomes(toolOutcomeStore, before.pdfClass, pb.remediation.appliedTools);
-    if (pb.remediation.improved) {
+      if (pb.remediation.improved) {
       playbookStore.recordResult(
         activePlaybook.id,
         true,
@@ -862,13 +1013,19 @@ export async function remediatePdf(
   }
 
   for (let round = 1; round <= maxRounds; round++) {
-    if (currentAnalysis.score >= targetScore) break;
+    if (currentAnalysis.score >= targetScore) {
+      noteEarlyExit(runtimeSummary, 'target_score_reached');
+      break;
+    }
 
     const roundStartScore = currentAnalysis.score;
     let rawPlan = planForRemediation(currentAnalysis, currentSnapshot, appliedTools, toolOutcomeStore);
     planningSummary = mergePlanningSummaries(planningSummary, rawPlan.planningSummary);
     const plan = filterPlan(rawPlan);
-    if (plan.stages.length === 0) break;
+    if (plan.stages.length === 0) {
+      noteEarlyExit(runtimeSummary, 'no_planned_stages');
+      break;
+    }
     const roundBase = 24 + ((round - 1) / Math.max(1, maxRounds)) * 42;
     const roundSpan = 42 / Math.max(1, maxRounds);
     await reportProgress(roundBase, 'Choosing fixes', `Pass ${round} of ${maxRounds}`);
@@ -885,10 +1042,11 @@ export async function remediatePdf(
       const stageStartAnalysis = currentAnalysis;
       const stageStartScore = currentAnalysis.score;
       const stageApplied: AppliedRemediationTool[] = [];
+      const stageStarted = performance.now();
 
       let buf = currentBuffer;
       for (const tool of stage.tools) {
-        const { buffer: next, outcome, details } = await runSingleTool(buf, tool, currentSnapshot);
+        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, tool, currentSnapshot);
         buf = next;
         stageApplied.push({
           toolName: tool.toolName,
@@ -899,6 +1057,16 @@ export async function remediatePdf(
           delta: 0,
           outcome,
           details,
+          durationMs,
+          source: 'planner',
+        });
+        runtimeSummary.toolTimings.push({
+          toolName: tool.toolName,
+          stage: stage.stageNumber,
+          round,
+          source: 'planner',
+          durationMs,
+          outcome,
         });
       }
 
@@ -944,6 +1112,14 @@ export async function remediatePdf(
           a.delta = analyzed.result.score - stageStartScore;
         }
       }
+      pushStageTiming(runtimeSummary, {
+        stageNumber: stage.stageNumber,
+        round,
+        source: 'planner',
+        toolCount: stage.tools.length,
+        totalMs: performance.now() - stageStarted,
+        reanalyzeMs: analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs,
+      });
       appliedTools.push(...stageApplied);
       recordToolOutcomes(toolOutcomeStore, before.pdfClass, stageApplied);
       const completedStagePercent =
@@ -967,6 +1143,7 @@ export async function remediatePdf(
 
     if (currentAnalysis.score >= targetScore) break;
     if (!improvedThisRound) {
+      noteEarlyExit(runtimeSummary, 'round_no_improvement');
       break;
     }
   }
@@ -981,6 +1158,7 @@ export async function remediatePdf(
       currentAnalysis,
       currentSnapshot,
       appliedTools,
+      runtimeSummary,
     });
     currentBuffer = st.buffer;
     currentAnalysis = st.analysis;
@@ -1009,6 +1187,7 @@ export async function remediatePdf(
       currentSnapshot,
       nextBuffer: alt.buffer,
       appliedTools,
+      runtimeSummary,
       tempPrefix: 'pdfaf-alt',
     });
     currentBuffer = altAccepted.buffer;
@@ -1046,6 +1225,7 @@ export async function remediatePdf(
           currentSnapshot,
           nextBuffer: stamped,
           appliedTools,
+          runtimeSummary,
           tempPrefix: 'pdfaf-post',
         });
         currentBuffer = accepted.buffer;
@@ -1074,6 +1254,7 @@ export async function remediatePdf(
         currentSnapshot,
         nextBuffer: drained,
         appliedTools,
+        runtimeSummary,
         tempPrefix: 'pdfaf-post',
       });
       currentBuffer = accepted.buffer;
@@ -1094,6 +1275,7 @@ export async function remediatePdf(
       currentAnalysis,
       currentSnapshot,
       appliedTools,
+      runtimeSummary,
     });
     currentBuffer = fin.buffer;
     currentAnalysis = fin.analysis;
@@ -1133,6 +1315,11 @@ export async function remediatePdf(
     rounds,
     remediationDurationMs: Date.now() - started,
     improved: currentAnalysis.score > before.score,
+    runtimeSummary: {
+      ...runtimeSummary,
+      analysisAfter: currentAnalysis.runtimeSummary ?? null,
+      deterministicTotalMs: Date.now() - started,
+    },
     ...(planningSummary ? { planningSummary } : {}),
     ...(summarizeStructuralConfidenceGuard(appliedTools)
       ? { structuralConfidenceGuard: summarizeStructuralConfidenceGuard(appliedTools) }

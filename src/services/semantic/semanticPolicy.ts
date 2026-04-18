@@ -49,6 +49,7 @@ export function buildSemanticSummary(input: {
   batches: SemanticRemediationSummary['batches'];
   gate: SemanticGateSummary;
   changeStatus: SemanticRemediationSummary['changeStatus'];
+  runtime?: SemanticRemediationSummary['runtime'];
   errorMessage?: string;
   trustDowngraded?: boolean;
 }): SemanticRemediationSummary {
@@ -63,6 +64,7 @@ export function buildSemanticSummary(input: {
     batches: input.batches,
     gate: input.gate,
     changeStatus: input.changeStatus,
+    ...(input.runtime ? { runtime: input.runtime } : {}),
     ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
     ...(input.trustDowngraded ? { trustDowngraded: true } : {}),
   };

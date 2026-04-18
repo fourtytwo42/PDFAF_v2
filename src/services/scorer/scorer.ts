@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { SCORING_WEIGHTS, GRADE_THRESHOLDS } from '../../config.js';
 import type { DocumentSnapshot, AnalysisResult, ScoredCategory, Grade } from '../../types.js';
 import { scoreTextExtractability } from './categories/textExtractability.js';
@@ -18,22 +19,35 @@ export function score(
   snap: DocumentSnapshot,
   meta: { id: string; filename: string; timestamp: string; analysisDurationMs: number },
 ): AnalysisResult {
+  const categoryTimings: Partial<Record<ScoredCategory['key'], number>> = {};
+  const scoreCategory = <T extends ScoredCategory['key']>(
+    key: T,
+    fn: () => ScoredCategory,
+  ): ScoredCategory => {
+    const started = performance.now();
+    const out = fn();
+    categoryTimings[key] = performance.now() - started;
+    return out;
+  };
+
   // 1. Score each category with its base weight
   const rawCategories: ScoredCategory[] = [
-    scoreTextExtractability(snap),
-    scoreTitleLanguage(snap),
-    scoreHeadingStructure(snap),
-    scoreAltText(snap),
-    scorePdfUaCompliance(snap),
-    scoreBookmarks(snap),
-    scoreTableMarkup(snap),
-    scoreColorContrast(snap),
-    scoreLinkQuality(snap),
-    scoreReadingOrder(snap),
-    scoreFormAccessibility(snap),
+    scoreCategory('text_extractability', () => scoreTextExtractability(snap)),
+    scoreCategory('title_language', () => scoreTitleLanguage(snap)),
+    scoreCategory('heading_structure', () => scoreHeadingStructure(snap)),
+    scoreCategory('alt_text', () => scoreAltText(snap)),
+    scoreCategory('pdf_ua_compliance', () => scorePdfUaCompliance(snap)),
+    scoreCategory('bookmarks', () => scoreBookmarks(snap)),
+    scoreCategory('table_markup', () => scoreTableMarkup(snap)),
+    scoreCategory('color_contrast', () => scoreColorContrast(snap)),
+    scoreCategory('link_quality', () => scoreLinkQuality(snap)),
+    scoreCategory('reading_order', () => scoreReadingOrder(snap)),
+    scoreCategory('form_accessibility', () => scoreFormAccessibility(snap)),
   ];
 
+  const finalizeStarted = performance.now();
   const finalized = finalizeScoringEvidence(snap, rawCategories);
+  const finalizeEvidenceMs = performance.now() - finalizeStarted;
 
   // 2. Redistribute weight of N/A categories proportionally to applicable ones
   const applicable   = finalized.categories.filter(c => c.applicable);
@@ -55,6 +69,7 @@ export function score(
 
   const finalScore = Math.round(Math.min(100, Math.max(0, rawScore)));
   const grade      = deriveGrade(finalScore);
+  const scoringMs = Object.values(categoryTimings).reduce((sum, value) => sum + (value ?? 0), 0) + finalizeEvidenceMs;
 
   return {
     id: meta.id,
@@ -71,6 +86,18 @@ export function score(
     manualReviewRequired: finalized.manualReviewRequired,
     manualReviewReasons: finalized.manualReviewReasons,
     scoreCapsApplied: finalized.scoreCapsApplied,
+    runtimeSummary: {
+      totalMs: meta.analysisDurationMs,
+      cacheHit: false,
+      pdfjsMs: 0,
+      structureMs: 0,
+      mergeMs: 0,
+      structuralAuditMs: 0,
+      scoringMs,
+      classificationMs: 0,
+      finalizeEvidenceMs,
+      scorerCategoryMs: categoryTimings,
+    },
   };
 }
 

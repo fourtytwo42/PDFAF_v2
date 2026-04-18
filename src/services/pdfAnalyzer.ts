@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -91,27 +92,67 @@ export async function analyzePdf(
     const fileHash = await hashFile(pdfPath);
     const cached = options?.bypassCache ? null : getCached(fileHash);
     if (cached) {
+      const cacheMs = Date.now() - startMs;
       return {
-        result: { ...cached.result, analysisDurationMs: Date.now() - startMs },
+        result: {
+          ...cached.result,
+          analysisDurationMs: cacheMs,
+          runtimeSummary: {
+            ...(cached.result.runtimeSummary ?? {
+              totalMs: cacheMs,
+              cacheHit: true,
+              pdfjsMs: 0,
+              structureMs: 0,
+              mergeMs: 0,
+              structuralAuditMs: 0,
+              scoringMs: 0,
+              classificationMs: 0,
+              finalizeEvidenceMs: 0,
+              scorerCategoryMs: {},
+            }),
+            totalMs: cacheMs,
+            cacheHit: true,
+          },
+        },
         snapshot: cached.snapshot,
       };
     }
 
     // Run pdfjs and pikepdf structural analysis in parallel
+    let pdfjsMs = 0;
+    let structureMs = 0;
     const [pdfjsResult, structResult] = await Promise.all([
-      extractWithPdfjs(pdfPath).catch(err => {
-        console.error(`[analyzer] pdfjs failed for ${filename}: ${err.message}`);
-        return emptyPdfjsResult();
-      }),
-      extractStructure(pdfPath).catch(err => {
-        console.error(`[analyzer] pikepdf failed for ${filename}: ${err.message}`);
-        return emptyPythonResult();
-      }),
+      (async () => {
+        const started = performance.now();
+        try {
+          return await extractWithPdfjs(pdfPath);
+        } catch (err) {
+          console.error(`[analyzer] pdfjs failed for ${filename}: ${(err as Error).message}`);
+          return emptyPdfjsResult();
+        } finally {
+          pdfjsMs = performance.now() - started;
+        }
+      })(),
+      (async () => {
+        const started = performance.now();
+        try {
+          return await extractStructure(pdfPath);
+        } catch (err) {
+          console.error(`[analyzer] pikepdf failed for ${filename}: ${(err as Error).message}`);
+          return emptyPythonResult();
+        } finally {
+          structureMs = performance.now() - started;
+        }
+      })(),
     ]);
 
+    const mergeStarted = performance.now();
     const snap = mergeSnapshot(pdfjsResult, structResult);
+    const mergeMs = performance.now() - mergeStarted;
     snap.pdfClass = classifyPdf(snap);
+    const auditStarted = performance.now();
     snap.detectionProfile = deriveDetectionProfile(snap);
+    const structuralAuditMs = performance.now() - auditStarted;
 
     const now = new Date().toISOString();
     const scoredResult = score(snap, {
@@ -120,10 +161,35 @@ export async function analyzePdf(
       timestamp: now,
       analysisDurationMs: Date.now() - startMs,
     });
+    const classificationStarted = performance.now();
     const analysisResult: AnalysisResult = {
       ...scoredResult,
       ...deriveAnalysisClassification(snap, scoredResult),
       detectionProfile: snap.detectionProfile,
+    };
+    const classificationMs = performance.now() - classificationStarted;
+    const totalMs = Date.now() - startMs;
+    analysisResult.analysisDurationMs = totalMs;
+    analysisResult.runtimeSummary = {
+      ...(scoredResult.runtimeSummary ?? {
+        totalMs,
+        cacheHit: false,
+        pdfjsMs: 0,
+        structureMs: 0,
+        mergeMs: 0,
+        structuralAuditMs: 0,
+        scoringMs: 0,
+        classificationMs: 0,
+        finalizeEvidenceMs: 0,
+        scorerCategoryMs: {},
+      }),
+      totalMs,
+      cacheHit: false,
+      pdfjsMs,
+      structureMs,
+      mergeMs,
+      structuralAuditMs,
+      classificationMs,
     };
 
     setCached(fileHash, analysisResult, snap);

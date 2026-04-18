@@ -215,9 +215,33 @@ export async function applySemanticHeadingRepairs(
   input: SemanticHeadingRepairInput,
 ): Promise<SemanticRepairOutput> {
   const started = Date.now();
+  let gateMs = 0;
+  let candidateMs = 0;
+  let llmMs = 0;
+  let mutationMs = 0;
+  let verifyMs = 0;
   const { buffer, filename, analysis, snapshot, options } = input;
   const scoreBefore = analysis.score;
   const hs = analysis.categories.find(c => c.key === 'heading_structure');
+  const runtimeFor = (
+    skippedReason: SemanticRemediationSummary['skippedReason'],
+    changeStatus: SemanticRemediationSummary['changeStatus'],
+    candidateCountBefore: number,
+    candidateCountAfter: number,
+  ) => ({
+    lane: 'headings' as const,
+    totalMs: Date.now() - started,
+    gateMs,
+    candidateMs,
+    llmMs,
+    mutationMs,
+    verifyMs,
+    candidateCountBefore,
+    candidateCountAfter,
+    candidateCapHit: false,
+    skippedReason,
+    changeStatus,
+  });
 
   const empty = (
     reason: SemanticRemediationSummary['skippedReason'],
@@ -237,12 +261,20 @@ export async function applySemanticHeadingRepairs(
       scoreAfter: scoreBefore,
       batches: [],
       gate,
+      runtime: runtimeFor(
+        reason,
+        reason === 'completed_no_changes' ? 'no_change' : 'skipped',
+        gate.candidateCountBefore ?? 0,
+        gate.candidateCountAfter ?? gate.candidateCountBefore ?? 0,
+      ),
       changeStatus: reason === 'completed_no_changes' ? 'no_change' : 'skipped',
       errorMessage: err,
     }),
   });
 
+  const gateStarted = Date.now();
   if (snapshot.pdfClass === 'scanned') {
+    gateMs += Date.now() - gateStarted;
     return empty(
       'scanned_pdf',
       buildSemanticGateSummary({
@@ -256,6 +288,7 @@ export async function applySemanticHeadingRepairs(
   }
 
   if (!hs?.applicable || hs.score >= REMEDIATION_CATEGORY_THRESHOLD) {
+    gateMs += Date.now() - gateStarted;
     return empty(
       'heading_structure_sufficient',
       buildSemanticGateSummary({
@@ -268,6 +301,7 @@ export async function applySemanticHeadingRepairs(
     );
   }
 
+  const candidateStarted = Date.now();
   const candidates = buildHeadingCandidates(snapshot);
   logInfo({
     message: 'semantic_headings_candidate_scan',
@@ -280,6 +314,8 @@ export async function applySemanticHeadingRepairs(
     },
   });
   if (candidates.length === 0) {
+    candidateMs += Date.now() - candidateStarted;
+    gateMs += Date.now() - gateStarted;
     return empty(
       'no_candidates',
       buildSemanticGateSummary({
@@ -291,11 +327,14 @@ export async function applySemanticHeadingRepairs(
       }),
     );
   }
+  candidateMs += Date.now() - candidateStarted;
+  gateMs += Date.now() - gateStarted;
 
   const title = snapshot.metadata.title ?? snapshot.structTitle ?? null;
   const domain = detectDomain(title, textSample(snapshot));
 
   const batches = chunk(candidates, SEMANTIC_HEADING_BATCH_SIZE);
+  const llmStarted = Date.now();
   const batchResults = await runBatchesWithConcurrency(
     batches,
     SEMANTIC_HEADING_REQUEST_CONCURRENCY,
@@ -308,6 +347,7 @@ export async function applySemanticHeadingRepairs(
         i,
       ),
   );
+  llmMs += Date.now() - llmStarted;
 
   const batchSummaries: SemanticBatchSummary[] = batchResults.map(r => r.summary);
   if (batchSummaries.some(b => isLlmTimeoutOrAbortError(b.error))) {
@@ -332,6 +372,7 @@ export async function applySemanticHeadingRepairs(
           targetCategoryKey: 'heading_structure',
           targetCategoryScoreBefore: hs.score,
         }),
+        runtime: runtimeFor('llm_timeout', 'skipped', candidates.length, candidates.length),
         changeStatus: 'skipped',
         errorMessage: batchSummaries.find(b => isLlmTimeoutOrAbortError(b.error))?.error,
       }),
@@ -386,17 +427,20 @@ export async function applySemanticHeadingRepairs(
           targetCategoryScoreBefore: hs.score,
           targetCategoryScoreAfter: hs.score,
         }),
+        runtime: runtimeFor('completed_no_changes', 'no_change', candidates.length, candidates.length),
         changeStatus: 'no_change',
       }),
     };
   }
 
+  const mutationStarted = Date.now();
   const { buffer: mutated, result } = await runPythonMutationBatch(buffer, mutations, {
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   });
 
   if (!result.success) {
+    mutationMs += Date.now() - mutationStarted;
     return {
       buffer,
       analysis,
@@ -420,12 +464,15 @@ export async function applySemanticHeadingRepairs(
           targetCategoryScoreBefore: hs.score,
           targetCategoryScoreAfter: hs.score,
         }),
+        runtime: runtimeFor('error', 'skipped', candidates.length, candidates.length),
         changeStatus: 'skipped',
         errorMessage: JSON.stringify(result.failed),
       }),
     };
   }
+  mutationMs += Date.now() - mutationStarted;
 
+  const verifyStarted = Date.now();
   const tmpPath = join(tmpdir(), `pdfaf-sem-h-${randomUUID()}.pdf`);
   await writeFile(tmpPath, mutated);
   let nextAnalysis: AnalysisResult;
@@ -437,6 +484,7 @@ export async function applySemanticHeadingRepairs(
   } finally {
     await unlink(tmpPath).catch(() => {});
   }
+  verifyMs += Date.now() - verifyStarted;
 
   const nextCandidates = buildHeadingCandidates(nextSnapshot);
   const decision = evaluateSemanticMutation({
@@ -469,6 +517,7 @@ export async function applySemanticHeadingRepairs(
         scoreAfter: scoreBefore,
         batches: batchSummaries,
         gate: decision.gate,
+        runtime: runtimeFor(decision.skippedReason, decision.changeStatus, candidates.length, candidates.length),
         changeStatus: decision.changeStatus,
         errorMessage: decision.errorMessage,
       }),
@@ -489,6 +538,7 @@ export async function applySemanticHeadingRepairs(
       scoreAfter: nextAnalysis.score,
       batches: batchSummaries,
       gate: decision.gate,
+      runtime: runtimeFor('completed', 'applied', candidates.length, nextCandidates.length),
       changeStatus: 'applied',
     }),
   };

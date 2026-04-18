@@ -98,6 +98,7 @@ Typical fields in the response:
 - `categories`
 - `findings`
 - `analysisDurationMs`
+- `runtimeSummary`
 
 Good use cases:
 
@@ -126,6 +127,7 @@ Typical fields in the response:
 - `planningSummary`
 - `structuralConfidenceGuard`
 - `remediationOutcomeSummary`
+- `runtimeSummary`
 - `semantic`
 - `semanticHeadings`
 - `semanticPromoteHeadings`
@@ -157,6 +159,13 @@ Each semantic summary reports:
 - proposal counts accepted/rejected
 - `skippedReason`
 - `trustDowngraded` when semantic output was kept but final trust stayed capped pending deterministic corroboration
+
+Stage 7 adds `runtimeSummary` as an additive performance surface for programmatic clients that want cost attribution, not just headline wall-clock timing. It reports:
+
+- analyze-side timings such as pdf.js, structure extraction, scoring, structural audits, and scorer-category timing buckets
+- deterministic remediation stage and per-tool timings
+- semantic lane timing buckets such as gate, candidate preparation, model time, mutation time, and verification time
+- bounded-work signals such as deterministic early exits and semantic skip reasons
 
 ## Remediation Options
 
@@ -198,7 +207,7 @@ curl -sS -X POST http://127.0.0.1:6200/v1/remediate \
   }'
 ```
 
-Semantic remains explicit opt-in by default. If the server has no OpenAI-compatible semantic endpoint configured, requested semantic lanes are reported as skipped with `skippedReason: "no_llm_config"` instead of failing the whole remediation request.
+Semantic remains explicit opt-in by default. If the server has no configured local or OpenAI-compatible semantic endpoint available, requested semantic lanes are reported as skipped with `skippedReason: "no_llm_config"` instead of failing the whole remediation request.
 
 ## Saving the Remediated PDF
 

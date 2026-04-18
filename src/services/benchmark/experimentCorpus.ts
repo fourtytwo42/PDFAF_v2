@@ -7,10 +7,12 @@ import type {
   FailureProfile,
   OcrPipelineSummary,
   PlanningSummary,
+  RemediationRuntimeSummary,
   RemediationOutcomeSummary,
   RemediationRoundSummary,
   ScoreCapApplied,
   SemanticRemediationSummary,
+  SemanticLaneRuntimeSummary,
   StructuralConfidenceGuardSummary,
   StructuralClassification,
   VerificationLevel,
@@ -114,6 +116,7 @@ export interface RemediateBenchmarkRow {
   ocrPipeline?: OcrPipelineSummary;
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary;
   remediationOutcomeSummary?: RemediationOutcomeSummary;
+  runtimeSummary?: RemediationRuntimeSummary;
   semantic?: SemanticRemediationSummary;
   semanticHeadings?: SemanticRemediationSummary;
   semanticPromoteHeadings?: SemanticRemediationSummary;
@@ -195,6 +198,12 @@ export interface BenchmarkRunSummary {
     semanticLaneUsageFrequency: Array<FrequencyRow>;
     semanticLaneSkipReasonFrequency: Array<FrequencyRow>;
     semanticLaneChangeStatusFrequency: Array<FrequencyRow>;
+    stageRuntimeFrequency: Array<RuntimeAggregateRow>;
+    toolRuntimeFrequency: Array<RuntimeAggregateRow>;
+    semanticLaneRuntimeFrequency: Array<RuntimeAggregateRow>;
+    semanticOutcomeRuntimeFrequency: Array<RuntimeAggregateRow>;
+    boundedWorkFrequency: Array<FrequencyRow>;
+    costBenefit: CostBenefitSummary;
     topSlowestRemediateFiles: Array<FileMetricRow>;
     topHighestDeltaFiles: Array<FileDeltaRow>;
     topLowestDeltaFiles: Array<FileDeltaRow>;
@@ -209,6 +218,21 @@ export interface SummaryStats {
   p95: number;
   min: number;
   max: number;
+}
+
+export interface RuntimeAggregateRow {
+  key: string;
+  count: number;
+  totalMs: number;
+  meanMs: number;
+  medianMs: number;
+  p95Ms: number;
+  maxMs: number;
+}
+
+export interface CostBenefitSummary {
+  scoreDeltaPerSecond: number | null;
+  confidenceDeltaPerSecond: number | null;
 }
 
 export interface FrequencyRow {
@@ -246,6 +270,7 @@ export interface CohortSummary {
   remediationDurationMs: SummaryStats;
   wallRemediateMs: SummaryStats;
   totalPipelineMs: SummaryStats;
+  costBenefit: CostBenefitSummary;
   weakestCategories: Array<FrequencyRow>;
   topFindingMessages: Array<FrequencyRow>;
   manualReviewReasonFrequency: Array<FrequencyRow>;
@@ -600,6 +625,87 @@ function semanticLaneChangeStatuses(row: RemediateBenchmarkRow): string[] {
     .map(summary => `${summary.lane}:${summary.changeStatus}`);
 }
 
+function confidenceRank(value: string | null | undefined): number {
+  switch (value) {
+    case 'high': return 2;
+    case 'medium': return 1;
+    case 'low': return 0;
+    default: return 0;
+  }
+}
+
+function costBenefit(rows: RemediateBenchmarkRow[]): CostBenefitSummary {
+  const valid = rows.filter(row => !row.error && (row.wallRemediateMs ?? 0) > 0);
+  const totalWallMs = valid.reduce((sum, row) => sum + (row.wallRemediateMs ?? 0), 0);
+  if (totalWallMs <= 0) {
+    return { scoreDeltaPerSecond: null, confidenceDeltaPerSecond: null };
+  }
+  const totalScoreDelta = valid.reduce((sum, row) => sum + (row.delta ?? 0), 0);
+  const totalConfidenceDelta = valid.reduce(
+    (sum, row) => sum + (
+      confidenceRank(row.afterStructuralClassification?.confidence)
+      - confidenceRank(row.beforeStructuralClassification?.confidence)
+    ),
+    0,
+  );
+  return {
+    scoreDeltaPerSecond: (totalScoreDelta / totalWallMs) * 1000,
+    confidenceDeltaPerSecond: (totalConfidenceDelta / totalWallMs) * 1000,
+  };
+}
+
+function aggregateRuntime(rows: Array<{ key: string; durationMs: number }>): Array<RuntimeAggregateRow> {
+  const buckets = new Map<string, number[]>();
+  for (const row of rows) {
+    if (!(row.durationMs > 0)) continue;
+    const list = buckets.get(row.key) ?? [];
+    list.push(row.durationMs);
+    buckets.set(row.key, list);
+  }
+  return [...buckets.entries()]
+    .map(([key, values]) => ({
+      key,
+      count: values.length,
+      totalMs: values.reduce((sum, value) => sum + value, 0),
+      meanMs: mean(values),
+      medianMs: median(values),
+      p95Ms: percentile(values, 95),
+      maxMs: Math.max(...values),
+    }))
+    .sort((a, b) => b.totalMs - a.totalMs || a.key.localeCompare(b.key))
+    .slice(0, 20);
+}
+
+function stageRuntimeRows(row: RemediateBenchmarkRow): Array<{ key: string; durationMs: number }> {
+  return row.runtimeSummary?.stageTimings.map(item => ({ key: item.key, durationMs: item.totalMs })) ?? [];
+}
+
+function toolRuntimeRows(row: RemediateBenchmarkRow): Array<{ key: string; durationMs: number }> {
+  return row.runtimeSummary?.toolTimings.map(item => ({ key: item.toolName, durationMs: item.durationMs })) ?? [];
+}
+
+function semanticRuntimeRows(row: RemediateBenchmarkRow): Array<{ key: string; durationMs: number }> {
+  return row.runtimeSummary?.semanticLaneTimings.map(item => ({ key: item.lane, durationMs: item.totalMs })) ?? [];
+}
+
+function semanticOutcomeRuntimeRows(row: RemediateBenchmarkRow): Array<{ key: string; durationMs: number }> {
+  return row.runtimeSummary?.semanticLaneTimings.map(item => ({
+    key: `${item.lane}:${item.changeStatus}`,
+    durationMs: item.totalMs,
+  })) ?? [];
+}
+
+function boundedWorkValues(row: RemediateBenchmarkRow): string[] {
+  if (!row.runtimeSummary) return [];
+  const values: string[] = [];
+  if (row.runtimeSummary.boundedWork.semanticCandidateCapsHit > 0) {
+    values.push(`semantic_candidate_cap_hit:${row.runtimeSummary.boundedWork.semanticCandidateCapsHit}`);
+  }
+  values.push(...row.runtimeSummary.boundedWork.deterministicEarlyExitReasons.map(item => `deterministic_early_exit:${item.key}`));
+  values.push(...row.runtimeSummary.boundedWork.semanticSkipReasons.map(item => `semantic_skip:${item.key}`));
+  return values;
+}
+
 export function buildBenchmarkSummary(input: {
   runId: string;
   generatedAt: string;
@@ -749,6 +855,22 @@ export function buildBenchmarkSummary(input: {
           semanticLaneChangeStatusFrequency: frequencyRows(
             remediateSuccessRows.flatMap(semanticLaneChangeStatuses),
           ),
+          stageRuntimeFrequency: aggregateRuntime(
+            remediateSuccessRows.flatMap(stageRuntimeRows),
+          ),
+          toolRuntimeFrequency: aggregateRuntime(
+            remediateSuccessRows.flatMap(toolRuntimeRows),
+          ),
+          semanticLaneRuntimeFrequency: aggregateRuntime(
+            remediateSuccessRows.flatMap(semanticRuntimeRows),
+          ),
+          semanticOutcomeRuntimeFrequency: aggregateRuntime(
+            remediateSuccessRows.flatMap(semanticOutcomeRuntimeRows),
+          ),
+          boundedWorkFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(boundedWorkValues),
+          ),
+          costBenefit: costBenefit(remediateSuccessRows),
           topSlowestRemediateFiles: remediateSuccessRows
             .map(row => ({
               id: row.id,
@@ -804,6 +926,7 @@ function buildCohortSummary(analyzeRows: AnalyzeBenchmarkRow[], remediateRows: R
     remediationDurationMs: summarizeStats(remediateSuccessRows.map(row => row.remediationDurationMs ?? 0)),
     wallRemediateMs: summarizeStats(remediateSuccessRows.map(row => row.wallRemediateMs ?? 0)),
     totalPipelineMs: summarizeStats(remediateSuccessRows.map(row => row.totalPipelineMs ?? 0)),
+    costBenefit: costBenefit(remediateSuccessRows),
     structureClassDistribution: distribution(analyzeSuccessRows.flatMap(structureClassValues)),
     primaryFailureFamilyDistribution: distribution(analyzeSuccessRows.flatMap(primaryFailureFamilyValues)),
     weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
@@ -917,6 +1040,12 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
     lines.push(`- **Semantic lanes used:** ${markdownFrequency(summary.remediate.semanticLaneUsageFrequency)}`);
     lines.push(`- **Semantic lane skip reasons:** ${markdownFrequency(summary.remediate.semanticLaneSkipReasonFrequency)}`);
     lines.push(`- **Semantic lane change status:** ${markdownFrequency(summary.remediate.semanticLaneChangeStatusFrequency)}`);
+    lines.push(`- **Stage runtime hotspots:** ${summary.remediate.stageRuntimeFrequency.map(row => `${row.key} (${row.totalMs.toFixed(0)} ms)`).join('; ') || 'n/a'}`);
+    lines.push(`- **Tool runtime hotspots:** ${summary.remediate.toolRuntimeFrequency.map(row => `${row.key} (${row.totalMs.toFixed(0)} ms)`).join('; ') || 'n/a'}`);
+    lines.push(`- **Semantic runtime hotspots:** ${summary.remediate.semanticLaneRuntimeFrequency.map(row => `${row.key} (${row.totalMs.toFixed(0)} ms)`).join('; ') || 'n/a'}`);
+    lines.push(`- **Bounded-work signals:** ${markdownFrequency(summary.remediate.boundedWorkFrequency)}`);
+    lines.push(`- **Score per second:** ${summary.remediate.costBenefit.scoreDeltaPerSecond?.toFixed(3) ?? 'n/a'}`);
+    lines.push(`- **Confidence per second:** ${summary.remediate.costBenefit.confidenceDeltaPerSecond?.toFixed(3) ?? 'n/a'}`);
   }
   lines.push('');
   lines.push('## Per Cohort');
@@ -937,6 +1066,7 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
       remediationDurationMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
       wallRemediateMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
       totalPipelineMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      costBenefit: { scoreDeltaPerSecond: null, confidenceDeltaPerSecond: null },
       structureClassDistribution: {},
       primaryFailureFamilyDistribution: {},
       weakestCategories: [],

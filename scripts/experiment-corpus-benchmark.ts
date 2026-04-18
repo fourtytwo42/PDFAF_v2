@@ -43,6 +43,8 @@ import { analyzePdf } from '../src/services/pdfAnalyzer.js';
 import type {
   AnalysisResult,
   DocumentSnapshot,
+  RemediationRuntimeSummary,
+  RuntimeCountRow,
   SemanticRemediationSummary,
 } from '../src/types.js';
 
@@ -57,6 +59,36 @@ interface ParsedArgs {
   writePdfs: boolean;
   validateManifestOnly: boolean;
   validateRunDir?: string;
+}
+
+function runtimeCounts(values: string[]): RuntimeCountRow[] {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function mergeRuntimeSummary(
+  deterministic: RemediationRuntimeSummary | undefined,
+  afterRuntime: AnalysisResult['runtimeSummary'] | undefined,
+  semanticSummaries: SemanticRemediationSummary[],
+): RemediationRuntimeSummary | undefined {
+  if (!deterministic && semanticSummaries.length === 0 && !afterRuntime) return undefined;
+  return {
+    analysisBefore: deterministic?.analysisBefore ?? null,
+    analysisAfter: afterRuntime ?? null,
+    deterministicTotalMs: deterministic?.deterministicTotalMs ?? 0,
+    stageTimings: deterministic?.stageTimings ?? [],
+    toolTimings: deterministic?.toolTimings ?? [],
+    semanticLaneTimings: semanticSummaries.flatMap(summary => summary.runtime ? [summary.runtime] : []),
+    boundedWork: {
+      semanticCandidateCapsHit: semanticSummaries.filter(summary => summary.runtime?.candidateCapHit).length,
+      deterministicEarlyExitCount: deterministic?.boundedWork.deterministicEarlyExitCount ?? 0,
+      deterministicEarlyExitReasons: deterministic?.boundedWork.deterministicEarlyExitReasons ?? [],
+      semanticSkipReasons: runtimeCounts(semanticSummaries.map(summary => `${summary.lane}:${summary.skippedReason}`)),
+    },
+  };
 }
 
 function printUsage(): void {
@@ -485,6 +517,17 @@ async function runRemediationStep(
       appliedTools: remediation.appliedTools,
       planningSummary: remediation.planningSummary,
     });
+    const semanticSummaries = [
+      semantic,
+      semanticHeadings,
+      semanticPromoteHeadings,
+      semanticUntaggedHeadings,
+    ].filter((summary): summary is SemanticRemediationSummary => summary != null);
+    const runtimeSummary = mergeRuntimeSummary(
+      remediation.runtimeSummary,
+      reanalyzed?.runtimeSummary ?? effectiveAfter.runtimeSummary,
+      semanticSummaries,
+    );
 
     return {
       id: entry.id,
@@ -535,6 +578,7 @@ async function runRemediationStep(
         ? { structuralConfidenceGuard: remediation.structuralConfidenceGuard }
         : {}),
       ...(remediationOutcomeSummary ? { remediationOutcomeSummary } : {}),
+      ...(runtimeSummary ? { runtimeSummary } : {}),
       ...(semantic ? { semantic } : {}),
       ...(semanticHeadings ? { semanticHeadings } : {}),
       ...(semanticPromoteHeadings ? { semanticPromoteHeadings } : {}),

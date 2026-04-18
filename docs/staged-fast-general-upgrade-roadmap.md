@@ -329,6 +329,31 @@ Use semantic passes only where they improve results without turning the engine s
 
 ## Stage 7: Performance Hardening
 
+### Status
+
+- Closed as of 2026-04-18.
+- Added additive runtime instrumentation across analyze/scoring, deterministic remediation stages, per-tool execution, and semantic lanes.
+- Added additive `runtimeSummary` output to `AnalysisResult`, `POST /v1/remediate`, and experiment-corpus benchmark rows.
+- Benchmarked on the full 50-file corpus with direct Stage 6→7 comparison artifacts under `Output/experiment-corpus-baseline/comparison-stage7-full-vs-stage6/`.
+- Closed with a Stage 7 acceptance audit under `Output/experiment-corpus-baseline/stage7-acceptance/`.
+- Accepted Stage 7 audit signals:
+  - `acceptedConfidenceRegressionCount = 0`
+  - `semanticOnlyTrustedPassCount = 0`
+  - all coded runtime gates passed
+- Accepted Stage 6→7 comparison signals:
+  - remediation wall-runtime median delta `-488.88 ms`
+  - remediation wall-runtime p95 delta `+572.79 ms`
+  - remediation after-score mean delta `-0.12`
+  - remediation reanalyzed mean delta `-0.04`
+  - score-per-second delta `+1.230`
+  - confidence-per-second delta `+0.0158`
+- Accepted cohort runtime signals:
+  - `20-figure-ownership` remediation runtime median delta `-292.49 ms`
+  - `30-structure-reading-order` remediation runtime median delta `-510.19 ms`
+  - `40-font-extractability` remediation runtime median delta `-16565.11 ms`
+  - `50-long-report-mixed` remediation runtime median delta `-1266.73 ms`
+- Stage 7 closes as an observability-and-gating stage: runtime costs are now explicit, attributable, and mechanically audited against the Stage 6 baseline.
+
 ### Goal
 
 Lock in speed as a product requirement, not just a hope.

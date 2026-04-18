@@ -348,6 +348,7 @@ export interface AnalysisResult {
   structuralClassification?: StructuralClassification;
   failureProfile?: FailureProfile;
   detectionProfile?: DetectionProfile;
+  runtimeSummary?: AnalysisRuntimeSummary;
 }
 
 // ─── Intermediate types from sub-services ────────────────────────────────────
@@ -394,6 +395,43 @@ export interface PythonAnalysisResult {
 
 export type RemediationToolOutcome = 'applied' | 'no_effect' | 'rejected' | 'failed';
 
+export interface RuntimeCountRow {
+  key: string;
+  count: number;
+}
+
+export interface AnalysisRuntimeSummary {
+  totalMs: number;
+  cacheHit: boolean;
+  pdfjsMs: number;
+  structureMs: number;
+  mergeMs: number;
+  structuralAuditMs: number;
+  scoringMs: number;
+  classificationMs: number;
+  finalizeEvidenceMs: number;
+  scorerCategoryMs: Partial<Record<CategoryKey, number>>;
+}
+
+export interface RemediationStageRuntimeSummary {
+  key: string;
+  stageNumber: number;
+  round: number;
+  source: 'planner' | 'playbook' | 'post_pass';
+  toolCount: number;
+  totalMs: number;
+  reanalyzeMs: number;
+}
+
+export interface RemediationToolRuntimeSummary {
+  toolName: string;
+  stage: number;
+  round: number;
+  source: 'planner' | 'playbook' | 'post_pass';
+  durationMs: number;
+  outcome: RemediationToolOutcome;
+}
+
 export interface PlannedRemediationTool {
   toolName: string;
   params: Record<string, unknown>;
@@ -420,6 +458,8 @@ export interface AppliedRemediationTool {
   delta: number;
   outcome: RemediationToolOutcome;
   details?: string;
+  durationMs?: number;
+  source?: 'planner' | 'playbook' | 'post_pass';
 }
 
 export interface RemediationRoundSummary {
@@ -544,8 +584,24 @@ export interface SemanticRemediationSummary {
   batches: SemanticBatchSummary[];
   gate: SemanticGateSummary;
   changeStatus: 'skipped' | 'no_change' | 'applied' | 'reverted';
+  runtime?: SemanticLaneRuntimeSummary;
   trustDowngraded?: boolean;
   errorMessage?: string;
+}
+
+export interface SemanticLaneRuntimeSummary {
+  lane: SemanticLane;
+  totalMs: number;
+  gateMs: number;
+  candidateMs: number;
+  llmMs: number;
+  mutationMs: number;
+  verifyMs: number;
+  candidateCountBefore: number;
+  candidateCountAfter: number;
+  candidateCapHit: boolean;
+  skippedReason: SemanticSkippedReason;
+  changeStatus: SemanticRemediationSummary['changeStatus'];
 }
 
 /** When `ocr_scanned_pdf` ran (or was attempted), tells API clients not to treat the headline score as PAC/Adobe-equivalent. */
@@ -610,6 +666,23 @@ export interface RemediationOutcomeSummary {
   familySummaries: RemediationOutcomeFamilySummary[];
 }
 
+export interface RemediationBoundedWorkSummary {
+  semanticCandidateCapsHit: number;
+  deterministicEarlyExitCount: number;
+  deterministicEarlyExitReasons: RuntimeCountRow[];
+  semanticSkipReasons: RuntimeCountRow[];
+}
+
+export interface RemediationRuntimeSummary {
+  analysisBefore?: AnalysisRuntimeSummary | null;
+  analysisAfter?: AnalysisRuntimeSummary | null;
+  deterministicTotalMs: number;
+  stageTimings: RemediationStageRuntimeSummary[];
+  toolTimings: RemediationToolRuntimeSummary[];
+  semanticLaneTimings: SemanticLaneRuntimeSummary[];
+  boundedWork: RemediationBoundedWorkSummary;
+}
+
 export interface RemediationResult {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -635,6 +708,8 @@ export interface RemediationResult {
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary;
   /** Present when Stage 5 deterministic structural outcome classification metadata is available. */
   remediationOutcomeSummary?: RemediationOutcomeSummary;
+  /** Present when Stage 7 runtime instrumentation metadata is available. */
+  runtimeSummary?: RemediationRuntimeSummary;
   /** Present when `htmlReport: true` was requested in remediate options. */
   htmlReport?: string | null;
 }

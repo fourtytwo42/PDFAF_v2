@@ -204,6 +204,8 @@ components:
           $ref: '#/components/schemas/FailureProfile'
         detectionProfile:
           $ref: '#/components/schemas/DetectionProfile'
+        runtimeSummary:
+          $ref: '#/components/schemas/AnalysisRuntimeSummary'
         categories:
           type: array
           items:
@@ -244,6 +246,8 @@ components:
           $ref: '#/components/schemas/StructuralConfidenceGuardSummary'
         remediationOutcomeSummary:
           $ref: '#/components/schemas/RemediationOutcomeSummary'
+        runtimeSummary:
+          $ref: '#/components/schemas/RemediationRuntimeSummary'
         htmlReport:
           type: [string, 'null']
           description: Present when options.htmlReport was true; null if report exceeded size cap.
@@ -400,10 +404,158 @@ components:
         changeStatus:
           type: string
           enum: [skipped, no_change, applied, reverted]
+        runtime:
+          $ref: '#/components/schemas/SemanticLaneRuntimeSummary'
         trustDowngraded:
           type: boolean
         errorMessage:
           type: string
+
+    AnalysisRuntimeSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        totalMs:
+          type: number
+        cacheHit:
+          type: boolean
+        pdfjsMs:
+          type: number
+        structureMs:
+          type: number
+        mergeMs:
+          type: number
+        structuralAuditMs:
+          type: number
+        scoringMs:
+          type: number
+        classificationMs:
+          type: number
+        finalizeEvidenceMs:
+          type: number
+        scorerCategoryMs:
+          type: object
+          additionalProperties:
+            type: number
+
+    RuntimeCountRow:
+      type: object
+      additionalProperties: true
+      properties:
+        key:
+          type: string
+        count:
+          type: integer
+
+    RemediationStageRuntimeSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        key:
+          type: string
+        stageNumber:
+          type: integer
+        round:
+          type: integer
+        source:
+          type: string
+          enum: [planner, playbook, post_pass]
+        toolCount:
+          type: integer
+        totalMs:
+          type: number
+        reanalyzeMs:
+          type: number
+
+    RemediationToolRuntimeSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        toolName:
+          type: string
+        stage:
+          type: integer
+        round:
+          type: integer
+        source:
+          type: string
+          enum: [planner, playbook, post_pass]
+        durationMs:
+          type: number
+        outcome:
+          type: string
+          enum: [applied, no_effect, rejected, failed]
+
+    SemanticLaneRuntimeSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        lane:
+          $ref: '#/components/schemas/SemanticLane'
+        totalMs:
+          type: number
+        gateMs:
+          type: number
+        candidateMs:
+          type: number
+        llmMs:
+          type: number
+        mutationMs:
+          type: number
+        verifyMs:
+          type: number
+        candidateCountBefore:
+          type: integer
+        candidateCountAfter:
+          type: integer
+        candidateCapHit:
+          type: boolean
+        skippedReason:
+          type: string
+        changeStatus:
+          type: string
+
+    RemediationBoundedWorkSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        semanticCandidateCapsHit:
+          type: integer
+        deterministicEarlyExitCount:
+          type: integer
+        deterministicEarlyExitReasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeCountRow'
+        semanticSkipReasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeCountRow'
+
+    RemediationRuntimeSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        analysisBefore:
+          $ref: '#/components/schemas/AnalysisRuntimeSummary'
+        analysisAfter:
+          $ref: '#/components/schemas/AnalysisRuntimeSummary'
+        deterministicTotalMs:
+          type: number
+        stageTimings:
+          type: array
+          items:
+            $ref: '#/components/schemas/RemediationStageRuntimeSummary'
+        toolTimings:
+          type: array
+          items:
+            $ref: '#/components/schemas/RemediationToolRuntimeSummary'
+        semanticLaneTimings:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticLaneRuntimeSummary'
+        boundedWork:
+          $ref: '#/components/schemas/RemediationBoundedWorkSummary'
 
     SemanticLane:
       type: string
