@@ -439,3 +439,142 @@ The final outcome is mixed:
 - The final engine did not pass the original majority-`100/100` corpus bar.
 
 Future work, if any, should start from the Stage 8 final artifacts rather than reopening this staged roadmap with revised success criteria.
+
+## Post-Stage-8 Follow-On Plan
+
+### Goal
+
+Increase true remediation coverage and push the corpus as close to `100/100` as possible while preserving the Stage 8 trust guarantees and avoiding speed regressions.
+
+This follow-on plan is separate from the completed Stage 0-8 roadmap. It starts from the Stage 8 final artifacts and treats runtime as a hard gate on every change.
+
+### Non-Negotiable Rules
+
+- no accepted confidence regressions
+- no semantic-only trusted passes
+- no broad new whole-document expensive passes in the hot path
+- every new repair path must be tightly preconditioned
+- every new lane must report score gain per added cost
+- analyze and remediate median/p95 runtime must stay flat or improve on the full corpus
+
+### Strategy
+
+The work should proceed on two tracks in parallel:
+
+- recovery track:
+  - recover score on files already near the top band, especially `10-short-near-pass` and `20-figure-ownership`
+  - convert `A` files into real `100/100` results using cheap deterministic repair completion and tighter final verification credit
+- hard-problem track:
+  - reduce the `unsafe_to_autofix` population in `30-structure-reading-order` and `40-font-extractability`
+  - add bounded new repairs only where deterministic or strongly gated execution is defensible
+
+### Stage 9: Stage 8 Miss Triage
+
+#### Goal
+
+Turn the Stage 8 final artifacts into an actionable backlog of real misses.
+
+#### Work
+
+- cluster every non-`100` result by residual failure family
+- separate misses into:
+  - fix exists but is not attempted
+  - fix is attempted but not fully credited
+  - genuinely unsafe or still out of scope
+- rank files and families by:
+  - score loss
+  - cohort frequency
+  - runtime cost
+  - likely repairability
+- produce a triage artifact that identifies:
+  - top `A-not-100` files likely convertible with cheap deterministic work
+  - top `unsafe_to_autofix` reasons by cohort
+  - top residual failures in `10-short-near-pass`, `30-structure-reading-order`, and `40-font-extractability`
+
+#### Exit Criteria
+
+- every Stage 8 miss is assigned to a concrete failure bucket
+- top score-loss families are ranked and attributable
+- the next repair stages have a bounded target list rather than broad hypotheses
+
+### Stage 10: Near-Pass Completion
+
+#### Goal
+
+Convert as many `A-not-100` files as possible into true `100/100` results with cheap, bounded work.
+
+#### Work
+
+- strengthen deterministic figure ownership and alt cleanup where the existing engine already has good anchors
+- finish cheap structural completion work for headings, lists, tables, links, and annotations
+- improve final-state verification so valid deterministic repairs receive full credit instead of remaining under-scored
+- keep all new work narrowly gated to files that already show the relevant residual debt
+
+#### Exit Criteria
+
+- `A-not-100` count drops materially on the full corpus
+- `10-short-near-pass` and `20-figure-ownership` improve without median or p95 runtime regression
+- no trust-gate regressions are introduced
+
+### Stage 11: Structural Hard Cases
+
+#### Goal
+
+Reduce the structural `unsafe_to_autofix` backlog without broad speculative reconstruction.
+
+#### Work
+
+- add bounded structure reconstruction for tagged-but-broken documents where deterministic anchors exist
+- improve reading-order repair for fixable structure-order mismatches
+- tighten orphan-content, heading, and annotation recovery on deeply broken but still repairable files
+- keep honest refusal for files where deterministic safe reconstruction still does not exist
+
+#### Exit Criteria
+
+- `unsafe_to_autofix` decreases in `30-structure-reading-order`
+- the worst structure-heavy files improve materially or move into a smaller honest bounded set
+- runtime growth remains attributable and acceptable on the affected cohort
+
+### Stage 12: Font And Extractability Lane
+
+#### Goal
+
+Target the remaining extractability and font-driven score loss with a dedicated bounded repair lane.
+
+#### Work
+
+- isolate the exact font and extractability failure families that dominate `40-font-extractability`
+- add deterministic or tightly gated remediation only where the engine can genuinely improve extractability outcomes
+- ensure the lane does not run on files without clear font/extractability debt
+- keep honest bounded outcomes for cases that remain unsafe or not machine-fixable
+
+#### Exit Criteria
+
+- `40-font-extractability` improves materially on the full corpus
+- the font lane stays bounded and does not inflate runtime on unaffected files
+- unresolved cases remain explicitly surfaced rather than overclaimed
+
+### Stage 13: Final Speed-And-Score Gate
+
+#### Goal
+
+Re-evaluate the engine after the follow-on work and prove that score gains came without speed regression.
+
+#### Work
+
+- rerun the full corpus after Stages 9-12
+- compare against the Stage 8 final run and the original Stage 0 baseline
+- report:
+  - new `100/100` count
+  - new `A` count
+  - remaining bounded states
+  - cohort-level score movement
+  - median and p95 runtime movement
+- fail the follow-on program if score gains require slower processing on the corpus
+
+#### Exit Criteria
+
+- score movement is positive on the targeted cohorts
+- median and p95 runtime stay flat or improve versus Stage 8
+- trust gates remain intact
+- the resulting engine is measurably closer to `100/100` across the corpus without sacrificing bounded performance
