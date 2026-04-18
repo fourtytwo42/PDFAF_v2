@@ -60,7 +60,7 @@ export function ConnectionStatusCard() {
         };
       }
       return {
-        label: 'Local AI is downloading automatically in the background. Until it finishes, you can only grade PDFs.',
+        label: 'Local AI is managed by the desktop app. If it is not ready yet, the app will download it in the background and remediation will become available when the download finishes.',
         tone: 'warning' as const,
       };
     }

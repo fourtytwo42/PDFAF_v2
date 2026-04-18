@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream, existsSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import {
   cp,
   mkdir,
@@ -142,8 +142,17 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function sha256File(path: string): Promise<string> {
-  const buffer = await readFile(path);
-  return createHash('sha256').update(buffer).digest('hex');
+  return await new Promise<string>((resolvePromise, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(path);
+    stream.on('error', reject);
+    stream.on('data', (chunk) => {
+      hash.update(chunk);
+    });
+    stream.on('end', () => {
+      resolvePromise(hash.digest('hex'));
+    });
+  });
 }
 
 async function findFileRecursively(rootDir: string, filename: string): Promise<string | null> {
@@ -568,6 +577,14 @@ export class LocalLlmManager {
   ): Promise<void> {
     await mkdir(dirname(partialPath), { recursive: true });
     let existingBytes = await this.#safeStatSize(partialPath);
+    if (existingBytes >= artifact.manifest.size && existingBytes > 0) {
+      const partialSha = await sha256File(partialPath).catch(() => null);
+      if (partialSha === artifact.manifest.sha256) {
+        return;
+      }
+      await unlink(partialPath).catch(() => {});
+      existingBytes = 0;
+    }
 
     const headers: Record<string, string> = artifact.url.includes('huggingface.co')
       ? { 'User-Agent': 'PDFAF-Desktop/1.0' }
@@ -583,6 +600,10 @@ export class LocalLlmManager {
       throw new RetryableDownloadError(error instanceof Error ? error.message : String(error));
     }
 
+    if (response.status === 416) {
+      await unlink(partialPath).catch(() => {});
+      throw new RetryableDownloadError(`Range request rejected for ${artifact.manifest.filename}; restarting download.`);
+    }
     if ((response.status >= 500 && response.status <= 599) || response.status === 429) {
       throw new RetryableDownloadError(`HTTP ${response.status} for ${artifact.url}`);
     }
@@ -595,15 +616,6 @@ export class LocalLlmManager {
       await truncate(partialPath, 0).catch(() => {});
       existingBytes = 0;
       append = false;
-    }
-
-    if (response.status === 416 && existingBytes === artifact.manifest.size) {
-      const partialSha = await sha256File(partialPath);
-      if (partialSha !== artifact.manifest.sha256) {
-        await unlink(partialPath).catch(() => {});
-        throw new Error(`Downloaded artifact checksum mismatch for ${artifact.manifest.filename}.`);
-      }
-      return;
     }
 
     const stream = createWriteStream(partialPath, { flags: append ? 'a' : 'w' });

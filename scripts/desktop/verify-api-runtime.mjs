@@ -8,6 +8,7 @@ const repoRoot = resolve(__dirname, '..', '..');
 const runtimeRoot = join(repoRoot, 'apps', 'desktop', '.api-runtime-packaged');
 const nodeModulesRoot = join(runtimeRoot, 'node_modules');
 const distRoot = join(runtimeRoot, 'dist');
+const pythonRoot = join(runtimeRoot, 'python');
 const manifestPath = join(runtimeRoot, 'manifest.json');
 
 const requiredPackages = [
@@ -44,6 +45,7 @@ async function directorySize(path) {
 
 async function main() {
   await requirePath(join(distRoot, 'server.js'));
+  await requirePath(join(pythonRoot, 'pdf_analysis_helper.py'));
   await requirePath(nodeModulesRoot);
   await requirePath(manifestPath);
 

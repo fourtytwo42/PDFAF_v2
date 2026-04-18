@@ -234,6 +234,9 @@ function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     PDFAF_LLAMA_WORKDIR: runtimePaths.llmDir,
     PDFAF_NODE_BIN: dependencyPaths.nodeBin,
     PDFAF_PYTHON_BIN: dependencyPaths.pythonBin,
+    ...(dependencyPaths.apiRuntimeRoot
+      ? { PDFAF_PYTHON_SCRIPT: join(dependencyPaths.apiRuntimeRoot, 'python', 'pdf_analysis_helper.py') }
+      : {}),
     PDFAF_QPDF_BIN: dependencyPaths.qpdfBin,
     ...(dependencyPaths.webRuntimeNodeModulesPath
       ? { NODE_PATH: dependencyPaths.webRuntimeNodeModulesPath }

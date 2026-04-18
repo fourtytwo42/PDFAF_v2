@@ -9,7 +9,9 @@ const repoRoot = resolve(__dirname, '..', '..');
 const outputRoot = join(repoRoot, 'apps', 'desktop', '.api-runtime-packaged');
 const outputNodeModulesRoot = join(outputRoot, 'node_modules');
 const outputDistRoot = join(outputRoot, 'dist');
+const outputPythonRoot = join(outputRoot, 'python');
 const apiDistRoot = join(repoRoot, 'dist');
+const apiPythonRoot = join(repoRoot, 'python');
 const repoRequire = createRequire(join(repoRoot, 'package.json'));
 
 async function readJson(path) {
@@ -141,6 +143,7 @@ async function main() {
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputNodeModulesRoot, { recursive: true });
   await mkdir(outputDistRoot, { recursive: true });
+  await mkdir(outputPythonRoot, { recursive: true });
 
   const packageGraph = await collectRuntimePackageGraph(directDependencyNames);
   const materializedPackageNames = [...packageGraph.keys()].sort();
@@ -150,6 +153,15 @@ async function main() {
   }
 
   await cp(apiDistRoot, outputDistRoot, { recursive: true, force: true });
+  await cp(
+    join(apiPythonRoot, 'pdf_analysis_helper.py'),
+    join(outputPythonRoot, 'pdf_analysis_helper.py'),
+    {
+      force: true,
+      dereference: true,
+      verbatimSymlinks: false,
+    },
+  );
 
   const totalBytes = await directorySize(outputRoot);
   await writeFile(
