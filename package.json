@@ -1,7 +1,8 @@
 {
   "name": "pdfaf-v2",
   "version": "2.0.0",
-  "description": "PDF Accessibility Fixer and Grader v2 — general-purpose WCAG 2.1 AA remediation API",
+  "description": "PDF Accessibility Fixer and Grader v2 - general-purpose WCAG 2.1 AA remediation API",
+  "author": "PDFAF",
   "type": "module",
   "main": "apps/desktop/dist/main.js",
   "scripts": {
@@ -15,6 +16,7 @@
     "desktop:runtime:prepare": "node scripts/desktop/prepare-runtime.mjs",
     "desktop:packaged:dev": "pnpm build && pnpm web:build && pnpm desktop:build && pnpm --filter pdf-af-desktop start",
     "desktop:package:dir": "pnpm desktop:native:prepare && pnpm desktop:runtime:prepare && pnpm build && pnpm web:build && pnpm desktop:build && node scripts/desktop/verify-native-deps.mjs && electron-builder --config apps/desktop/electron-builder.json --dir",
+    "desktop:package:win": "pnpm desktop:native:prepare && pnpm desktop:runtime:prepare && pnpm build && pnpm web:build && pnpm desktop:build && node scripts/desktop/verify-native-deps.mjs && electron-builder --config apps/desktop/electron-builder.json --win nsis dir && node scripts/desktop/write-artifact-checksums.mjs",
     "build": "tsc --noEmit && tsc",
     "start": "node dist/server.js",
     "test": "vitest run",

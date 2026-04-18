@@ -1,9 +1,12 @@
 {
   "appId": "com.pdfaf.desktop",
   "productName": "PDFAF",
+  "copyright": "Copyright (c) PDFAF",
   "electronVersion": "36.3.1",
   "npmRebuild": false,
   "asar": false,
+  "artifactName": "PDFAF-${version}-${arch}.${ext}",
+  "forceCodeSigning": false,
   "directories": {
     "output": "apps/desktop/dist-packaged"
   },
@@ -27,9 +30,34 @@
     }
   ],
   "win": {
+    "executableName": "PDFAF",
+    "publisherName": "PDFAF",
+    "signAndEditExecutable": true,
     "target": [
-      "dir"
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
+        "target": "dir",
+        "arch": [
+          "x64"
+        ]
+      }
     ],
-    "artifactName": "PDFAF-${version}-${arch}.${ext}"
+    "icon": "apps/desktop/assets/tray.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": false,
+    "createStartMenuShortcut": true,
+    "deleteAppDataOnUninstall": false,
+    "artifactName": "PDFAF-Setup-${version}-${arch}.${ext}",
+    "shortcutName": "PDFAF",
+    "uninstallDisplayName": "PDFAF"
   }
 }

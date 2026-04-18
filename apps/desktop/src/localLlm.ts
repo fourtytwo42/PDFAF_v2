@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
 import {
   cp,
@@ -13,6 +13,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import {
+  localLlmArtifactManifest,
+  type LocalLlmArtifactManifestEntry,
+} from './localLlmManifest.js';
 
 export type LocalLlmInstallStatus =
   | 'not_installed'
@@ -60,6 +64,7 @@ interface LocalLlmArtifact {
   kind: 'zip' | 'file';
   url: string;
   destinationPath: string;
+  manifest: LocalLlmArtifactManifestEntry;
 }
 
 interface LocalLlmManagerOptions {
@@ -68,22 +73,15 @@ interface LocalLlmManagerOptions {
   log: (message: string) => void;
 }
 
-const LLAMA_CPP_RELEASE = 'b8797';
-const LLAMA_CPP_WINDOWS_CPU_URL =
-  `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_RELEASE}/llama-${LLAMA_CPP_RELEASE}-bin-win-cpu-x64.zip`;
-const DEFAULT_HF_REPO = 'unsloth/gemma-4-E2B-it-GGUF';
-const DEFAULT_GGUF_FILE = 'gemma-4-E2B-it-Q4_K_M.gguf';
-const DEFAULT_MMPROJ_FILE = 'mmproj-F16.gguf';
-const GGUF_URL =
-  `https://huggingface.co/${DEFAULT_HF_REPO}/resolve/main/${DEFAULT_GGUF_FILE}?download=1`;
-const MMPROJ_URL =
-  `https://huggingface.co/${DEFAULT_HF_REPO}/resolve/main/${DEFAULT_MMPROJ_FILE}?download=1`;
+const DEFAULT_HF_REPO = localLlmArtifactManifest.hfRepo;
+const DEFAULT_GGUF_FILE = localLlmArtifactManifest.artifacts.gguf.filename;
+const DEFAULT_MMPROJ_FILE = localLlmArtifactManifest.artifacts.mmproj.filename;
 
 const defaultState: LocalLlmState = {
   status: 'not_installed',
   enabled: false,
   artifactVersion: {
-    llamaCppRelease: LLAMA_CPP_RELEASE,
+    llamaCppRelease: localLlmArtifactManifest.artifacts.llamaServer.version,
     hfRepo: DEFAULT_HF_REPO,
     gguf: DEFAULT_GGUF_FILE,
     mmproj: DEFAULT_MMPROJ_FILE,
@@ -123,6 +121,11 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function sha256File(path: string): Promise<string> {
+  const buffer = await readFile(path);
+  return createHash('sha256').update(buffer).digest('hex');
 }
 
 async function findFileRecursively(rootDir: string, filename: string): Promise<string | null> {
@@ -267,18 +270,21 @@ export class LocalLlmManager {
       const artifacts: LocalLlmArtifact[] = [
         {
           kind: 'zip',
-          url: LLAMA_CPP_WINDOWS_CPU_URL,
-          destinationPath: join(this.paths.downloadsDir, `llama-${LLAMA_CPP_RELEASE}.zip`),
+          url: localLlmArtifactManifest.artifacts.llamaServer.url,
+          destinationPath: join(this.paths.downloadsDir, localLlmArtifactManifest.artifacts.llamaServer.filename),
+          manifest: localLlmArtifactManifest.artifacts.llamaServer,
         },
         {
           kind: 'file',
-          url: GGUF_URL,
+          url: localLlmArtifactManifest.artifacts.gguf.url,
           destinationPath: this.paths.ggufPath,
+          manifest: localLlmArtifactManifest.artifacts.gguf,
         },
         {
           kind: 'file',
-          url: MMPROJ_URL,
+          url: localLlmArtifactManifest.artifacts.mmproj.url,
           destinationPath: this.paths.mmprojPath,
+          manifest: localLlmArtifactManifest.artifacts.mmproj,
         },
       ];
 
@@ -440,8 +446,7 @@ export class LocalLlmManager {
       throw new Error(`Failed to download local AI artifact: HTTP ${response.status} for ${artifact.url}`);
     }
 
-    const totalBytesHeader = response.headers.get('content-length');
-    const totalBytes = totalBytesHeader ? Number.parseInt(totalBytesHeader, 10) : null;
+    const totalBytes = artifact.manifest.size;
     const reader = response.body.getReader();
     let downloadedBytes = 0;
     await mkdir(dirname(temporaryPath), { recursive: true });
@@ -475,17 +480,24 @@ export class LocalLlmManager {
       });
     }
 
-    if (totalBytes !== null) {
-      const downloadedStat = await stat(temporaryPath);
-      if (downloadedStat.size !== totalBytes) {
-        await unlink(temporaryPath).catch(() => {});
-        throw new Error(`Downloaded artifact size mismatch for ${artifact.destinationPath}.`);
-      }
+    const downloadedStat = await stat(temporaryPath);
+    if (downloadedStat.size !== totalBytes) {
+      await unlink(temporaryPath).catch(() => {});
+      throw new Error(`Downloaded artifact size mismatch for ${artifact.destinationPath}.`);
+    }
+
+    const sha256 = await sha256File(temporaryPath);
+    if (sha256 !== artifact.manifest.sha256) {
+      await unlink(temporaryPath).catch(() => {});
+      throw new Error(
+        `Downloaded artifact checksum mismatch for ${artifact.manifest.filename}. Expected ${artifact.manifest.sha256}, got ${sha256}.`,
+      );
     }
 
     await mkdir(dirname(artifact.destinationPath), { recursive: true });
     await rm(artifact.destinationPath, { force: true }).catch(() => {});
     await rename(temporaryPath, artifact.destinationPath);
+    this.#log(`local-llm artifact verified: ${artifact.manifest.id}@${artifact.manifest.version}`);
   }
 
   async #installLlamaZip(zipPath: string): Promise<void> {

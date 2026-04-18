@@ -2,15 +2,18 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } from 'el
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  parseDesktopRuntimeManifest,
   resolveDesktopAppPaths,
   resolveDesktopDependencyPaths,
+  validateDesktopStartupInputs,
   validatePackagedDependencyPaths,
   type DesktopDependencyPaths,
+  type DesktopRuntimeManifestSummary,
 } from './runtime.js';
 import { LocalLlmManager, type LocalLlmPublicState } from './localLlm.js';
 
@@ -80,6 +83,7 @@ let runtimePaths: RuntimePaths | null = null;
 let dependencyPaths: DesktopDependencyPaths | null = null;
 let desktopState: DesktopState = { ...defaultDesktopState };
 let localLlmManager: LocalLlmManager | null = null;
+let runtimeManifestSummary: DesktopRuntimeManifestSummary | null = null;
 
 const runtimeState: RuntimeState = {
   apiChild: null,
@@ -132,6 +136,12 @@ async function ensureRuntimePaths(paths: RuntimePaths): Promise<void> {
   ]);
 }
 
+async function validateWritableRuntimePaths(paths: RuntimePaths): Promise<void> {
+  const probePath = join(paths.tempDir, 'desktop-write-test.tmp');
+  await writeFile(probePath, 'ok', 'utf8');
+  await rm(probePath, { force: true });
+}
+
 async function loadDesktopState(): Promise<void> {
   if (!runtimePaths) return;
   try {
@@ -142,6 +152,18 @@ async function loadDesktopState(): Promise<void> {
     };
   } catch {
     desktopState = { ...defaultDesktopState };
+  }
+}
+
+async function loadRuntimeManifestSummary(): Promise<DesktopRuntimeManifestSummary | null> {
+  if (!dependencyPaths?.runtimeManifestPath || !existsSync(dependencyPaths.runtimeManifestPath)) {
+    return null;
+  }
+
+  try {
+    return parseDesktopRuntimeManifest(await readFile(dependencyPaths.runtimeManifestPath, 'utf8'));
+  } catch {
+    return null;
   }
 }
 
@@ -381,6 +403,25 @@ async function showFatalStartupError(error: StartupError): Promise<void> {
     message: 'PDFAF Desktop could not start its local services.',
     detail,
   });
+}
+
+async function validateInstalledDesktopRuntime(): Promise<void> {
+  if (!dependencyPaths) {
+    throw new Error('Desktop dependency paths are not initialized.');
+  }
+  if (!runtimePaths) {
+    throw new Error('Desktop runtime paths are not initialized.');
+  }
+
+  const issues = validateDesktopStartupInputs({
+    dependencyPaths,
+    appPaths,
+  });
+  if (issues.length > 0) {
+    throw new Error(issues.join('\n'));
+  }
+
+  await validateWritableRuntimePaths(runtimePaths);
 }
 
 async function handleRuntimeFailure(
@@ -709,6 +750,21 @@ async function bootstrap(): Promise<void> {
   });
   runtimePaths = resolveRuntimePaths();
   await ensureRuntimePaths(runtimePaths);
+  logFilePath = runtimePaths.logFilePath;
+  try {
+    await validateInstalledDesktopRuntime();
+  } catch (error) {
+    await showFatalStartupError({
+      component: 'desktop',
+      message:
+        error instanceof Error
+          ? `The installed PDFAF package is incomplete, corrupted, or cannot write to its app-data directory.\n${error.message}`
+          : 'The installed PDFAF package failed validation.',
+      stderrTail: [],
+    });
+    app.quit();
+    return;
+  }
   await loadDesktopState();
   localLlmManager = new LocalLlmManager({
     llmRootDir: runtimePaths.llmDir,
@@ -722,14 +778,29 @@ async function bootstrap(): Promise<void> {
     log: (message) => queueLog('electron', message),
   });
   await localLlmManager.initialize();
+  runtimeManifestSummary = await loadRuntimeManifestSummary();
   registerLocalLlmIpc();
-  logFilePath = runtimePaths.logFilePath;
   queueLog('electron', 'Desktop runtime booting');
+  queueLog('electron', `Desktop app version: ${app.getVersion()}`);
+  queueLog('electron', `Desktop build flavor: ${app.isPackaged ? 'nsis' : 'development'}`);
   queueLog('electron', `Desktop app data dir: ${runtimePaths.appDataDir}`);
   queueLog('electron', `Desktop runtime mode: ${dependencyPaths.mode}`);
   queueLog('electron', `Resolved node bin: ${dependencyPaths.nodeBin}`);
   queueLog('electron', `Resolved python bin: ${dependencyPaths.pythonBin}`);
   queueLog('electron', `Resolved qpdf bin: ${dependencyPaths.qpdfBin}`);
+  if (runtimeManifestSummary) {
+    queueLog(
+      'electron',
+      `Runtime manifest: generatedAt=${runtimeManifestSummary.generatedAt} platform=${runtimeManifestSummary.platform} node=${runtimeManifestSummary.nodeVersion ?? 'unknown'} python=${runtimeManifestSummary.pythonVersion ?? 'unknown'} qpdf=${runtimeManifestSummary.qpdfVersion ?? 'unknown'}`,
+    );
+  }
+  if (localLlmManager) {
+    const localLlmState = localLlmManager.getState();
+    queueLog(
+      'electron',
+      `Local AI startup state: status=${localLlmState.status} enabled=${localLlmState.enabled} available=${localLlmState.available}`,
+    );
+  }
   const packagedDependencyErrors = validatePackagedDependencyPaths(dependencyPaths);
   if (packagedDependencyErrors.length > 0) {
     await showFatalStartupError({
