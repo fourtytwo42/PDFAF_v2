@@ -23,6 +23,22 @@ export type FailureRoutingHint =
   | 'prefer_font_repair'
   | 'semantic_not_primary'
   | 'manual_review_likely_after_fix';
+export type RemediationRoute =
+  | 'metadata_foundation'
+  | 'structure_bootstrap'
+  | 'annotation_link_normalization'
+  | 'native_structure_repair'
+  | 'font_ocr_repair'
+  | 'figure_semantics'
+  | 'document_navigation_forms'
+  | 'safe_cleanup';
+export type PlanningSkipReason =
+  | 'route_not_active'
+  | 'missing_precondition'
+  | 'already_succeeded'
+  | 'reliability_filtered'
+  | 'semantic_deferred'
+  | 'category_not_failing';
 export type DetectionConfidence = 'high' | 'medium' | 'low';
 
 export interface ReadingOrderSignals {
@@ -392,6 +408,7 @@ export interface RemediationStagePlan {
 
 export interface RemediationPlan {
   stages: RemediationStagePlan[];
+  planningSummary?: PlanningSummary;
 }
 
 export interface AppliedRemediationTool {
@@ -520,6 +537,18 @@ export interface OcrPipelineSummary {
   guidance: string;
 }
 
+export interface PlanningSummary {
+  primaryRoute: RemediationRoute | null;
+  secondaryRoutes: RemediationRoute[];
+  triggeringSignals: string[];
+  scheduledTools: string[];
+  skippedTools: Array<{
+    toolName: string;
+    reason: PlanningSkipReason;
+  }>;
+  semanticDeferred: boolean;
+}
+
 export interface RemediationResult {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -539,6 +568,8 @@ export interface RemediationResult {
   semanticPromoteHeadings?: SemanticRemediationSummary;
   /** Present when `semanticUntaggedHeadings: true` was requested (even if skipped). */
   semanticUntaggedHeadings?: SemanticRemediationSummary;
+  /** Present when the deterministic planner was used or when playbook replay fell back to the planner. */
+  planningSummary?: PlanningSummary;
   /** Present when `htmlReport: true` was requested in remediate options. */
   htmlReport?: string | null;
 }

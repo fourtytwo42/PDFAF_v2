@@ -140,9 +140,28 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('Verification summary');
     expect(html).toContain('Structural classification');
     expect(html).toContain('Detection signals');
+    expect(html).toContain('Planner routing');
     expect(html).toContain('figure_alt_ownership_heavy');
     expect(html).toContain('manual_review_required');
     expect(html.length).toBeLessThan(100_000);
+  });
+
+  it('includes planner routing summary when present', () => {
+    const a = baseAnalysis();
+    const html = generateHtmlReport(a, a, [], {
+      planningSummary: {
+        primaryRoute: 'structure_bootstrap',
+        secondaryRoutes: ['annotation_link_normalization', 'safe_cleanup'],
+        triggeringSignals: ['missing_structure_tree', 'annotation_debt'],
+        scheduledTools: ['bootstrap_struct_tree', 'normalize_annotation_tab_order'],
+        skippedTools: [{ toolName: 'set_figure_alt_text', reason: 'semantic_deferred' }],
+        semanticDeferred: true,
+      },
+    });
+    expect(html).toContain('structure_bootstrap');
+    expect(html).toContain('annotation_link_normalization');
+    expect(html).toContain('bootstrap_struct_tree');
+    expect(html).toContain('set_figure_alt_text:semantic_deferred');
   });
 
   it('includes applied tools when requested', () => {

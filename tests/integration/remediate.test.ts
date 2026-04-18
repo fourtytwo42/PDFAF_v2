@@ -42,6 +42,16 @@ describe('POST /v1/remediate', () => {
     expect(typeof body.remediatedPdfBase64).toBe('string');
     expect(Array.isArray(body.appliedTools)).toBe(true);
     expect(body.appliedTools.length).toBeGreaterThan(0);
+    const plannerDriven = Array.isArray(body.rounds)
+      && body.rounds.some((round: { source?: string }) => round.source !== 'playbook');
+    if (plannerDriven) {
+      expect(body).toHaveProperty('planningSummary');
+      expect(
+        typeof body.planningSummary?.primaryRoute === 'string'
+          || body.planningSummary?.primaryRoute === null,
+      ).toBe(true);
+      expect(Array.isArray(body.planningSummary?.scheduledTools)).toBe(true);
+    }
     expect(body.after.score).toBeGreaterThanOrEqual(0);
     expect(body.after.score).toBeLessThanOrEqual(100);
 
@@ -61,6 +71,7 @@ describe('POST /v1/remediate', () => {
     expect(typeof res.body.htmlReport).toBe('string');
     expect(res.body.htmlReport.length).toBeGreaterThan(100);
     expect(res.body.htmlReport).toContain('<!DOCTYPE html>');
+    expect(res.body.htmlReport).toContain('Planner routing');
   }, 120_000);
 
   it('returns 400 when options is not valid JSON', async () => {

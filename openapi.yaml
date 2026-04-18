@@ -230,9 +230,49 @@ components:
           type: number
         improved:
           type: boolean
+        planningSummary:
+          $ref: '#/components/schemas/PlanningSummary'
         htmlReport:
           type: [string, 'null']
           description: Present when options.htmlReport was true; null if report exceeded size cap.
+
+    PlanningSummary:
+      type: object
+      additionalProperties: true
+      properties:
+        primaryRoute:
+          type: [string, 'null']
+        secondaryRoutes:
+          type: array
+          items:
+            type: string
+        triggeringSignals:
+          type: array
+          items:
+            type: string
+        scheduledTools:
+          type: array
+          items:
+            type: string
+        skippedTools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              toolName:
+                type: string
+              reason:
+                type: string
+                enum:
+                  - route_not_active
+                  - missing_precondition
+                  - already_succeeded
+                  - reliability_filtered
+                  - semantic_deferred
+                  - category_not_failing
+        semanticDeferred:
+          type: boolean
 
     VerificationLevel:
       type: string

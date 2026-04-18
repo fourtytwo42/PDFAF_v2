@@ -1,0 +1,231 @@
+import { REMEDIATION_CATEGORY_THRESHOLD } from '../../config.js';
+import type {
+  AnalysisResult,
+  DetectionProfile,
+  DocumentSnapshot,
+  FailureProfile,
+  PlanningSkipReason,
+  PlannedRemediationTool,
+  PlanningSummary,
+  RemediationRoute,
+  ScoredCategory,
+} from '../../types.js';
+
+export interface RoutingDecision {
+  primaryRoute: RemediationRoute | null;
+  secondaryRoutes: RemediationRoute[];
+  triggeringSignals: string[];
+  deferredRoutes: RemediationRoute[];
+  semanticDeferred: boolean;
+}
+
+function categoryScore(
+  analysis: AnalysisResult,
+  key: ScoredCategory['key'],
+): number {
+  return analysis.categories.find(category => category.key === key)?.score ?? 100;
+}
+
+function categoryFailing(
+  analysis: AnalysisResult,
+  key: ScoredCategory['key'],
+): boolean {
+  const category = analysis.categories.find(item => item.key === key);
+  return Boolean(category?.applicable && category.score < REMEDIATION_CATEGORY_THRESHOLD);
+}
+
+function pushRoute(routes: RemediationRoute[], route: RemediationRoute): void {
+  if (!routes.includes(route)) routes.push(route);
+}
+
+function pushSignal(signals: string[], signal: string, active: boolean): void {
+  if (active && !signals.includes(signal)) signals.push(signal);
+}
+
+function hasStrongTaggedContentDebt(profile?: DetectionProfile | null): boolean {
+  if (!profile) return false;
+  return (
+    (profile.pdfUaSignals.orphanMcidCount ?? 0) > 0 ||
+    (profile.pdfUaSignals.suspectedPathPaintOutsideMc ?? 0) >= 10 ||
+    (profile.listSignals.listItemMisplacedCount ?? 0) > 0 ||
+    (profile.listSignals.lblBodyMisplacedCount ?? 0) > 0 ||
+    (profile.listSignals.listsWithoutItems ?? 0) > 0
+  );
+}
+
+function hasAnnotationDebt(profile?: DetectionProfile | null): boolean {
+  if (!profile) return false;
+  return (
+    (profile.annotationSignals.pagesMissingTabsS ?? 0) > 0 ||
+    (profile.annotationSignals.pagesAnnotationOrderDiffers ?? 0) > 0 ||
+    (profile.annotationSignals.linkAnnotationsMissingStructure ?? 0) > 0 ||
+    (profile.annotationSignals.nonLinkAnnotationsMissingStructure ?? 0) > 0 ||
+    (profile.annotationSignals.linkAnnotationsMissingStructParent ?? 0) > 0 ||
+    (profile.annotationSignals.nonLinkAnnotationsMissingStructParent ?? 0) > 0
+  );
+}
+
+function hasReadingOrderDebt(profile?: DetectionProfile | null): boolean {
+  if (!profile) return false;
+  return (
+    profile.readingOrderSignals.missingStructureTree ||
+    profile.readingOrderSignals.annotationOrderRiskCount > 0 ||
+    profile.readingOrderSignals.annotationStructParentRiskCount > 0 ||
+    profile.readingOrderSignals.sampledStructurePageOrderDriftCount > 0 ||
+    profile.readingOrderSignals.multiColumnOrderRiskPages > 0 ||
+    profile.readingOrderSignals.headerFooterPollutionRisk
+  );
+}
+
+function hasTableDebt(snapshot: DocumentSnapshot, profile?: DetectionProfile | null): boolean {
+  if (snapshot.tables.length === 0) return false;
+  if (!profile) return snapshot.tables.some(table => !table.hasHeaders);
+  return (
+    (profile.tableSignals.irregularTableCount ?? 0) > 0 ||
+    (profile.tableSignals.stronglyIrregularTableCount ?? 0) > 0 ||
+    (profile.tableSignals.directCellUnderTableCount ?? 0) > 0 ||
+    snapshot.tables.some(table => !table.hasHeaders)
+  );
+}
+
+function hasFigureDebt(snapshot: DocumentSnapshot, failureProfile?: FailureProfile): boolean {
+  return (
+    snapshot.figures.length > 0 &&
+    (failureProfile?.primaryFailureFamily === 'figure_alt_ownership_heavy' ||
+      (failureProfile?.semanticIssues.includes('alt_text') ?? false) ||
+      (failureProfile?.manualOnlyIssues.includes('alt_text') ?? false))
+  );
+}
+
+function hasFontDebt(snapshot: DocumentSnapshot, analysis: AnalysisResult, failureProfile?: FailureProfile): boolean {
+  const riskyFontCount = snapshot.fonts.filter(
+    font => font.encodingRisk || !font.hasUnicode || !font.isEmbedded,
+  ).length;
+  const dominantRiskyFontDebt =
+    riskyFontCount >= 2 && riskyFontCount >= Math.ceil(Math.max(snapshot.fonts.length, 1) / 2);
+  return (
+    failureProfile?.primaryFailureFamily === 'font_extractability_heavy' ||
+    categoryFailing(analysis, 'text_extractability') ||
+    snapshot.pdfClass === 'scanned' ||
+    snapshot.pdfClass === 'mixed' ||
+    dominantRiskyFontDebt
+  );
+}
+
+export function deriveRoutingDecision(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): RoutingDecision {
+  const routes: RemediationRoute[] = [];
+  const deferredRoutes: RemediationRoute[] = [];
+  const signals: string[] = [];
+  const failureProfile = analysis.failureProfile;
+  const structural = analysis.structuralClassification;
+  const detection = analysis.detectionProfile;
+  const semanticDeferred = failureProfile?.routingHints.includes('semantic_not_primary') ?? false;
+
+  const metadataDebt =
+    categoryFailing(analysis, 'title_language') || !snapshot.pdfUaVersion;
+  const bootstrapDebt =
+    snapshot.pdfClass !== 'scanned' &&
+    (structural?.structureClass === 'untagged_digital' ||
+      structural?.structureClass === 'partially_tagged' ||
+      snapshot.structureTree === null ||
+      hasStrongTaggedContentDebt(detection) ||
+      (categoryFailing(analysis, 'pdf_ua_compliance') &&
+        hasStrongTaggedContentDebt(detection)));
+  const annotationDebt =
+    hasAnnotationDebt(detection) || categoryFailing(analysis, 'link_quality');
+  const nativeStructureDebt =
+    categoryFailing(analysis, 'reading_order') ||
+    categoryFailing(analysis, 'heading_structure') ||
+    categoryFailing(analysis, 'table_markup') ||
+    categoryFailing(analysis, 'pdf_ua_compliance') ||
+    hasReadingOrderDebt(detection) ||
+    hasTableDebt(snapshot, detection);
+  const fontDebt = hasFontDebt(snapshot, analysis, failureProfile);
+  const figureDebt =
+    hasFigureDebt(snapshot, failureProfile) || categoryFailing(analysis, 'alt_text');
+  const navigationDebt =
+    categoryFailing(analysis, 'bookmarks') || categoryFailing(analysis, 'form_accessibility');
+  const structureDominant =
+    bootstrapDebt ||
+    annotationDebt ||
+    nativeStructureDebt ||
+    failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
+    failureProfile?.primaryFailureFamily === 'mixed_structural';
+  const fontDominant =
+    fontDebt && failureProfile?.primaryFailureFamily === 'font_extractability_heavy';
+
+  pushSignal(signals, 'title_language_debt', metadataDebt);
+  pushSignal(signals, 'missing_pdfua_identification', !snapshot.pdfUaVersion);
+  pushSignal(signals, 'structure_class_untagged_or_partial', structural?.structureClass === 'untagged_digital' || structural?.structureClass === 'partially_tagged');
+  pushSignal(signals, 'missing_structure_tree', snapshot.structureTree === null);
+  pushSignal(signals, 'tagged_content_debt', hasStrongTaggedContentDebt(detection));
+  pushSignal(signals, 'annotation_debt', annotationDebt);
+  pushSignal(signals, 'reading_order_debt', hasReadingOrderDebt(detection) || categoryFailing(analysis, 'reading_order'));
+  pushSignal(signals, 'table_debt', hasTableDebt(snapshot, detection) || categoryFailing(analysis, 'table_markup'));
+  pushSignal(signals, 'font_or_ocr_debt', fontDebt);
+  pushSignal(signals, 'figure_semantic_debt', figureDebt);
+  pushSignal(signals, 'navigation_or_forms_debt', navigationDebt);
+
+  if (fontDominant) pushRoute(routes, 'font_ocr_repair');
+  if (structureDominant) {
+    if (bootstrapDebt) pushRoute(routes, 'structure_bootstrap');
+    if (annotationDebt) pushRoute(routes, 'annotation_link_normalization');
+    if (nativeStructureDebt) pushRoute(routes, 'native_structure_repair');
+  }
+  if (metadataDebt && !structureDominant && !fontDominant) pushRoute(routes, 'metadata_foundation');
+  if (fontDebt && !routes.includes('font_ocr_repair')) pushRoute(routes, 'font_ocr_repair');
+  if (metadataDebt && !routes.includes('metadata_foundation')) pushRoute(routes, 'metadata_foundation');
+  if (!structureDominant) {
+    if (bootstrapDebt) pushRoute(routes, 'structure_bootstrap');
+    if (annotationDebt) pushRoute(routes, 'annotation_link_normalization');
+    if (nativeStructureDebt) pushRoute(routes, 'native_structure_repair');
+  }
+  if (navigationDebt) pushRoute(routes, 'document_navigation_forms');
+  if (figureDebt) {
+    if (semanticDeferred || bootstrapDebt || nativeStructureDebt) {
+      pushRoute(deferredRoutes, 'figure_semantics');
+    } else {
+      pushRoute(routes, 'figure_semantics');
+    }
+  }
+  if (bootstrapDebt || nativeStructureDebt || annotationDebt) {
+    pushRoute(routes, 'safe_cleanup');
+  }
+
+  if (routes.length === 0 && analysis.score < 95) {
+    pushRoute(routes, 'safe_cleanup');
+    pushSignal(signals, 'residual_score_below_target', true);
+  }
+
+  return {
+    primaryRoute: routes[0] ?? null,
+    secondaryRoutes: routes.slice(1),
+    triggeringSignals: signals,
+    deferredRoutes,
+    semanticDeferred,
+  };
+}
+
+export interface PlannerToolDecision {
+  toolName: string;
+  allowed: boolean;
+  reason: PlanningSkipReason;
+}
+
+export function buildPlanningSummary(input: {
+  routing: RoutingDecision;
+  scheduledTools: PlannedRemediationTool[];
+  skippedTools: Array<{ toolName: string; reason: PlanningSkipReason }>;
+}): PlanningSummary {
+  return {
+    primaryRoute: input.routing.primaryRoute,
+    secondaryRoutes: input.routing.secondaryRoutes,
+    triggeringSignals: input.routing.triggeringSignals,
+    scheduledTools: input.scheduledTools.map(tool => tool.toolName),
+    skippedTools: input.skippedTools,
+    semanticDeferred: input.routing.semanticDeferred,
+  };
+}

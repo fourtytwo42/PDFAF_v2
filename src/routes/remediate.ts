@@ -467,6 +467,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           includeFindingsDetail: parsedOptions.htmlReportIncludeFindingsDetail,
           includeAppliedTools: parsedOptions.htmlReportIncludeAppliedTools,
           ocrPipeline: remediation.ocrPipeline,
+          planningSummary: remediation.planningSummary,
         },
       );
       const maxReport = 512 * 1024;

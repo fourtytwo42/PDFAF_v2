@@ -494,6 +494,7 @@ async function runRemediationStep(
       reanalyzedStructuralClassification: reanalyzed?.structuralClassification ?? null,
       reanalyzedFailureProfile: reanalyzed?.failureProfile ?? null,
       reanalyzedDetectionProfile: reanalyzed?.detectionProfile ?? null,
+      planningSummary: remediation.planningSummary ?? null,
       delta: effectiveAfter.score - remediation.before.score,
       appliedTools: remediation.appliedTools,
       rounds: remediation.rounds,

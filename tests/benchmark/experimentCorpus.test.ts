@@ -115,6 +115,7 @@ function makeRemediateRow(input: {
   afterScore: number;
   reanalyzedScore?: number | null;
   totalPipelineMs: number;
+  primaryRoute?: string;
 }): RemediateBenchmarkRow {
   return {
     id: input.id,
@@ -226,6 +227,14 @@ function makeRemediateRow(input: {
     delta: input.afterScore - input.beforeScore,
     appliedTools: [],
     rounds: [],
+    planningSummary: {
+      primaryRoute: (input.primaryRoute as RemediateBenchmarkRow['planningSummary']['primaryRoute']) ?? 'structure_bootstrap',
+      secondaryRoutes: ['safe_cleanup'],
+      triggeringSignals: ['missing_structure_tree'],
+      scheduledTools: ['bootstrap_struct_tree', 'mark_untagged_content_as_artifact'],
+      skippedTools: [{ toolName: 'set_figure_alt_text', reason: 'semantic_deferred' }],
+      semanticDeferred: true,
+    },
     analysisBeforeMs: 120,
     remediationDurationMs: 250,
     wallRemediateMs: 275,
@@ -377,6 +386,9 @@ describe('experiment corpus helpers', () => {
     expect(summary.analyze.deterministicIssueFrequency[0]?.key).toBe('reading_order');
     expect(summary.analyze.manualReviewReasonFrequency[0]?.key).toContain('Contrast');
     expect(summary.remediate?.afterCategoryManualReviewFrequency[0]?.key).toBe('reading_order');
+    expect(summary.remediate?.primaryRouteDistribution.structure_bootstrap).toBe(2);
+    expect(summary.remediate?.skippedToolReasonFrequency[0]?.key).toBe('semantic_deferred');
+    expect(summary.remediate?.scheduledToolFrequency[0]?.key).toBe('bootstrap_struct_tree');
 
     const markdown = renderBenchmarkSummaryMarkdown(summary);
     expect(markdown).toContain('# Experiment corpus benchmark summary');
@@ -385,6 +397,8 @@ describe('experiment corpus helpers', () => {
     expect(markdown).toContain('Analyze manual-review reasons');
     expect(markdown).toContain('Analyze structure class');
     expect(markdown).toContain('Failure Family Stability');
+    expect(markdown).toContain('Remediation primary routes');
+    expect(markdown).toContain('Remediation skipped-tool reasons');
   });
 
   it('validates artifact bundles against manifest and summaries', () => {

@@ -1,11 +1,10 @@
-import type { CategoryKey, PdfClass } from '../../types.js';
+import type { CategoryKey, PdfClass, PlanningSkipReason, RemediationRoute } from '../../types.js';
 import type { AnalysisResult, DocumentSnapshot, AppliedRemediationTool, RemediationPlan, RemediationStagePlan, PlannedRemediationTool } from '../../types.js';
 import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
   OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS,
   REMEDIATION_CATEGORY_THRESHOLD,
-  REMEDIATION_CRITERION_TOOL_MAP,
   REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN,
   REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
   REMEDIATION_TARGET_SCORE,
@@ -14,6 +13,7 @@ import {
   TOOL_RELIABILITY_FILTER_MIN_ATTEMPTS,
 } from '../../config.js';
 import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
+import { buildPlanningSummary, deriveRoutingDecision } from './routingDecision.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -62,6 +62,58 @@ function failingCategories(analysis: AnalysisResult): CategoryKey[] {
   }
   return out;
 }
+
+const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
+  metadata_foundation: [
+    'set_pdfua_identification',
+    'set_document_title',
+    'set_document_language',
+  ],
+  structure_bootstrap: [
+    'bootstrap_struct_tree',
+    'repair_structure_conformance',
+    'wrap_singleton_orphan_mcid',
+    'remap_orphan_mcids_as_artifacts',
+    'tag_native_text_blocks',
+    'tag_ocr_text_blocks',
+  ],
+  annotation_link_normalization: [
+    'repair_native_link_structure',
+    'tag_unowned_annotations',
+    'set_link_annotation_contents',
+    'normalize_annotation_tab_order',
+    'repair_annotation_alt_text',
+  ],
+  native_structure_repair: [
+    'repair_native_reading_order',
+    'normalize_heading_hierarchy',
+    'repair_list_li_wrong_parent',
+    'repair_native_table_headers',
+    'set_table_header_cells',
+  ],
+  font_ocr_repair: [
+    'ocr_scanned_pdf',
+    'tag_ocr_text_blocks',
+    'tag_native_text_blocks',
+    'mark_untagged_content_as_artifact',
+  ],
+  figure_semantics: [
+    'set_figure_alt_text',
+    'mark_figure_decorative',
+    'repair_alt_text_structure',
+    'repair_annotation_alt_text',
+    'retag_as_figure',
+  ],
+  document_navigation_forms: [
+    'replace_bookmarks_from_headings',
+    'add_page_outline_bookmarks',
+    'fill_form_field_tooltips',
+  ],
+  safe_cleanup: [
+    'mark_untagged_content_as_artifact',
+    'repair_annotation_alt_text',
+  ],
+};
 
 function noEffectCountForTool(applied: AppliedRemediationTool[], toolName: string): number {
   return applied.filter(a => a.toolName === toolName && a.outcome === 'no_effect').length;
@@ -240,27 +292,121 @@ export function planForRemediation(
   toolOutcomeStore?: ToolOutcomeStore,
 ): RemediationPlan {
   if (analysis.score >= REMEDIATION_TARGET_SCORE) {
-    return { stages: [] };
+    return {
+      stages: [],
+      planningSummary: buildPlanningSummary({
+        routing: deriveRoutingDecision(analysis, snapshot),
+        scheduledTools: [],
+        skippedTools: [],
+      }),
+    };
   }
 
   const failCats = failingCategories(analysis);
+  const routing = deriveRoutingDecision(analysis, snapshot);
+  const activeRoutes = [routing.primaryRoute, ...routing.secondaryRoutes].filter(
+    (route): route is RemediationRoute => route !== null,
+  );
   const toolSet = new Map<string, PlannedRemediationTool>();
+  const skippedTools = new Map<string, PlanningSkipReason>();
+  const addSkipped = (toolName: string, reason: PlanningSkipReason) => {
+    if (!skippedTools.has(toolName)) skippedTools.set(toolName, reason);
+  };
+  const activeRouteSet = new Set(activeRoutes);
 
-  for (const cat of failCats) {
-    const tools = REMEDIATION_CRITERION_TOOL_MAP[cat];
-    if (!tools?.length) continue;
+  const categoryFailing = (key: CategoryKey) => failCats.includes(key);
+  const hasAnnotationSignals =
+    (snapshot.detectionProfile?.annotationSignals.pagesMissingTabsS ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.pagesAnnotationOrderDiffers ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructure ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.nonLinkAnnotationsMissingStructure ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructParent ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.nonLinkAnnotationsMissingStructParent ?? 0) > 0;
+  const hasReadingOrderSignals =
+    snapshot.detectionProfile?.readingOrderSignals.missingStructureTree === true ||
+    (snapshot.detectionProfile?.readingOrderSignals.annotationOrderRiskCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.annotationStructParentRiskCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.sampledStructurePageOrderDriftCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.multiColumnOrderRiskPages ?? 0) > 0 ||
+    snapshot.detectionProfile?.readingOrderSignals.headerFooterPollutionRisk === true;
+  const hasTableSignals =
+    (snapshot.detectionProfile?.tableSignals.irregularTableCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.tableSignals.stronglyIrregularTableCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.tableSignals.directCellUnderTableCount ?? 0) > 0;
+  const structurePrimary =
+    analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
+    analysis.failureProfile?.primaryFailureFamily === 'mixed_structural';
+
+  const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
+    if (routing.deferredRoutes.includes('figure_semantics') && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)) {
+      return { allowed: false, reason: 'semantic_deferred' };
+    }
+    if (toolName === 'repair_annotation_alt_text' && !hasAnnotationSignals) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (toolName === 'repair_native_reading_order' && !(categoryFailing('reading_order') || hasReadingOrderSignals)) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if ((toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells') && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals))) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if ((toolName === 'replace_bookmarks_from_headings' || toolName === 'add_page_outline_bookmarks') && !categoryFailing('bookmarks')) {
+      return { allowed: false, reason: 'category_not_failing' };
+    }
+    if (toolName === 'fill_form_field_tooltips' && !categoryFailing('form_accessibility')) {
+      return { allowed: false, reason: 'category_not_failing' };
+    }
+    if (ROUTE_TOOL_MAP.figure_semantics.includes(toolName) && structurePrimary) {
+      return { allowed: false, reason: 'semantic_deferred' };
+    }
+    if (toolName === 'ocr_scanned_pdf' && !(analysis.failureProfile?.primaryFailureFamily === 'font_extractability_heavy' || categoryFailing('text_extractability') || analysis.pdfClass === 'scanned' || analysis.pdfClass === 'mixed')) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    return { allowed: true };
+  };
+
+  for (const route of activeRoutes) {
+    const tools = ROUTE_TOOL_MAP[route] ?? [];
     for (const toolName of tools) {
-      if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) continue;
-      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) continue;
-      if (noEffectCountForTool(alreadyApplied, toolName) >= REMEDIATION_MAX_NO_EFFECT_PER_TOOL) continue;
+      const routeOwning = Object.entries(ROUTE_TOOL_MAP)
+        .filter(([, routeTools]) => routeTools.includes(toolName))
+        .map(([routeName]) => routeName as RemediationRoute);
+      if (!routeOwning.some(routeName => activeRouteSet.has(routeName))) {
+        addSkipped(toolName, 'route_not_active');
+        continue;
+      }
+      const routeGate = toolIsRouteRelevant(toolName);
+      if (!routeGate.allowed) {
+        addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
+        continue;
+      }
+      if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
+        addSkipped(toolName, 'missing_precondition');
+        continue;
+      }
+      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) {
+        addSkipped(toolName, 'already_succeeded');
+        continue;
+      }
+      if (noEffectCountForTool(alreadyApplied, toolName) >= REMEDIATION_MAX_NO_EFFECT_PER_TOOL) {
+        addSkipped(toolName, 'missing_precondition');
+        continue;
+      }
       if (toolSet.has(toolName)) continue;
-
       const params = buildDefaultParams(toolName, analysis, snapshot);
       toolSet.set(toolName, {
         toolName,
         params,
-        rationale: `Address failing category "${cat}" (score below ${REMEDIATION_CATEGORY_THRESHOLD}).`,
+        rationale: `Run deterministic route "${route}" for ${routing.triggeringSignals.join(', ') || 'residual debt'}.`,
       });
+    }
+  }
+
+  for (const route of routing.deferredRoutes) {
+    for (const toolName of ROUTE_TOOL_MAP[route] ?? []) {
+      if (!toolSet.has(toolName)) {
+        addSkipped(toolName, route === 'figure_semantics' ? 'semantic_deferred' : 'route_not_active');
+      }
     }
   }
 
@@ -272,9 +418,21 @@ export function planForRemediation(
   });
 
   const planned = filterPlannedToolsByReliability(plannedRaw, analysis.pdfClass, toolOutcomeStore);
+  for (const tool of plannedRaw) {
+    if (!planned.some(candidate => candidate.toolName === tool.toolName)) {
+      addSkipped(tool.toolName, 'reliability_filtered');
+    }
+  }
 
   if (planned.length === 0) {
-    return { stages: [] };
+    return {
+      stages: [],
+      planningSummary: buildPlanningSummary({
+        routing,
+        scheduledTools: [],
+        skippedTools: [...skippedTools.entries()].map(([toolName, reason]) => ({ toolName, reason })),
+      }),
+    };
   }
 
   // One stage per distinct stage number; reanalyze after each stage (authoritative score).
@@ -285,7 +443,14 @@ export function planForRemediation(
     reanalyzeAfter: true,
   })).filter(s => s.tools.length > 0);
 
-  return { stages };
+  return {
+    stages,
+    planningSummary: buildPlanningSummary({
+      routing,
+      scheduledTools: planned,
+      skippedTools: [...skippedTools.entries()].map(([toolName, reason]) => ({ toolName, reason })),
+    }),
+  };
 }
 
 export function buildDefaultParams(

@@ -21,6 +21,7 @@ import type {
   AppliedRemediationTool,
   DocumentSnapshot,
   OcrPipelineSummary,
+  PlanningSummary,
   PlannedRemediationTool,
   Playbook,
   RemediationPlan,
@@ -40,8 +41,29 @@ export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
 const implemented = new Set<string>(REMEDIATION_IMPLEMENTED_TOOLS);
 
+function mergePlanningSummaries(
+  prior: PlanningSummary | undefined,
+  next: PlanningSummary | undefined,
+): PlanningSummary | undefined {
+  if (!next) return prior;
+  if (!prior) return next;
+  const skipped = new Map<string, { toolName: string; reason: PlanningSummary['skippedTools'][number]['reason'] }>();
+  for (const row of [...prior.skippedTools, ...next.skippedTools]) {
+    skipped.set(`${row.toolName}:${row.reason}`, row);
+  }
+  return {
+    primaryRoute: prior.primaryRoute ?? next.primaryRoute,
+    secondaryRoutes: [...new Set([...prior.secondaryRoutes, ...next.secondaryRoutes])],
+    triggeringSignals: [...new Set([...prior.triggeringSignals, ...next.triggeringSignals])],
+    scheduledTools: [...new Set([...prior.scheduledTools, ...next.scheduledTools])],
+    skippedTools: [...skipped.values()],
+    semanticDeferred: prior.semanticDeferred || next.semanticDeferred,
+  };
+}
+
 function filterPlan(plan: RemediationPlan): RemediationPlan {
   return {
+    ...(plan.planningSummary ? { planningSummary: plan.planningSummary } : {}),
     stages: plan.stages
       .map(s => ({
         ...s,
@@ -655,6 +677,7 @@ export async function remediatePdf(
   let currentSnapshot = initialSnapshot;
   const appliedTools: AppliedRemediationTool[] = [];
   const rounds: RemediationRoundSummary[] = [];
+  let planningSummary: PlanningSummary | undefined;
 
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
@@ -684,6 +707,7 @@ export async function remediatePdf(
 
     const roundStartScore = currentAnalysis.score;
     let rawPlan = planForRemediation(currentAnalysis, currentSnapshot, appliedTools, toolOutcomeStore);
+    planningSummary = mergePlanningSummaries(planningSummary, rawPlan.planningSummary);
     const plan = filterPlan(rawPlan);
     if (plan.stages.length === 0) break;
     const roundBase = 24 + ((round - 1) / Math.max(1, maxRounds)) * 42;
@@ -944,6 +968,7 @@ export async function remediatePdf(
     rounds,
     remediationDurationMs: Date.now() - started,
     improved: currentAnalysis.score > before.score,
+    ...(planningSummary ? { planningSummary } : {}),
     ...(ocrMain ? { ocrPipeline: ocrMain } : {}),
   };
 

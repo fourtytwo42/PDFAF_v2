@@ -6,6 +6,7 @@ import type {
   DetectionProfile,
   FailureProfile,
   OcrPipelineSummary,
+  PlanningSummary,
   RemediationRoundSummary,
   ScoreCapApplied,
   SemanticRemediationSummary,
@@ -104,6 +105,7 @@ export interface RemediateBenchmarkRow {
   reanalyzedStructuralClassification?: StructuralClassification | null;
   reanalyzedFailureProfile?: FailureProfile | null;
   reanalyzedDetectionProfile?: DetectionProfile | null;
+  planningSummary?: PlanningSummary | null;
   delta: number | null;
   appliedTools: AppliedRemediationTool[];
   rounds: RemediationRoundSummary[];
@@ -181,6 +183,9 @@ export interface BenchmarkRunSummary {
     afterCategoryManualReviewFrequency: Array<FrequencyRow>;
     afterCategoryVerificationLevels: Record<string, Record<string, number>>;
     afterScoreCapsByCategory: Array<FrequencyRow>;
+    primaryRouteDistribution: Record<string, number>;
+    skippedToolReasonFrequency: Array<FrequencyRow>;
+    scheduledToolFrequency: Array<FrequencyRow>;
     topSlowestRemediateFiles: Array<FileMetricRow>;
     topHighestDeltaFiles: Array<FileDeltaRow>;
     topLowestDeltaFiles: Array<FileDeltaRow>;
@@ -542,6 +547,18 @@ function scoreCapCategoryKeys(caps?: ScoreCapApplied[]): string[] {
   return (caps ?? []).map(cap => cap.category);
 }
 
+function primaryRouteValues(row: RemediateBenchmarkRow): string[] {
+  return row.error || !row.planningSummary?.primaryRoute ? [] : [row.planningSummary.primaryRoute];
+}
+
+function skippedToolReasons(row: RemediateBenchmarkRow): string[] {
+  return row.error ? [] : (row.planningSummary?.skippedTools ?? []).map(item => item.reason);
+}
+
+function scheduledToolNames(row: RemediateBenchmarkRow): string[] {
+  return row.error ? [] : row.planningSummary?.scheduledTools ?? [];
+}
+
 export function buildBenchmarkSummary(input: {
   runId: string;
   generatedAt: string;
@@ -666,6 +683,15 @@ export function buildBenchmarkSummary(input: {
           ),
           afterScoreCapsByCategory: frequencyRows(
             remediateSuccessRows.flatMap(row => scoreCapCategoryKeys(row.afterScoreCapsApplied)),
+          ),
+          primaryRouteDistribution: distribution(
+            remediateSuccessRows.flatMap(primaryRouteValues),
+          ),
+          skippedToolReasonFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(skippedToolReasons),
+          ),
+          scheduledToolFrequency: frequencyRows(
+            remediateSuccessRows.flatMap(scheduledToolNames),
           ),
           topSlowestRemediateFiles: remediateSuccessRows
             .map(row => ({
@@ -827,6 +853,9 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
     lines.push(`- **Remediation category manual review:** ${markdownFrequency(summary.remediate.afterCategoryManualReviewFrequency)}`);
     lines.push(`- **Remediation category verification:** ${markdownVerificationLevels(summary.remediate.afterCategoryVerificationLevels)}`);
     lines.push(`- **Remediation score caps:** ${markdownFrequency(summary.remediate.afterScoreCapsByCategory)}`);
+    lines.push(`- **Remediation primary routes:** ${markdownDistribution(summary.remediate.primaryRouteDistribution)}`);
+    lines.push(`- **Remediation skipped-tool reasons:** ${markdownFrequency(summary.remediate.skippedToolReasonFrequency)}`);
+    lines.push(`- **Remediation scheduled tools:** ${markdownFrequency(summary.remediate.scheduledToolFrequency)}`);
   }
   lines.push('');
   lines.push('## Per Cohort');

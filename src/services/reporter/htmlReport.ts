@@ -4,6 +4,7 @@ import type {
   AppliedRemediationTool,
   Finding,
   OcrPipelineSummary,
+  PlanningSummary,
 } from '../../types.js';
 
 export interface HtmlReportOptions {
@@ -12,6 +13,7 @@ export interface HtmlReportOptions {
   includeAppliedTools?: boolean;
   /** When set, shows a prominent human-review notice (OCR scores are not PAC-equivalent). */
   ocrPipeline?: OcrPipelineSummary | null;
+  planningSummary?: PlanningSummary | null;
 }
 
 function esc(s: string): string {
@@ -110,6 +112,24 @@ function detectionBullets(after: AnalysisResult): string {
   if (table.misplacedCellCount + table.stronglyIrregularTableCount > 0) {
     lines.push(
       `<li><strong>Tables:</strong> misplaced cells ${table.misplacedCellCount}, strongly irregular tables ${table.stronglyIrregularTableCount}</li>`,
+    );
+  }
+  return lines.join('');
+}
+
+function planningBullets(summary?: PlanningSummary | null): string {
+  if (!summary) return '';
+  const lines: string[] = [];
+  lines.push(`<li><strong>Primary route:</strong> ${esc(summary.primaryRoute ?? 'none')}</li>`);
+  lines.push(`<li><strong>Secondary routes:</strong> ${esc(summary.secondaryRoutes.join(' | ') || 'none')}</li>`);
+  lines.push(`<li><strong>Triggers:</strong> ${esc(summary.triggeringSignals.join(' | ') || 'none')}</li>`);
+  lines.push(`<li><strong>Scheduled tools:</strong> ${esc(summary.scheduledTools.join(' | ') || 'none')}</li>`);
+  lines.push(`<li><strong>Semantic deferred:</strong> ${summary.semanticDeferred ? 'yes' : 'no'}</li>`);
+  if (summary.skippedTools.length > 0) {
+    lines.push(
+      `<li><strong>Skipped tools:</strong> ${esc(
+        summary.skippedTools.map(row => `${row.toolName}:${row.reason}`).join(' | '),
+      )}</li>`,
     );
   }
   return lines.join('');
@@ -248,6 +268,10 @@ export function generateHtmlReport(
   <section>
     <h2>Detection signals</h2>
     <ul>${detectionBullets(afterRef) || '<li>No Stage 3 detection metadata present.</li>'}</ul>
+  </section>
+  <section>
+    <h2>Planner routing</h2>
+    <ul>${planningBullets(options?.planningSummary) || '<li>No Stage 4 planner metadata present.</li>'}</ul>
   </section>
   <section>
     <h2>Category scores</h2>
