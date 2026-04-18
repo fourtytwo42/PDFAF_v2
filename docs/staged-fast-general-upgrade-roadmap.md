@@ -142,6 +142,16 @@ Route repairs by actual failure shape instead of broad guesses.
 - Planner inputs become more specific without noticeable analyze slowdown.
 - Failure grouping is stable across multiple unrelated documents in the same cohort.
 
+### Status
+
+- Implemented as a read-only analysis layer on top of `DocumentSnapshot` and Stage 1 evidence outputs.
+- Benchmarked on the full 50-file corpus in both `analyze` and `full` modes with additive benchmark/reporting output for structure class and failure family distributions.
+- Full corpus coverage achieved:
+  - every file received a `structuralClassification`
+  - every file received a `failureProfile`
+- Runtime remained in the same band as Stage 1 in the direct full-run comparison under `Output/experiment-corpus-baseline/comparison-stage2-full-vs-stage1/`.
+- Closed as a read-only classification/failure-profiling stage; planner and routing changes remain deferred to Stage 4.
+
 ## Stage 3: Bounded Detection Upgrades
 
 ### Goal
