@@ -57,6 +57,37 @@ const baseAnalysis = (over: Partial<AnalysisResult> = {}): AnalysisResult =>
         reason: 'Alt text quality or ownership evidence is not fully machine-verifiable.',
       },
     ],
+    structuralClassification: {
+      structureClass: 'partially_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: true,
+        hasBookmarks: false,
+        hasFigures: true,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: false,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'medium',
+    },
+    failureProfile: {
+      deterministicIssues: ['reading_order'],
+      semanticIssues: ['alt_text'],
+      manualOnlyIssues: ['alt_text'],
+      primaryFailureFamily: 'figure_alt_ownership_heavy',
+      secondaryFailureFamilies: ['structure_reading_order_heavy'],
+      routingHints: ['manual_review_likely_after_fix'],
+    },
     ...over,
   }) as AnalysisResult;
 
@@ -69,6 +100,8 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('>B<');
     expect(html).toContain('1.1.1');
     expect(html).toContain('Verification summary');
+    expect(html).toContain('Structural classification');
+    expect(html).toContain('figure_alt_ownership_heavy');
     expect(html).toContain('manual_review_required');
     expect(html.length).toBeLessThan(100_000);
   });

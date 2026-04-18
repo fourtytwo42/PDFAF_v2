@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFailureSignature, describeSignature } from '../../src/services/learning/failureSignature.js';
+import { buildFailureSignature, describeSignature, describeSignatureContext } from '../../src/services/learning/failureSignature.js';
 import type { AnalysisResult, DocumentSnapshot } from '../../src/types.js';
 
 const baseAnalysis = (over: Partial<AnalysisResult> = {}): AnalysisResult =>
@@ -87,5 +87,47 @@ describe('failureSignature', () => {
     expect(d.isScanned).toBe(true);
     expect(d.hasStructureTree).toBe(true);
     expect(d.failingCategories).toEqual(['alt_text', 'title_language']);
+  });
+
+  it('describeSignatureContext exposes stage 2 inspection metadata without changing the hash', () => {
+    const a = baseAnalysis({
+      structuralClassification: {
+        structureClass: 'untagged_digital',
+        contentProfile: {
+          pageBucket: '1-5',
+          dominantContent: 'text',
+          hasStructureTree: false,
+          hasBookmarks: false,
+          hasFigures: false,
+          hasTables: false,
+          hasForms: false,
+          annotationRisk: false,
+          taggedContentRisk: false,
+          listStructureRisk: false,
+        },
+        fontRiskProfile: {
+          riskLevel: 'low',
+          riskyFontCount: 0,
+          missingUnicodeFontCount: 0,
+          unembeddedFontCount: 0,
+          ocrTextLayerSuspected: false,
+        },
+        confidence: 'high',
+      },
+      failureProfile: {
+        deterministicIssues: ['title_language'],
+        semanticIssues: ['alt_text'],
+        manualOnlyIssues: [],
+        primaryFailureFamily: 'metadata_language_heavy',
+        secondaryFailureFamilies: ['figure_alt_ownership_heavy'],
+        routingHints: ['semantic_not_primary'],
+      },
+    });
+    const snap = baseSnapshot();
+    const context = describeSignatureContext(a, snap);
+    expect(context.signature.pdfClass).toBe('native_untagged');
+    expect(context.structureClass).toBe('untagged_digital');
+    expect(context.primaryFailureFamily).toBe('metadata_language_heavy');
+    expect(buildFailureSignature(a, snap)).toBe(buildFailureSignature(baseAnalysis(), snap));
   });
 });

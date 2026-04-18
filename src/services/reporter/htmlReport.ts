@@ -48,6 +48,34 @@ function verificationBullets(after: AnalysisResult): string {
   return lines.join('');
 }
 
+function classificationBullets(after: AnalysisResult): string {
+  const lines: string[] = [];
+  if (after.structuralClassification) {
+    lines.push(
+      `<li><strong>Structure class:</strong> ${esc(after.structuralClassification.structureClass)}</li>`,
+    );
+    lines.push(
+      `<li><strong>Classification confidence:</strong> ${esc(after.structuralClassification.confidence)}</li>`,
+    );
+  }
+  if (after.failureProfile) {
+    lines.push(
+      `<li><strong>Primary failure family:</strong> ${esc(after.failureProfile.primaryFailureFamily)}</li>`,
+    );
+    lines.push(
+      `<li><strong>Deterministic issues:</strong> ${esc(
+        after.failureProfile.deterministicIssues.join(' | ') || 'none',
+      )}</li>`,
+    );
+    lines.push(
+      `<li><strong>Manual-only issues:</strong> ${esc(
+        after.failureProfile.manualOnlyIssues.join(' | ') || 'none',
+      )}</li>`,
+    );
+  }
+  return lines.join('');
+}
+
 /**
  * Self-contained HTML accessibility summary (inline CSS, no CDN).
  * Safe for embedding: filenames and messages are escaped.
@@ -173,6 +201,10 @@ export function generateHtmlReport(
   <section>
     <h2>Verification summary</h2>
     <ul>${verificationBullets(afterRef)}</ul>
+  </section>
+  <section>
+    <h2>Structural classification</h2>
+    <ul>${classificationBullets(afterRef) || '<li>No Stage 2 classification metadata present.</li>'}</ul>
   </section>
   <section>
     <h2>Category scores</h2>

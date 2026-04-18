@@ -198,6 +198,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScoreCapApplied'
+        structuralClassification:
+          $ref: '#/components/schemas/StructuralClassification'
+        failureProfile:
+          $ref: '#/components/schemas/FailureProfile'
         categories:
           type: array
           items:
@@ -250,6 +254,91 @@ components:
           type: number
         reason:
           type: string
+
+    StructuralClassification:
+      type: object
+      additionalProperties: true
+      properties:
+        structureClass:
+          type: string
+          enum: [scanned, untagged_digital, partially_tagged, native_tagged, well_tagged]
+        contentProfile:
+          type: object
+          additionalProperties: true
+          properties:
+            pageBucket:
+              type: string
+              enum: ['1-5', '6-20', '21-50', '50+']
+            dominantContent:
+              type: string
+              enum: [text, mixed, image_heavy]
+            hasStructureTree:
+              type: boolean
+            hasBookmarks:
+              type: boolean
+            hasFigures:
+              type: boolean
+            hasTables:
+              type: boolean
+            hasForms:
+              type: boolean
+            annotationRisk:
+              type: boolean
+            taggedContentRisk:
+              type: boolean
+            listStructureRisk:
+              type: boolean
+        fontRiskProfile:
+          type: object
+          additionalProperties: true
+          properties:
+            riskLevel:
+              type: string
+              enum: [low, medium, high]
+            riskyFontCount:
+              type: integer
+            missingUnicodeFontCount:
+              type: integer
+            unembeddedFontCount:
+              type: integer
+            ocrTextLayerSuspected:
+              type: boolean
+        confidence:
+          type: string
+          enum: [high, medium, low]
+
+    FailureProfile:
+      type: object
+      additionalProperties: true
+      properties:
+        deterministicIssues:
+          type: array
+          items:
+            type: string
+        semanticIssues:
+          type: array
+          items:
+            type: string
+        manualOnlyIssues:
+          type: array
+          items:
+            type: string
+        primaryFailureFamily:
+          type: string
+          enum:
+            [font_extractability_heavy, structure_reading_order_heavy, figure_alt_ownership_heavy, metadata_language_heavy, mixed_structural, near_pass_residual]
+        secondaryFailureFamilies:
+          type: array
+          items:
+            type: string
+            enum:
+              [font_extractability_heavy, structure_reading_order_heavy, figure_alt_ownership_heavy, metadata_language_heavy, mixed_structural, near_pass_residual]
+        routingHints:
+          type: array
+          items:
+            type: string
+            enum:
+              [prefer_structure_bootstrap, prefer_annotation_normalization, prefer_font_repair, semantic_not_primary, manual_review_likely_after_fix]
 
     Finding:
       type: object

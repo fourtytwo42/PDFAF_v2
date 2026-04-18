@@ -3,10 +3,12 @@ import { join, resolve, dirname } from 'node:path';
 import type {
   AnalysisResult,
   AppliedRemediationTool,
+  FailureProfile,
   OcrPipelineSummary,
   RemediationRoundSummary,
   ScoreCapApplied,
   SemanticRemediationSummary,
+  StructuralClassification,
   VerificationLevel,
 } from '../../types.js';
 
@@ -55,6 +57,8 @@ export interface AnalyzeBenchmarkRow {
   manualReviewRequired?: boolean;
   manualReviewReasons?: string[];
   scoreCapsApplied?: ScoreCapApplied[];
+  structuralClassification?: StructuralClassification;
+  failureProfile?: FailureProfile;
   error?: string;
 }
 
@@ -73,6 +77,8 @@ export interface RemediateBenchmarkRow {
   beforeManualReviewRequired?: boolean | null;
   beforeManualReviewReasons?: string[];
   beforeScoreCapsApplied?: ScoreCapApplied[];
+  beforeStructuralClassification?: StructuralClassification | null;
+  beforeFailureProfile?: FailureProfile | null;
   afterScore: number | null;
   afterGrade: string | null;
   afterPdfClass: string | null;
@@ -81,6 +87,8 @@ export interface RemediateBenchmarkRow {
   afterManualReviewRequired?: boolean | null;
   afterManualReviewReasons?: string[];
   afterScoreCapsApplied?: ScoreCapApplied[];
+  afterStructuralClassification?: StructuralClassification | null;
+  afterFailureProfile?: FailureProfile | null;
   reanalyzedScore: number | null;
   reanalyzedGrade: string | null;
   reanalyzedPdfClass: string | null;
@@ -89,6 +97,8 @@ export interface RemediateBenchmarkRow {
   reanalyzedManualReviewRequired?: boolean | null;
   reanalyzedManualReviewReasons?: string[];
   reanalyzedScoreCapsApplied?: ScoreCapApplied[];
+  reanalyzedStructuralClassification?: StructuralClassification | null;
+  reanalyzedFailureProfile?: FailureProfile | null;
   delta: number | null;
   appliedTools: AppliedRemediationTool[];
   rounds: RemediationRoundSummary[];
@@ -126,11 +136,16 @@ export interface BenchmarkRunSummary {
     wallAnalyzeMs: SummaryStats;
     gradeDistribution: Record<string, number>;
     pdfClassDistribution: Record<string, number>;
+    structureClassDistribution: Record<string, number>;
+    primaryFailureFamilyDistribution: Record<string, number>;
     weakestCategories: Array<FrequencyRow>;
     topFindingMessages: Array<FrequencyRow>;
     manualReviewReasonFrequency: Array<FrequencyRow>;
     categoryManualReviewFrequency: Array<FrequencyRow>;
     categoryVerificationLevels: Record<string, Record<string, number>>;
+    deterministicIssueFrequency: Array<FrequencyRow>;
+    semanticIssueFrequency: Array<FrequencyRow>;
+    manualOnlyIssueFrequency: Array<FrequencyRow>;
     manualReviewRequiredCount: number;
     scoreCapsByCategory: Array<FrequencyRow>;
     topSlowestAnalyzeFiles: Array<FileMetricRow>;
@@ -213,6 +228,11 @@ export interface CohortSummary {
   manualReviewReasonFrequency: Array<FrequencyRow>;
   categoryManualReviewFrequency: Array<FrequencyRow>;
   categoryVerificationLevels: Record<string, Record<string, number>>;
+  structureClassDistribution: Record<string, number>;
+  primaryFailureFamilyDistribution: Record<string, number>;
+  deterministicIssueFrequency: Array<FrequencyRow>;
+  semanticIssueFrequency: Array<FrequencyRow>;
+  manualOnlyIssueFrequency: Array<FrequencyRow>;
   manualReviewRequiredCount: number;
   scoreCapsByCategory: Array<FrequencyRow>;
 }
@@ -430,6 +450,31 @@ function categoryVerificationCounts(
   );
 }
 
+function structureClassValues(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  return row.structuralClassification ? [row.structuralClassification.structureClass] : [];
+}
+
+function primaryFailureFamilyValues(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  return row.failureProfile ? [row.failureProfile.primaryFailureFamily] : [];
+}
+
+function deterministicIssues(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  return row.failureProfile?.deterministicIssues ?? [];
+}
+
+function semanticIssues(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  return row.failureProfile?.semanticIssues ?? [];
+}
+
+function manualOnlyIssues(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error) return [];
+  return row.failureProfile?.manualOnlyIssues ?? [];
+}
+
 function scoreCapCategoryKeys(caps?: ScoreCapApplied[]): string[] {
   return (caps ?? []).map(cap => cap.category);
 }
@@ -479,11 +524,16 @@ export function buildBenchmarkSummary(input: {
       wallAnalyzeMs: summarizeStats(analyzeSuccessRows.map(row => row.wallAnalyzeMs ?? 0)),
       gradeDistribution: distribution(analyzeSuccessRows.map(row => row.grade)),
       pdfClassDistribution: distribution(analyzeSuccessRows.map(row => row.pdfClass)),
+      structureClassDistribution: distribution(analyzeSuccessRows.flatMap(structureClassValues)),
+      primaryFailureFamilyDistribution: distribution(analyzeSuccessRows.flatMap(primaryFailureFamilyValues)),
       weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
       topFindingMessages: frequencyRows(analyzeSuccessRows.flatMap(topFindingMessages)),
       manualReviewReasonFrequency: frequencyRows(analyzeSuccessRows.flatMap(manualReviewReasons)),
       categoryManualReviewFrequency: frequencyRows(analyzeSuccessRows.flatMap(categoryManualReviewKeys)),
       categoryVerificationLevels: categoryVerificationCounts(analyzeSuccessRows),
+      deterministicIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(deterministicIssues)),
+      semanticIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(semanticIssues)),
+      manualOnlyIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(manualOnlyIssues)),
       manualReviewRequiredCount: analyzeSuccessRows.filter(row => row.manualReviewRequired === true).length,
       scoreCapsByCategory: frequencyRows(analyzeSuccessRows.flatMap(row => scoreCapCategoryKeys(row.scoreCapsApplied))),
       topSlowestAnalyzeFiles: analyzeSuccessRows
@@ -605,11 +655,16 @@ function buildCohortSummary(analyzeRows: AnalyzeBenchmarkRow[], remediateRows: R
     remediationDurationMs: summarizeStats(remediateSuccessRows.map(row => row.remediationDurationMs ?? 0)),
     wallRemediateMs: summarizeStats(remediateSuccessRows.map(row => row.wallRemediateMs ?? 0)),
     totalPipelineMs: summarizeStats(remediateSuccessRows.map(row => row.totalPipelineMs ?? 0)),
+    structureClassDistribution: distribution(analyzeSuccessRows.flatMap(structureClassValues)),
+    primaryFailureFamilyDistribution: distribution(analyzeSuccessRows.flatMap(primaryFailureFamilyValues)),
     weakestCategories: frequencyRows(analyzeSuccessRows.flatMap(weakestCategoryKeys)),
     topFindingMessages: frequencyRows(analyzeSuccessRows.flatMap(topFindingMessages)),
     manualReviewReasonFrequency: frequencyRows(analyzeSuccessRows.flatMap(manualReviewReasons)),
     categoryManualReviewFrequency: frequencyRows(analyzeSuccessRows.flatMap(categoryManualReviewKeys)),
     categoryVerificationLevels: categoryVerificationCounts(analyzeSuccessRows),
+    deterministicIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(deterministicIssues)),
+    semanticIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(semanticIssues)),
+    manualOnlyIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(manualOnlyIssues)),
     manualReviewRequiredCount: analyzeSuccessRows.filter(row => row.manualReviewRequired === true).length,
     scoreCapsByCategory: frequencyRows(analyzeSuccessRows.flatMap(row => scoreCapCategoryKeys(row.scoreCapsApplied))),
   };
@@ -671,12 +726,17 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
   lines.push(`- **Analyze runtime (wall):** ${formatStats(summary.analyze.wallAnalyzeMs)}`);
   lines.push(`- **Analyze grades:** ${markdownDistribution(summary.analyze.gradeDistribution)}`);
   lines.push(`- **Analyze pdfClass:** ${markdownDistribution(summary.analyze.pdfClassDistribution)}`);
+  lines.push(`- **Analyze structure class:** ${markdownDistribution(summary.analyze.structureClassDistribution)}`);
+  lines.push(`- **Analyze primary failure family:** ${markdownDistribution(summary.analyze.primaryFailureFamilyDistribution)}`);
   lines.push(`- **Weakest categories:** ${markdownFrequency(summary.analyze.weakestCategories)}`);
   lines.push(`- **Top findings:** ${markdownFrequency(summary.analyze.topFindingMessages)}`);
   lines.push(`- **Analyze manual-review count:** ${summary.analyze.manualReviewRequiredCount}`);
   lines.push(`- **Analyze manual-review reasons:** ${markdownFrequency(summary.analyze.manualReviewReasonFrequency)}`);
   lines.push(`- **Analyze category manual review:** ${markdownFrequency(summary.analyze.categoryManualReviewFrequency)}`);
   lines.push(`- **Analyze category verification:** ${markdownVerificationLevels(summary.analyze.categoryVerificationLevels)}`);
+  lines.push(`- **Analyze deterministic issues:** ${markdownFrequency(summary.analyze.deterministicIssueFrequency)}`);
+  lines.push(`- **Analyze semantic issues:** ${markdownFrequency(summary.analyze.semanticIssueFrequency)}`);
+  lines.push(`- **Analyze manual-only issues:** ${markdownFrequency(summary.analyze.manualOnlyIssueFrequency)}`);
   lines.push(`- **Analyze score caps:** ${markdownFrequency(summary.analyze.scoreCapsByCategory)}`);
   if (summary.remediate) {
     lines.push(`- **Remediation before scores:** ${formatStats(summary.remediate.beforeScore)}`);
@@ -696,8 +756,8 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
   lines.push('');
   lines.push('## Per Cohort');
   lines.push('');
-  lines.push('| Cohort | Files | Analyze score | Analyze p95 wall ms | Remediate delta | Remediate p95 total ms |');
-  lines.push('| --- | ---: | --- | ---: | --- | ---: |');
+  lines.push('| Cohort | Files | Analyze score | Analyze p95 wall ms | Primary families | Remediate delta | Remediate p95 total ms |');
+  lines.push('| --- | ---: | --- | ---: | --- | --- | ---: |');
   for (const cohort of EXPERIMENT_CORPUS_COHORTS) {
     const row = summary.cohorts[cohort] ?? {
       fileCount: 0,
@@ -712,17 +772,29 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
       remediationDurationMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
       wallRemediateMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
       totalPipelineMs: { count: 0, mean: 0, median: 0, p95: 0, min: 0, max: 0 },
+      structureClassDistribution: {},
+      primaryFailureFamilyDistribution: {},
       weakestCategories: [],
       topFindingMessages: [],
       manualReviewReasonFrequency: [],
       categoryManualReviewFrequency: [],
       categoryVerificationLevels: {},
+      deterministicIssueFrequency: [],
+      semanticIssueFrequency: [],
+      manualOnlyIssueFrequency: [],
       manualReviewRequiredCount: 0,
       scoreCapsByCategory: [],
     };
     lines.push(
-      `| ${cohort} | ${row.fileCount} | ${row.analyzeScore.count ? row.analyzeScore.mean.toFixed(1) : 'n/a'} | ${row.wallAnalyzeMs.p95.toFixed(0)} | ${row.remediationDelta.count ? row.remediationDelta.mean.toFixed(1) : 'n/a'} | ${row.totalPipelineMs.p95.toFixed(0)} |`,
+      `| ${cohort} | ${row.fileCount} | ${row.analyzeScore.count ? row.analyzeScore.mean.toFixed(1) : 'n/a'} | ${row.wallAnalyzeMs.p95.toFixed(0)} | ${markdownDistribution(row.primaryFailureFamilyDistribution)} | ${row.remediationDelta.count ? row.remediationDelta.mean.toFixed(1) : 'n/a'} | ${row.totalPipelineMs.p95.toFixed(0)} |`,
     );
+  }
+  lines.push('');
+  lines.push('## Failure Family Stability');
+  lines.push('');
+  for (const cohort of EXPERIMENT_CORPUS_COHORTS) {
+    const row = summary.cohorts[cohort];
+    lines.push(`- **${cohort}:** ${markdownDistribution(row?.primaryFailureFamilyDistribution ?? {})}`);
   }
   lines.push('');
   lines.push('## Slowest Analyze Files');

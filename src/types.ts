@@ -8,6 +8,54 @@ export type Severity  = 'critical' | 'moderate' | 'minor' | 'pass';
 export type Grade     = 'A' | 'B' | 'C' | 'D' | 'F';
 export type EvidenceLevel = 'verified' | 'heuristic' | 'inferred_after_fix' | 'manual_review_required';
 export type VerificationLevel = 'verified' | 'mixed' | 'heuristic' | 'manual_review_required';
+export type StructureClass = 'scanned' | 'untagged_digital' | 'partially_tagged' | 'native_tagged' | 'well_tagged';
+export type ClassificationConfidence = 'high' | 'medium' | 'low';
+export type FailureFamily =
+  | 'font_extractability_heavy'
+  | 'structure_reading_order_heavy'
+  | 'figure_alt_ownership_heavy'
+  | 'metadata_language_heavy'
+  | 'mixed_structural'
+  | 'near_pass_residual';
+export type FailureRoutingHint =
+  | 'prefer_structure_bootstrap'
+  | 'prefer_annotation_normalization'
+  | 'prefer_font_repair'
+  | 'semantic_not_primary'
+  | 'manual_review_likely_after_fix';
+
+export interface StructuralClassification {
+  structureClass: StructureClass;
+  contentProfile: {
+    pageBucket: '1-5' | '6-20' | '21-50' | '50+';
+    dominantContent: 'text' | 'mixed' | 'image_heavy';
+    hasStructureTree: boolean;
+    hasBookmarks: boolean;
+    hasFigures: boolean;
+    hasTables: boolean;
+    hasForms: boolean;
+    annotationRisk: boolean;
+    taggedContentRisk: boolean;
+    listStructureRisk: boolean;
+  };
+  fontRiskProfile: {
+    riskLevel: 'low' | 'medium' | 'high';
+    riskyFontCount: number;
+    missingUnicodeFontCount: number;
+    unembeddedFontCount: number;
+    ocrTextLayerSuspected: boolean;
+  };
+  confidence: ClassificationConfidence;
+}
+
+export interface FailureProfile {
+  deterministicIssues: string[];
+  semanticIssues: string[];
+  manualOnlyIssues: string[];
+  primaryFailureFamily: FailureFamily;
+  secondaryFailureFamilies: FailureFamily[];
+  routingHints: FailureRoutingHint[];
+}
 
 // ─── Structure tree node (minimal, for reading order check) ──────────────────
 
@@ -230,6 +278,8 @@ export interface AnalysisResult {
   manualReviewRequired?: boolean;
   manualReviewReasons?: string[];
   scoreCapsApplied?: ScoreCapApplied[];
+  structuralClassification?: StructuralClassification;
+  failureProfile?: FailureProfile;
 }
 
 // ─── Intermediate types from sub-services ────────────────────────────────────

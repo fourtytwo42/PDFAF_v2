@@ -69,6 +69,8 @@ describe('POST /v1/analyze', () => {
     expect(body).toHaveProperty('manualReviewRequired');
     expect(body).toHaveProperty('manualReviewReasons');
     expect(body).toHaveProperty('scoreCapsApplied');
+    expect(body).toHaveProperty('structuralClassification');
+    expect(body).toHaveProperty('failureProfile');
 
     expect(['A','B','C','D','F']).toContain(body.grade);
     expect(body.score).toBeGreaterThanOrEqual(0);
@@ -88,6 +90,9 @@ describe('POST /v1/analyze', () => {
       expect(cat).toHaveProperty('verificationLevel');
       expect(cat).toHaveProperty('manualReviewRequired');
     }
+
+    expect(body.structuralClassification).toHaveProperty('structureClass');
+    expect(body.failureProfile).toHaveProperty('primaryFailureFamily');
 
     // Should complete in reasonable time
     expect(body.analysisDurationMs).toBeLessThan(60_000);

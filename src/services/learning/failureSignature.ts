@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto';
 import { REMEDIATION_CATEGORY_THRESHOLD } from '../../config.js';
-import type { AnalysisResult, DocumentSnapshot, PdfClass, CategoryKey } from '../../types.js';
+import { deriveAnalysisClassification } from '../classification/analysisClassification.js';
+import type {
+  AnalysisResult,
+  DocumentSnapshot,
+  PdfClass,
+  CategoryKey,
+  FailureFamily,
+  StructureClass,
+} from '../../types.js';
 
 /** Portable fields hashed for playbook matching (no filenames, ids, or raw scores). */
 export interface FailureSignature {
@@ -9,6 +17,14 @@ export interface FailureSignature {
   isScanned: boolean;
   hasStructureTree: boolean;
   estimatedPageRange: '1-5' | '6-20' | '21-50' | '50+';
+}
+
+export interface FailureSignatureDescription {
+  signature: FailureSignature;
+  structureClass: StructureClass;
+  primaryFailureFamily: FailureFamily;
+  deterministicIssues: string[];
+  manualOnlyIssues: string[];
 }
 
 function classifyPageCount(pageCount: number): FailureSignature['estimatedPageRange'] {
@@ -36,6 +52,28 @@ export function describeSignature(
     isScanned: analysis.pdfClass === 'scanned',
     hasStructureTree: snapshot.structureTree != null,
     estimatedPageRange: classifyPageCount(analysis.pageCount),
+  };
+}
+
+export function describeSignatureContext(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): FailureSignatureDescription {
+  const stage2 = {
+    structuralClassification: analysis.structuralClassification,
+    failureProfile: analysis.failureProfile,
+  };
+  const derived =
+    stage2.structuralClassification && stage2.failureProfile
+      ? stage2
+      : deriveAnalysisClassification(snapshot, analysis);
+
+  return {
+    signature: describeSignature(analysis, snapshot),
+    structureClass: derived.structuralClassification!.structureClass,
+    primaryFailureFamily: derived.failureProfile!.primaryFailureFamily,
+    deterministicIssues: derived.failureProfile!.deterministicIssues,
+    manualOnlyIssues: derived.failureProfile!.manualOnlyIssues,
   };
 }
 

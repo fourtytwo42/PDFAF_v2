@@ -11,6 +11,7 @@ import type { DocumentSnapshot, PdfClass, AnalysisResult, PdfjsResult, PythonAna
 import { extractWithPdfjs } from './pdfjsService.js';
 import { extractStructure }  from './structureService.js';
 import { score }             from './scorer/scorer.js';
+import { deriveAnalysisClassification } from './classification/analysisClassification.js';
 import { getDb }             from '../db/client.js';
 
 // ─── Concurrency semaphore ────────────────────────────────────────────────────
@@ -111,12 +112,16 @@ export async function analyzePdf(
     snap.pdfClass = classifyPdf(snap);
 
     const now = new Date().toISOString();
-    const analysisResult = score(snap, {
+    const scoredResult = score(snap, {
       id: randomUUID(),
       filename,
       timestamp: now,
       analysisDurationMs: Date.now() - startMs,
     });
+    const analysisResult: AnalysisResult = {
+      ...scoredResult,
+      ...deriveAnalysisClassification(snap, scoredResult),
+    };
 
     setCached(fileHash, analysisResult, snap);
     persistResult(analysisResult);

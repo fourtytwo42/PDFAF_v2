@@ -73,6 +73,37 @@ function makeAnalyzeRow(input: {
     manualReviewRequired: true,
     manualReviewReasons: ['Contrast not machine-verified.'],
     scoreCapsApplied: [{ category: 'reading_order', cap: 89, rawScore: 100, finalScore: 89, reason: 'heuristic cap' }],
+    structuralClassification: {
+      structureClass: input.pdfClass === 'native_untagged' ? 'untagged_digital' : 'partially_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: input.pdfClass !== 'native_untagged',
+        hasBookmarks: false,
+        hasFigures: false,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: true,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'medium',
+    },
+    failureProfile: {
+      deterministicIssues: ['reading_order'],
+      semanticIssues: [],
+      manualOnlyIssues: ['reading_order'],
+      primaryFailureFamily: 'structure_reading_order_heavy',
+      secondaryFailureFamilies: [],
+      routingHints: ['prefer_structure_bootstrap'],
+    },
   };
 }
 
@@ -99,6 +130,8 @@ function makeRemediateRow(input: {
     beforeManualReviewRequired: true,
     beforeManualReviewReasons: ['Before reason'],
     beforeScoreCapsApplied: [],
+    beforeStructuralClassification: null,
+    beforeFailureProfile: null,
     afterScore: input.afterScore,
     afterGrade: 'A',
     afterPdfClass: 'native_tagged',
@@ -120,6 +153,37 @@ function makeRemediateRow(input: {
     afterManualReviewRequired: true,
     afterManualReviewReasons: ['After reason'],
     afterScoreCapsApplied: [{ category: 'reading_order', cap: 89, rawScore: 95, finalScore: 89, reason: 'heuristic cap' }],
+    afterStructuralClassification: {
+      structureClass: 'native_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: true,
+        hasBookmarks: false,
+        hasFigures: false,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: false,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'medium',
+    },
+    afterFailureProfile: {
+      deterministicIssues: ['reading_order'],
+      semanticIssues: [],
+      manualOnlyIssues: ['reading_order'],
+      primaryFailureFamily: 'structure_reading_order_heavy',
+      secondaryFailureFamilies: [],
+      routingHints: ['prefer_structure_bootstrap'],
+    },
     reanalyzedScore: input.reanalyzedScore ?? null,
     reanalyzedGrade: input.reanalyzedScore == null ? null : 'A',
     reanalyzedPdfClass: input.reanalyzedScore == null ? null : 'native_tagged',
@@ -128,6 +192,37 @@ function makeRemediateRow(input: {
     reanalyzedManualReviewRequired: input.reanalyzedScore == null ? null : true,
     reanalyzedManualReviewReasons: input.reanalyzedScore == null ? [] : ['Reanalyzed reason'],
     reanalyzedScoreCapsApplied: input.reanalyzedScore == null ? [] : [{ category: 'reading_order', cap: 89, rawScore: 95, finalScore: 89, reason: 'heuristic cap' }],
+    reanalyzedStructuralClassification: input.reanalyzedScore == null ? null : {
+      structureClass: 'native_tagged',
+      contentProfile: {
+        pageBucket: '1-5',
+        dominantContent: 'text',
+        hasStructureTree: true,
+        hasBookmarks: false,
+        hasFigures: false,
+        hasTables: false,
+        hasForms: false,
+        annotationRisk: false,
+        taggedContentRisk: false,
+        listStructureRisk: false,
+      },
+      fontRiskProfile: {
+        riskLevel: 'low',
+        riskyFontCount: 0,
+        missingUnicodeFontCount: 0,
+        unembeddedFontCount: 0,
+        ocrTextLayerSuspected: false,
+      },
+      confidence: 'medium',
+    },
+    reanalyzedFailureProfile: input.reanalyzedScore == null ? null : {
+      deterministicIssues: ['reading_order'],
+      semanticIssues: [],
+      manualOnlyIssues: ['reading_order'],
+      primaryFailureFamily: 'structure_reading_order_heavy',
+      secondaryFailureFamilies: [],
+      routingHints: ['prefer_structure_bootstrap'],
+    },
     delta: input.afterScore - input.beforeScore,
     appliedTools: [],
     rounds: [],
@@ -276,6 +371,10 @@ describe('experiment corpus helpers', () => {
     expect(summary.remediate?.delta.mean).toBe(7);
     expect(summary.analyze.gradeDistribution).toEqual({ A: 1, C: 1 });
     expect(summary.analyze.manualReviewRequiredCount).toBe(2);
+    expect(summary.analyze.structureClassDistribution.partially_tagged).toBe(1);
+    expect(summary.analyze.structureClassDistribution.untagged_digital).toBe(1);
+    expect(summary.analyze.primaryFailureFamilyDistribution.structure_reading_order_heavy).toBe(2);
+    expect(summary.analyze.deterministicIssueFrequency[0]?.key).toBe('reading_order');
     expect(summary.analyze.manualReviewReasonFrequency[0]?.key).toContain('Contrast');
     expect(summary.remediate?.afterCategoryManualReviewFrequency[0]?.key).toBe('reading_order');
 
@@ -284,6 +383,8 @@ describe('experiment corpus helpers', () => {
     expect(markdown).toContain('## Slowest Analyze Files');
     expect(markdown).toContain('## Highest Delta Files');
     expect(markdown).toContain('Analyze manual-review reasons');
+    expect(markdown).toContain('Analyze structure class');
+    expect(markdown).toContain('Failure Family Stability');
   });
 
   it('validates artifact bundles against manifest and summaries', () => {
