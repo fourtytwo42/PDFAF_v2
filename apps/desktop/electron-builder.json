@@ -4,7 +4,11 @@
   "copyright": "Copyright (c) PDFAF",
   "electronVersion": "36.3.1",
   "npmRebuild": false,
-  "asar": false,
+  "asar": true,
+  "asarUnpack": [
+    "dist/**/*",
+    "apps/desktop/assets/**/*"
+  ],
   "artifactName": "PDFAF-${version}-${arch}.${ext}",
   "forceCodeSigning": false,
   "directories": {
@@ -15,10 +19,7 @@
     "dist/**/*",
     "python/**/*",
     "apps/desktop/dist/**/*",
-    "apps/desktop/assets/**/*",
-    "apps/pdf-af-web/.next/standalone/**/*",
-    "apps/pdf-af-web/.next/static/**/*",
-    "apps/pdf-af-web/public/**/*"
+    "apps/desktop/assets/**/*"
   ],
   "extraResources": [
     {
@@ -27,6 +28,14 @@
       "filter": [
         "**/*"
       ]
+    },
+    {
+      "from": "apps/desktop/.release/build-metadata.json",
+      "to": "release/build-metadata.json"
+    },
+    {
+      "from": "apps/desktop/.web-runtime-packaged",
+      "to": "web-runtime"
     }
   ],
   "win": {

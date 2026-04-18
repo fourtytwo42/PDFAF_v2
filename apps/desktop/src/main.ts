@@ -1,17 +1,20 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage, shell } from 'electron';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  parseDesktopBuildMetadata,
   parseDesktopRuntimeManifest,
   resolveDesktopAppPaths,
   resolveDesktopDependencyPaths,
   validateDesktopStartupInputs,
   validatePackagedDependencyPaths,
+  type DesktopAppPaths,
+  type DesktopBuildMetadataSummary,
   type DesktopDependencyPaths,
   type DesktopRuntimeManifestSummary,
 } from './runtime.js';
@@ -60,6 +63,7 @@ interface RuntimePaths {
   logsDir: string;
   logFilePath: string;
   llmDir: string;
+  supportDir: string;
   tempDir: string;
   stateFilePath: string;
 }
@@ -68,9 +72,26 @@ interface DesktopState {
   hasSeenTrayHint: boolean;
 }
 
+interface DesktopDiagnosticsSummary {
+  appVersion: string;
+  startupPhase: StartupPhase;
+  runtimeMode: 'development' | 'packaged';
+  apiPort: number | null;
+  webPort: number | null;
+  appDataDir: string;
+  logsDir: string;
+  runtime: {
+    nodeBin: string;
+    pythonBin: string;
+    qpdfBin: string;
+    manifest: DesktopRuntimeManifestSummary | null;
+    buildMetadata: DesktopBuildMetadataSummary | null;
+  };
+  localAi: LocalLlmPublicState | null;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const appPaths = resolveDesktopAppPaths(__dirname);
 const startupTimeoutMs = 60_000;
 const pollIntervalMs = 500;
 const maxTailLines = 40;
@@ -84,6 +105,8 @@ let dependencyPaths: DesktopDependencyPaths | null = null;
 let desktopState: DesktopState = { ...defaultDesktopState };
 let localLlmManager: LocalLlmManager | null = null;
 let runtimeManifestSummary: DesktopRuntimeManifestSummary | null = null;
+let buildMetadataSummary: DesktopBuildMetadataSummary | null = null;
+let appPaths: DesktopAppPaths | null = null;
 
 const runtimeState: RuntimeState = {
   apiChild: null,
@@ -104,12 +127,20 @@ function baseChildEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   };
 }
 
+function requireAppPaths(): DesktopAppPaths {
+  if (!appPaths) {
+    throw new Error('Desktop app paths are not initialized.');
+  }
+  return appPaths;
+}
+
 function resolveRuntimePaths(): RuntimePaths {
   const appDataDir = join(app.getPath('userData'), 'data');
   const dbDir = join(appDataDir, 'db');
   const filesDir = join(appDataDir, 'files');
   const logsDir = join(appDataDir, 'logs');
   const llmDir = join(appDataDir, 'llm');
+  const supportDir = join(appDataDir, 'support');
   const tempDir = join(appDataDir, 'temp');
 
   return {
@@ -120,6 +151,7 @@ function resolveRuntimePaths(): RuntimePaths {
     logsDir,
     logFilePath: join(logsDir, 'pdfaf-desktop.log'),
     llmDir,
+    supportDir,
     tempDir,
     stateFilePath: join(appDataDir, 'desktop-state.json'),
   };
@@ -132,6 +164,7 @@ async function ensureRuntimePaths(paths: RuntimePaths): Promise<void> {
     mkdir(paths.filesDir, { recursive: true }),
     mkdir(paths.logsDir, { recursive: true }),
     mkdir(paths.llmDir, { recursive: true }),
+    mkdir(paths.supportDir, { recursive: true }),
     mkdir(paths.tempDir, { recursive: true }),
   ]);
 }
@@ -167,6 +200,18 @@ async function loadRuntimeManifestSummary(): Promise<DesktopRuntimeManifestSumma
   }
 }
 
+async function loadBuildMetadataSummary(): Promise<DesktopBuildMetadataSummary | null> {
+  if (!dependencyPaths?.buildMetadataPath || !existsSync(dependencyPaths.buildMetadataPath)) {
+    return null;
+  }
+
+  try {
+    return parseDesktopBuildMetadata(await readFile(dependencyPaths.buildMetadataPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 async function saveDesktopState(): Promise<void> {
   if (!runtimePaths) return;
   await writeFile(runtimePaths.stateFilePath, JSON.stringify(desktopState, null, 2), 'utf8');
@@ -190,6 +235,9 @@ function desktopChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     PDFAF_NODE_BIN: dependencyPaths.nodeBin,
     PDFAF_PYTHON_BIN: dependencyPaths.pythonBin,
     PDFAF_QPDF_BIN: dependencyPaths.qpdfBin,
+    ...(dependencyPaths.webRuntimeNodeModulesPath
+      ? { NODE_PATH: dependencyPaths.webRuntimeNodeModulesPath }
+      : {}),
     PDFAF_LOCAL_LLM_INSTALLED: localLlmManager?.isInstalled() ? '1' : '0',
     PDFAF_LOCAL_LLM_ENABLED: localLlmManager?.getState().enabled ? '1' : '0',
     PDFAF_LOCAL_LLM_ACTIVE_MODE: localLlmManager?.getState().enabled && localLlmManager?.isInstalled() ? 'local' : 'none',
@@ -412,6 +460,9 @@ async function validateInstalledDesktopRuntime(): Promise<void> {
   if (!runtimePaths) {
     throw new Error('Desktop runtime paths are not initialized.');
   }
+  if (!appPaths) {
+    throw new Error('Desktop app paths are not initialized.');
+  }
 
   const issues = validateDesktopStartupInputs({
     dependencyPaths,
@@ -435,9 +486,142 @@ async function handleRuntimeFailure(
     type: 'error',
     title: 'PDFAF Desktop service failure',
     message: `The ${component} service exited unexpectedly.`,
-    detail: `${message}\n\nLog file: ${logFilePath}`,
+    detail: [
+      message,
+      '',
+      'Next steps:',
+      '1. Open the logs folder and review the latest desktop log.',
+      '2. Try Restart App Services from the tray or diagnostics panel.',
+      '3. Export a support bundle if the problem persists.',
+      '',
+      `Logs: ${runtimePaths?.logsDir ?? '(unavailable)'}`,
+      `Data: ${runtimePaths?.appDataDir ?? '(unavailable)'}`,
+      `Log file: ${logFilePath}`,
+    ].join('\n'),
   });
   app.quit();
+}
+
+function getDesktopDiagnostics(): DesktopDiagnosticsSummary {
+  if (!runtimePaths || !dependencyPaths) {
+    throw new Error('Desktop runtime is not initialized.');
+  }
+
+  return {
+    appVersion: app.getVersion(),
+    startupPhase: runtimeState.startupPhase,
+    runtimeMode: dependencyPaths.mode,
+    apiPort: runtimeState.apiPort,
+    webPort: runtimeState.webPort,
+    appDataDir: runtimePaths.appDataDir,
+    logsDir: runtimePaths.logsDir,
+    runtime: {
+      nodeBin: dependencyPaths.nodeBin,
+      pythonBin: dependencyPaths.pythonBin,
+      qpdfBin: dependencyPaths.qpdfBin,
+      manifest: runtimeManifestSummary,
+      buildMetadata: buildMetadataSummary,
+    },
+    localAi: localLlmManager?.getState() ?? null,
+  };
+}
+
+async function openFolder(path: string): Promise<string> {
+  const error = await shell.openPath(path);
+  if (error) {
+    throw new Error(error);
+  }
+  return path;
+}
+
+async function compressArchive(sourceDir: string, zipPath: string): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(
+      'powershell',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-Command',
+        `Compress-Archive -LiteralPath '${sourceDir.replace(/'/g, "''")}\\*' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
+      ],
+      {
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(`Compress-Archive exited with code ${code ?? 'null'}`));
+    });
+  });
+}
+
+async function captureHealthSnapshot(): Promise<unknown> {
+  if (!runtimeState.apiPort) return null;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${runtimeState.apiPort}/v1/health`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      return { status: 'unavailable', httpStatus: response.status };
+    }
+    return await response.json();
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function exportSupportBundle(): Promise<string> {
+  if (!runtimePaths) {
+    throw new Error('Desktop runtime is not initialized.');
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const bundleDir = join(runtimePaths.supportDir, `bundle-${timestamp}`);
+  const zipPath = join(runtimePaths.supportDir, `pdfaf-support-${timestamp}.zip`);
+  await rm(bundleDir, { recursive: true, force: true });
+  await rm(zipPath, { force: true }).catch(() => {});
+  await mkdir(bundleDir, { recursive: true });
+
+  const copyIfExists = async (sourcePath: string | null, targetName: string): Promise<void> => {
+    if (!sourcePath || !existsSync(sourcePath)) return;
+    await copyFile(sourcePath, join(bundleDir, targetName));
+  };
+
+  await Promise.all([
+    copyIfExists(logFilePath || null, 'pdfaf-desktop.log'),
+    copyIfExists(runtimePaths.stateFilePath, 'desktop-state.json'),
+    copyIfExists(join(runtimePaths.llmDir, 'state.json'), 'local-llm-state.json'),
+    copyIfExists(dependencyPaths?.runtimeManifestPath ?? null, 'runtime-manifest.json'),
+    copyIfExists(dependencyPaths?.buildMetadataPath ?? null, 'build-metadata.json'),
+  ]);
+
+  await writeFile(
+    join(bundleDir, 'diagnostics.json'),
+    JSON.stringify(
+      {
+        exportedAt: new Date().toISOString(),
+        diagnostics: getDesktopDiagnostics(),
+        health: await captureHealthSnapshot(),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+
+  await compressArchive(bundleDir, zipPath);
+  await rm(bundleDir, { recursive: true, force: true });
+  queueLog('electron', `Support bundle exported: ${zipPath}`);
+  return zipPath;
 }
 
 function broadcastLocalLlmState(state: LocalLlmPublicState): void {
@@ -472,6 +656,32 @@ function registerLocalLlmIpc(): void {
     await restartServices();
     return state;
   });
+  ipcMain.handle('pdfaf:desktop:get-diagnostics', async () => getDesktopDiagnostics());
+  ipcMain.handle('pdfaf:desktop:open-data-folder', async () => {
+    if (!runtimePaths) {
+      throw new Error('Desktop runtime is not initialized.');
+    }
+    return await openFolder(runtimePaths.appDataDir);
+  });
+  ipcMain.handle('pdfaf:desktop:open-logs-folder', async () => {
+    if (!runtimePaths) {
+      throw new Error('Desktop runtime is not initialized.');
+    }
+    return await openFolder(runtimePaths.logsDir);
+  });
+  ipcMain.handle('pdfaf:desktop:export-support-bundle', async () => await exportSupportBundle());
+  ipcMain.handle('pdfaf:desktop:restart-services', async () => {
+    await restartServices();
+    return getDesktopDiagnostics();
+  });
+  ipcMain.handle('pdfaf:desktop:reset-local-ai', async () => {
+    if (!localLlmManager) {
+      throw new Error('Local AI manager is not initialized.');
+    }
+    await localLlmManager.remove();
+    await restartServices();
+    return getDesktopDiagnostics();
+  });
 }
 
 function getCurrentWebUrl(): string {
@@ -502,7 +712,7 @@ async function showMainWindow(): Promise<void> {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: appPaths.preloadPath,
+      preload: requireAppPaths().preloadPath,
     },
   });
 
@@ -531,6 +741,7 @@ async function createMainWindow(url: string): Promise<void> {
 }
 
 async function startServices(): Promise<void> {
+  const resolvedAppPaths = requireAppPaths();
   if (!dependencyPaths) {
     throw {
       component: 'desktop',
@@ -538,17 +749,17 @@ async function startServices(): Promise<void> {
       stderrTail: [],
     } satisfies StartupError;
   }
-  if (!existsSync(appPaths.apiEntry)) {
+  if (!existsSync(resolvedAppPaths.apiEntry)) {
     throw {
       component: 'api',
-      message: `Missing API entrypoint: ${appPaths.apiEntry}`,
+      message: `Missing API entrypoint: ${resolvedAppPaths.apiEntry}`,
       stderrTail: [],
     } satisfies StartupError;
   }
-  if (!existsSync(appPaths.webEntry)) {
+  if (!existsSync(resolvedAppPaths.webEntry)) {
     throw {
       component: 'web',
-      message: `Missing web standalone entrypoint: ${appPaths.webEntry}. Build the web app with standalone output before starting the desktop shell.`,
+      message: `Missing web standalone entrypoint: ${resolvedAppPaths.webEntry}. Build the web app with standalone output before starting the desktop shell.`,
       stderrTail: [],
     } satisfies StartupError;
   }
@@ -562,8 +773,8 @@ async function startServices(): Promise<void> {
   runtimeState.apiChild = spawnManagedChild(
     'api',
     dependencyPaths.nodeBin,
-    appPaths.apiEntry,
-    appPaths.apiCwd,
+    resolvedAppPaths.apiEntry,
+    resolvedAppPaths.apiCwd,
     desktopChildEnv({
       HOST: '127.0.0.1',
       NODE_ENV: 'production',
@@ -586,8 +797,8 @@ async function startServices(): Promise<void> {
   runtimeState.webChild = spawnManagedChild(
     'web',
     dependencyPaths.nodeBin,
-    appPaths.webEntry,
-    appPaths.webCwd,
+    resolvedAppPaths.webEntry,
+    resolvedAppPaths.webCwd,
     desktopChildEnv({
       HOSTNAME: '127.0.0.1',
       NODE_ENV: 'production',
@@ -681,9 +892,10 @@ function buildTrayMenu(): Menu {
 
 function createTrayIcon(): void {
   if (runtimeState.tray) return;
+  const resolvedAppPaths = requireAppPaths();
 
-  const trayImage = existsSync(appPaths.trayIconPath)
-    ? nativeImage.createFromPath(appPaths.trayIconPath)
+  const trayImage = existsSync(resolvedAppPaths.trayIconPath)
+    ? nativeImage.createFromPath(resolvedAppPaths.trayIconPath)
     : nativeImage.createFromDataURL(
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAx0lEQVR4AY2RsQ3CQBBFnxMHEMABnMAJnMAGnMAJnMABHMAJxwSJP0l2ghJp2SZv7r2dnXve6+5ShlDNQkS9RrkmaRjA2ckb2z9CbYuK7VUyWWtaFgjA5a6W3V6sbjMqYNri7JjBdP4zCZh98oOw3XK7oUNwnR5jh1OrCiAtDfJxQgWVa5iTZ8u4K4DkWt9Nso1gpGnoR0AV4yStM8+gPe8IIwRgz5rEhP1MO9mNfVGLyH8s12Mg3ylGjM2D0T4drm2oAQ0s69c4+jQ5s5rY8Y7A7q8f7l0x1F5gQhSt6XJgAAAABJRU5ErkJggg==',
       );
@@ -744,9 +956,15 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.whenReady();
+  appPaths = resolveDesktopAppPaths({
+    desktopDistDir: __dirname,
+    processResourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+  });
   dependencyPaths = resolveDesktopDependencyPaths({
     desktopDistDir: __dirname,
     isPackaged: app.isPackaged,
+    processResourcesPath: process.resourcesPath,
   });
   runtimePaths = resolveRuntimePaths();
   await ensureRuntimePaths(runtimePaths);
@@ -779,6 +997,7 @@ async function bootstrap(): Promise<void> {
   });
   await localLlmManager.initialize();
   runtimeManifestSummary = await loadRuntimeManifestSummary();
+  buildMetadataSummary = await loadBuildMetadataSummary();
   registerLocalLlmIpc();
   queueLog('electron', 'Desktop runtime booting');
   queueLog('electron', `Desktop app version: ${app.getVersion()}`);
@@ -792,6 +1011,12 @@ async function bootstrap(): Promise<void> {
     queueLog(
       'electron',
       `Runtime manifest: generatedAt=${runtimeManifestSummary.generatedAt} platform=${runtimeManifestSummary.platform} node=${runtimeManifestSummary.nodeVersion ?? 'unknown'} python=${runtimeManifestSummary.pythonVersion ?? 'unknown'} qpdf=${runtimeManifestSummary.qpdfVersion ?? 'unknown'}`,
+    );
+  }
+  if (buildMetadataSummary) {
+    queueLog(
+      'electron',
+      `Build metadata: version=${buildMetadataSummary.appVersion} commit=${buildMetadataSummary.gitCommit ?? 'unknown'} builtAt=${buildMetadataSummary.buildTimestamp} signingConfigured=${buildMetadataSummary.signingConfigured}`,
     );
   }
   if (localLlmManager) {

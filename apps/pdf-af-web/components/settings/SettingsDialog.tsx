@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../common/Button';
 import { LocalAiSettingsCard } from './LocalAiSettingsCard';
+import { SupportDiagnosticsCard } from './SupportDiagnosticsCard';
 import { useAppSettingsStore } from '../../stores/settings';
 
 interface SettingsDialogProps {
@@ -102,6 +103,7 @@ export function SettingsDialog({ defaultApiBaseUrl }: SettingsDialogProps) {
           ) : null}
 
           <LocalAiSettingsCard />
+          <SupportDiagnosticsCard />
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-1.5">

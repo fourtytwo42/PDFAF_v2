@@ -28,6 +28,35 @@ interface LocalLlmPublicState {
   };
 }
 
+interface DesktopDiagnosticsSummary {
+  appVersion: string;
+  startupPhase: string;
+  runtimeMode: 'development' | 'packaged';
+  apiPort: number | null;
+  webPort: number | null;
+  appDataDir: string;
+  logsDir: string;
+  runtime: {
+    nodeBin: string;
+    pythonBin: string;
+    qpdfBin: string;
+    manifest: {
+      generatedAt: string;
+      platform: string;
+      nodeVersion: string | null;
+      pythonVersion: string | null;
+      qpdfVersion: string | null;
+    } | null;
+    buildMetadata: {
+      appVersion: string;
+      gitCommit: string | null;
+      buildTimestamp: string;
+      signingConfigured: boolean;
+    } | null;
+  };
+  localAi: LocalLlmPublicState | null;
+}
+
 const channels = {
   getState: 'pdfaf:local-llm:get-state',
   install: 'pdfaf:local-llm:install',
@@ -35,6 +64,12 @@ const channels = {
   remove: 'pdfaf:local-llm:remove',
   setEnabled: 'pdfaf:local-llm:set-enabled',
   changed: 'pdfaf:local-llm:changed',
+  getDiagnostics: 'pdfaf:desktop:get-diagnostics',
+  openDataFolder: 'pdfaf:desktop:open-data-folder',
+  openLogsFolder: 'pdfaf:desktop:open-logs-folder',
+  exportSupportBundle: 'pdfaf:desktop:export-support-bundle',
+  restartServices: 'pdfaf:desktop:restart-services',
+  resetLocalAi: 'pdfaf:desktop:reset-local-ai',
 } as const;
 
 contextBridge.exposeInMainWorld('pdfafDesktop', {
@@ -52,5 +87,13 @@ contextBridge.exposeInMainWorld('pdfafDesktop', {
         ipcRenderer.removeListener(channels.changed, wrapped);
       };
     },
+  },
+  support: {
+    getDiagnostics: () => ipcRenderer.invoke(channels.getDiagnostics) as Promise<DesktopDiagnosticsSummary>,
+    openDataFolder: () => ipcRenderer.invoke(channels.openDataFolder) as Promise<string>,
+    openLogsFolder: () => ipcRenderer.invoke(channels.openLogsFolder) as Promise<string>,
+    exportSupportBundle: () => ipcRenderer.invoke(channels.exportSupportBundle) as Promise<string>,
+    restartServices: () => ipcRenderer.invoke(channels.restartServices) as Promise<DesktopDiagnosticsSummary>,
+    resetLocalAi: () => ipcRenderer.invoke(channels.resetLocalAi) as Promise<DesktopDiagnosticsSummary>,
   },
 });
