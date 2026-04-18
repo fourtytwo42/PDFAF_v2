@@ -11,6 +11,7 @@ import {
   type ExperimentCorpusManifestEntry,
   type RemediateBenchmarkRow,
 } from '../../src/services/benchmark/experimentCorpus.js';
+import { compareBenchmarkSummaries, renderBenchmarkComparisonMarkdown } from '../../src/services/benchmark/compareRuns.js';
 import type { AnalysisResult, Finding, ScoredCategory } from '../../src/types.js';
 
 function makeCategory(key: ScoredCategory['key'], score: number): ScoredCategory {
@@ -68,6 +69,10 @@ function makeAnalyzeRow(input: {
     findings: analysis.findings,
     analysisDurationMs: analysis.analysisDurationMs,
     wallAnalyzeMs: input.wallAnalyzeMs,
+    verificationLevel: 'mixed',
+    manualReviewRequired: true,
+    manualReviewReasons: ['Contrast not machine-verified.'],
+    scoreCapsApplied: [{ category: 'reading_order', cap: 89, rawScore: 100, finalScore: 89, reason: 'heuristic cap' }],
   };
 }
 
@@ -89,12 +94,40 @@ function makeRemediateRow(input: {
     beforeScore: input.beforeScore,
     beforeGrade: 'B',
     beforePdfClass: 'native_untagged',
+    beforeCategories: [],
+    beforeVerificationLevel: 'heuristic',
+    beforeManualReviewRequired: true,
+    beforeManualReviewReasons: ['Before reason'],
+    beforeScoreCapsApplied: [],
     afterScore: input.afterScore,
     afterGrade: 'A',
     afterPdfClass: 'native_tagged',
+    afterCategories: [
+      {
+        key: 'reading_order',
+        score: input.afterScore,
+        weight: 1,
+        applicable: true,
+        severity: 'minor',
+        findings: [],
+        evidence: 'heuristic',
+        verificationLevel: 'heuristic',
+        manualReviewRequired: true,
+        manualReviewReasons: ['After reason'],
+      },
+    ],
+    afterVerificationLevel: 'heuristic',
+    afterManualReviewRequired: true,
+    afterManualReviewReasons: ['After reason'],
+    afterScoreCapsApplied: [{ category: 'reading_order', cap: 89, rawScore: 95, finalScore: 89, reason: 'heuristic cap' }],
     reanalyzedScore: input.reanalyzedScore ?? null,
     reanalyzedGrade: input.reanalyzedScore == null ? null : 'A',
     reanalyzedPdfClass: input.reanalyzedScore == null ? null : 'native_tagged',
+    reanalyzedCategories: [],
+    reanalyzedVerificationLevel: input.reanalyzedScore == null ? null : 'heuristic',
+    reanalyzedManualReviewRequired: input.reanalyzedScore == null ? null : true,
+    reanalyzedManualReviewReasons: input.reanalyzedScore == null ? [] : ['Reanalyzed reason'],
+    reanalyzedScoreCapsApplied: input.reanalyzedScore == null ? [] : [{ category: 'reading_order', cap: 89, rawScore: 95, finalScore: 89, reason: 'heuristic cap' }],
     delta: input.afterScore - input.beforeScore,
     appliedTools: [],
     rounds: [],
@@ -242,11 +275,15 @@ describe('experiment corpus helpers', () => {
     expect(summary.analyze.wallAnalyzeMs.p95).toBe(200);
     expect(summary.remediate?.delta.mean).toBe(7);
     expect(summary.analyze.gradeDistribution).toEqual({ A: 1, C: 1 });
+    expect(summary.analyze.manualReviewRequiredCount).toBe(2);
+    expect(summary.analyze.manualReviewReasonFrequency[0]?.key).toContain('Contrast');
+    expect(summary.remediate?.afterCategoryManualReviewFrequency[0]?.key).toBe('reading_order');
 
     const markdown = renderBenchmarkSummaryMarkdown(summary);
     expect(markdown).toContain('# Experiment corpus benchmark summary');
     expect(markdown).toContain('## Slowest Analyze Files');
     expect(markdown).toContain('## Highest Delta Files');
+    expect(markdown).toContain('Analyze manual-review reasons');
   });
 
   it('validates artifact bundles against manifest and summaries', () => {
@@ -334,5 +371,76 @@ describe('experiment corpus helpers', () => {
     });
     expect(broken.ok).toBe(false);
     expect(broken.errors.join('\n')).toContain('Missing analyze row');
+  });
+
+  it('compares benchmark summaries and renders markdown', () => {
+    const before = buildBenchmarkSummary({
+      runId: 'before',
+      generatedAt: '2026-04-18T00:00:00.000Z',
+      mode: 'full',
+      semanticEnabled: false,
+      writePdfs: false,
+      selectedFileIds: ['doc-1'],
+      manifestEntries: 50,
+      analyzeRows: [
+        makeAnalyzeRow({
+          id: 'doc-1',
+          file: '00-fixtures/a.pdf',
+          cohort: '00-fixtures',
+          score: 80,
+          grade: 'B',
+          pdfClass: 'native_tagged',
+          wallAnalyzeMs: 100,
+        }),
+      ],
+      remediateRows: [
+        makeRemediateRow({
+          id: 'doc-1',
+          file: '00-fixtures/a.pdf',
+          cohort: '00-fixtures',
+          beforeScore: 80,
+          afterScore: 90,
+          reanalyzedScore: 88,
+          totalPipelineMs: 300,
+        }),
+      ],
+    });
+    const after = buildBenchmarkSummary({
+      runId: 'after',
+      generatedAt: '2026-04-18T00:00:00.000Z',
+      mode: 'full',
+      semanticEnabled: false,
+      writePdfs: false,
+      selectedFileIds: ['doc-1'],
+      manifestEntries: 50,
+      analyzeRows: [
+        makeAnalyzeRow({
+          id: 'doc-1',
+          file: '00-fixtures/a.pdf',
+          cohort: '00-fixtures',
+          score: 85,
+          grade: 'A',
+          pdfClass: 'native_tagged',
+          wallAnalyzeMs: 110,
+        }),
+      ],
+      remediateRows: [
+        makeRemediateRow({
+          id: 'doc-1',
+          file: '00-fixtures/a.pdf',
+          cohort: '00-fixtures',
+          beforeScore: 85,
+          afterScore: 93,
+          reanalyzedScore: 91,
+          totalPipelineMs: 320,
+        }),
+      ],
+    });
+    const comparison = compareBenchmarkSummaries(before, after);
+    expect(comparison.analyze.scoreMeanDelta).toBe(5);
+    expect(comparison.remediate?.afterMeanDelta).toBe(3);
+    const markdown = renderBenchmarkComparisonMarkdown(comparison);
+    expect(markdown).toContain('# Experiment corpus benchmark comparison');
+    expect(markdown).toContain('Analyze score mean delta');
   });
 });

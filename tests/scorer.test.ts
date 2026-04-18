@@ -733,6 +733,8 @@ describe('stage 1 evidence model', () => {
     expect(cat.applicable).toBe(false);
     expect(cat.evidence).toBe('heuristic');
     expect(cat.manualReviewRequired).toBe(true);
+    expect(result.manualReviewRequired).toBe(false);
+    expect(result.verificationLevel).toBe('mixed');
     expect(result.manualReviewReasons?.some(reason => reason.includes('Color contrast'))).toBe(true);
   });
 

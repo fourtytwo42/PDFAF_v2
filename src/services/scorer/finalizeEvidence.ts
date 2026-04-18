@@ -196,12 +196,12 @@ function finalizeCategory(snap: DocumentSnapshot, category: ScoredCategory): Sco
 }
 
 function topLevelVerificationLevel(categories: ScoredCategory[]): VerificationLevel {
-  if (categories.some(category => category.manualReviewRequired)) {
+  const applicable = categories.filter(category => category.applicable);
+  if (applicable.some(category => category.manualReviewRequired)) {
     return 'manual_review_required';
   }
-  const applicable = categories.filter(category => category.applicable);
-  const hasVerified = applicable.some(category => category.evidence === 'verified');
-  const hasNonVerified = applicable.some(category => category.evidence !== 'verified');
+  const hasVerified = categories.some(category => category.evidence === 'verified');
+  const hasNonVerified = categories.some(category => category.evidence !== 'verified');
   if (!hasNonVerified) return 'verified';
   if (hasVerified) return 'mixed';
   return 'heuristic';
@@ -235,7 +235,7 @@ export function finalizeScoringEvidence(
     categories: finalizedCategories,
     findings,
     verificationLevel: topLevelVerificationLevel(finalizedCategories),
-    manualReviewRequired: finalizedCategories.some(category => category.manualReviewRequired),
+    manualReviewRequired: finalizedCategories.some(category => category.applicable && category.manualReviewRequired),
     manualReviewReasons,
     scoreCapsApplied,
   };
