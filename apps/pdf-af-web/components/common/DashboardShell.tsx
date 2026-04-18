@@ -3,7 +3,6 @@
 import { useEffect } from 'react';
 import { BrandBar } from '../branding/BrandBar';
 import { QueueWorkspace } from '../queue/QueueWorkspace';
-import { ConnectionStatusCard } from '../settings/ConnectionStatusCard';
 import { LocalAiDownloadToast } from '../settings/LocalAiDownloadToast';
 import { SettingsDialog } from '../settings/SettingsDialog';
 import { UploadDropzone } from '../upload/UploadDropzone';
@@ -27,7 +26,6 @@ export function DashboardShell({ defaultApiBaseUrl }: DashboardShellProps) {
     <main className="app-shell">
       <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-3 px-3 py-4 md:px-4 md:py-6">
         <BrandBar />
-        <ConnectionStatusCard />
         <UploadDropzone />
         <QueueWorkspace />
         <SettingsDialog defaultApiBaseUrl={defaultApiBaseUrl} />
