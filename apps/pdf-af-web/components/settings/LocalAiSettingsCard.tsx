@@ -17,6 +17,7 @@ function statusLabel(state: DesktopLocalLlmState | null, hasDesktopBridge: boole
   if (!hasDesktopBridge) return 'Desktop unavailable';
   if (!state) return 'Checking';
   if (state.status === 'downloading') return 'Installing';
+  if (state.currentStep === 'waiting_for_retry') return 'Paused';
   if (state.status === 'installed' && state.enabled) return 'Ready';
   if (state.status === 'installed') return 'Disabled';
   if (state.status === 'failed') return 'Install failed';
@@ -32,6 +33,7 @@ function statusTone(
   if (!state) return 'accent';
   if (state.status === 'installed' && state.enabled) return 'success';
   if (state.status === 'failed') return 'danger';
+  if (state.currentStep === 'waiting_for_retry') return 'warning';
   if (state.status === 'downloading' || state.status === 'removing') return 'accent';
   if (state.status === 'installed') return 'warning';
   return 'neutral';
@@ -74,7 +76,7 @@ export function LocalAiSettingsCard() {
             Local AI
           </p>
           <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-            Local AI is required for remediation. Repair or reinstall it here if setup did not finish cleanly.
+            Local AI downloads automatically after the desktop app starts. Until it finishes, remediation is unavailable and you can only grade PDFs.
           </p>
         </div>
         <StatusPill label={statusLabel(state, hasDesktopBridge)} tone={statusTone(state, hasDesktopBridge)} />
@@ -119,6 +121,8 @@ export function LocalAiSettingsCard() {
                 ? `Downloading local AI runtime: ${progressLabel}`
                 : state?.currentStep === 'downloading_model'
                   ? `Downloading local AI model: ${progressLabel}`
+                  : state?.currentStep === 'waiting_for_retry'
+                    ? `Waiting to resume download: ${progressLabel}`
                   : progressLabel}
             </p>
           ) : null}
@@ -130,15 +134,9 @@ export function LocalAiSettingsCard() {
           ) : null}
 
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {state?.status === 'downloading' ? (
-              <Button variant="secondary" disabled={busy} onClick={() => void runAction(() => desktopBridge!.cancel())}>
-                Cancel Install
-              </Button>
-            ) : null}
-
             {state?.status !== 'downloading' && state?.status !== 'installed' ? (
               <Button variant="primary" disabled={busy} onClick={() => void runAction(() => desktopBridge!.install())}>
-                {state?.status === 'failed' ? 'Retry Required AI Install' : 'Install Required AI'}
+                {state?.status === 'failed' ? 'Retry Required AI Install' : 'Start Required AI Install'}
               </Button>
             ) : null}
 

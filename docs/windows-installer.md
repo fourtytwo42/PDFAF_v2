@@ -27,13 +27,13 @@ It does ship:
 - the packaged web runtime
 - bundled Node, Python, and `qpdf`
 
-Local AI is required for a remediation-ready install. The NSIS installer now runs a second provisioning phase after base files are copied and downloads local AI into user data:
+Local AI is downloaded by the desktop app after first launch into user data:
 
 - `llama-server`
 - the GGUF model
 - `mmproj`
 
-That download phase uses the same manifest-backed verification flow as the desktop app and must complete before setup finishes.
+The desktop app starts that download automatically in the background and resumes partial downloads after transient network failures.
 
 ## Uninstall and data retention
 

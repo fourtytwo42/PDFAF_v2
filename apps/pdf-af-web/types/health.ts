@@ -16,7 +16,7 @@ export interface LocalLlmHealthSummary {
 
 export interface DesktopLocalLlmState {
   status: 'not_installed' | 'downloading' | 'installed' | 'failed' | 'removing';
-  currentStep: 'idle' | 'downloading_runtime' | 'downloading_model' | 'verifying' | 'finalizing' | 'removing';
+  currentStep: 'idle' | 'downloading_runtime' | 'downloading_model' | 'waiting_for_retry' | 'verifying' | 'finalizing' | 'removing';
   currentArtifact: string | null;
   enabled: boolean;
   available: boolean;

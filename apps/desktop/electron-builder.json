@@ -7,7 +7,6 @@
   "asar": true,
   "asarUnpack": [
     "dist/**/*",
-    "apps/desktop/dist/**/*",
     "apps/desktop/assets/**/*"
   ],
   "artifactName": "PDFAF-${version}-${arch}.${ext}",
@@ -70,7 +69,6 @@
     "createDesktopShortcut": false,
     "createStartMenuShortcut": true,
     "deleteAppDataOnUninstall": false,
-    "include": "apps/desktop/build/installer.nsh",
     "artifactName": "PDFAF-Setup-${version}-${arch}.${ext}",
     "shortcutName": "PDFAF",
     "uninstallDisplayName": "PDFAF"

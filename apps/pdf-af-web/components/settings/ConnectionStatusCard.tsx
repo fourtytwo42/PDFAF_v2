@@ -16,6 +16,16 @@ export function ConnectionStatusCard() {
   const openSettings = useAppSettingsStore((state) => state.openSettings);
   const { hasDesktopBridge, state: localAiState, error: localAiError } = useDesktopLocalAiState();
   const healthLocalLlm = connection.summary?.localLlm;
+  const showLocalAiProgress = Boolean(
+    hasDesktopBridge &&
+    localAiState &&
+    (localAiState.status === 'downloading' || localAiState.currentStep === 'waiting_for_retry') &&
+    localAiState.totalBytes &&
+    localAiState.totalBytes > 0,
+  );
+  const localAiProgressPercent = showLocalAiProgress && localAiState?.totalBytes
+    ? Math.min(100, Math.max(0, (localAiState.downloadedBytes / localAiState.totalBytes) * 100))
+    : 0;
 
   const statusTone =
     connection.status === 'connected'
@@ -73,8 +83,15 @@ export function ConnectionStatusCard() {
           ? 'Downloading local AI runtime'
           : 'Downloading local AI model';
       return {
-        label: `${phaseLabel}: ${downloadedLabel} of ${totalLabel}${localAiState.currentArtifact ? ` (${localAiState.currentArtifact})` : ''}.`,
+        label: `${phaseLabel}: ${downloadedLabel} of ${totalLabel}${localAiState.currentArtifact ? ` (${localAiState.currentArtifact})` : ''}. You can grade PDFs now; remediation will be available after this finishes.`,
         tone: 'accent' as const,
+      };
+    }
+
+    if (localAiState.currentStep === 'waiting_for_retry') {
+      return {
+        label: `${localAiState.lastError ?? 'Waiting to resume local AI download.'} You can grade PDFs now; remediation will be available after download resumes and finishes.`,
+        tone: 'warning' as const,
       };
     }
 
@@ -121,7 +138,7 @@ export function ConnectionStatusCard() {
     }
 
     return {
-      label: 'Local AI is required for remediation and is not installed yet.',
+      label: 'Local AI is downloading automatically in the background when the desktop app starts. Until it finishes, you can only grade PDFs.',
       tone: 'warning' as const,
     };
   }, [hasDesktopBridge, healthLocalLlm, localAiError, localAiState]);
@@ -171,6 +188,19 @@ export function ConnectionStatusCard() {
           }`}>
             {localAiSummary.label}
           </p>
+          {showLocalAiProgress ? (
+            <div className="mt-2">
+              <div className="h-2 overflow-hidden rounded-full bg-[color:rgba(255,255,255,0.08)]">
+                <div
+                  className="h-full bg-[var(--accent-strong)] transition-[width] duration-300"
+                  style={{ width: `${localAiProgressPercent.toFixed(1)}%` }}
+                />
+              </div>
+              <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                Local AI download {localAiProgressPercent.toFixed(1)}%
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="surface-strong p-3">

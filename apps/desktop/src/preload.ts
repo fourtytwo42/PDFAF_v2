@@ -11,6 +11,7 @@ type LocalLlmInstallStep =
   | 'idle'
   | 'downloading_runtime'
   | 'downloading_model'
+  | 'waiting_for_retry'
   | 'verifying'
   | 'finalizing'
   | 'removing';

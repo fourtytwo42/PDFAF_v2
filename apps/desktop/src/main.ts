@@ -1040,6 +1040,12 @@ async function bootstrap(): Promise<void> {
 
   try {
     await initializeRuntime();
+    if (localLlmManager) {
+      localLlmManager.ensureInstalledInBackground(async () => {
+        queueLog('electron', 'Local AI finished installing in background; restarting services.');
+        await restartServices();
+      });
+    }
   } catch (error) {
     const startupError = error as StartupError;
     await shutdownChildren();

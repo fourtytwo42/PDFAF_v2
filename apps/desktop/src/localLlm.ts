@@ -9,6 +9,7 @@ import {
   rename,
   rm,
   stat,
+  truncate,
   unlink,
   writeFile,
 } from 'node:fs/promises';
@@ -29,6 +30,7 @@ export type LocalLlmInstallStep =
   | 'idle'
   | 'downloading_runtime'
   | 'downloading_model'
+  | 'waiting_for_retry'
   | 'verifying'
   | 'finalizing'
   | 'removing';
@@ -82,6 +84,10 @@ interface LocalLlmManagerOptions {
   onStateChange: (state: LocalLlmPublicState) => void;
   log: (message: string) => void;
 }
+
+class RetryableDownloadError extends Error {}
+
+const retryBackoffMs = [5_000, 15_000, 30_000, 60_000];
 
 const DEFAULT_HF_REPO = localLlmArtifactManifest.hfRepo;
 const DEFAULT_GGUF_FILE = localLlmArtifactManifest.artifacts.gguf.filename;
@@ -203,6 +209,7 @@ export class LocalLlmManager {
   #onStateChange: (state: LocalLlmPublicState) => void;
   #log: (message: string) => void;
   #installAbortController: AbortController | null = null;
+  #backgroundInstallPromise: Promise<void> | null = null;
 
   constructor(options: LocalLlmManagerOptions) {
     this.paths = resolveLocalLlmPaths(options.llmRootDir);
@@ -258,6 +265,25 @@ export class LocalLlmManager {
 
   isInstalled(): boolean {
     return this.#state.status === 'installed';
+  }
+
+  ensureInstalledInBackground(onInstalled?: () => Promise<void> | void): void {
+    if (this.isInstalled()) return;
+    if (this.#backgroundInstallPromise) return;
+
+    this.#backgroundInstallPromise = this.install()
+      .then(async (state) => {
+        if (state.enabled && onInstalled) {
+          await onInstalled();
+        }
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.#log(`local-llm background install ended without completion: ${message}`);
+      })
+      .finally(() => {
+        this.#backgroundInstallPromise = null;
+      });
   }
 
   async install(): Promise<LocalLlmPublicState> {
@@ -483,27 +509,116 @@ export class LocalLlmManager {
   }
 
   async #downloadArtifact(artifact: LocalLlmArtifact, signal: AbortSignal): Promise<void> {
-    const temporaryPath = join(this.paths.downloadsDir, `${randomUUID()}.partial`);
-    const response = await fetch(artifact.url, {
-      signal,
-      headers: artifact.url.includes('huggingface.co')
-        ? { 'User-Agent': 'PDFAF-Desktop/1.0' }
-        : undefined,
-    });
+    if (await fileExists(artifact.destinationPath)) {
+      const destinationSha = await sha256File(artifact.destinationPath);
+      if (destinationSha === artifact.manifest.sha256) {
+        this.#log(`local-llm artifact already present: ${artifact.manifest.id}@${artifact.manifest.version}`);
+        return;
+      }
+      await rm(artifact.destinationPath, { force: true }).catch(() => {});
+    }
 
+    const partialPath = join(this.paths.downloadsDir, `${artifact.manifest.filename}.partial`);
+    let retryIndex = 0;
+
+    while (true) {
+      try {
+        await this.#downloadArtifactAttempt(artifact, partialPath, signal);
+        await mkdir(dirname(artifact.destinationPath), { recursive: true });
+        await rm(artifact.destinationPath, { force: true }).catch(() => {});
+        await rename(partialPath, artifact.destinationPath);
+        this.#log(`local-llm artifact verified: ${artifact.manifest.id}@${artifact.manifest.version}`);
+        return;
+      } catch (error) {
+        if (signal.aborted) {
+          throw error;
+        }
+        if (!(error instanceof RetryableDownloadError)) {
+          throw error;
+        }
+
+        const delayMs = retryBackoffMs[Math.min(retryIndex, retryBackoffMs.length - 1)] ?? retryBackoffMs[retryBackoffMs.length - 1] ?? 60_000;
+        retryIndex += 1;
+        const downloadedBytes = await this.#safeStatSize(partialPath);
+        this.#state = {
+          ...this.#state,
+          status: 'downloading',
+          currentStep: 'waiting_for_retry',
+          currentArtifact: artifact.manifest.filename,
+          lastError: `Connection lost. Retrying in ${Math.ceil(delayMs / 1000)}s.`,
+          downloadedBytes,
+          totalBytes: artifact.manifest.size,
+        };
+        this.#emit();
+        await this.#sleep(delayMs, signal);
+        this.#state = {
+          ...this.#state,
+          currentStep: artifact.manifest.id === 'llama-server' ? 'downloading_runtime' : 'downloading_model',
+          lastError: null,
+        };
+        this.#emit();
+      }
+    }
+  }
+
+  async #downloadArtifactAttempt(
+    artifact: LocalLlmArtifact,
+    partialPath: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(partialPath), { recursive: true });
+    let existingBytes = await this.#safeStatSize(partialPath);
+
+    const headers: Record<string, string> = artifact.url.includes('huggingface.co')
+      ? { 'User-Agent': 'PDFAF-Desktop/1.0' }
+      : {};
+    if (existingBytes > 0) {
+      headers.Range = `bytes=${existingBytes}-`;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(artifact.url, { signal, headers });
+    } catch (error) {
+      throw new RetryableDownloadError(error instanceof Error ? error.message : String(error));
+    }
+
+    if ((response.status >= 500 && response.status <= 599) || response.status === 429) {
+      throw new RetryableDownloadError(`HTTP ${response.status} for ${artifact.url}`);
+    }
     if (!response.ok || !response.body) {
       throw new Error(`Failed to download local AI artifact: HTTP ${response.status} for ${artifact.url}`);
     }
 
-    const totalBytes = artifact.manifest.size;
+    let append = existingBytes > 0 && response.status === 206;
+    if (existingBytes > 0 && response.status === 200) {
+      await truncate(partialPath, 0).catch(() => {});
+      existingBytes = 0;
+      append = false;
+    }
+
+    if (response.status === 416 && existingBytes === artifact.manifest.size) {
+      const partialSha = await sha256File(partialPath);
+      if (partialSha !== artifact.manifest.sha256) {
+        await unlink(partialPath).catch(() => {});
+        throw new Error(`Downloaded artifact checksum mismatch for ${artifact.manifest.filename}.`);
+      }
+      return;
+    }
+
+    const stream = createWriteStream(partialPath, { flags: append ? 'a' : 'w' });
     const reader = response.body.getReader();
-    let downloadedBytes = 0;
-    await mkdir(dirname(temporaryPath), { recursive: true });
-    const stream = createWriteStream(temporaryPath);
+    let downloadedBytes = existingBytes;
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        let chunk;
+        try {
+          chunk = await reader.read();
+        } catch (error) {
+          throw new RetryableDownloadError(error instanceof Error ? error.message : String(error));
+        }
+        const { done, value } = chunk;
         if (done) break;
         if (!value) continue;
         downloadedBytes += value.byteLength;
@@ -513,7 +628,7 @@ export class LocalLlmManager {
         this.#state = {
           ...this.#state,
           downloadedBytes,
-          totalBytes,
+          totalBytes: artifact.manifest.size,
         };
         this.#emit();
       }
@@ -529,24 +644,43 @@ export class LocalLlmManager {
       });
     }
 
-    const downloadedStat = await stat(temporaryPath);
-    if (downloadedStat.size !== totalBytes) {
-      await unlink(temporaryPath).catch(() => {});
-      throw new Error(`Downloaded artifact size mismatch for ${artifact.destinationPath}.`);
+    const downloadedStat = await stat(partialPath);
+    if (downloadedStat.size !== artifact.manifest.size) {
+      throw new RetryableDownloadError(`Partial local AI artifact remains incomplete: ${artifact.manifest.filename}.`);
     }
 
-    const sha256 = await sha256File(temporaryPath);
+    const sha256 = await sha256File(partialPath);
     if (sha256 !== artifact.manifest.sha256) {
-      await unlink(temporaryPath).catch(() => {});
+      await unlink(partialPath).catch(() => {});
       throw new Error(
         `Downloaded artifact checksum mismatch for ${artifact.manifest.filename}. Expected ${artifact.manifest.sha256}, got ${sha256}.`,
       );
     }
+  }
 
-    await mkdir(dirname(artifact.destinationPath), { recursive: true });
-    await rm(artifact.destinationPath, { force: true }).catch(() => {});
-    await rename(temporaryPath, artifact.destinationPath);
-    this.#log(`local-llm artifact verified: ${artifact.manifest.id}@${artifact.manifest.version}`);
+  async #safeStatSize(path: string): Promise<number> {
+    try {
+      return (await stat(path)).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  async #sleep(delayMs: number, signal: AbortSignal): Promise<void> {
+    await new Promise<void>((resolvePromise, reject) => {
+      const timeout = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolvePromise();
+      }, delayMs);
+
+      const onAbort = () => {
+        clearTimeout(timeout);
+        signal.removeEventListener('abort', onAbort);
+        reject(new Error('Local AI installation canceled.'));
+      };
+
+      signal.addEventListener('abort', onAbort);
+    });
   }
 
   async #installLlamaZip(zipPath: string): Promise<void> {
