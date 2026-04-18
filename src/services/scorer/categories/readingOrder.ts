@@ -23,6 +23,12 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   const unowned = unownedAnnotationReadingOrderScore(snap);
   const stage3 = snap.detectionProfile?.readingOrderSignals;
   const sampledPages = snap.detectionProfile?.sampledPages ?? [];
+  const readingOrderRiskPresent =
+    (snap.annotationAccessibility?.pagesMissingTabsS ?? 0) > 0 ||
+    (snap.annotationAccessibility?.pagesAnnotationOrderDiffers ?? 0) > 0 ||
+    (stage3?.sampledStructurePageOrderDriftCount ?? 0) > 0 ||
+    (stage3?.multiColumnOrderRiskPages ?? 0) > 0 ||
+    stage3?.headerFooterPollutionRisk === true;
 
   if (!snap.structureTree || snap.pdfClass === 'scanned') {
     // No tree in snapshot: still use headings / paragraph tags as a weak proxy (common after exports).
@@ -149,7 +155,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     });
   }
 
-  if (snap.isTagged && unowned.total === 0) {
+  if (snap.isTagged && unowned.total === 0 && !readingOrderRiskPresent) {
     const roFloor = (snap.textCharCount ?? 0) >= 3500 ? 98 : 96;
     tabScore = Math.max(roFloor, tabScore);
     annotOrderScore = Math.max(roFloor, annotOrderScore);

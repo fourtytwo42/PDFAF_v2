@@ -609,6 +609,63 @@ describe('annotationAccessibility signals', () => {
     expect(cat.findings.some(f => f.message.includes('header/footer'))).toBe(true);
   });
 
+  it('does not preserve the tagged reading-order floor when annotation order risk is present', () => {
+    const snap = makeSnap({
+      pageCount: 20,
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          annotationOrderRiskCount: 4,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 10,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 0,
+          suspectedPathPaintOutsideMc: 0,
+          taggedAnnotationRiskCount: 0,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 4,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1, 2, 3],
+        confidence: 'high',
+      },
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 4,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBeLessThan(95);
+    expect(cat.findings.some(f => f.message.includes('annotations ordered differently'))).toBe(true);
+  });
+
   it('penalises link_quality for /Link missing /StructParent (distinct from ParentTree)', () => {
     const snap = makeSnap({
       links: [{ text: 'Good label', url: 'https://example.com', page: 0 }],

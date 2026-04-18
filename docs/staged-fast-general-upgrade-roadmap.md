@@ -181,6 +181,14 @@ Improve generic detection for the hardest machine-detectable gaps without broad 
 - Analyze runtime growth stays small and attributable.
 - Long-report p95 remains acceptable because new checks are sampled or gated.
 
+### Status
+
+- Implemented as a bounded detection layer with additive `detectionProfile` output and tighter structural category scoring.
+- Benchmarked in both `analyze` and `full` modes against the fixed 50-file corpus.
+- Closed with direct Stage 2→3 comparison artifacts and a Stage 3 acceptance audit under `Output/experiment-corpus-baseline/stage3-acceptance/`.
+- Accepted with one calibration pass in `reading_order`; remaining post-remediation `pdf_ua_compliance` survivors are documented and deferred to Stage 4/5 work.
+- Accepted as a detection-only stage; planner/routing changes remain deferred to Stage 4.
+
 ## Stage 4: Deterministic-First Remediation Routing
 
 ### Goal
