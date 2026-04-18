@@ -22,4 +22,5 @@ apps/desktop/.runtime-cache/
 apps/desktop/.release/
 apps/desktop/.web-runtime/
 apps/desktop/.web-runtime-packaged/
+apps/desktop/.api-runtime-packaged/
 apps/desktop/dist-packaged/

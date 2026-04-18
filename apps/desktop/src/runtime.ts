@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 export interface DesktopDependencyPaths {
   mode: 'development' | 'packaged';
   runtimeRoot: string | null;
+  apiRuntimeRoot: string | null;
   webRuntimeRoot: string | null;
   nodeBin: string;
   pythonBin: string;
@@ -61,10 +62,12 @@ export function resolveDesktopDependencyPaths(args: ResolveDesktopPathsArgs): De
 
   if (isPackaged) {
     const runtimeRoot = join(processResourcesPath, 'runtime');
+    const apiRuntimeRoot = join(processResourcesPath, 'api-runtime');
     const webRuntimeRoot = join(processResourcesPath, 'web-runtime');
     return {
       mode: 'packaged',
       runtimeRoot,
+      apiRuntimeRoot,
       webRuntimeRoot,
       nodeBin: env['PDFAF_NODE_BIN']?.trim() || join(runtimeRoot, 'node', 'node.exe'),
       pythonBin: env['PDFAF_PYTHON_BIN']?.trim() || join(runtimeRoot, 'python', 'python.exe'),
@@ -78,6 +81,7 @@ export function resolveDesktopDependencyPaths(args: ResolveDesktopPathsArgs): De
   return {
     mode: 'development',
     runtimeRoot: env['PDFAF_DESKTOP_RUNTIME_ROOT']?.trim() || null,
+    apiRuntimeRoot: null,
     webRuntimeRoot: null,
     nodeBin: env['PDFAF_NODE_BIN']?.trim() || processExecPath,
     pythonBin: env['PDFAF_PYTHON_BIN']?.trim() || 'python',
@@ -96,6 +100,9 @@ export function resolveDesktopAppPaths(args: ResolveDesktopPathsArgs): DesktopAp
   const unpackedRepoRoot = isPackaged ? join(processResourcesPath, 'app.asar.unpacked') : null;
   const scriptRoot = unpackedRepoRoot ?? repoRoot;
   const packagedDesktopRoot = isPackaged ? join(processResourcesPath, 'app.asar', 'apps', 'desktop') : desktopRoot;
+  const packagedApiRoot = isPackaged
+    ? join(processResourcesPath, 'api-runtime')
+    : scriptRoot;
   const packagedWebRoot = isPackaged
     ? join(processResourcesPath, 'web-runtime', 'apps', 'pdf-af-web')
     : join(scriptRoot, 'apps', 'pdf-af-web');
@@ -104,8 +111,10 @@ export function resolveDesktopAppPaths(args: ResolveDesktopPathsArgs): DesktopAp
     repoRoot,
     desktopRoot: packagedDesktopRoot,
     unpackedRepoRoot,
-    apiEntry: join(scriptRoot, 'dist', 'server.js'),
-    apiCwd: scriptRoot,
+    apiEntry: isPackaged
+      ? join(processResourcesPath, 'api-runtime', 'dist', 'server.js')
+      : join(scriptRoot, 'dist', 'server.js'),
+    apiCwd: packagedApiRoot,
     webCwd: packagedWebRoot,
     webEntry: isPackaged
       ? join(processResourcesPath, 'web-runtime', 'apps', 'pdf-af-web', 'server.js')
@@ -127,6 +136,9 @@ export function validatePackagedDependencyPaths(paths: DesktopDependencyPaths): 
   }
   if (!paths.buildMetadataPath || !existsSync(paths.buildMetadataPath)) {
     missing.push(`Bundled build metadata missing: ${paths.buildMetadataPath ?? '(not set)'}`);
+  }
+  if (!paths.apiRuntimeRoot || !existsSync(paths.apiRuntimeRoot)) {
+    missing.push(`Bundled API runtime root missing: ${paths.apiRuntimeRoot ?? '(not set)'}`);
   }
   if (!paths.webRuntimeRoot || !existsSync(paths.webRuntimeRoot)) {
     missing.push(`Bundled web runtime root missing: ${paths.webRuntimeRoot ?? '(not set)'}`);

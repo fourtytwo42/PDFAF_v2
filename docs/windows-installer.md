@@ -20,6 +20,13 @@ The Stage 6 packaging flow produces:
 
 The installer ships the desktop app and bundled base runtime only. It does **not** ship local AI model assets.
 
+It does ship:
+
+- the Electron shell
+- the packaged API runtime
+- the packaged web runtime
+- bundled Node, Python, and `qpdf`
+
 Local AI stays optional and is downloaded after install by the app itself into user data:
 
 - `llama-server`
