@@ -23,6 +23,56 @@ export type FailureRoutingHint =
   | 'prefer_font_repair'
   | 'semantic_not_primary'
   | 'manual_review_likely_after_fix';
+export type DetectionConfidence = 'high' | 'medium' | 'low';
+
+export interface ReadingOrderSignals {
+  missingStructureTree: boolean;
+  annotationOrderRiskCount: number;
+  annotationStructParentRiskCount: number;
+  headerFooterPollutionRisk: boolean;
+  sampledStructurePageOrderDriftCount: number;
+  multiColumnOrderRiskPages: number;
+  suspiciousPageCount: number;
+}
+
+export interface PdfUaSignals {
+  orphanMcidCount: number;
+  suspectedPathPaintOutsideMc: number;
+  taggedAnnotationRiskCount: number;
+}
+
+export interface AnnotationSignals {
+  pagesMissingTabsS: number;
+  pagesAnnotationOrderDiffers: number;
+  linkAnnotationsMissingStructure: number;
+  nonLinkAnnotationsMissingStructure: number;
+  linkAnnotationsMissingStructParent: number;
+  nonLinkAnnotationsMissingStructParent: number;
+}
+
+export interface ListSignals {
+  listItemMisplacedCount: number;
+  lblBodyMisplacedCount: number;
+  listsWithoutItems: number;
+}
+
+export interface TableSignals {
+  tablesWithMisplacedCells: number;
+  misplacedCellCount: number;
+  irregularTableCount: number;
+  stronglyIrregularTableCount: number;
+  directCellUnderTableCount: number;
+}
+
+export interface DetectionProfile {
+  readingOrderSignals: ReadingOrderSignals;
+  pdfUaSignals: PdfUaSignals;
+  annotationSignals: AnnotationSignals;
+  listSignals: ListSignals;
+  tableSignals: TableSignals;
+  sampledPages: number[];
+  confidence: DetectionConfidence;
+}
 
 export interface StructuralClassification {
   structureClass: StructureClass;
@@ -221,6 +271,7 @@ export interface DocumentSnapshot {
   // --- computed during merge in pdfAnalyzer ---
   pdfClass: PdfClass;
   imageToTextRatio: number;         // imageOnlyPageCount / pageCount
+  detectionProfile?: DetectionProfile;
 }
 
 // ─── Per-finding detail ───────────────────────────────────────────────────────
@@ -280,6 +331,7 @@ export interface AnalysisResult {
   scoreCapsApplied?: ScoreCapApplied[];
   structuralClassification?: StructuralClassification;
   failureProfile?: FailureProfile;
+  detectionProfile?: DetectionProfile;
 }
 
 // ─── Intermediate types from sub-services ────────────────────────────────────

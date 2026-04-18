@@ -561,6 +561,54 @@ describe('annotationAccessibility signals', () => {
     expect(cat.manualReviewRequired).toBe(true);
   });
 
+  it('penalises reading_order for sampled structure drift and header/footer pollution signals', () => {
+    const snap = makeSnap({
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: true,
+          sampledStructurePageOrderDriftCount: 2,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 4,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 0,
+          suspectedPathPaintOutsideMc: 0,
+          taggedAnnotationRiskCount: 0,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1, 2, 3],
+        confidence: 'high',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBeLessThan(96);
+    expect(cat.findings.some(f => f.message.includes('sampled structure-order drift'))).toBe(true);
+    expect(cat.findings.some(f => f.message.includes('header/footer'))).toBe(true);
+  });
+
   it('penalises link_quality for /Link missing /StructParent (distinct from ParentTree)', () => {
     const snap = makeSnap({
       links: [{ text: 'Good label', url: 'https://example.com', page: 0 }],
@@ -610,6 +658,54 @@ describe('annotationAccessibility signals', () => {
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'table_markup')!;
     expect(cat.findings.some(f => f.message.includes('advisory'))).toBe(true);
+  });
+
+  it('penalises table_markup for strongly irregular Stage 3 table structure', () => {
+    const snap = makeSnap({
+      tables: [{ hasHeaders: true, headerCount: 1, totalCells: 8, page: 1 }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 0,
+          suspectedPathPaintOutsideMc: 0,
+          taggedAnnotationRiskCount: 0,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 1,
+          misplacedCellCount: 3,
+          irregularTableCount: 1,
+          stronglyIrregularTableCount: 1,
+          directCellUnderTableCount: 3,
+        },
+        sampledPages: [1],
+        confidence: 'high',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'table_markup')!;
+    expect(cat.score).toBeLessThan(90);
+    expect(cat.findings.some(f => f.message.includes('strongly irregular'))).toBe(true);
   });
 });
 

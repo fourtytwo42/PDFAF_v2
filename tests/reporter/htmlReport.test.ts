@@ -88,6 +88,44 @@ const baseAnalysis = (over: Partial<AnalysisResult> = {}): AnalysisResult =>
       secondaryFailureFamilies: ['structure_reading_order_heavy'],
       routingHints: ['manual_review_likely_after_fix'],
     },
+    detectionProfile: {
+      readingOrderSignals: {
+        missingStructureTree: false,
+        annotationOrderRiskCount: 1,
+        annotationStructParentRiskCount: 2,
+        headerFooterPollutionRisk: true,
+        sampledStructurePageOrderDriftCount: 1,
+        multiColumnOrderRiskPages: 0,
+        suspiciousPageCount: 3,
+      },
+      pdfUaSignals: {
+        orphanMcidCount: 1,
+        suspectedPathPaintOutsideMc: 0,
+        taggedAnnotationRiskCount: 2,
+      },
+      annotationSignals: {
+        pagesMissingTabsS: 1,
+        pagesAnnotationOrderDiffers: 1,
+        linkAnnotationsMissingStructure: 1,
+        nonLinkAnnotationsMissingStructure: 1,
+        linkAnnotationsMissingStructParent: 1,
+        nonLinkAnnotationsMissingStructParent: 1,
+      },
+      listSignals: {
+        listItemMisplacedCount: 0,
+        lblBodyMisplacedCount: 0,
+        listsWithoutItems: 0,
+      },
+      tableSignals: {
+        tablesWithMisplacedCells: 0,
+        misplacedCellCount: 0,
+        irregularTableCount: 0,
+        stronglyIrregularTableCount: 0,
+        directCellUnderTableCount: 0,
+      },
+      sampledPages: [0, 1, 2],
+      confidence: 'high',
+    },
     ...over,
   }) as AnalysisResult;
 
@@ -101,6 +139,7 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('1.1.1');
     expect(html).toContain('Verification summary');
     expect(html).toContain('Structural classification');
+    expect(html).toContain('Detection signals');
     expect(html).toContain('figure_alt_ownership_heavy');
     expect(html).toContain('manual_review_required');
     expect(html.length).toBeLessThan(100_000);

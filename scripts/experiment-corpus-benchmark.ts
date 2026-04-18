@@ -210,6 +210,7 @@ function makeAnalyzeRow(
     scoreCapsApplied: result.scoreCapsApplied,
     structuralClassification: result.structuralClassification,
     failureProfile: result.failureProfile,
+    detectionProfile: result.detectionProfile,
   };
 }
 
@@ -235,6 +236,7 @@ function makeAnalyzeErrorRow(entry: ExperimentCorpusEntry, error: unknown): Anal
     scoreCapsApplied: [],
     structuralClassification: undefined,
     failureProfile: undefined,
+    detectionProfile: undefined,
     error: sanitizeError(error),
   };
 }
@@ -469,6 +471,7 @@ async function runRemediationStep(
       beforeScoreCapsApplied: remediation.before.scoreCapsApplied ?? [],
       beforeStructuralClassification: remediation.before.structuralClassification ?? null,
       beforeFailureProfile: remediation.before.failureProfile ?? null,
+      beforeDetectionProfile: remediation.before.detectionProfile ?? null,
       afterScore: effectiveAfter.score,
       afterGrade: effectiveAfter.grade,
       afterPdfClass: effectiveAfter.pdfClass,
@@ -479,6 +482,7 @@ async function runRemediationStep(
       afterScoreCapsApplied: effectiveAfter.scoreCapsApplied ?? [],
       afterStructuralClassification: effectiveAfter.structuralClassification ?? null,
       afterFailureProfile: effectiveAfter.failureProfile ?? null,
+      afterDetectionProfile: effectiveAfter.detectionProfile ?? null,
       reanalyzedScore: reanalyzed?.score ?? null,
       reanalyzedGrade: reanalyzed?.grade ?? null,
       reanalyzedPdfClass: reanalyzed?.pdfClass ?? null,
@@ -489,6 +493,7 @@ async function runRemediationStep(
       reanalyzedScoreCapsApplied: reanalyzed?.scoreCapsApplied ?? [],
       reanalyzedStructuralClassification: reanalyzed?.structuralClassification ?? null,
       reanalyzedFailureProfile: reanalyzed?.failureProfile ?? null,
+      reanalyzedDetectionProfile: reanalyzed?.detectionProfile ?? null,
       delta: effectiveAfter.score - remediation.before.score,
       appliedTools: remediation.appliedTools,
       rounds: remediation.rounds,

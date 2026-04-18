@@ -14,6 +14,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   }
 
   const findings: Finding[] = [];
+  const stage3 = snap.detectionProfile?.tableSignals;
   const tablesWithHeaders = snap.tables.filter(t => t.hasHeaders);
   const ratio = tablesWithHeaders.length / snap.tables.length;
   let score = Math.round(ratio * 100);
@@ -30,11 +31,13 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   }
 
   // Acrobat "Table rows / TH and TD / regularity" — align scorer with per-table struct audit (v1-style).
-  let misplacedCells = 0;
-  let irregularTables = 0;
-  for (const t of snap.tables) {
-    misplacedCells += t.cellsMisplacedCount ?? 0;
-    if ((t.irregularRows ?? 0) > 0) irregularTables += 1;
+  let misplacedCells = stage3?.misplacedCellCount ?? 0;
+  let irregularTables = stage3?.irregularTableCount ?? 0;
+  if (!stage3) {
+    for (const t of snap.tables) {
+      misplacedCells += t.cellsMisplacedCount ?? 0;
+      if ((t.irregularRows ?? 0) > 0) irregularTables += 1;
+    }
   }
   if (misplacedCells > 0 || irregularTables > 0) {
     const parts: string[] = [];
@@ -57,6 +60,17 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     });
     const rolePenalty = Math.min(85, misplacedCells * 5 + irregularTables * 10);
     score = Math.min(score, Math.max(0, 100 - rolePenalty));
+  }
+
+  if ((stage3?.stronglyIrregularTableCount ?? 0) > 0) {
+    findings.push({
+      category: 'table_markup',
+      severity: 'moderate',
+      wcag: '1.3.1',
+      message: `${stage3!.stronglyIrregularTableCount} table(s) have strongly irregular row structure beyond advisory variance.`,
+      count: stage3!.stronglyIrregularTableCount,
+    });
+    score = Math.min(score, Math.max(0, 100 - stage3!.stronglyIrregularTableCount * 18));
   }
 
   let advisoryCount = 0;

@@ -7,6 +7,7 @@ import {
 
 export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
+  const stage3 = snap.detectionProfile;
 
   const checks: { pass: boolean; wcag: string; msg: string }[] = [
     {
@@ -38,7 +39,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
     },
   ];
 
-  const aa = snap.annotationAccessibility;
+  const aa = stage3?.annotationSignals ?? snap.annotationAccessibility;
   if (snap.structureTree !== null && aa) {
     const n =
       (aa.linkAnnotationsMissingStructure ?? 0) + (aa.nonLinkAnnotationsMissingStructure ?? 0);
@@ -52,7 +53,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
     }
   }
 
-  const lsa = snap.listStructureAudit;
+  const lsa = stage3?.listSignals ?? snap.listStructureAudit;
   if (snap.isTagged && snap.structureTree !== null && lsa) {
     const violations =
       (lsa.listItemMisplacedCount ?? 0) +
@@ -67,9 +68,9 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
     }
   }
 
-  const tca = snap.taggedContentAudit;
-  if (snap.structureTree !== null && tca) {
-    const orphans = tca.orphanMcidCount ?? 0;
+  const pdfUaSignals = stage3?.pdfUaSignals ?? snap.taggedContentAudit;
+  if (snap.structureTree !== null && pdfUaSignals) {
+    const orphans = pdfUaSignals.orphanMcidCount ?? 0;
     if (orphans >= PDF_UA_ORPHAN_MCID_FAIL_THRESHOLD) {
       checks.push({
         pass: false,
@@ -77,12 +78,30 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
         msg: `${orphans} marked-content MCID(s) appear outside the structure tree (Acrobat "Tagged content" / orphan MCIDs).`,
       });
     }
-    const paths = tca.suspectedPathPaintOutsideMc ?? 0;
+    const paths = pdfUaSignals.suspectedPathPaintOutsideMc ?? 0;
     if (paths > PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD) {
       checks.push({
         pass: false,
         wcag: '1.3.1',
         msg: `Tagged content audit suggests ${paths} path paint operator(s) outside marked-content blocks (heuristic; Acrobat may flag untagged content).`,
+      });
+    }
+  }
+
+  const tableSignals = stage3?.tableSignals;
+  if (snap.structureTree !== null && tableSignals) {
+    if (tableSignals.directCellUnderTableCount > 0) {
+      checks.push({
+        pass: false,
+        wcag: '1.3.1',
+        msg: `${tableSignals.directCellUnderTableCount} table cell(s) appear directly under /Table instead of under /TR rows.`,
+      });
+    }
+    if (tableSignals.stronglyIrregularTableCount > 0) {
+      checks.push({
+        pass: false,
+        wcag: '1.3.1',
+        msg: `${tableSignals.stronglyIrregularTableCount} table(s) show strongly irregular row structure likely to break table semantics.`,
       });
     }
   }

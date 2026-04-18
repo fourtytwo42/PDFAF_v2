@@ -76,6 +76,45 @@ function classificationBullets(after: AnalysisResult): string {
   return lines.join('');
 }
 
+function detectionBullets(after: AnalysisResult): string {
+  if (!after.detectionProfile) return '';
+  const lines: string[] = [];
+  const ro = after.detectionProfile.readingOrderSignals;
+  const pdfUa = after.detectionProfile.pdfUaSignals;
+  const list = after.detectionProfile.listSignals;
+  const table = after.detectionProfile.tableSignals;
+  if (ro.missingStructureTree) lines.push('<li><strong>Reading order:</strong> missing structure tree</li>');
+  if (ro.annotationOrderRiskCount > 0) {
+    lines.push(`<li><strong>Reading order:</strong> annotation order risk on ${ro.annotationOrderRiskCount} page(s)</li>`);
+  }
+  if (ro.annotationStructParentRiskCount > 0) {
+    lines.push(`<li><strong>Annotations:</strong> ${ro.annotationStructParentRiskCount} visible annotation(s) missing /StructParent</li>`);
+  }
+  if (ro.headerFooterPollutionRisk) {
+    lines.push('<li><strong>Reading order:</strong> repeated header/footer boundary text detected</li>');
+  }
+  if (ro.sampledStructurePageOrderDriftCount > 0) {
+    lines.push(`<li><strong>Reading order:</strong> sampled structure/page-order drift count ${ro.sampledStructurePageOrderDriftCount}</li>`);
+  }
+  if (pdfUa.orphanMcidCount > 0) {
+    lines.push(`<li><strong>PDF/UA:</strong> orphan MCIDs ${pdfUa.orphanMcidCount}</li>`);
+  }
+  if (pdfUa.suspectedPathPaintOutsideMc > 0) {
+    lines.push(`<li><strong>PDF/UA:</strong> suspected path paint outside marked content ${pdfUa.suspectedPathPaintOutsideMc}</li>`);
+  }
+  if (list.listItemMisplacedCount + list.lblBodyMisplacedCount + list.listsWithoutItems > 0) {
+    lines.push(
+      `<li><strong>Lists:</strong> misplaced LI ${list.listItemMisplacedCount}, misplaced Lbl/LBody ${list.lblBodyMisplacedCount}, lists without items ${list.listsWithoutItems}</li>`,
+    );
+  }
+  if (table.misplacedCellCount + table.stronglyIrregularTableCount > 0) {
+    lines.push(
+      `<li><strong>Tables:</strong> misplaced cells ${table.misplacedCellCount}, strongly irregular tables ${table.stronglyIrregularTableCount}</li>`,
+    );
+  }
+  return lines.join('');
+}
+
 /**
  * Self-contained HTML accessibility summary (inline CSS, no CDN).
  * Safe for embedding: filenames and messages are escaped.
@@ -205,6 +244,10 @@ export function generateHtmlReport(
   <section>
     <h2>Structural classification</h2>
     <ul>${classificationBullets(afterRef) || '<li>No Stage 2 classification metadata present.</li>'}</ul>
+  </section>
+  <section>
+    <h2>Detection signals</h2>
+    <ul>${detectionBullets(afterRef) || '<li>No Stage 3 detection metadata present.</li>'}</ul>
   </section>
   <section>
     <h2>Category scores</h2>

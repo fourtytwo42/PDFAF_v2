@@ -3,6 +3,7 @@ import { join, resolve, dirname } from 'node:path';
 import type {
   AnalysisResult,
   AppliedRemediationTool,
+  DetectionProfile,
   FailureProfile,
   OcrPipelineSummary,
   RemediationRoundSummary,
@@ -59,6 +60,7 @@ export interface AnalyzeBenchmarkRow {
   scoreCapsApplied?: ScoreCapApplied[];
   structuralClassification?: StructuralClassification;
   failureProfile?: FailureProfile;
+  detectionProfile?: DetectionProfile;
   error?: string;
 }
 
@@ -79,6 +81,7 @@ export interface RemediateBenchmarkRow {
   beforeScoreCapsApplied?: ScoreCapApplied[];
   beforeStructuralClassification?: StructuralClassification | null;
   beforeFailureProfile?: FailureProfile | null;
+  beforeDetectionProfile?: DetectionProfile | null;
   afterScore: number | null;
   afterGrade: string | null;
   afterPdfClass: string | null;
@@ -89,6 +92,7 @@ export interface RemediateBenchmarkRow {
   afterScoreCapsApplied?: ScoreCapApplied[];
   afterStructuralClassification?: StructuralClassification | null;
   afterFailureProfile?: FailureProfile | null;
+  afterDetectionProfile?: DetectionProfile | null;
   reanalyzedScore: number | null;
   reanalyzedGrade: string | null;
   reanalyzedPdfClass: string | null;
@@ -99,6 +103,7 @@ export interface RemediateBenchmarkRow {
   reanalyzedScoreCapsApplied?: ScoreCapApplied[];
   reanalyzedStructuralClassification?: StructuralClassification | null;
   reanalyzedFailureProfile?: FailureProfile | null;
+  reanalyzedDetectionProfile?: DetectionProfile | null;
   delta: number | null;
   appliedTools: AppliedRemediationTool[];
   rounds: RemediationRoundSummary[];
@@ -146,6 +151,10 @@ export interface BenchmarkRunSummary {
     deterministicIssueFrequency: Array<FrequencyRow>;
     semanticIssueFrequency: Array<FrequencyRow>;
     manualOnlyIssueFrequency: Array<FrequencyRow>;
+    readingOrderSignalFrequency: Array<FrequencyRow>;
+    annotationSignalFrequency: Array<FrequencyRow>;
+    taggedContentSignalFrequency: Array<FrequencyRow>;
+    listTableSignalFrequency: Array<FrequencyRow>;
     manualReviewRequiredCount: number;
     scoreCapsByCategory: Array<FrequencyRow>;
     topSlowestAnalyzeFiles: Array<FileMetricRow>;
@@ -233,6 +242,10 @@ export interface CohortSummary {
   deterministicIssueFrequency: Array<FrequencyRow>;
   semanticIssueFrequency: Array<FrequencyRow>;
   manualOnlyIssueFrequency: Array<FrequencyRow>;
+  readingOrderSignalFrequency: Array<FrequencyRow>;
+  annotationSignalFrequency: Array<FrequencyRow>;
+  taggedContentSignalFrequency: Array<FrequencyRow>;
+  listTableSignalFrequency: Array<FrequencyRow>;
   manualReviewRequiredCount: number;
   scoreCapsByCategory: Array<FrequencyRow>;
 }
@@ -475,6 +488,56 @@ function manualOnlyIssues(row: AnalyzeBenchmarkRow): string[] {
   return row.failureProfile?.manualOnlyIssues ?? [];
 }
 
+function readingOrderSignals(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error || !row.detectionProfile) return [];
+  const signals: string[] = [];
+  const ro = row.detectionProfile.readingOrderSignals;
+  if (ro.missingStructureTree) signals.push('missing_structure_tree');
+  if (ro.annotationOrderRiskCount > 0) signals.push('annotation_order_risk');
+  if (ro.annotationStructParentRiskCount > 0) signals.push('annotation_struct_parent_risk');
+  if (ro.headerFooterPollutionRisk) signals.push('header_footer_pollution_risk');
+  if (ro.sampledStructurePageOrderDriftCount > 0) signals.push('sampled_structure_page_order_drift');
+  if (ro.multiColumnOrderRiskPages > 0) signals.push('multi_column_order_risk');
+  return signals;
+}
+
+function annotationSignals(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error || !row.detectionProfile) return [];
+  const signals: string[] = [];
+  const ann = row.detectionProfile.annotationSignals;
+  if (ann.pagesMissingTabsS > 0) signals.push('pages_missing_tabs_s');
+  if (ann.pagesAnnotationOrderDiffers > 0) signals.push('pages_annotation_order_differs');
+  if (ann.linkAnnotationsMissingStructure > 0) signals.push('link_annotations_missing_structure');
+  if (ann.nonLinkAnnotationsMissingStructure > 0) signals.push('nonlink_annotations_missing_structure');
+  if (ann.linkAnnotationsMissingStructParent > 0) signals.push('link_annotations_missing_struct_parent');
+  if (ann.nonLinkAnnotationsMissingStructParent > 0) signals.push('nonlink_annotations_missing_struct_parent');
+  return signals;
+}
+
+function taggedContentSignals(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error || !row.detectionProfile) return [];
+  const signals: string[] = [];
+  const pdfUa = row.detectionProfile.pdfUaSignals;
+  if (pdfUa.orphanMcidCount > 0) signals.push('orphan_mcids');
+  if (pdfUa.suspectedPathPaintOutsideMc > 0) signals.push('path_paint_outside_mc');
+  if (pdfUa.taggedAnnotationRiskCount > 0) signals.push('tagged_annotation_risk');
+  return signals;
+}
+
+function listTableSignals(row: AnalyzeBenchmarkRow): string[] {
+  if (row.error || !row.detectionProfile) return [];
+  const signals: string[] = [];
+  const list = row.detectionProfile.listSignals;
+  const table = row.detectionProfile.tableSignals;
+  if (list.listItemMisplacedCount > 0) signals.push('list_item_misplaced');
+  if (list.lblBodyMisplacedCount > 0) signals.push('lbl_body_misplaced');
+  if (list.listsWithoutItems > 0) signals.push('lists_without_items');
+  if (table.directCellUnderTableCount > 0) signals.push('direct_cell_under_table');
+  if (table.irregularTableCount > 0) signals.push('irregular_tables');
+  if (table.stronglyIrregularTableCount > 0) signals.push('strongly_irregular_tables');
+  return signals;
+}
+
 function scoreCapCategoryKeys(caps?: ScoreCapApplied[]): string[] {
   return (caps ?? []).map(cap => cap.category);
 }
@@ -534,6 +597,10 @@ export function buildBenchmarkSummary(input: {
       deterministicIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(deterministicIssues)),
       semanticIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(semanticIssues)),
       manualOnlyIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(manualOnlyIssues)),
+      readingOrderSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(readingOrderSignals)),
+      annotationSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(annotationSignals)),
+      taggedContentSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(taggedContentSignals)),
+      listTableSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(listTableSignals)),
       manualReviewRequiredCount: analyzeSuccessRows.filter(row => row.manualReviewRequired === true).length,
       scoreCapsByCategory: frequencyRows(analyzeSuccessRows.flatMap(row => scoreCapCategoryKeys(row.scoreCapsApplied))),
       topSlowestAnalyzeFiles: analyzeSuccessRows
@@ -665,6 +732,10 @@ function buildCohortSummary(analyzeRows: AnalyzeBenchmarkRow[], remediateRows: R
     deterministicIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(deterministicIssues)),
     semanticIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(semanticIssues)),
     manualOnlyIssueFrequency: frequencyRows(analyzeSuccessRows.flatMap(manualOnlyIssues)),
+    readingOrderSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(readingOrderSignals)),
+    annotationSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(annotationSignals)),
+    taggedContentSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(taggedContentSignals)),
+    listTableSignalFrequency: frequencyRows(analyzeSuccessRows.flatMap(listTableSignals)),
     manualReviewRequiredCount: analyzeSuccessRows.filter(row => row.manualReviewRequired === true).length,
     scoreCapsByCategory: frequencyRows(analyzeSuccessRows.flatMap(row => scoreCapCategoryKeys(row.scoreCapsApplied))),
   };
@@ -737,6 +808,10 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
   lines.push(`- **Analyze deterministic issues:** ${markdownFrequency(summary.analyze.deterministicIssueFrequency)}`);
   lines.push(`- **Analyze semantic issues:** ${markdownFrequency(summary.analyze.semanticIssueFrequency)}`);
   lines.push(`- **Analyze manual-only issues:** ${markdownFrequency(summary.analyze.manualOnlyIssueFrequency)}`);
+  lines.push(`- **Reading-order signals:** ${markdownFrequency(summary.analyze.readingOrderSignalFrequency)}`);
+  lines.push(`- **Annotation signals:** ${markdownFrequency(summary.analyze.annotationSignalFrequency)}`);
+  lines.push(`- **Tagged-content signals:** ${markdownFrequency(summary.analyze.taggedContentSignalFrequency)}`);
+  lines.push(`- **List/table legality signals:** ${markdownFrequency(summary.analyze.listTableSignalFrequency)}`);
   lines.push(`- **Analyze score caps:** ${markdownFrequency(summary.analyze.scoreCapsByCategory)}`);
   if (summary.remediate) {
     lines.push(`- **Remediation before scores:** ${formatStats(summary.remediate.beforeScore)}`);
@@ -782,6 +857,10 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
       deterministicIssueFrequency: [],
       semanticIssueFrequency: [],
       manualOnlyIssueFrequency: [],
+      readingOrderSignalFrequency: [],
+      annotationSignalFrequency: [],
+      taggedContentSignalFrequency: [],
+      listTableSignalFrequency: [],
       manualReviewRequiredCount: 0,
       scoreCapsByCategory: [],
     };
@@ -796,6 +875,17 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkRunSummary): st
     const row = summary.cohorts[cohort];
     lines.push(`- **${cohort}:** ${markdownDistribution(row?.primaryFailureFamilyDistribution ?? {})}`);
   }
+  const falseCleanRows = Object.values(summary.cohorts)
+    .flatMap(() => []);
+  void falseCleanRows;
+  lines.push('');
+  lines.push('## False-Clean Pressure');
+  lines.push('');
+  lines.push('- Files with strong structural signals but unexpectedly high category scores should be reviewed in the JSON artifacts using `detectionProfile` alongside category outputs.');
+  lines.push(`- Reading-order signal frequency: ${markdownFrequency(summary.analyze.readingOrderSignalFrequency)}`);
+  lines.push(`- Annotation signal frequency: ${markdownFrequency(summary.analyze.annotationSignalFrequency)}`);
+  lines.push(`- Tagged-content signal frequency: ${markdownFrequency(summary.analyze.taggedContentSignalFrequency)}`);
+  lines.push(`- List/table signal frequency: ${markdownFrequency(summary.analyze.listTableSignalFrequency)}`);
   lines.push('');
   lines.push('## Slowest Analyze Files');
   lines.push('');

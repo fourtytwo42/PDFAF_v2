@@ -21,6 +21,8 @@ function unownedAnnotationReadingOrderScore(snap: DocumentSnapshot): { score: nu
 export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
   const unowned = unownedAnnotationReadingOrderScore(snap);
+  const stage3 = snap.detectionProfile?.readingOrderSignals;
+  const sampledPages = snap.detectionProfile?.sampledPages ?? [];
 
   if (!snap.structureTree || snap.pdfClass === 'scanned') {
     // No tree in snapshot: still use headings / paragraph tags as a weak proxy (common after exports).
@@ -51,6 +53,25 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
             ? 'Full structure-tree reading order was not available; score uses heading/paragraph heuristics only.'
             : 'Reading order cannot be verified without a document structure tree.',
       });
+      if (stage3?.headerFooterPollutionRisk) {
+        score = Math.min(score, 82);
+        findings.push({
+          category: 'reading_order',
+          severity: 'minor',
+          wcag: '1.3.2',
+          message: 'Repeated header/footer boundary text appears across pages, which can pollute fallback reading order heuristics.',
+        });
+      }
+      if ((stage3?.multiColumnOrderRiskPages ?? 0) > 0) {
+        score = Math.min(score, 78);
+        findings.push({
+          category: 'reading_order',
+          severity: 'moderate',
+          wcag: '1.3.2',
+          message: `${stage3!.multiColumnOrderRiskPages} sampled page(s) look multi-column from paragraph bounds, so fallback reading order is risky without verified structure.`,
+          count: stage3!.multiColumnOrderRiskPages,
+        });
+      }
     }
     let scoreOut = Math.min(score, unowned.score);
     if (unowned.total > 0) {
@@ -136,6 +157,35 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let score = Math.min(headingScore, tabScore, annotOrderScore, unowned.score);
+  if ((stage3?.sampledStructurePageOrderDriftCount ?? 0) > 0) {
+    score = Math.min(score, Math.max(0, 96 - stage3!.sampledStructurePageOrderDriftCount * 12));
+    findings.push({
+      category: 'reading_order',
+      severity: stage3!.sampledStructurePageOrderDriftCount > 2 ? 'moderate' : 'minor',
+      wcag: '1.3.2',
+      message: `${stage3!.sampledStructurePageOrderDriftCount} sampled structure-order drift event(s) were found across suspicious pages (${sampledPages.length} sampled).`,
+      count: stage3!.sampledStructurePageOrderDriftCount,
+    });
+  }
+  if (stage3?.headerFooterPollutionRisk) {
+    score = Math.min(score, 92);
+    findings.push({
+      category: 'reading_order',
+      severity: 'minor',
+      wcag: '1.3.2',
+      message: 'Repeated header/footer boundary text appears across pages and may contaminate apparent reading order.',
+    });
+  }
+  if ((stage3?.multiColumnOrderRiskPages ?? 0) > 0) {
+    score = Math.min(score, Math.max(0, 94 - stage3!.multiColumnOrderRiskPages * 10));
+    findings.push({
+      category: 'reading_order',
+      severity: stage3!.multiColumnOrderRiskPages > 1 ? 'moderate' : 'minor',
+      wcag: '1.3.2',
+      message: `${stage3!.multiColumnOrderRiskPages} sampled page(s) show paragraph x-position spread consistent with multi-column order risk.`,
+      count: stage3!.multiColumnOrderRiskPages,
+    });
+  }
   if (unowned.total > 0) {
     const aa = snap.annotationAccessibility;
     const ln = aa?.linkAnnotationsMissingStructParent ?? 0;

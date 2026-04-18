@@ -71,6 +71,7 @@ describe('POST /v1/analyze', () => {
     expect(body).toHaveProperty('scoreCapsApplied');
     expect(body).toHaveProperty('structuralClassification');
     expect(body).toHaveProperty('failureProfile');
+    expect(body).toHaveProperty('detectionProfile');
 
     expect(['A','B','C','D','F']).toContain(body.grade);
     expect(body.score).toBeGreaterThanOrEqual(0);
@@ -93,6 +94,7 @@ describe('POST /v1/analyze', () => {
 
     expect(body.structuralClassification).toHaveProperty('structureClass');
     expect(body.failureProfile).toHaveProperty('primaryFailureFamily');
+    expect(body.detectionProfile).toHaveProperty('readingOrderSignals');
 
     // Should complete in reasonable time
     expect(body.analysisDurationMs).toBeLessThan(60_000);

@@ -94,6 +94,11 @@ export const PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD = 40;
 
 // Large docs: sample this many pages max for expensive per-page checks
 export const MAX_SAMPLE_PAGES = 50;
+export const STAGE3_SUSPICIOUS_PAGE_SAMPLE_CAP = 10;
+export const STAGE3_PARAGRAPH_DENSITY_THRESHOLD = 6;
+export const STAGE3_HEADER_FOOTER_REPEAT_THRESHOLD = 3;
+export const STAGE3_MULTI_COLUMN_X_GAP = 140;
+export const STAGE3_TABLE_STRONG_IRREGULAR_ROWS_THRESHOLD = 2;
 
 // Heading coverage: one heading per this many pages is considered adequate
 export const HEADING_COVERAGE_PAGES_PER_HEADING = 3;

@@ -202,6 +202,8 @@ components:
           $ref: '#/components/schemas/StructuralClassification'
         failureProfile:
           $ref: '#/components/schemas/FailureProfile'
+        detectionProfile:
+          $ref: '#/components/schemas/DetectionProfile'
         categories:
           type: array
           items:
@@ -339,6 +341,86 @@ components:
             type: string
             enum:
               [prefer_structure_bootstrap, prefer_annotation_normalization, prefer_font_repair, semantic_not_primary, manual_review_likely_after_fix]
+
+    DetectionProfile:
+      type: object
+      additionalProperties: true
+      properties:
+        readingOrderSignals:
+          type: object
+          additionalProperties: true
+          properties:
+            missingStructureTree:
+              type: boolean
+            annotationOrderRiskCount:
+              type: integer
+            annotationStructParentRiskCount:
+              type: integer
+            headerFooterPollutionRisk:
+              type: boolean
+            sampledStructurePageOrderDriftCount:
+              type: integer
+            multiColumnOrderRiskPages:
+              type: integer
+            suspiciousPageCount:
+              type: integer
+        pdfUaSignals:
+          type: object
+          additionalProperties: true
+          properties:
+            orphanMcidCount:
+              type: integer
+            suspectedPathPaintOutsideMc:
+              type: integer
+            taggedAnnotationRiskCount:
+              type: integer
+        annotationSignals:
+          type: object
+          additionalProperties: true
+          properties:
+            pagesMissingTabsS:
+              type: integer
+            pagesAnnotationOrderDiffers:
+              type: integer
+            linkAnnotationsMissingStructure:
+              type: integer
+            nonLinkAnnotationsMissingStructure:
+              type: integer
+            linkAnnotationsMissingStructParent:
+              type: integer
+            nonLinkAnnotationsMissingStructParent:
+              type: integer
+        listSignals:
+          type: object
+          additionalProperties: true
+          properties:
+            listItemMisplacedCount:
+              type: integer
+            lblBodyMisplacedCount:
+              type: integer
+            listsWithoutItems:
+              type: integer
+        tableSignals:
+          type: object
+          additionalProperties: true
+          properties:
+            tablesWithMisplacedCells:
+              type: integer
+            misplacedCellCount:
+              type: integer
+            irregularTableCount:
+              type: integer
+            stronglyIrregularTableCount:
+              type: integer
+            directCellUnderTableCount:
+              type: integer
+        sampledPages:
+          type: array
+          items:
+            type: integer
+        confidence:
+          type: string
+          enum: [high, medium, low]
 
     Finding:
       type: object

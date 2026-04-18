@@ -6,9 +6,10 @@ import {
 import { isGenericLinkText, isRawUrlLinkText } from '../linkTextHeuristics.js';
 
 export function scoreLinkQuality(snap: DocumentSnapshot): ScoredCategory {
-  const structLinks = snap.annotationAccessibility?.linkAnnotationsMissingStructure ?? 0;
+  const annotationSignals = snap.detectionProfile?.annotationSignals ?? snap.annotationAccessibility;
+  const structLinks = annotationSignals?.linkAnnotationsMissingStructure ?? 0;
   const linkMissingStructParent =
-    snap.annotationAccessibility?.linkAnnotationsMissingStructParent ?? 0;
+    annotationSignals?.linkAnnotationsMissingStructParent ?? 0;
   if (snap.links.length === 0 && structLinks === 0 && linkMissingStructParent === 0) {
     return {
       key: 'link_quality',
@@ -43,7 +44,7 @@ export function scoreLinkQuality(snap: DocumentSnapshot): ScoredCategory {
       category: 'link_quality',
       severity: structLinks > 3 ? 'moderate' : 'minor',
       wcag: '2.4.4',
-      message: `${structLinks} link annotation(s) are not associated with the structure tree (ParentTree / role).`,
+      message: `${structLinks} link annotation(s) are not associated with the structure tree (ParentTree / role), which also weakens reading-order confidence.`,
       count: structLinks,
     });
   }

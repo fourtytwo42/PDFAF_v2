@@ -12,6 +12,7 @@ import { extractWithPdfjs } from './pdfjsService.js';
 import { extractStructure }  from './structureService.js';
 import { score }             from './scorer/scorer.js';
 import { deriveAnalysisClassification } from './classification/analysisClassification.js';
+import { deriveDetectionProfile } from './detection/boundedDetection.js';
 import { getDb }             from '../db/client.js';
 
 // ─── Concurrency semaphore ────────────────────────────────────────────────────
@@ -110,6 +111,7 @@ export async function analyzePdf(
 
     const snap = mergeSnapshot(pdfjsResult, structResult);
     snap.pdfClass = classifyPdf(snap);
+    snap.detectionProfile = deriveDetectionProfile(snap);
 
     const now = new Date().toISOString();
     const scoredResult = score(snap, {
@@ -121,6 +123,7 @@ export async function analyzePdf(
     const analysisResult: AnalysisResult = {
       ...scoredResult,
       ...deriveAnalysisClassification(snap, scoredResult),
+      detectionProfile: snap.detectionProfile,
     };
 
     setCached(fileHash, analysisResult, snap);
