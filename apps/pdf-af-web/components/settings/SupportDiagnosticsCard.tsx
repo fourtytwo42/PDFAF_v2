@@ -1,9 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { DesktopDiagnosticsSummary } from '../../types/desktop';
+import type { DesktopDiagnosticsSummary, DesktopSupportBridge } from '../../types/desktop';
 import { Button } from '../common/Button';
 import { StatusPill } from '../common/StatusPill';
+
+function resolveDesktopSupportBridge(): DesktopSupportBridge | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return window.pdfafDesktop?.support;
+}
 
 function runtimeTone(summary: DesktopDiagnosticsSummary | null, hasDesktopBridge: boolean) {
   if (!hasDesktopBridge) return 'neutral' as const;
@@ -21,11 +26,37 @@ function runtimeLabel(summary: DesktopDiagnosticsSummary | null, hasDesktopBridg
 }
 
 export function SupportDiagnosticsCard() {
-  const supportBridge = typeof window !== 'undefined' ? window.pdfafDesktop?.support : undefined;
+  const [supportBridge, setSupportBridge] = useState<DesktopSupportBridge | undefined>(() => resolveDesktopSupportBridge());
   const hasDesktopBridge = Boolean(supportBridge);
   const [summary, setSummary] = useState<DesktopDiagnosticsSummary | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const existingBridge = resolveDesktopSupportBridge();
+    if (existingBridge) {
+      setSupportBridge(existingBridge);
+      return;
+    }
+
+    let active = true;
+    const interval = window.setInterval(() => {
+      const nextBridge = resolveDesktopSupportBridge();
+      if (!nextBridge || !active) return;
+      setSupportBridge(nextBridge);
+      window.clearInterval(interval);
+    }, 250);
+
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval);
+    }, 10_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, []);
 
   useEffect(() => {
     if (!supportBridge) return;
