@@ -2,7 +2,9 @@ import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.j
 import { isAdvisoryTableRegularity } from '../tableRegularityHeuristics.js';
 
 export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
-  if (snap.tables.length === 0) {
+  const scoredTables = snap.tables.filter(table => !isTinyRowlessTable(table));
+
+  if (scoredTables.length === 0) {
     return {
       key: 'table_markup',
       score: 100,
@@ -15,17 +17,17 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
 
   const findings: Finding[] = [];
   const stage3 = snap.detectionProfile?.tableSignals;
-  const tablesWithHeaders = snap.tables.filter(t => t.hasHeaders);
-  const ratio = tablesWithHeaders.length / snap.tables.length;
+  const tablesWithHeaders = scoredTables.filter(t => t.hasHeaders);
+  const ratio = tablesWithHeaders.length / scoredTables.length;
   let score = Math.round(ratio * 100);
 
-  if (tablesWithHeaders.length < snap.tables.length) {
-    const missing = snap.tables.length - tablesWithHeaders.length;
+  if (tablesWithHeaders.length < scoredTables.length) {
+    const missing = scoredTables.length - tablesWithHeaders.length;
     findings.push({
       category: 'table_markup',
       severity: ratio < 0.5 ? 'critical' : ratio < 0.8 ? 'moderate' : 'minor',
       wcag: '1.3.1',
-      message: `${missing} of ${snap.tables.length} table${snap.tables.length !== 1 ? 's' : ''} lack header cells (/TH). Screen readers cannot associate data with headers.`,
+      message: `${missing} of ${scoredTables.length} table${scoredTables.length !== 1 ? 's' : ''} lack header cells (/TH). Screen readers cannot associate data with headers.`,
       count: missing,
     });
   }
@@ -34,7 +36,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   let misplacedCells = stage3?.misplacedCellCount ?? 0;
   let irregularTables = stage3?.irregularTableCount ?? 0;
   if (!stage3) {
-    for (const t of snap.tables) {
+    for (const t of scoredTables) {
       misplacedCells += t.cellsMisplacedCount ?? 0;
       if ((t.irregularRows ?? 0) > 0) irregularTables += 1;
     }
@@ -74,7 +76,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let advisoryCount = 0;
-  for (const t of snap.tables) {
+  for (const t of scoredTables) {
     if (isAdvisoryTableRegularity(t)) advisoryCount += 1;
   }
   if (advisoryCount > 0) {
@@ -96,6 +98,14 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     severity: scoreSeverity(score),
     findings,
   };
+}
+
+function isTinyRowlessTable(table: DocumentSnapshot['tables'][number]): boolean {
+  return (
+    (table.rowCount ?? 0) === 0 &&
+    (table.totalCells ?? 0) <= 2 &&
+    (table.cellsMisplacedCount ?? 0) === 0
+  );
 }
 
 function scoreSeverity(score: number) {

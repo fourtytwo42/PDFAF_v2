@@ -540,6 +540,57 @@ def _promote_first_row_td_to_th(table_elem) -> bool:
     return changed
 
 
+def _iter_table_rows(table_elem) -> list:
+    rows: list = []
+    q: deque = deque()
+    _enqueue_children(q, table_elem.get("/K"))
+    seen: set[int] = set()
+    limit = 500
+    while q and limit > 0 and len(rows) < 200:
+        limit -= 1
+        elem = q.popleft()
+        if not isinstance(elem, pikepdf.Dictionary):
+            continue
+        oid = id(elem)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        tag = (get_name(elem) or "").lstrip("/").upper()
+        if tag == "TR":
+            rows.append(elem)
+            continue
+        _enqueue_children(q, elem.get("/K"))
+    return rows
+
+
+def _promote_first_column_td_to_th(table_elem) -> bool:
+    rows = _iter_table_rows(table_elem)
+    if len(rows) < 2:
+        return False
+    first_col_cells: list = []
+    for row in rows:
+        k = row.get("/K")
+        if k is None:
+            return False
+        children = list(k) if isinstance(k, pikepdf.Array) else [k]
+        cells = [child for child in children if isinstance(child, pikepdf.Dictionary)]
+        if len(cells) < 2:
+            return False
+        first = cells[0]
+        tag = (get_name(first) or "").lstrip("/").upper()
+        if tag != "TD":
+            return False
+        first_col_cells.append(first)
+    changed = False
+    for cell in first_col_cells:
+        try:
+            cell["/S"] = pikepdf.Name("/TH")
+            changed = True
+        except Exception:
+            continue
+    return changed
+
+
 def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = params.get("structRef")
     if not ref:
@@ -552,14 +603,23 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
         return False
     if (get_name(table) or "").lstrip("/").upper() != "TABLE":
         return False
-    return _promote_first_row_td_to_th(table)
+    if _promote_first_row_td_to_th(table):
+        return True
+    return _promote_first_column_td_to_th(table)
 
 
 def _op_repair_native_table_headers(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
+    if _repair_table_role_misplacement(pdf):
+        changed = True
     for table in _iter_table_struct_elems(pdf):
         th, td = _count_table_cells(table)
-        if th == 0 and td > 0 and _promote_first_row_td_to_th(table):
+        if th != 0 or td <= 0:
+            continue
+        if _promote_first_row_td_to_th(table):
+            changed = True
+            continue
+        if _promote_first_column_td_to_th(table):
             changed = True
     return changed
 
@@ -2576,6 +2636,10 @@ def _tooltip_fallback_for_widget_field(field: pikepdf.Dictionary) -> str:
     """Acrobat 'Field descriptions' uses /TU (tooltip). Derive from /T and /FT when missing."""
     t = safe_str(field.get("/T", "")).strip()
     ft = safe_str(field.get("/FT", "")).lstrip("/").strip()
+    if t:
+        t = re.sub(r"[_\-]+", " ", t)
+        t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", t)
+        t = re.sub(r"\s+", " ", t).strip()
     if not t:
         t = "Form field"
     if ft == "Btn":
@@ -2591,6 +2655,48 @@ def _tooltip_fallback_for_widget_field(field: pikepdf.Dictionary) -> str:
     if ft == "Sig":
         return f"Signature: {t}"[:500]
     return t[:500]
+
+
+def _is_boilerplate_form_tooltip(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "")).strip().lower()
+    if not t:
+        return True
+    return t in {
+        "form field",
+        "field",
+        "text field",
+        "checkbox",
+        "check box",
+        "radio button",
+        "button",
+        "choice field",
+        "list field",
+        "signature",
+    }
+
+
+def _annotation_fallback_contents_text(
+    annot: pikepdf.Dictionary,
+    subtype: str,
+    subtype_labels: dict[str, str],
+) -> str:
+    if subtype == "/Widget":
+        try:
+            tu = safe_str(annot.get("/TU", "")).strip()
+        except Exception:
+            tu = ""
+        if tu:
+            return tu[:500]
+        label = _tooltip_fallback_for_widget_field(annot)
+        if label:
+            return label[:500]
+    try:
+        title = safe_str(annot.get("/T", "")).strip()
+    except Exception:
+        title = ""
+    if title:
+        return title[:500]
+    return subtype_labels.get(subtype, subtype.lstrip("/") + " annotation")[:500]
 
 
 def _op_fill_form_field_tooltips(pdf: pikepdf.Pdf, _params: dict) -> bool:
@@ -2609,7 +2715,7 @@ def _op_fill_form_field_tooltips(pdf: pikepdf.Pdf, _params: dict) -> bool:
             try:
                 tu = field.get("/TU")
                 tu_s = safe_str(tu).strip() if tu is not None else ""
-                if tu_s:
+                if tu_s and not _is_boilerplate_form_tooltip(tu_s):
                     continue
                 label = _tooltip_fallback_for_widget_field(field)
                 if not label:
@@ -3017,6 +3123,13 @@ def collect_annotation_accessibility_stats(pdf: pikepdf.Pdf) -> dict:
                     txt = str(ct).strip() if ct is not None else ""
                 except Exception:
                     txt = ""
+                if not txt and subtype == "/Widget":
+                    try:
+                        tu_txt = safe_str(annot.get("/TU", "")).strip()
+                    except Exception:
+                        tu_txt = ""
+                    if tu_txt and not _is_boilerplate_form_tooltip(tu_txt):
+                        continue
                 if not txt:
                     out["nonLinkAnnotationsMissingContents"] += 1
     return out
@@ -3099,6 +3212,16 @@ def _label_for_uri(uri: str) -> str:
     return "External link"[:200]
 
 
+def _label_for_internal_link() -> str:
+    return "In-document link"
+
+
+def _sanitize_link_text_fragment(text: str) -> str:
+    s = (text or "").replace("\x00", "")
+    s = re.sub(r"[\x00-\x1f\x7f]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def collect_link_scoring_rows(pdf: pikepdf.Pdf) -> list:
     """One row per visible /Link annotation (all pages) for scorer merge — pdfjs only samples pages."""
     rows: list = []
@@ -3123,10 +3246,10 @@ def collect_link_scoring_rows(pdf: pikepdf.Pdf) -> list:
                 continue
             if _annotation_is_invisible(annot):
                 continue
-            uri = _extract_http_uri_from_link_annot(annot) or ""
+            uri = _sanitize_link_text_fragment(_extract_http_uri_from_link_annot(annot) or "")
             cur = annot.get("/Contents")
             try:
-                cur_s = str(cur).strip() if cur is not None else ""
+                cur_s = _sanitize_link_text_fragment(str(cur)) if cur is not None else ""
             except Exception:
                 cur_s = ""
             if uri:
@@ -3139,7 +3262,11 @@ def collect_link_scoring_rows(pdf: pikepdf.Pdf) -> list:
                     eff = cur_s[:200]
                 else:
                     eff = "In-document link"
-            rows.append({"page": page_idx, "url": uri, "effectiveText": eff[:200]})
+            rows.append({
+                "page": page_idx,
+                "url": uri[:500],
+                "effectiveText": _sanitize_link_text_fragment(eff)[:200],
+            })
     return rows
 
 
@@ -3177,16 +3304,19 @@ def _mut_fill_link_annotation_contents(pdf: pikepdf.Pdf) -> bool:
             if _annotation_is_invisible(annot):
                 continue
             uri = _extract_http_uri_from_link_annot(annot)
-            if not uri:
-                continue
             cur = annot.get("/Contents")
             try:
                 cur_s = str(cur).strip() if cur is not None else ""
             except Exception:
                 cur_s = ""
-            if not _link_contents_needs_fill(cur_s, uri):
-                continue
-            lab = _label_for_uri(uri)
+            if uri:
+                if not _link_contents_needs_fill(cur_s, uri):
+                    continue
+                lab = _label_for_uri(uri)
+            else:
+                if not _link_contents_needs_fill(cur_s, ""):
+                    continue
+                lab = _label_for_internal_link()
             try:
                 annot["/Contents"] = _pdf_text_string(lab, 500)
                 changed = True
@@ -3385,15 +3515,28 @@ def _mut_repair_annotation_alt_text(pdf: pikepdf.Pdf) -> bool:
                     pass
 
             if not existing_text:
-                try:
-                    t = annot.get("/T")
-                    title = str(t).strip() if t is not None else ""
-                except Exception:
-                    title = ""
-                label = subtype_labels.get(subtype, subtype.lstrip("/") + " annotation")
-                description = title if title else label
+                description = _annotation_fallback_contents_text(annot, subtype, subtype_labels)
                 annot["/Contents"] = _pdf_text_string(description, 500)
                 changed = True
+            elif subtype == "/Widget":
+                try:
+                    tu_text = safe_str(annot.get("/TU", "")).strip()
+                except Exception:
+                    tu_text = ""
+                if tu_text and tu_text != existing_text:
+                    annot["/Contents"] = _pdf_text_string(tu_text[:500], 500)
+                    changed = True
+
+            if subtype == "/Widget":
+                try:
+                    tu_existing = safe_str(annot.get("/TU", "")).strip()
+                except Exception:
+                    tu_existing = ""
+                if not tu_existing or _is_boilerplate_form_tooltip(tu_existing):
+                    better_tu = _tooltip_fallback_for_widget_field(annot)
+                    if better_tu and better_tu != tu_existing:
+                        annot["/TU"] = _pdf_text_string(better_tu, 500)
+                        changed = True
 
             if is_tagged and struct_nums is not None and struct_document is not None:
                 if annot.get("/StructParent") is None:
@@ -4437,6 +4580,66 @@ def _replace_li_child_with_l_wrapper(parent, li, pdf: pikepdf.Pdf) -> bool:
     return False
 
 
+def _wrap_list_shell_children_into_li(list_elem, pdf: pikepdf.Pdf) -> int:
+    try:
+        k = list_elem.get("/K")
+    except Exception:
+        return 0
+    if k is None:
+        return 0
+    children = list(k) if isinstance(k, pikepdf.Array) else [k]
+    struct_children = [child for child in children if isinstance(child, pikepdf.Dictionary)]
+    if not struct_children:
+        return 0
+    tags = [(get_name(child) or "").lstrip("/").upper() for child in struct_children]
+    if any(tag == "LI" for tag in tags):
+        return 0
+    if any(tag not in ("LBL", "LBODY", "L") for tag in tags):
+        return 0
+
+    new_children = pikepdf.Array()
+    repairs = 0
+    i = 0
+    while i < len(children):
+        child = children[i]
+        if not isinstance(child, pikepdf.Dictionary):
+            new_children.append(child)
+            i += 1
+            continue
+        tag = (get_name(child) or "").lstrip("/").upper()
+        if tag not in ("LBL", "LBODY", "L"):
+            new_children.append(child)
+            i += 1
+            continue
+        li_k = pikepdf.Array([child])
+        if i + 1 < len(children):
+            sib = children[i + 1]
+            if isinstance(sib, pikepdf.Dictionary):
+                sib_tag = (get_name(sib) or "").lstrip("/").upper()
+                if (tag == "LBL" and sib_tag == "LBODY") or (tag == "LBODY" and sib_tag == "LBL"):
+                    li_k.append(sib)
+                    i += 1
+        li = pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name("/StructElem"),
+                S=pikepdf.Name("/LI"),
+                P=list_elem,
+                K=li_k,
+            )
+        )
+        for wrapped in list(li_k):
+            try:
+                wrapped["/P"] = li
+            except Exception:
+                continue
+        new_children.append(li)
+        repairs += 1
+        i += 1
+    if repairs > 0:
+        list_elem["/K"] = new_children
+    return repairs
+
+
 def _op_repair_list_li_wrong_parent(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """Wrap misplaced /LI (parent is not /L) in a new /L StructElem (bounded)."""
     try:
@@ -4483,6 +4686,11 @@ def _op_repair_list_li_wrong_parent(pdf: pikepdf.Pdf, _params: dict) -> bool:
                     if _replace_li_child_with_l_wrapper(parent, elem, pdf):
                         changed = True
                         repairs += 1
+        elif tag == "L" and repairs < cap:
+            added = _wrap_list_shell_children_into_li(elem, pdf)
+            if added > 0:
+                changed = True
+                repairs += added
 
         try:
             _enqueue_children(q, elem.get("/K"))

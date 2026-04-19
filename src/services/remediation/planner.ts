@@ -161,6 +161,23 @@ function successfulApplyCount(applied: AppliedRemediationTool[], toolName: strin
   return applied.filter(a => a.toolName === toolName && a.outcome === 'applied').length;
 }
 
+function tooltipNeedsRepair(tooltip: string | null | undefined): boolean {
+  const t = (tooltip ?? '').trim().toLowerCase();
+  if (!t) return true;
+  return [
+    'form field',
+    'field',
+    'text field',
+    'checkbox',
+    'check box',
+    'radio button',
+    'button',
+    'choice field',
+    'list field',
+    'signature',
+  ].includes(t);
+}
+
 /** One-shot tools: skip after first success. Figure alt/decorative + table headers: repeat until cap or no targets. */
 function shouldSkipAfterSuccessfulApply(toolName: string, applied: AppliedRemediationTool[]): boolean {
   if (toolName === 'set_figure_alt_text' || toolName === 'mark_figure_decorative') {
@@ -234,7 +251,7 @@ function toolApplicableToPdfClass(
       }
     }
     for (const v of byName.values()) {
-      if (!v.tooltip?.trim()) return true;
+      if (tooltipNeedsRepair(v.tooltip)) return true;
     }
     return false;
   }
@@ -318,7 +335,10 @@ function toolApplicableToPdfClass(
   if (toolName === 'repair_list_li_wrong_parent') {
     if (pdfClass === 'scanned') return false;
     const l = snapshot.listStructureAudit;
-    return snapshot.structureTree !== null && (l?.listItemMisplacedCount ?? 0) > 0;
+    return snapshot.structureTree !== null && (
+      (l?.listItemMisplacedCount ?? 0) > 0 ||
+      (l?.listsWithoutItems ?? 0) > 0
+    );
   }
   return true;
 }
@@ -382,6 +402,7 @@ export function planForRemediation(
     (snapshot.detectionProfile?.annotationSignals.pagesAnnotationOrderDiffers ?? 0) > 0 ||
     (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructure ?? 0) > 0 ||
     (snapshot.detectionProfile?.annotationSignals.nonLinkAnnotationsMissingStructure ?? 0) > 0 ||
+    (snapshot.annotationAccessibility?.nonLinkAnnotationsMissingContents ?? 0) > 0 ||
     (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructParent ?? 0) > 0 ||
     (snapshot.detectionProfile?.annotationSignals.nonLinkAnnotationsMissingStructParent ?? 0) > 0;
   const hasReadingOrderSignals =
@@ -425,6 +446,7 @@ export function planForRemediation(
       && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)
       && toolName !== 'canonicalize_figure_alt_ownership'
       && toolName !== 'normalize_nested_figure_containers'
+      && toolName !== 'repair_annotation_alt_text'
     ) {
       return { allowed: false, reason: 'semantic_deferred' };
     }
@@ -537,6 +559,9 @@ export function planForRemediation(
       return { allowed: false, reason: 'category_not_failing' };
     }
     if (ROUTE_TOOL_MAP.figure_semantics.includes(toolName) && structurePrimary) {
+      if (toolName === 'repair_annotation_alt_text') {
+        return { allowed: true };
+      }
       return { allowed: false, reason: 'semantic_deferred' };
     }
     if (
