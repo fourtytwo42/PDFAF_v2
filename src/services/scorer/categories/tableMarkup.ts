@@ -1,12 +1,8 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
-import { isAdvisoryTableRegularity } from '../tableRegularityHeuristics.js';
+import { normalizedTableSignals } from '../tableRegularityHeuristics.js';
 
 export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   const scoredTables = snap.tables.filter(table => !isTinyRowlessTable(table));
-  const advisoryCount = scoredTables.filter(table => isAdvisoryTableRegularity(table)).length;
-  const nonAdvisoryIrregularTables = scoredTables.filter(
-    table => (table.irregularRows ?? 0) > 0 && !isAdvisoryTableRegularity(table),
-  ).length;
 
   if (scoredTables.length === 0) {
     return {
@@ -20,7 +16,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   }
 
   const findings: Finding[] = [];
-  const stage3 = snap.detectionProfile?.tableSignals;
+  const effectiveSignals = normalizedTableSignals(snap, snap.detectionProfile?.tableSignals);
   const tablesWithHeaders = scoredTables.filter(t => t.hasHeaders);
   const ratio = tablesWithHeaders.length / scoredTables.length;
   let score = Math.round(ratio * 100);
@@ -37,17 +33,8 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   }
 
   // Acrobat "Table rows / TH and TD / regularity" — align scorer with per-table struct audit (v1-style).
-  let misplacedCells = stage3?.misplacedCellCount ?? 0;
-  let irregularTables = Math.max(
-    nonAdvisoryIrregularTables,
-    (stage3?.irregularTableCount ?? 0) - advisoryCount,
-  );
-  if (!stage3) {
-    irregularTables = nonAdvisoryIrregularTables;
-    for (const t of scoredTables) {
-      misplacedCells += t.cellsMisplacedCount ?? 0;
-    }
-  }
+  const misplacedCells = effectiveSignals.misplacedCellCount;
+  const irregularTables = effectiveSignals.irregularTableCount;
   if (misplacedCells > 0 || irregularTables > 0) {
     const parts: string[] = [];
     if (misplacedCells > 0) {
@@ -71,10 +58,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     score = Math.min(score, Math.max(0, 100 - rolePenalty));
   }
 
-  const stronglyIrregularTableCount = Math.max(
-    0,
-    (stage3?.stronglyIrregularTableCount ?? 0) - advisoryCount,
-  );
+  const stronglyIrregularTableCount = effectiveSignals.stronglyIrregularTableCount;
   if (stronglyIrregularTableCount > 0) {
     findings.push({
       category: 'table_markup',
@@ -85,6 +69,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     });
     score = Math.min(score, Math.max(0, 100 - stronglyIrregularTableCount * 18));
   }
+  const advisoryCount = effectiveSignals.advisoryRegularityCount;
   if (advisoryCount > 0) {
     findings.push({
       category: 'table_markup',

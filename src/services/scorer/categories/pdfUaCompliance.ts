@@ -4,7 +4,7 @@ import {
   PDF_UA_ORPHAN_MCID_FAIL_THRESHOLD,
   PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD,
 } from '../../../config.js';
-import { isAdvisoryTableRegularity } from '../tableRegularityHeuristics.js';
+import { normalizedTableSignals } from '../tableRegularityHeuristics.js';
 
 export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
@@ -91,7 +91,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
 
   const tableSignals = stage3?.tableSignals;
   if (snap.structureTree !== null && tableSignals) {
-    const advisoryIrregularCount = snap.tables.filter(table => isAdvisoryTableRegularity(table)).length;
+    const effectiveTableSignals = normalizedTableSignals(snap, tableSignals);
     if (tableSignals.directCellUnderTableCount > 0) {
       checks.push({
         pass: false,
@@ -99,7 +99,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
         msg: `${tableSignals.directCellUnderTableCount} table cell(s) appear directly under /Table instead of under /TR rows.`,
       });
     }
-    const strongIrregularCount = Math.max(0, tableSignals.stronglyIrregularTableCount - advisoryIrregularCount);
+    const strongIrregularCount = effectiveTableSignals.stronglyIrregularTableCount;
     if (strongIrregularCount > 0) {
       checks.push({
         pass: false,
