@@ -50,6 +50,10 @@ MAX_ITEMS = 2000  # cap per collection to avoid runaway on malformed trees
 MAX_MCID_SPANS = 500  # Phase 3c-c: cap MCID scan results in analysis JSON
 PDFAF_3CC_GOLDEN_MARKER = "pdfaf-3cc-golden-v1"
 PDFAF_3CC_ORPHAN_MARKER = "pdfaf-3cc-orphan-v1"
+PDFAF_ENGINE_OCR_MARKER = "/PDFAFEngineOcr"
+PDFAF_ENGINE_OCR_TAGGED_MARKER = "/PDFAFEngineTaggedOcrText"
+PDFAF_BOOKMARK_STRATEGY_MARKER = "/PDFAFBookmarkStrategy"
+PDFAF_BOOKMARK_PAGE_COUNT_MARKER = "/PDFAFBookmarkPageCount"
 
 MCID_OP_RE = re.compile(rb"/MCID\s+(\d+)", re.IGNORECASE)
 TJ_AFTER_MCID_RE = re.compile(rb"\(((?:\\.|[^\\\)])+)\)\s*Tj")
@@ -424,6 +428,8 @@ def _op_replace_bookmarks_from_headings(pdf: pikepdf.Pdf, params: dict) -> bool:
         stack.append((new_item, level))
 
     pdf.Root["/Outlines"] = outline_root
+    _set_pdfaf_remediation_marker(pdf, PDFAF_BOOKMARK_STRATEGY_MARKER, "heading_outlines")
+    _set_pdfaf_remediation_marker(pdf, PDFAF_BOOKMARK_PAGE_COUNT_MARKER, len(headings))
     return True
 
 
@@ -472,6 +478,8 @@ def _op_add_page_outline_bookmarks(pdf: pikepdf.Pdf, params: dict) -> bool:
         outline_root["/Last"] = new_item
 
     pdf.Root["/Outlines"] = outline_root
+    _set_pdfaf_remediation_marker(pdf, PDFAF_BOOKMARK_STRATEGY_MARKER, "page_outlines")
+    _set_pdfaf_remediation_marker(pdf, PDFAF_BOOKMARK_PAGE_COUNT_MARKER, maxp)
     return True
 
 
@@ -1452,6 +1460,45 @@ def extract_metadata(pdf: pikepdf.Pdf) -> dict:
     except Exception as e:
         print(f"[warn] metadata extraction failed: {e}", file=sys.stderr)
 
+    return result
+
+
+def _set_pdfaf_remediation_marker(pdf: pikepdf.Pdf, key: str, value) -> None:
+    try:
+        if pdf.docinfo is None:
+            pdf.docinfo = pikepdf.Dictionary()
+        if isinstance(value, bool):
+            pdf.docinfo[pikepdf.Name(key)] = pikepdf.String("true" if value else "false")
+        elif isinstance(value, int):
+            pdf.docinfo[pikepdf.Name(key)] = value
+        else:
+            pdf.docinfo[pikepdf.Name(key)] = pikepdf.String(str(value))
+    except Exception as e:
+        print(f"[warn] set remediation marker {key}: {e}", file=sys.stderr)
+
+
+def extract_remediation_provenance(pdf: pikepdf.Pdf) -> dict:
+    result = {
+        "engineAppliedOcr": False,
+        "engineTaggedOcrText": False,
+        "bookmarkStrategy": "none",
+    }
+    try:
+        info = pdf.docinfo
+        if not info:
+            return result
+        ocr = safe_str(info.get(PDFAF_ENGINE_OCR_MARKER, ""))
+        tagged = safe_str(info.get(PDFAF_ENGINE_OCR_TAGGED_MARKER, ""))
+        strategy = safe_str(info.get(PDFAF_BOOKMARK_STRATEGY_MARKER, "")) or "none"
+        page_count = info.get(PDFAF_BOOKMARK_PAGE_COUNT_MARKER)
+        result["engineAppliedOcr"] = ocr.lower() == "true"
+        result["engineTaggedOcrText"] = tagged.lower() == "true"
+        if strategy in ("none", "page_outlines", "heading_outlines"):
+            result["bookmarkStrategy"] = strategy
+        if isinstance(page_count, int) and page_count > 0:
+            result["pageOutlineCount"] = int(page_count)
+    except Exception as e:
+        print(f"[warn] remediation provenance extraction failed: {e}", file=sys.stderr)
     return result
 
 
@@ -3665,6 +3712,11 @@ def main():
             "orphanedAltEmptyElementCount": 0,
             "sampleOwnershipModes": [],
         },
+        "remediationProvenance": {
+            "engineAppliedOcr": False,
+            "engineTaggedOcrText": False,
+            "bookmarkStrategy": "none",
+        },
     }
 
     try:
@@ -3676,6 +3728,7 @@ def main():
         result["orphanMcids"] = collect_orphan_mcids(pdf)
         result["mcidTextSpans"] = collect_mcid_text_spans(pdf)
         result["taggedContentAudit"] = collect_tagged_content_audit(pdf)
+        result["remediationProvenance"] = extract_remediation_provenance(pdf)
 
         try:
             result["listStructureAudit"] = collect_list_structure_audit(pdf)
@@ -5541,7 +5594,10 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
 
 def _op_tag_ocr_text_blocks(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """OCRmyPDF sandwich: see _tag_bt_et_blocks_into_structure."""
-    return _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=True)
+    changed = _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=True)
+    if changed:
+        _set_pdfaf_remediation_marker(pdf, PDFAF_ENGINE_OCR_TAGGED_MARKER, True)
+    return changed
 
 
 def _op_tag_native_text_blocks(pdf: pikepdf.Pdf, _params: dict) -> bool:
@@ -5742,6 +5798,7 @@ def mutate_main(request_path: str) -> int:
                     except Exception as e3:
                         failed.append({"op": "_reopen", "error": str(e3)})
                     break
+                _set_pdfaf_remediation_marker(pdf, PDFAF_ENGINE_OCR_MARKER, True)
                 applied.append(op)
                 continue
 

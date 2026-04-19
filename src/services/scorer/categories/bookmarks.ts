@@ -1,5 +1,14 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
-import { BOOKMARKS_PAGE_THRESHOLD, SCORE_TAGGED_MARKED_NO_OUTLINES_BOOKMARKS } from '../../../config.js';
+import {
+  BOOKMARKS_PAGE_THRESHOLD,
+  ENGINE_HEADING_BOOKMARK_FALLBACK_SCORE,
+  ENGINE_PAGE_OUTLINE_BOOKMARK_SCORE,
+  SCORE_TAGGED_MARKED_NO_OUTLINES_BOOKMARKS,
+} from '../../../config.js';
+import {
+  engineBookmarkStrategy,
+  enginePageOutlineCoverageSufficient,
+} from '../remediationProvenance.js';
 
 export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
   if (snap.pageCount < BOOKMARKS_PAGE_THRESHOLD) {
@@ -125,6 +134,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
 
   // Compare bookmark coverage against heading structure
   let score = 70; // baseline: bookmarks exist but may be incomplete
+  const bookmarkStrategy = engineBookmarkStrategy(snap);
 
   if (headingCount > 0) {
     const coverage = Math.min(1, bookmarkCount / headingCount);
@@ -140,7 +150,23 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
   } else {
     // No heading structure detected, but document has bookmarks — navigation exists.
     // Strong paragraph-level tagging still supports in-document navigation; score between legacy 90 and full pass.
-    if (paragraphCount >= 20 || (snap.textCharCount ?? 0) >= 12_000) {
+    if (bookmarkStrategy === 'heading_outlines' && (paragraphCount >= 8 || (snap.textCharCount ?? 0) >= 5_000)) {
+      score = ENGINE_HEADING_BOOKMARK_FALLBACK_SCORE;
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `PDFAF synthesized heading-derived bookmarks for this ${snap.pageCount}-page document. The heading tree is sparse in analysis, but bookmark navigation is present and should be validated manually.`,
+      });
+    } else if (bookmarkStrategy === 'page_outlines' && enginePageOutlineCoverageSufficient(snap) && snap.isTagged) {
+      score = ENGINE_PAGE_OUTLINE_BOOKMARK_SCORE;
+      findings.push({
+        category: 'bookmarks',
+        severity: 'minor',
+        wcag: '2.4.1',
+        message: `PDFAF synthesized ${bookmarkCount} page-outline bookmark(s), providing bounded section navigation even though heading coverage remains sparse.`,
+      });
+    } else if (paragraphCount >= 20 || (snap.textCharCount ?? 0) >= 12_000) {
       score = 97;
       findings.push({
         category: 'bookmarks',

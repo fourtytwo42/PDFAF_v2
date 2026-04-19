@@ -1,5 +1,6 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
+  ENGINE_OCR_TEXT_EXTRACTABILITY_SCORE,
   OCR_METADATA_TEXT_EXTRACTABILITY_CAP,
   SCORE_TAGGED_MARKED_NO_EXTRACTABLE_TEXT,
   TEXT_EXTRACTABILITY_ENCODING_MAX_PENALTY,
@@ -10,6 +11,7 @@ import {
   TEXT_EXTRACTABILITY_ENCODING_RELAX_PER_FONT,
   TEXT_EXTRACTABILITY_ENCODING_SCORE_FLOOR,
 } from '../../../config.js';
+import { qualifiesForEngineOwnedOcrExtractabilityCredit } from '../remediationProvenance.js';
 
 function encodingRiskFontCount(snap: DocumentSnapshot): number {
   return snap.fonts.filter(f => Boolean(f.encodingRisk)).length;
@@ -138,6 +140,17 @@ export function scoreTextExtractability(snap: DocumentSnapshot): ScoredCategory 
         }
       } else {
         if (metadataSuggestsOcrEngine(snap)) {
+          if (qualifiesForEngineOwnedOcrExtractabilityCredit(snap)) {
+            score = ENGINE_OCR_TEXT_EXTRACTABILITY_SCORE;
+            findings.push({
+              category: 'text_extractability',
+              severity: 'minor',
+              wcag: '1.3.1',
+              message:
+                'PDFAF-applied OCR produced a tagged, fully extractable text layer with no remaining font-unicode risk. Manual validation of OCR accuracy is still recommended, but extractability is no longer capped at the generic OCR-survivor floor.',
+            });
+            break;
+          }
           findings.push({
             category: 'text_extractability',
             severity: 'moderate',

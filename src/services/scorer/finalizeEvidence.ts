@@ -8,6 +8,7 @@ import type {
   ScoredCategory,
   VerificationLevel,
 } from '../../types.js';
+import { qualifiesForEngineOwnedOcrExtractabilityCredit } from './remediationProvenance.js';
 
 const HEURISTIC_SCORE_CAP = 89;
 
@@ -85,6 +86,13 @@ function policyForCategory(snap: DocumentSnapshot, category: ScoredCategory): Ca
           evidence: 'verified',
           manualReviewRequired: false,
           manualReviewReasons: [],
+        };
+      }
+      if (qualifiesForEngineOwnedOcrExtractabilityCredit(snap)) {
+        return {
+          evidence: 'manual_review_required',
+          manualReviewRequired: true,
+          manualReviewReasons: ['PDFAF applied OCR and produced a strong text layer, but OCR recognition accuracy and assistive-technology usability still need manual validation.'],
         };
       }
       return {

@@ -242,6 +242,19 @@ const _ocrMetaTexCap = parseInt(process.env['PDFAF_OCR_METADATA_TEXT_EXTRACTABIL
 export const OCR_METADATA_TEXT_EXTRACTABILITY_CAP =
   Number.isFinite(_ocrMetaTexCap) && _ocrMetaTexCap >= 0 && _ocrMetaTexCap <= 100 ? _ocrMetaTexCap : 100;
 
+/** Stage 19: bounded high-confidence extractability score for PDFAF-owned OCR output. */
+export const ENGINE_OCR_TEXT_EXTRACTABILITY_SCORE = 97;
+/** Stage 19: minimum text chars/page required before PDFAF-owned OCR gets high-confidence credit. */
+export const ENGINE_OCR_TEXT_CHARS_PER_PAGE_MIN = 120;
+/** Stage 19: absolute minimum extracted chars required before PDFAF-owned OCR gets high-confidence credit. */
+export const ENGINE_OCR_TEXT_CHARS_MIN = 800;
+/** Stage 19: clean PDFAF-owned OCR docs get a higher reading-order floor than generic OCR metadata survivors. */
+export const ENGINE_OCR_READING_ORDER_FLOOR = 98;
+/** Stage 19: engine-created page-outline bookmarks count as real navigation, but below full heading-derived coverage. */
+export const ENGINE_PAGE_OUTLINE_BOOKMARK_SCORE = 95;
+/** Stage 19: heading-derived bookmarks with rich tagged body but sparse detected heading tree still deserve strong credit. */
+export const ENGINE_HEADING_BOOKMARK_FALLBACK_SCORE = 97;
+
 /** After this many `no_effect` outcomes for the same tool name, skip further attempts this run. */
 export const REMEDIATION_MAX_NO_EFFECT_PER_TOOL = parseInt(
   process.env['REMEDIATION_MAX_NO_EFFECT_PER_TOOL'] ?? '2',

@@ -1,9 +1,11 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
+  ENGINE_OCR_READING_ORDER_FLOOR,
   READING_ORDER_UNOWNED_LINK_WEIGHT,
   READING_ORDER_UNOWNED_MAX_DEDUCTION,
   READING_ORDER_UNOWNED_NONLINK_WEIGHT,
 } from '../../../config.js';
+import { qualifiesForEngineOwnedOcrReadingOrderCredit } from '../remediationProvenance.js';
 
 function unownedAnnotationReadingOrderScore(snap: DocumentSnapshot): { score: number; total: number } {
   const aa = snap.annotationAccessibility;
@@ -163,6 +165,9 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let score = Math.min(headingScore, tabScore, annotOrderScore, unowned.score);
+  if (qualifiesForEngineOwnedOcrReadingOrderCredit(snap) && !stage3?.headerFooterPollutionRisk) {
+    score = Math.max(score, Math.min(ENGINE_OCR_READING_ORDER_FLOOR, unowned.score));
+  }
   if ((stage3?.sampledStructurePageOrderDriftCount ?? 0) > 0) {
     score = Math.min(score, Math.max(0, 96 - stage3!.sampledStructurePageOrderDriftCount * 12));
     findings.push({

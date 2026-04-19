@@ -303,6 +303,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     listStructureAudit: struct.listStructureAudit,
     acrobatStyleAltRisks: struct.acrobatStyleAltRisks,
     annotationAccessibility: normalizeAnnotationAccessibility(struct.annotationAccessibility),
+    remediationProvenance: struct.remediationProvenance,
     // computed
     pdfClass:         'native_untagged', // overwritten below
     imageToTextRatio,
@@ -377,5 +378,10 @@ function emptyPythonResult(): PythonAnalysisResult {
     mcidTextSpans: [],
     taggedContentAudit: undefined,
     acrobatStyleAltRisks: undefined,
+    remediationProvenance: {
+      engineAppliedOcr: false,
+      engineTaggedOcrText: false,
+      bookmarkStrategy: 'none',
+    },
   };
 }

@@ -307,6 +307,17 @@ export interface DocumentSnapshot {
     expectedFloor: number;
     passesFloor: boolean;
   };
+  /** Internal-only remediation provenance inferred from the current remediated PDF. */
+  remediationProvenance?: {
+    /** True when this PDF was OCR-remediated by PDFAF and the marker survived re-analysis. */
+    engineAppliedOcr: boolean;
+    /** True when PDFAF tagged OCR text blocks after OCR. */
+    engineTaggedOcrText: boolean;
+    /** Bookmark synthesis strategy PDFAF applied, if any. */
+    bookmarkStrategy: 'none' | 'page_outlines' | 'heading_outlines';
+    /** Page-outline count synthesized by PDFAF when `bookmarkStrategy=page_outlines`. */
+    pageOutlineCount?: number;
+  };
 
   // --- computed during merge in pdfAnalyzer ---
   pdfClass: PdfClass;
@@ -414,6 +425,7 @@ export interface PythonAnalysisResult {
   listStructureAudit?: DocumentSnapshot['listStructureAudit'];
   acrobatStyleAltRisks?: DocumentSnapshot['acrobatStyleAltRisks'];
   structureBootstrapGate?: DocumentSnapshot['structureBootstrapGate'];
+  remediationProvenance?: DocumentSnapshot['remediationProvenance'];
 }
 
 // ─── Phase 2 — remediation ────────────────────────────────────────────────────
