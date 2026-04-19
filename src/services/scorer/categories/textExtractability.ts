@@ -17,9 +17,16 @@ function encodingRiskFontCount(snap: DocumentSnapshot): number {
 
 function encodingRiskPenaltyRelaxed(snap: DocumentSnapshot): boolean {
   if (snap.pdfClass !== 'native_tagged') return false;
-  if (TEXT_EXTRACTABILITY_ENCODING_RELAX_MIN_CHARS <= 0) return false;
-  if ((snap.textCharCount ?? 0) < TEXT_EXTRACTABILITY_ENCODING_RELAX_MIN_CHARS) return false;
+  const textChars = snap.textCharCount ?? 0;
   const cpp = (snap.textCharCount ?? 0) / Math.max(snap.pageCount, 1);
+  const denseTaggedShortDoc =
+    snap.isTagged &&
+    snap.pageCount <= 2 &&
+    textChars >= 500 &&
+    cpp >= TEXT_EXTRACTABILITY_ENCODING_RELAX_CHARS_PER_PAGE;
+  if (denseTaggedShortDoc) return true;
+  if (TEXT_EXTRACTABILITY_ENCODING_RELAX_MIN_CHARS <= 0) return false;
+  if (textChars < TEXT_EXTRACTABILITY_ENCODING_RELAX_MIN_CHARS) return false;
   return cpp >= TEXT_EXTRACTABILITY_ENCODING_RELAX_CHARS_PER_PAGE;
 }
 

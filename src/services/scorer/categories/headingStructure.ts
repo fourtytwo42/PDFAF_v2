@@ -7,13 +7,29 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
 
   // Single-page docs: headings optional
   if (snap.pageCount <= 1) {
+    const taggedSinglePageBody =
+      snap.isTagged &&
+      (
+        (snap.paragraphStructElems?.length ?? 0) > 0 ||
+        (snap.pdfClass === 'native_tagged' && (snap.textCharCount ?? 0) >= 300)
+      );
     return {
       key: 'heading_structure',
-      score: headings.length > 0 ? 100 : 80,
+      score: headings.length > 0 || taggedSinglePageBody ? 100 : 80,
       weight: 0.130,
       applicable: true,
       severity: 'pass',
-      findings: [],
+      findings: headings.length > 0 || !taggedSinglePageBody
+        ? []
+        : [
+            {
+              category: 'heading_structure',
+              severity: 'minor',
+              wcag: '2.4.6',
+              message:
+                'Single-page tagged PDF has structured body text but no explicit H1-H6 role. Treating headings as optional for scoring; add a heading role if section navigation matters.',
+            },
+          ],
     };
   }
 
