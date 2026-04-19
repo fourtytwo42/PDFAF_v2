@@ -4,6 +4,7 @@ import {
   PDF_UA_ORPHAN_MCID_FAIL_THRESHOLD,
   PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD,
 } from '../../../config.js';
+import { isAdvisoryTableRegularity } from '../tableRegularityHeuristics.js';
 
 export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
@@ -90,6 +91,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
 
   const tableSignals = stage3?.tableSignals;
   if (snap.structureTree !== null && tableSignals) {
+    const advisoryIrregularCount = snap.tables.filter(table => isAdvisoryTableRegularity(table)).length;
     if (tableSignals.directCellUnderTableCount > 0) {
       checks.push({
         pass: false,
@@ -97,11 +99,12 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
         msg: `${tableSignals.directCellUnderTableCount} table cell(s) appear directly under /Table instead of under /TR rows.`,
       });
     }
-    if (tableSignals.stronglyIrregularTableCount > 0) {
+    const strongIrregularCount = Math.max(0, tableSignals.stronglyIrregularTableCount - advisoryIrregularCount);
+    if (strongIrregularCount > 0) {
       checks.push({
         pass: false,
         wcag: '1.3.1',
-        msg: `${tableSignals.stronglyIrregularTableCount} table(s) show strongly irregular row structure likely to break table semantics.`,
+        msg: `${strongIrregularCount} table(s) show strongly irregular row structure likely to break table semantics.`,
       });
     }
   }

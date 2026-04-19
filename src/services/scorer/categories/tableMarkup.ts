@@ -3,6 +3,10 @@ import { isAdvisoryTableRegularity } from '../tableRegularityHeuristics.js';
 
 export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   const scoredTables = snap.tables.filter(table => !isTinyRowlessTable(table));
+  const advisoryCount = scoredTables.filter(table => isAdvisoryTableRegularity(table)).length;
+  const nonAdvisoryIrregularTables = scoredTables.filter(
+    table => (table.irregularRows ?? 0) > 0 && !isAdvisoryTableRegularity(table),
+  ).length;
 
   if (scoredTables.length === 0) {
     return {
@@ -34,11 +38,14 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
 
   // Acrobat "Table rows / TH and TD / regularity" — align scorer with per-table struct audit (v1-style).
   let misplacedCells = stage3?.misplacedCellCount ?? 0;
-  let irregularTables = stage3?.irregularTableCount ?? 0;
+  let irregularTables = Math.max(
+    nonAdvisoryIrregularTables,
+    (stage3?.irregularTableCount ?? 0) - advisoryCount,
+  );
   if (!stage3) {
+    irregularTables = nonAdvisoryIrregularTables;
     for (const t of scoredTables) {
       misplacedCells += t.cellsMisplacedCount ?? 0;
-      if ((t.irregularRows ?? 0) > 0) irregularTables += 1;
     }
   }
   if (misplacedCells > 0 || irregularTables > 0) {
@@ -64,20 +71,19 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     score = Math.min(score, Math.max(0, 100 - rolePenalty));
   }
 
-  if ((stage3?.stronglyIrregularTableCount ?? 0) > 0) {
+  const stronglyIrregularTableCount = Math.max(
+    0,
+    (stage3?.stronglyIrregularTableCount ?? 0) - advisoryCount,
+  );
+  if (stronglyIrregularTableCount > 0) {
     findings.push({
       category: 'table_markup',
       severity: 'moderate',
       wcag: '1.3.1',
-      message: `${stage3!.stronglyIrregularTableCount} table(s) have strongly irregular row structure beyond advisory variance.`,
-      count: stage3!.stronglyIrregularTableCount,
+      message: `${stronglyIrregularTableCount} table(s) have strongly irregular row structure beyond advisory variance.`,
+      count: stronglyIrregularTableCount,
     });
-    score = Math.min(score, Math.max(0, 100 - stage3!.stronglyIrregularTableCount * 18));
-  }
-
-  let advisoryCount = 0;
-  for (const t of scoredTables) {
-    if (isAdvisoryTableRegularity(t)) advisoryCount += 1;
+    score = Math.min(score, Math.max(0, 100 - stronglyIrregularTableCount * 18));
   }
   if (advisoryCount > 0) {
     findings.push({
@@ -102,7 +108,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
 
 function isTinyRowlessTable(table: DocumentSnapshot['tables'][number]): boolean {
   return (
-    (table.rowCount ?? 0) === 0 &&
+    (table.rowCount ?? 0) <= 1 &&
     (table.totalCells ?? 0) <= 2 &&
     (table.cellsMisplacedCount ?? 0) === 0
   );

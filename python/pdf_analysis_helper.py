@@ -3446,17 +3446,6 @@ def _mut_repair_annotation_alt_text(pdf: pikepdf.Pdf) -> bool:
     }
     is_tagged = _pdf_is_effectively_tagged(pdf)
 
-    struct_root = None
-    struct_document = None
-    struct_nums = None
-    struct_next_key = 0
-    if is_tagged:
-        struct_root = pdf.Root.get("/StructTreeRoot")
-        if isinstance(struct_root, pikepdf.Dictionary):
-            struct_document = _ensure_document_struct_elem(pdf, struct_root)
-            _, struct_nums = _ensure_parent_tree(struct_root, pdf)
-            struct_next_key = int(struct_root.get("/ParentTreeNextKey", 0) or 0)
-
     changed = False
     for page in pdf.pages:
         page_obj = page.obj
@@ -3538,35 +3527,6 @@ def _mut_repair_annotation_alt_text(pdf: pikepdf.Pdf) -> bool:
                         annot["/TU"] = _pdf_text_string(better_tu, 500)
                         changed = True
 
-            if is_tagged and struct_nums is not None and struct_document is not None:
-                if annot.get("/StructParent") is None:
-                    try:
-                        objr = pdf.make_indirect(pikepdf.Dictionary({
-                            "/Type": pikepdf.Name("/OBJR"),
-                            "/Obj": annot,
-                            "/Pg": page_obj,
-                        }))
-                        annot_elem = pdf.make_indirect(pikepdf.Dictionary({
-                            "/Type": pikepdf.Name("/StructElem"),
-                            "/S": pikepdf.Name("/Annot"),
-                            "/P": struct_document,
-                            "/Pg": page_obj,
-                            "/K": objr,
-                        }))
-                        kids = struct_document.get("/K")
-                        if not isinstance(kids, pikepdf.Array):
-                            kids = pikepdf.Array([kids]) if kids is not None else pikepdf.Array()
-                        kids.append(annot_elem)
-                        struct_document["/K"] = kids
-                        annot["/StructParent"] = pikepdf.Integer(struct_next_key)
-                        _upsert_parent_tree_entry(struct_nums, struct_next_key, annot_elem)
-                        struct_next_key += 1
-                        changed = True
-                    except Exception:
-                        pass
-
-    if struct_root is not None and isinstance(struct_root, pikepdf.Dictionary):
-        struct_root["/ParentTreeNextKey"] = pikepdf.Integer(struct_next_key)
     return changed
 
 
