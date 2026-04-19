@@ -1084,13 +1084,18 @@ export async function remediatePdf(
         });
       }
 
-      const tmp = join(tmpdir(), `pdfaf-rem-${randomUUID()}.pdf`);
-      await writeFile(tmp, buf);
+      const stageHadEffect = stageApplied.some(a => a.outcome === 'applied');
       let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
-      try {
-        analyzed = await analyzePdf(tmp, filename);
-      } finally {
-        await unlink(tmp).catch(() => {});
+      if (stageHadEffect) {
+        const tmp = join(tmpdir(), `pdfaf-rem-${randomUUID()}.pdf`);
+        await writeFile(tmp, buf);
+        try {
+          analyzed = await analyzePdf(tmp, filename);
+        } finally {
+          await unlink(tmp).catch(() => {});
+        }
+      } else {
+        analyzed = { result: currentAnalysis, snapshot: currentSnapshot };
       }
 
       const stageDecision = shouldRejectStageResult({
@@ -1132,7 +1137,9 @@ export async function remediatePdf(
         source: 'planner',
         toolCount: stage.tools.length,
         totalMs: performance.now() - stageStarted,
-        reanalyzeMs: analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs,
+        reanalyzeMs: stageHadEffect
+          ? (analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs)
+          : 0,
       });
       appliedTools.push(...stageApplied);
       recordToolOutcomes(toolOutcomeStore, before.pdfClass, stageApplied);

@@ -28,14 +28,32 @@ export function hasEngineTaggedOcrText(snap: DocumentSnapshot): boolean {
   return snap.remediationProvenance?.engineTaggedOcrText === true;
 }
 
+const _extractabilityCreditCache = new WeakMap<object, boolean>();
+
 export function qualifiesForEngineOwnedOcrExtractabilityCredit(snap: DocumentSnapshot): boolean {
-  if (!isEngineOwnedOcrDocument(snap)) return false;
-  if (snap.pdfClass !== 'native_tagged') return false;
-  if (snap.imageOnlyPageCount !== 0) return false;
-  if (hasEncodingRisk(snap) && !hasOnlyAdvisoryEngineOcrFontRisk(snap)) return false;
+  const cached = _extractabilityCreditCache.get(snap);
+  if (cached !== undefined) return cached;
+  if (!isEngineOwnedOcrDocument(snap)) {
+    _extractabilityCreditCache.set(snap, false);
+    return false;
+  }
+  if (snap.pdfClass !== 'native_tagged') {
+    _extractabilityCreditCache.set(snap, false);
+    return false;
+  }
+  if (snap.imageOnlyPageCount !== 0) {
+    _extractabilityCreditCache.set(snap, false);
+    return false;
+  }
+  if (hasEncodingRisk(snap) && !hasOnlyAdvisoryEngineOcrFontRisk(snap)) {
+    _extractabilityCreditCache.set(snap, false);
+    return false;
+  }
   const textChars = snap.textCharCount ?? 0;
   const perPage = textChars / Math.max(snap.pageCount, 1);
-  return textChars >= ENGINE_OCR_TEXT_CHARS_MIN && perPage >= ENGINE_OCR_TEXT_CHARS_PER_PAGE_MIN;
+  const result = textChars >= ENGINE_OCR_TEXT_CHARS_MIN && perPage >= ENGINE_OCR_TEXT_CHARS_PER_PAGE_MIN;
+  _extractabilityCreditCache.set(snap, result);
+  return result;
 }
 
 export function qualifiesForEngineOwnedOcrReadingOrderCredit(snap: DocumentSnapshot): boolean {
