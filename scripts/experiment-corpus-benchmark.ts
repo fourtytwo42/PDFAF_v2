@@ -53,6 +53,7 @@ type BenchmarkMode = 'analyze' | 'remediate' | 'full';
 interface ParsedArgs {
   mode: BenchmarkMode;
   outDir?: string;
+  manifestPath?: string;
   cohorts: string[];
   fileIds: string[];
   semanticEnabled: boolean;
@@ -98,6 +99,7 @@ function printUsage(): void {
 Options:
   --mode analyze|remediate|full   Benchmark mode (default: full)
   --out <dir>                     Output directory root or explicit run directory
+  --manifest <path>               Alternate experiment corpus manifest path
   --cohort <name>                 Restrict to a cohort (repeatable)
   --file <id>                     Restrict to one manifest id (repeatable)
   --semantic                      Enable semantic passes
@@ -111,6 +113,7 @@ Options:
 function parseArgs(argv: string[]): ParsedArgs {
   let mode: BenchmarkMode = 'full';
   let outDir: string | undefined;
+  let manifestPath: string | undefined;
   const cohorts: string[] = [];
   const fileIds: string[] = [];
   let semanticEnabled = false;
@@ -134,6 +137,12 @@ function parseArgs(argv: string[]): ParsedArgs {
         const value = argv[++i];
         if (!value) throw new Error('Missing value for --out.');
         outDir = value;
+        break;
+      }
+      case '--manifest': {
+        const value = argv[++i];
+        if (!value) throw new Error('Missing value for --manifest.');
+        manifestPath = resolve(value);
         break;
       }
       case '--cohort': {
@@ -178,6 +187,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   return {
     mode,
     outDir,
+    manifestPath,
     cohorts,
     fileIds,
     semanticEnabled,
@@ -633,7 +643,9 @@ function filterEntries(
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const { manifestPath, corpusRoot } = defaultExperimentCorpusPaths();
+  const defaults = defaultExperimentCorpusPaths();
+  const manifestPath = args.manifestPath ?? defaults.manifestPath;
+  const corpusRoot = dirname(manifestPath);
 
   if (args.validateManifestOnly) {
     await validateManifest(manifestPath);
