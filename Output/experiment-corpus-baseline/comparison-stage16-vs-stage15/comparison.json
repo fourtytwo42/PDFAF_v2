@@ -1,0 +1,330 @@
+{
+  "beforeRunId": "run-2026-04-19T05-30-39-879Z",
+  "afterRunId": "run-2026-04-19T06-07-38-044Z",
+  "generatedAt": "2026-04-19T06:23:11.191Z",
+  "analyze": {
+    "scoreMeanDelta": -0.35999999999999943,
+    "scoreMedianDelta": 0,
+    "scoreP95Delta": 2,
+    "runtimeMedianDeltaMs": -3.647137000109069,
+    "runtimeP95DeltaMs": -8.685120999929495,
+    "manualReviewRequiredDelta": 0,
+    "scoreCapFrequencyDelta": [
+      {
+        "key": "alt_text",
+        "before": 1,
+        "after": 0,
+        "delta": -1
+      }
+    ]
+  },
+  "remediate": {
+    "beforeMeanDelta": -0.35999999999999943,
+    "afterMeanDelta": 0.7399999999999949,
+    "reanalyzedMeanDelta": 0.7599999999999909,
+    "deltaMeanDelta": 1.1000000000000014,
+    "wallMedianDeltaMs": -278.0914449999982,
+    "wallP95DeltaMs": -921.4471950000152,
+    "totalMedianDeltaMs": -278.091385000007,
+    "totalP95DeltaMs": -921.4470740000252,
+    "beforeManualReviewRequiredDelta": 0,
+    "afterManualReviewRequiredDelta": 0,
+    "reanalyzedManualReviewRequiredDelta": 0,
+    "scoreCapFrequencyDelta": [
+      {
+        "key": "text_extractability",
+        "before": 3,
+        "after": 3,
+        "delta": 0
+      }
+    ],
+    "stageRuntimeMedianDeltaMs": [
+      {
+        "key": "planner:stage1",
+        "beforeMedianMs": 996.8654779999051,
+        "afterMedianMs": 977.3022900000215,
+        "deltaMedianMs": -19.563187999883667
+      },
+      {
+        "key": "planner:stage2",
+        "beforeMedianMs": 1023.3582849999657,
+        "afterMedianMs": 997.3499709999887,
+        "deltaMedianMs": -26.008313999976963
+      },
+      {
+        "key": "planner:stage3",
+        "beforeMedianMs": 398.56988699999056,
+        "afterMedianMs": 405.56647599999997,
+        "deltaMedianMs": 6.996589000009408
+      },
+      {
+        "key": "planner:stage4",
+        "beforeMedianMs": 817.1967799999984,
+        "afterMedianMs": 805.0197840000037,
+        "deltaMedianMs": -12.176995999994688
+      },
+      {
+        "key": "planner:stage5",
+        "beforeMedianMs": 767.6188540000003,
+        "afterMedianMs": 772.0464900000079,
+        "deltaMedianMs": 4.427636000007624
+      },
+      {
+        "key": "planner:stage6",
+        "beforeMedianMs": 266.4046259999741,
+        "afterMedianMs": 137.12412200006656,
+        "deltaMedianMs": -129.28050399990752
+      },
+      {
+        "key": "planner:stage7",
+        "beforeMedianMs": 50409.89308299997,
+        "afterMedianMs": 49858.55934899999,
+        "deltaMedianMs": -551.3337339999853
+      },
+      {
+        "key": "planner:stage8",
+        "beforeMedianMs": 111.58045499993023,
+        "afterMedianMs": 107.5946249999979,
+        "deltaMedianMs": -3.985829999932321
+      },
+      {
+        "key": "planner:stage9",
+        "beforeMedianMs": 739.1211760000151,
+        "afterMedianMs": 738.8963820000063,
+        "deltaMedianMs": -0.22479400000884198
+      },
+      {
+        "key": "post_pass:stage11",
+        "beforeMedianMs": 110.69117200002074,
+        "afterMedianMs": 107.66396000003442,
+        "deltaMedianMs": -3.0272119999863207
+      },
+      {
+        "key": "post_pass:stage12",
+        "beforeMedianMs": 0.019367000000784174,
+        "afterMedianMs": 0.021140000004379544,
+        "deltaMedianMs": 0.0017730000035953708
+      }
+    ],
+    "toolRuntimeMedianDeltaMs": [
+      {
+        "key": "add_page_outline_bookmarks",
+        "beforeMedianMs": 119.75841999996919,
+        "afterMedianMs": 112.17565699998522,
+        "deltaMedianMs": -7.58276299998397
+      },
+      {
+        "key": "artifact_repeating_page_furniture",
+        "beforeMedianMs": 107.92796900001122,
+        "afterMedianMs": 105.76792599994224,
+        "deltaMedianMs": -2.160043000068981
+      },
+      {
+        "key": "bootstrap_struct_tree",
+        "beforeMedianMs": 106.602458999987,
+        "afterMedianMs": 105.85900100006256,
+        "deltaMedianMs": -0.7434579999244306
+      },
+      {
+        "key": "create_heading_from_candidate",
+        "beforeMedianMs": 142.74010900000576,
+        "afterMedianMs": 0,
+        "deltaMedianMs": -142.74010900000576
+      },
+      {
+        "key": "mark_untagged_content_as_artifact",
+        "beforeMedianMs": 178.2814219999127,
+        "afterMedianMs": 183.57862099993508,
+        "deltaMedianMs": 5.297199000022374
+      },
+      {
+        "key": "normalize_annotation_tab_order",
+        "beforeMedianMs": 110.41214699996635,
+        "afterMedianMs": 104.91669399989769,
+        "deltaMedianMs": -5.4954530000686646
+      },
+      {
+        "key": "normalize_heading_hierarchy",
+        "beforeMedianMs": 298.0614330000244,
+        "afterMedianMs": 0,
+        "deltaMedianMs": -298.0614330000244
+      },
+      {
+        "key": "ocr_scanned_pdf",
+        "beforeMedianMs": 48713.41511199996,
+        "afterMedianMs": 48163.52878200007,
+        "deltaMedianMs": -549.886329999892
+      },
+      {
+        "key": "remap_orphan_mcids_as_artifacts",
+        "beforeMedianMs": 601.1617200000001,
+        "afterMedianMs": 580.0414159999928,
+        "deltaMedianMs": -21.12030400000731
+      },
+      {
+        "key": "repair_native_link_structure",
+        "beforeMedianMs": 110.43794699999853,
+        "afterMedianMs": 112.52688000001945,
+        "deltaMedianMs": 2.0889330000209156
+      },
+      {
+        "key": "repair_native_table_headers",
+        "beforeMedianMs": 0,
+        "afterMedianMs": 142.66337900003418,
+        "deltaMedianMs": 142.66337900003418
+      },
+      {
+        "key": "repair_structure_conformance",
+        "beforeMedianMs": 112.61394499999005,
+        "afterMedianMs": 105.59728899993934,
+        "deltaMedianMs": -7.016656000050716
+      },
+      {
+        "key": "replace_bookmarks_from_headings",
+        "beforeMedianMs": 153.88695099999313,
+        "afterMedianMs": 145.8323090000049,
+        "deltaMedianMs": -8.054641999988235
+      },
+      {
+        "key": "set_document_language",
+        "beforeMedianMs": 114.85841599999912,
+        "afterMedianMs": 109.99683199997526,
+        "deltaMedianMs": -4.861584000023868
+      },
+      {
+        "key": "set_document_title",
+        "beforeMedianMs": 110.0443919999525,
+        "afterMedianMs": 102.36110500001814,
+        "deltaMedianMs": -7.683286999934353
+      },
+      {
+        "key": "set_link_annotation_contents",
+        "beforeMedianMs": 106.39876499993261,
+        "afterMedianMs": 106.94817700001295,
+        "deltaMedianMs": 0.5494120000803377
+      },
+      {
+        "key": "set_pdfua_identification",
+        "beforeMedianMs": 110.15970299998298,
+        "afterMedianMs": 103.57237599999644,
+        "deltaMedianMs": -6.587326999986544
+      },
+      {
+        "key": "set_table_header_cells",
+        "beforeMedianMs": 0,
+        "afterMedianMs": 134.23847099998966,
+        "deltaMedianMs": 134.23847099998966
+      },
+      {
+        "key": "synthesize_basic_structure_from_layout",
+        "beforeMedianMs": 104.90066299994942,
+        "afterMedianMs": 103.26506700000027,
+        "deltaMedianMs": -1.635595999949146
+      },
+      {
+        "key": "tag_native_text_blocks",
+        "beforeMedianMs": 108.98026400001254,
+        "afterMedianMs": 105.54707200000121,
+        "deltaMedianMs": -3.4331920000113314
+      },
+      {
+        "key": "tag_ocr_text_blocks",
+        "beforeMedianMs": 952.1579380000476,
+        "afterMedianMs": 950.8393940000096,
+        "deltaMedianMs": -1.3185440000379458
+      },
+      {
+        "key": "tag_unowned_annotations",
+        "beforeMedianMs": 112.04578700003913,
+        "afterMedianMs": 110.14133899996523,
+        "deltaMedianMs": -1.9044480000738986
+      }
+    ],
+    "semanticLaneRuntimeMedianDeltaMs": [],
+    "costBenefitDelta": {
+      "scoreDeltaPerSecond": 0.058644027448810476,
+      "confidenceDeltaPerSecond": -0.00003942700843151403
+    }
+  },
+  "cohorts": {
+    "00-fixtures": {
+      "analyzeMeanDelta": 0.8333333333333286,
+      "analyzeRuntimeMedianDeltaMs": 1.5605550000000221,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [],
+      "remediationDeltaMeanDelta": -0.16666666666666785,
+      "remediationRuntimeMedianDeltaMs": 15.044797000000472,
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": -0.25622802645707043,
+        "confidenceDeltaPerSecond": -0.003916573428974876
+      }
+    },
+    "10-short-near-pass": {
+      "analyzeMeanDelta": -0.75,
+      "analyzeRuntimeMedianDeltaMs": 5.3657620000012685,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [],
+      "remediationDeltaMeanDelta": 4.125,
+      "remediationRuntimeMedianDeltaMs": 69.16374599999835,
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": 0.8188532366742969,
+        "confidenceDeltaPerSecond": 0.001114379474937352
+      }
+    },
+    "20-figure-ownership": {
+      "analyzeMeanDelta": 0,
+      "analyzeRuntimeMedianDeltaMs": 11.143056000029901,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [],
+      "remediationDeltaMeanDelta": 0,
+      "remediationRuntimeMedianDeltaMs": 143.79931800000486,
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": -0.060205903109455505,
+        "confidenceDeltaPerSecond": -0.00033355070974768614
+      }
+    },
+    "30-structure-reading-order": {
+      "analyzeMeanDelta": -2.3000000000000043,
+      "analyzeRuntimeMedianDeltaMs": 36.45441199999186,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [
+        {
+          "key": "alt_text",
+          "before": 1,
+          "after": 0,
+          "delta": -1
+        }
+      ],
+      "remediationDeltaMeanDelta": 2.3999999999999986,
+      "remediationRuntimeMedianDeltaMs": 130.4824769999832,
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": 0.042269231668414564,
+        "confidenceDeltaPerSecond": -0.00022576162649718713
+      }
+    },
+    "40-font-extractability": {
+      "analyzeMeanDelta": 0.375,
+      "analyzeRuntimeMedianDeltaMs": -4.823832000023685,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [],
+      "remediationDeltaMeanDelta": 0.25,
+      "remediationRuntimeMedianDeltaMs": -183.26005799986888,
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": 0.04223429413876878,
+        "confidenceDeltaPerSecond": 0.00014367423643038557
+      }
+    },
+    "50-long-report-mixed": {
+      "analyzeMeanDelta": 0.375,
+      "analyzeRuntimeMedianDeltaMs": -1.5975859999889508,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [],
+      "remediationDeltaMeanDelta": -0.375,
+      "remediationRuntimeMedianDeltaMs": -76.73879800003488,
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": 0.018520975734489742,
+        "confidenceDeltaPerSecond": 0.0012228421653194474
+      }
+    }
+  }
+}

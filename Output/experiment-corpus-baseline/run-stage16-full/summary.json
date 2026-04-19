@@ -1,0 +1,3262 @@
+{
+  "runId": "run-2026-04-19T06-07-38-044Z",
+  "generatedAt": "2026-04-19T06:07:38.044Z",
+  "mode": "full",
+  "semanticEnabled": true,
+  "writePdfs": false,
+  "selectedFileIds": [
+    "fixture-adam2",
+    "fixture-teams-original",
+    "fixture-teams-remediated",
+    "fixture-teams-targeted-wave1",
+    "fixture-accessible",
+    "fixture-inaccessible",
+    "short-3981",
+    "short-4074",
+    "short-4101",
+    "short-4176",
+    "short-4189",
+    "short-4192",
+    "short-4214",
+    "short-4660",
+    "figure-4082",
+    "figure-4184",
+    "figure-4188",
+    "figure-4194",
+    "figure-4466",
+    "figure-4609",
+    "figure-4702",
+    "figure-4753",
+    "figure-4754",
+    "figure-4755",
+    "structure-3661",
+    "structure-3775",
+    "structure-3994",
+    "structure-4076",
+    "structure-4078",
+    "structure-4108",
+    "structure-4122",
+    "structure-4131",
+    "structure-4207",
+    "structure-4438",
+    "font-3437",
+    "font-3448",
+    "font-3529",
+    "font-4035",
+    "font-4057",
+    "font-4156",
+    "font-4172",
+    "font-4699",
+    "long-4146",
+    "long-4470",
+    "long-4516",
+    "long-4606",
+    "long-4608",
+    "long-4680",
+    "long-4683",
+    "long-4700"
+  ],
+  "counts": {
+    "manifestEntries": 50,
+    "selectedEntries": 50,
+    "analyzeSuccess": 50,
+    "analyzeErrors": 0,
+    "remediateSuccess": 50,
+    "remediateErrors": 0
+  },
+  "analyze": {
+    "score": {
+      "count": 50,
+      "mean": 55.5,
+      "median": 54,
+      "p95": 92,
+      "min": 16,
+      "max": 95
+    },
+    "analysisDurationMs": {
+      "count": 50,
+      "mean": 826.8,
+      "median": 681,
+      "p95": 1359,
+      "min": 520,
+      "max": 3733
+    },
+    "wallAnalyzeMs": {
+      "count": 50,
+      "mean": 828.6394044200035,
+      "median": 683.1131729999324,
+      "p95": 1359.1639890000224,
+      "min": 535.5403919999953,
+      "max": 3734.05017100001
+    },
+    "gradeDistribution": {
+      "A": 3,
+      "B": 4,
+      "C": 6,
+      "D": 8,
+      "F": 29
+    },
+    "pdfClassDistribution": {
+      "native_tagged": 33,
+      "native_untagged": 17
+    },
+    "structureClassDistribution": {
+      "partially_tagged": 33,
+      "untagged_digital": 17
+    },
+    "primaryFailureFamilyDistribution": {
+      "figure_alt_ownership_heavy": 1,
+      "mixed_structural": 16,
+      "structure_reading_order_heavy": 33
+    },
+    "weakestCategories": [
+      {
+        "key": "alt_text",
+        "count": 23
+      },
+      {
+        "key": "title_language",
+        "count": 20
+      },
+      {
+        "key": "pdf_ua_compliance",
+        "count": 18
+      },
+      {
+        "key": "heading_structure",
+        "count": 17
+      },
+      {
+        "key": "reading_order",
+        "count": 14
+      },
+      {
+        "key": "table_markup",
+        "count": 4
+      }
+    ],
+    "topFindingMessages": [
+      {
+        "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+        "count": 50
+      },
+      {
+        "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+        "count": 47
+      },
+      {
+        "key": "Document language (/Lang) is not specified.",
+        "count": 36
+      },
+      {
+        "key": "64 marked-content MCID(s) appear outside the structure tree (Acrobat \"Tagged content\" / orphan MCIDs).",
+        "count": 21
+      },
+      {
+        "key": "Document is missing both /Title and /Lang. Essential metadata for screen reader users is absent.",
+        "count": 20
+      },
+      {
+        "key": "/MarkInfo dictionary is missing or /Marked is not true.",
+        "count": 19
+      },
+      {
+        "key": "Document is not tagged (no structure tree or /MarkInfo/Marked).",
+        "count": 17
+      },
+      {
+        "key": "Reading order cannot be verified without a document structure tree.",
+        "count": 17
+      },
+      {
+        "key": "Structure tree (/StructTreeRoot) is absent.",
+        "count": 17
+      },
+      {
+        "key": "Document language is not set (/Lang missing). Screen readers cannot select the correct voice/language.",
+        "count": 16
+      }
+    ],
+    "manualReviewReasonFrequency": [
+      {
+        "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+        "count": 50
+      },
+      {
+        "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+        "count": 30
+      },
+      {
+        "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+        "count": 20
+      },
+      {
+        "key": "Reading order fell back to heading/paragraph heuristics because no structure tree was available.",
+        "count": 17
+      }
+    ],
+    "categoryManualReviewFrequency": [
+      {
+        "key": "color_contrast",
+        "count": 50
+      },
+      {
+        "key": "reading_order",
+        "count": 42
+      },
+      {
+        "key": "alt_text",
+        "count": 20
+      }
+    ],
+    "categoryVerificationLevels": {
+      "alt_text": {
+        "manual_review_required": 20,
+        "verified": 30
+      },
+      "bookmarks": {
+        "verified": 50
+      },
+      "color_contrast": {
+        "manual_review_required": 50
+      },
+      "form_accessibility": {
+        "verified": 50
+      },
+      "heading_structure": {
+        "verified": 50
+      },
+      "link_quality": {
+        "verified": 50
+      },
+      "pdf_ua_compliance": {
+        "heuristic": 42,
+        "verified": 8
+      },
+      "reading_order": {
+        "manual_review_required": 42,
+        "verified": 8
+      },
+      "table_markup": {
+        "verified": 50
+      },
+      "text_extractability": {
+        "verified": 50
+      },
+      "title_language": {
+        "verified": 50
+      }
+    },
+    "deterministicIssueFrequency": [
+      {
+        "key": "pdf_ua_compliance",
+        "count": 50
+      },
+      {
+        "key": "reading_order",
+        "count": 43
+      },
+      {
+        "key": "tagged_content_paint",
+        "count": 42
+      },
+      {
+        "key": "title_language",
+        "count": 41
+      },
+      {
+        "key": "tagged_content_orphans",
+        "count": 34
+      },
+      {
+        "key": "annotation_tabs",
+        "count": 28
+      },
+      {
+        "key": "heading_structure",
+        "count": 21
+      },
+      {
+        "key": "text_extractability",
+        "count": 17
+      },
+      {
+        "key": "bookmarks",
+        "count": 15
+      },
+      {
+        "key": "annotation_struct_parent",
+        "count": 7
+      }
+    ],
+    "semanticIssueFrequency": [
+      {
+        "key": "alt_text",
+        "count": 28
+      },
+      {
+        "key": "figure_meaning",
+        "count": 26
+      }
+    ],
+    "manualOnlyIssueFrequency": [
+      {
+        "key": "reading_order",
+        "count": 42
+      },
+      {
+        "key": "alt_text",
+        "count": 20
+      }
+    ],
+    "readingOrderSignalFrequency": [
+      {
+        "key": "missing_structure_tree",
+        "count": 17
+      },
+      {
+        "key": "annotation_struct_parent_risk",
+        "count": 8
+      },
+      {
+        "key": "annotation_order_risk",
+        "count": 5
+      },
+      {
+        "key": "sampled_structure_page_order_drift",
+        "count": 2
+      },
+      {
+        "key": "header_footer_pollution_risk",
+        "count": 1
+      }
+    ],
+    "annotationSignalFrequency": [
+      {
+        "key": "pages_missing_tabs_s",
+        "count": 28
+      },
+      {
+        "key": "link_annotations_missing_struct_parent",
+        "count": 7
+      },
+      {
+        "key": "pages_annotation_order_differs",
+        "count": 5
+      },
+      {
+        "key": "link_annotations_missing_structure",
+        "count": 1
+      },
+      {
+        "key": "nonlink_annotations_missing_struct_parent",
+        "count": 1
+      },
+      {
+        "key": "nonlink_annotations_missing_structure",
+        "count": 1
+      }
+    ],
+    "taggedContentSignalFrequency": [
+      {
+        "key": "path_paint_outside_mc",
+        "count": 42
+      },
+      {
+        "key": "orphan_mcids",
+        "count": 34
+      },
+      {
+        "key": "tagged_annotation_risk",
+        "count": 2
+      }
+    ],
+    "listTableSignalFrequency": [
+      {
+        "key": "lists_without_items",
+        "count": 3
+      },
+      {
+        "key": "irregular_tables",
+        "count": 2
+      },
+      {
+        "key": "strongly_irregular_tables",
+        "count": 2
+      },
+      {
+        "key": "lbl_body_misplaced",
+        "count": 1
+      },
+      {
+        "key": "list_item_misplaced",
+        "count": 1
+      }
+    ],
+    "manualReviewRequiredCount": 45,
+    "scoreCapsByCategory": [],
+    "topSlowestAnalyzeFiles": [
+      {
+        "id": "structure-4076",
+        "file": "30-structure-reading-order/4076-Juvenile Justice Data 2004 Annual Report APPENDIX H Data Tables.pdf",
+        "cohort": "30-structure-reading-order",
+        "metricMs": 3734.05017100001
+      },
+      {
+        "id": "font-3529",
+        "file": "40-font-extractability/3529-Information Technology for Criminal Justice.pdf",
+        "cohort": "40-font-extractability",
+        "metricMs": 1765.6740330000175
+      },
+      {
+        "id": "font-3448",
+        "file": "40-font-extractability/3448-Flow of Funds in Illinois Criminal Justice System.pdf",
+        "cohort": "40-font-extractability",
+        "metricMs": 1359.1639890000224
+      },
+      {
+        "id": "figure-4466",
+        "file": "20-figure-ownership/4466-Victim Need Report_ Service Providers_ Perspectives on the Needs of Crime Victims and Service Gaps.pdf",
+        "cohort": "20-figure-ownership",
+        "metricMs": 1260.0476339999877
+      },
+      {
+        "id": "fixture-inaccessible",
+        "file": "00-fixtures/pdfaf_fixture_inaccessible.pdf",
+        "cohort": "00-fixtures",
+        "metricMs": 1225.3873370000001
+      },
+      {
+        "id": "structure-4438",
+        "file": "30-structure-reading-order/4438-Inventorying Employment Restrictions Task Force Final Report.pdf",
+        "cohort": "30-structure-reading-order",
+        "metricMs": 1137.5626929999562
+      },
+      {
+        "id": "figure-4754",
+        "file": "20-figure-ownership/4754-2023 Domestic Violence Fatality Review Committee Annual Report.pdf",
+        "cohort": "20-figure-ownership",
+        "metricMs": 1073.404227000021
+      },
+      {
+        "id": "long-4516",
+        "file": "50-long-report-mixed/4516-An Exploratory Study of the Discretionary Use of Electronic Monitoring for Individuals Upon Release to Mandatory Supervised Release _MSR_ in Illinois.pdf",
+        "cohort": "50-long-report-mixed",
+        "metricMs": 1021.6316560000414
+      },
+      {
+        "id": "long-4606",
+        "file": "50-long-report-mixed/4606-Illinois Criminal Justice Information Authority 2018 Annual Report.pdf",
+        "cohort": "50-long-report-mixed",
+        "metricMs": 1011.1817540000193
+      },
+      {
+        "id": "figure-4753",
+        "file": "20-figure-ownership/4753-2022 Domestic Violence Fatality Review Committee Annual Report.pdf",
+        "cohort": "20-figure-ownership",
+        "metricMs": 1006.2187180000183
+      }
+    ]
+  },
+  "remediate": {
+    "beforeScore": {
+      "count": 50,
+      "mean": 55.5,
+      "median": 54,
+      "p95": 92,
+      "min": 16,
+      "max": 95
+    },
+    "afterScore": {
+      "count": 50,
+      "mean": 97.74,
+      "median": 98,
+      "p95": 100,
+      "min": 90,
+      "max": 100
+    },
+    "reanalyzedScore": {
+      "count": 50,
+      "mean": 97.74,
+      "median": 98,
+      "p95": 100,
+      "min": 90,
+      "max": 100
+    },
+    "delta": {
+      "count": 50,
+      "mean": 42.24,
+      "median": 43,
+      "p95": 80,
+      "min": 1,
+      "max": 80
+    },
+    "remediationDurationMs": {
+      "count": 50,
+      "mean": 16722.32,
+      "median": 6011,
+      "p95": 85399,
+      "min": 2779,
+      "max": 200868
+    },
+    "wallRemediateMs": {
+      "count": 50,
+      "mean": 17647.874380740002,
+      "median": 6715.495077,
+      "p95": 87237.83810000005,
+      "min": 3319.139433999997,
+      "max": 205482.95715399995
+    },
+    "analysisAfterMs": {
+      "count": 50,
+      "mean": 822.4,
+      "median": 688,
+      "p95": 1762,
+      "min": 515,
+      "max": 2205
+    },
+    "totalPipelineMs": {
+      "count": 50,
+      "mean": 17647.875203360003,
+      "median": 6715.495597000001,
+      "p95": 87237.83863100002,
+      "min": 3319.141187999998,
+      "max": 205482.95761500002
+    },
+    "gradeDistributionBefore": {
+      "A": 3,
+      "B": 4,
+      "C": 6,
+      "D": 8,
+      "F": 29
+    },
+    "gradeDistributionAfter": {
+      "A": 50
+    },
+    "gradeDistributionReanalyzed": {
+      "A": 50
+    },
+    "pdfClassDistributionBefore": {
+      "native_tagged": 33,
+      "native_untagged": 17
+    },
+    "pdfClassDistributionAfter": {
+      "native_tagged": 50
+    },
+    "pdfClassDistributionReanalyzed": {
+      "native_tagged": 50
+    },
+    "beforeManualReviewRequiredCount": 45,
+    "afterManualReviewRequiredCount": 9,
+    "reanalyzedManualReviewRequiredCount": 9,
+    "afterManualReviewReasonFrequency": [
+      {
+        "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+        "count": 50
+      },
+      {
+        "key": "PDF/UA compliance includes heuristic proxy signals and should be confirmed with external/manual review before treating as a high-confidence pass.",
+        "count": 4
+      },
+      {
+        "key": "OCR metadata indicates a machine-generated text layer that was not verified for recognition accuracy, logical order, or assistive-technology usability.",
+        "count": 3
+      },
+      {
+        "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+        "count": 1
+      },
+      {
+        "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+        "count": 1
+      }
+    ],
+    "afterCategoryManualReviewFrequency": [
+      {
+        "key": "color_contrast",
+        "count": 50
+      },
+      {
+        "key": "pdf_ua_compliance",
+        "count": 4
+      },
+      {
+        "key": "text_extractability",
+        "count": 3
+      },
+      {
+        "key": "alt_text",
+        "count": 1
+      },
+      {
+        "key": "reading_order",
+        "count": 1
+      }
+    ],
+    "afterCategoryVerificationLevels": {
+      "alt_text": {
+        "manual_review_required": 1,
+        "verified": 49
+      },
+      "bookmarks": {
+        "verified": 50
+      },
+      "color_contrast": {
+        "manual_review_required": 50
+      },
+      "form_accessibility": {
+        "verified": 50
+      },
+      "heading_structure": {
+        "verified": 50
+      },
+      "link_quality": {
+        "verified": 50
+      },
+      "pdf_ua_compliance": {
+        "heuristic": 3,
+        "manual_review_required": 4,
+        "verified": 43
+      },
+      "reading_order": {
+        "manual_review_required": 1,
+        "verified": 49
+      },
+      "table_markup": {
+        "verified": 50
+      },
+      "text_extractability": {
+        "manual_review_required": 3,
+        "verified": 47
+      },
+      "title_language": {
+        "verified": 50
+      }
+    },
+    "afterScoreCapsByCategory": [
+      {
+        "key": "text_extractability",
+        "count": 3
+      }
+    ],
+    "primaryRouteDistribution": {
+      "font_unicode_tail_recovery": 4,
+      "post_bootstrap_heading_convergence": 25,
+      "structure_bootstrap": 10,
+      "structure_bootstrap_and_conformance": 10
+    },
+    "skippedToolReasonFrequency": [
+      {
+        "key": "missing_precondition",
+        "count": 271
+      },
+      {
+        "key": "not_applicable",
+        "count": 249
+      },
+      {
+        "key": "semantic_deferred",
+        "count": 212
+      },
+      {
+        "key": "already_succeeded",
+        "count": 45
+      },
+      {
+        "key": "category_not_failing",
+        "count": 33
+      }
+    ],
+    "scheduledToolFrequency": [
+      {
+        "key": "mark_untagged_content_as_artifact",
+        "count": 49
+      },
+      {
+        "key": "repair_structure_conformance",
+        "count": 49
+      },
+      {
+        "key": "set_document_language",
+        "count": 46
+      },
+      {
+        "key": "set_document_title",
+        "count": 46
+      },
+      {
+        "key": "set_pdfua_identification",
+        "count": 46
+      },
+      {
+        "key": "artifact_repeating_page_furniture",
+        "count": 42
+      },
+      {
+        "key": "repair_native_reading_order",
+        "count": 42
+      },
+      {
+        "key": "normalize_annotation_tab_order",
+        "count": 40
+      },
+      {
+        "key": "set_link_annotation_contents",
+        "count": 40
+      },
+      {
+        "key": "repair_native_link_structure",
+        "count": 35
+      }
+    ],
+    "outcomeStatusDistribution": {
+      "fixed": 39,
+      "needs_manual_review": 8,
+      "partially_fixed": 3
+    },
+    "outcomeFamilyStatusFrequency": [
+      {
+        "key": "headings:fixed",
+        "count": 49
+      },
+      {
+        "key": "tables:fixed",
+        "count": 46
+      },
+      {
+        "key": "lists:fixed",
+        "count": 45
+      },
+      {
+        "key": "annotations:fixed",
+        "count": 43
+      },
+      {
+        "key": "tagged_content:fixed",
+        "count": 40
+      },
+      {
+        "key": "tagged_content:partially_fixed",
+        "count": 9
+      },
+      {
+        "key": "lists:needs_manual_review",
+        "count": 5
+      },
+      {
+        "key": "tables:needs_manual_review",
+        "count": 2
+      },
+      {
+        "key": "annotations:needs_manual_review",
+        "count": 1
+      },
+      {
+        "key": "tagged_content:needs_manual_review",
+        "count": 1
+      }
+    ],
+    "semanticLaneUsageFrequency": [
+      {
+        "key": "figures",
+        "count": 50
+      },
+      {
+        "key": "headings",
+        "count": 50
+      },
+      {
+        "key": "promote_headings",
+        "count": 50
+      },
+      {
+        "key": "untagged_headings",
+        "count": 50
+      }
+    ],
+    "semanticLaneSkipReasonFrequency": [
+      {
+        "key": "headings:heading_structure_sufficient",
+        "count": 50
+      },
+      {
+        "key": "promote_headings:heading_structure_sufficient",
+        "count": 50
+      },
+      {
+        "key": "untagged_headings:unsupported_pdf",
+        "count": 50
+      },
+      {
+        "key": "figures:alt_text_sufficient",
+        "count": 48
+      },
+      {
+        "key": "figures:no_candidates",
+        "count": 2
+      }
+    ],
+    "semanticLaneChangeStatusFrequency": [
+      {
+        "key": "figures:skipped",
+        "count": 50
+      },
+      {
+        "key": "headings:skipped",
+        "count": 50
+      },
+      {
+        "key": "promote_headings:skipped",
+        "count": 50
+      },
+      {
+        "key": "untagged_headings:skipped",
+        "count": 50
+      }
+    ],
+    "stageRuntimeFrequency": [
+      {
+        "key": "planner:stage2",
+        "count": 58,
+        "totalMs": 189131.02549900004,
+        "meanMs": 3260.879749982759,
+        "medianMs": 997.3499709999887,
+        "p95Ms": 7774.259102000011,
+        "maxMs": 92348.30966099998
+      },
+      {
+        "key": "planner:stage3",
+        "count": 55,
+        "totalMs": 156635.36317200016,
+        "meanMs": 2847.9156940363664,
+        "medianMs": 405.56647599999997,
+        "p95Ms": 10943.097091999982,
+        "maxMs": 93319.407068
+      },
+      {
+        "key": "planner:stage7",
+        "count": 3,
+        "totalMs": 149764.12753200007,
+        "meanMs": 49921.375844000024,
+        "medianMs": 49858.55934899999,
+        "p95Ms": 67688.20198000001,
+        "maxMs": 67688.20198000001
+      },
+      {
+        "key": "planner:stage1",
+        "count": 46,
+        "totalMs": 61359.82677800007,
+        "meanMs": 1333.9092777826102,
+        "medianMs": 977.3022900000215,
+        "p95Ms": 1801.0324109999929,
+        "maxMs": 11670.863574999996
+      },
+      {
+        "key": "planner:stage4",
+        "count": 42,
+        "totalMs": 47812.164381000126,
+        "meanMs": 1138.3848662142886,
+        "medianMs": 805.0197840000037,
+        "p95Ms": 2037.1348320000106,
+        "maxMs": 7677.679069000005
+      },
+      {
+        "key": "planner:stage9",
+        "count": 53,
+        "totalMs": 46064.77120100012,
+        "meanMs": 869.1466264339646,
+        "medianMs": 738.8963820000063,
+        "p95Ms": 1476.0150380000123,
+        "maxMs": 5158.362145000021
+      },
+      {
+        "key": "planner:stage5",
+        "count": 16,
+        "totalMs": 13766.898117000084,
+        "meanMs": 860.4311323125053,
+        "medianMs": 772.0464900000079,
+        "p95Ms": 1877.6511000000173,
+        "maxMs": 1877.6511000000173
+      },
+      {
+        "key": "planner:stage8",
+        "count": 20,
+        "totalMs": 9570.006840999868,
+        "meanMs": 478.5003420499934,
+        "medianMs": 107.5946249999979,
+        "p95Ms": 2482.618696999969,
+        "maxMs": 2877.775609000004
+      },
+      {
+        "key": "post_pass:stage11",
+        "count": 50,
+        "totalMs": 8801.728572999855,
+        "meanMs": 176.0345714599971,
+        "medianMs": 107.66396000003442,
+        "p95Ms": 225.95467000000644,
+        "maxMs": 2681.9685529999842
+      },
+      {
+        "key": "planner:stage6",
+        "count": 6,
+        "totalMs": 4106.916400999913,
+        "meanMs": 684.4860668333189,
+        "medianMs": 137.12412200006656,
+        "p95Ms": 2717.841023999994,
+        "maxMs": 2717.841023999994
+      },
+      {
+        "key": "post_pass:stage12",
+        "count": 50,
+        "totalMs": 852.260305000349,
+        "meanMs": 17.04520610000698,
+        "medianMs": 0.021140000004379544,
+        "p95Ms": 0.05811099999846192,
+        "maxMs": 851.0101049999939
+      }
+    ],
+    "toolRuntimeFrequency": [
+      {
+        "key": "ocr_scanned_pdf",
+        "count": 3,
+        "totalMs": 145101.68909300002,
+        "meanMs": 48367.22969766668,
+        "medianMs": 48163.52878200007,
+        "p95Ms": 65903.11656899995,
+        "maxMs": 65903.11656899995
+      },
+      {
+        "key": "repair_structure_conformance",
+        "count": 49,
+        "totalMs": 130616.947966,
+        "meanMs": 2665.6519993061224,
+        "medianMs": 105.59728899993934,
+        "p95Ms": 4799.853640999994,
+        "maxMs": 90121.301431
+      },
+      {
+        "key": "remap_orphan_mcids_as_artifacts",
+        "count": 95,
+        "totalMs": 67610.55838900013,
+        "meanMs": 711.6900883052646,
+        "medianMs": 580.0414159999928,
+        "p95Ms": 2207.1369680000353,
+        "maxMs": 2864.774323999998
+      },
+      {
+        "key": "repair_native_link_structure",
+        "count": 35,
+        "totalMs": 64652.3983059999,
+        "meanMs": 1847.2113801714258,
+        "medianMs": 112.52688000001945,
+        "p95Ms": 10412.209871000028,
+        "maxMs": 45903.84987699997
+      },
+      {
+        "key": "tag_unowned_annotations",
+        "count": 35,
+        "totalMs": 64606.351917999884,
+        "meanMs": 1845.895769085711,
+        "medianMs": 110.14133899996523,
+        "p95Ms": 10524.321505,
+        "maxMs": 45447.04801700002
+      },
+      {
+        "key": "mark_untagged_content_as_artifact",
+        "count": 53,
+        "totalMs": 14769.92247200009,
+        "meanMs": 278.6777824905677,
+        "medianMs": 183.57862099993508,
+        "p95Ms": 560.6097099999897,
+        "maxMs": 2942.588446000009
+      },
+      {
+        "key": "set_pdfua_identification",
+        "count": 50,
+        "totalMs": 13510.588984000176,
+        "meanMs": 270.21177968000353,
+        "medianMs": 103.57237599999644,
+        "p95Ms": 1751.845134000061,
+        "maxMs": 2636.392174000008
+      },
+      {
+        "key": "artifact_repeating_page_furniture",
+        "count": 51,
+        "totalMs": 9175.56210299998,
+        "meanMs": 179.91298241176432,
+        "medianMs": 105.76792599994224,
+        "p95Ms": 378.9500649999827,
+        "maxMs": 2743.2888209999946
+      },
+      {
+        "key": "set_document_language",
+        "count": 46,
+        "totalMs": 8011.829668000204,
+        "meanMs": 174.17021017391747,
+        "medianMs": 109.99683199997526,
+        "p95Ms": 202.18864400009625,
+        "maxMs": 2656.4400120000064
+      },
+      {
+        "key": "set_document_title",
+        "count": 46,
+        "totalMs": 7816.177084000233,
+        "meanMs": 169.91689313043983,
+        "medianMs": 102.36110500001814,
+        "p95Ms": 201.43235300004017,
+        "maxMs": 2664.280369999993
+      },
+      {
+        "key": "normalize_annotation_tab_order",
+        "count": 40,
+        "totalMs": 7538.609582999926,
+        "meanMs": 188.46523957499815,
+        "medianMs": 104.91669399989769,
+        "p95Ms": 198.80441500002053,
+        "maxMs": 2727.3616629999888
+      },
+      {
+        "key": "set_link_annotation_contents",
+        "count": 40,
+        "totalMs": 7471.343632000034,
+        "meanMs": 186.78359080000084,
+        "medianMs": 106.94817700001295,
+        "p95Ms": 196.1306709999917,
+        "maxMs": 2687.421325000003
+      },
+      {
+        "key": "repair_native_table_headers",
+        "count": 5,
+        "totalMs": 3407.888439999908,
+        "meanMs": 681.5776879999815,
+        "medianMs": 142.66337900003418,
+        "p95Ms": 2723.3177819999983,
+        "maxMs": 2723.3177819999983
+      },
+      {
+        "key": "set_table_header_cells",
+        "count": 5,
+        "totalMs": 3318.9084460000304,
+        "meanMs": 663.7816892000061,
+        "medianMs": 134.23847099998966,
+        "p95Ms": 2690.4717419999943,
+        "maxMs": 2690.4717419999943
+      },
+      {
+        "key": "tag_ocr_text_blocks",
+        "count": 3,
+        "totalMs": 2713.7832929999568,
+        "meanMs": 904.5944309999855,
+        "medianMs": 950.8393940000096,
+        "p95Ms": 1032.8295099999523,
+        "maxMs": 1032.8295099999523
+      },
+      {
+        "key": "tag_native_text_blocks",
+        "count": 17,
+        "totalMs": 1969.425016999946,
+        "meanMs": 115.84853041176153,
+        "medianMs": 105.54707200000121,
+        "p95Ms": 196.8450400000438,
+        "maxMs": 196.8450400000438
+      },
+      {
+        "key": "synthesize_basic_structure_from_layout",
+        "count": 17,
+        "totalMs": 1914.7432580001878,
+        "meanMs": 112.63195635295222,
+        "medianMs": 103.26506700000027,
+        "p95Ms": 199.6398470000131,
+        "maxMs": 199.6398470000131
+      },
+      {
+        "key": "bootstrap_struct_tree",
+        "count": 17,
+        "totalMs": 1890.4147040000098,
+        "meanMs": 111.20086494117704,
+        "medianMs": 105.85900100006256,
+        "p95Ms": 215.79665899998508,
+        "maxMs": 215.79665899998508
+      },
+      {
+        "key": "add_page_outline_bookmarks",
+        "count": 14,
+        "totalMs": 1732.912952999999,
+        "meanMs": 123.77949664285708,
+        "medianMs": 112.17565699998522,
+        "p95Ms": 255.59901499992702,
+        "maxMs": 255.59901499992702
+      },
+      {
+        "key": "replace_bookmarks_from_headings",
+        "count": 3,
+        "totalMs": 688.3264280000149,
+        "meanMs": 229.44214266667163,
+        "medianMs": 145.8323090000049,
+        "p95Ms": 401.69665900000837,
+        "maxMs": 401.69665900000837
+      }
+    ],
+    "semanticLaneRuntimeFrequency": [],
+    "semanticOutcomeRuntimeFrequency": [],
+    "boundedWorkFrequency": [
+      {
+        "key": "semantic_skip:headings:heading_structure_sufficient",
+        "count": 50
+      },
+      {
+        "key": "semantic_skip:promote_headings:heading_structure_sufficient",
+        "count": 50
+      },
+      {
+        "key": "semantic_skip:untagged_headings:unsupported_pdf",
+        "count": 50
+      },
+      {
+        "key": "semantic_skip:figures:alt_text_sufficient",
+        "count": 48
+      },
+      {
+        "key": "deterministic_early_exit:round_no_improvement",
+        "count": 8
+      },
+      {
+        "key": "deterministic_early_exit:no_planned_stages",
+        "count": 2
+      },
+      {
+        "key": "semantic_skip:figures:no_candidates",
+        "count": 2
+      },
+      {
+        "key": "deterministic_early_exit:target_score_reached",
+        "count": 1
+      }
+    ],
+    "costBenefit": {
+      "scoreDeltaPerSecond": 2.393489385106832,
+      "confidenceDeltaPerSecond": 0.024932181094862834
+    },
+    "topSlowestRemediateFiles": [
+      {
+        "id": "structure-4438",
+        "file": "30-structure-reading-order/4438-Inventorying Employment Restrictions Task Force Final Report.pdf",
+        "cohort": "30-structure-reading-order",
+        "metricMs": 205482.95761500002
+      },
+      {
+        "id": "structure-4076",
+        "file": "30-structure-reading-order/4076-Juvenile Justice Data 2004 Annual Report APPENDIX H Data Tables.pdf",
+        "cohort": "30-structure-reading-order",
+        "metricMs": 95558.53749800002
+      },
+      {
+        "id": "font-3529",
+        "file": "40-font-extractability/3529-Information Technology for Criminal Justice.pdf",
+        "cohort": "40-font-extractability",
+        "metricMs": 87237.83863100002
+      },
+      {
+        "id": "font-3448",
+        "file": "40-font-extractability/3448-Flow of Funds in Illinois Criminal Justice System.pdf",
+        "cohort": "40-font-extractability",
+        "metricMs": 67028.98386099993
+      },
+      {
+        "id": "long-4516",
+        "file": "50-long-report-mixed/4516-An Exploratory Study of the Discretionary Use of Electronic Monitoring for Individuals Upon Release to Mandatory Supervised Release _MSR_ in Illinois.pdf",
+        "cohort": "50-long-report-mixed",
+        "metricMs": 54502.643677999964
+      },
+      {
+        "id": "font-3437",
+        "file": "40-font-extractability/3437-Information Networks Expanding.pdf",
+        "cohort": "40-font-extractability",
+        "metricMs": 44778.13375200005
+      },
+      {
+        "id": "long-4606",
+        "file": "50-long-report-mixed/4606-Illinois Criminal Justice Information Authority 2018 Annual Report.pdf",
+        "cohort": "50-long-report-mixed",
+        "metricMs": 16640.05743699998
+      },
+      {
+        "id": "figure-4466",
+        "file": "20-figure-ownership/4466-Victim Need Report_ Service Providers_ Perspectives on the Needs of Crime Victims and Service Gaps.pdf",
+        "cohort": "20-figure-ownership",
+        "metricMs": 16163.372920000009
+      },
+      {
+        "id": "long-4146",
+        "file": "50-long-report-mixed/4146-ICJIA 2008 Annual Report.pdf",
+        "cohort": "50-long-report-mixed",
+        "metricMs": 14230.398217000067
+      },
+      {
+        "id": "figure-4754",
+        "file": "20-figure-ownership/4754-2023 Domestic Violence Fatality Review Committee Annual Report.pdf",
+        "cohort": "20-figure-ownership",
+        "metricMs": 12967.699492999993
+      }
+    ],
+    "topHighestDeltaFiles": [
+      {
+        "id": "font-3437",
+        "file": "40-font-extractability/3437-Information Networks Expanding.pdf",
+        "cohort": "40-font-extractability",
+        "delta": 80,
+        "beforeScore": 16,
+        "afterScore": 96,
+        "reanalyzedScore": 96
+      },
+      {
+        "id": "font-3448",
+        "file": "40-font-extractability/3448-Flow of Funds in Illinois Criminal Justice System.pdf",
+        "cohort": "40-font-extractability",
+        "delta": 80,
+        "beforeScore": 16,
+        "afterScore": 96,
+        "reanalyzedScore": 96
+      },
+      {
+        "id": "font-3529",
+        "file": "40-font-extractability/3529-Information Technology for Criminal Justice.pdf",
+        "cohort": "40-font-extractability",
+        "delta": 80,
+        "beforeScore": 16,
+        "afterScore": 96,
+        "reanalyzedScore": 96
+      },
+      {
+        "id": "figure-4194",
+        "file": "20-figure-ownership/4194-Childrens risk of homicide Victimization from birth to age 14 1965 to 1995.pdf",
+        "cohort": "20-figure-ownership",
+        "delta": 67,
+        "beforeScore": 31,
+        "afterScore": 98,
+        "reanalyzedScore": 98
+      },
+      {
+        "id": "fixture-adam2",
+        "file": "00-fixtures/ADAM2.pdf",
+        "cohort": "00-fixtures",
+        "delta": 66,
+        "beforeScore": 33,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "short-3981",
+        "file": "10-short-near-pass/3981-Illinois Bill of Rights for Victims and Witnesses of Violent Crime _Polish_.pdf",
+        "cohort": "10-short-near-pass",
+        "delta": 66,
+        "beforeScore": 33,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "font-4035",
+        "file": "40-font-extractability/4035-Comparison of official and unofficial sources of criminal history record information.pdf",
+        "cohort": "40-font-extractability",
+        "delta": 66,
+        "beforeScore": 33,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "structure-4207",
+        "file": "30-structure-reading-order/4207-Families and Reentry Unpacking How Social Support Matters.pdf",
+        "cohort": "30-structure-reading-order",
+        "delta": 62,
+        "beforeScore": 36,
+        "afterScore": 98,
+        "reanalyzedScore": 98
+      },
+      {
+        "id": "short-4101",
+        "file": "10-short-near-pass/4101-Implementing restorative justice A guide for schools.pdf",
+        "cohort": "10-short-near-pass",
+        "delta": 57,
+        "beforeScore": 41,
+        "afterScore": 98,
+        "reanalyzedScore": 98
+      },
+      {
+        "id": "structure-3661",
+        "file": "30-structure-reading-order/3661-A Generation of Change 30 Years of Criminal Justice in Illinois.pdf",
+        "cohort": "30-structure-reading-order",
+        "delta": 57,
+        "beforeScore": 41,
+        "afterScore": 98,
+        "reanalyzedScore": 98
+      }
+    ],
+    "topLowestDeltaFiles": [
+      {
+        "id": "fixture-accessible",
+        "file": "00-fixtures/pdfaf_fixture_accessible.pdf",
+        "cohort": "00-fixtures",
+        "delta": 1,
+        "beforeScore": 94,
+        "afterScore": 95,
+        "reanalyzedScore": 95
+      },
+      {
+        "id": "figure-4753",
+        "file": "20-figure-ownership/4753-2022 Domestic Violence Fatality Review Committee Annual Report.pdf",
+        "cohort": "20-figure-ownership",
+        "delta": 2,
+        "beforeScore": 95,
+        "afterScore": 97,
+        "reanalyzedScore": 97
+      },
+      {
+        "id": "figure-4466",
+        "file": "20-figure-ownership/4466-Victim Need Report_ Service Providers_ Perspectives on the Needs of Crime Victims and Service Gaps.pdf",
+        "cohort": "20-figure-ownership",
+        "delta": 6,
+        "beforeScore": 92,
+        "afterScore": 98,
+        "reanalyzedScore": 98
+      },
+      {
+        "id": "fixture-teams-original",
+        "file": "00-fixtures/Microsoft_Teams_Quickstart (1).pdf",
+        "cohort": "00-fixtures",
+        "delta": 14,
+        "beforeScore": 85,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "long-4608",
+        "file": "50-long-report-mixed/4608-Law Enforcement Response to Mental Health Crisis Incidents_ A Survey of Illinois Police and Sheriff_s Departments.pdf",
+        "cohort": "50-long-report-mixed",
+        "delta": 17,
+        "beforeScore": 76,
+        "afterScore": 93,
+        "reanalyzedScore": 93
+      },
+      {
+        "id": "long-4700",
+        "file": "50-long-report-mixed/4700-R3 2022 Annual Report.pdf",
+        "cohort": "50-long-report-mixed",
+        "delta": 18,
+        "beforeScore": 81,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "fixture-teams-remediated",
+        "file": "00-fixtures/Microsoft_Teams_Quickstart (1)-remediated.pdf",
+        "cohort": "00-fixtures",
+        "delta": 19,
+        "beforeScore": 80,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "fixture-teams-targeted-wave1",
+        "file": "00-fixtures/Microsoft_Teams_Quickstart (1)-targeted-figures-wave1-b2.pdf",
+        "cohort": "00-fixtures",
+        "delta": 19,
+        "beforeScore": 80,
+        "afterScore": 99,
+        "reanalyzedScore": 99
+      },
+      {
+        "id": "figure-4754",
+        "file": "20-figure-ownership/4754-2023 Domestic Violence Fatality Review Committee Annual Report.pdf",
+        "cohort": "20-figure-ownership",
+        "delta": 23,
+        "beforeScore": 73,
+        "afterScore": 96,
+        "reanalyzedScore": 96
+      },
+      {
+        "id": "long-4470",
+        "file": "50-long-report-mixed/4470-Co-occurring Mental Health and Substance Use Disorders of Women in Prison_ An Evaluation of the WestCare Foundation_s Dual Diagnosis Program in Illinois.pdf",
+        "cohort": "50-long-report-mixed",
+        "delta": 23,
+        "beforeScore": 75,
+        "afterScore": 98,
+        "reanalyzedScore": 98
+      }
+    ]
+  },
+  "cohorts": {
+    "00-fixtures": {
+      "fileCount": 6,
+      "analyzeSuccess": 6,
+      "analyzeErrors": 0,
+      "remediateSuccess": 6,
+      "remediateErrors": 0,
+      "analyzeScore": {
+        "count": 6,
+        "mean": 69.83333333333333,
+        "median": 80,
+        "p95": 94,
+        "min": 33,
+        "max": 94
+      },
+      "analyzeDurationMs": {
+        "count": 6,
+        "mean": 699,
+        "median": 629,
+        "p95": 1224,
+        "min": 520,
+        "max": 1224
+      },
+      "wallAnalyzeMs": {
+        "count": 6,
+        "mean": 703.5280673333336,
+        "median": 630.2277630000008,
+        "p95": 1225.3873370000001,
+        "min": 538.5015630000003,
+        "max": 1225.3873370000001
+      },
+      "remediationDelta": {
+        "count": 6,
+        "mean": 28.333333333333332,
+        "median": 19,
+        "p95": 66,
+        "min": 1,
+        "max": 66
+      },
+      "remediationDurationMs": {
+        "count": 6,
+        "mean": 4363.333333333333,
+        "median": 3242,
+        "p95": 8604,
+        "min": 2779,
+        "max": 8604
+      },
+      "wallRemediateMs": {
+        "count": 6,
+        "mean": 5053.055924166667,
+        "median": 3862.975944,
+        "p95": 9818.944209000005,
+        "min": 3319.139433999997,
+        "max": 9818.944209000005
+      },
+      "totalPipelineMs": {
+        "count": 6,
+        "mean": 5053.0578545,
+        "median": 3862.9778570000017,
+        "p95": 9818.945411,
+        "min": 3319.141187999998,
+        "max": 9818.945411
+      },
+      "costBenefit": {
+        "scoreDeltaPerSecond": 5.6071679709355235,
+        "confidenceDeltaPerSecond": 0.09895002301650924
+      },
+      "structureClassDistribution": {
+        "partially_tagged": 4,
+        "untagged_digital": 2
+      },
+      "primaryFailureFamilyDistribution": {
+        "figure_alt_ownership_heavy": 1,
+        "mixed_structural": 4,
+        "structure_reading_order_heavy": 1
+      },
+      "weakestCategories": [
+        {
+          "key": "alt_text",
+          "count": 3
+        },
+        {
+          "key": "heading_structure",
+          "count": 2
+        },
+        {
+          "key": "pdf_ua_compliance",
+          "count": 2
+        }
+      ],
+      "topFindingMessages": [
+        {
+          "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+          "count": 6
+        },
+        {
+          "key": "64 marked-content MCID(s) appear outside the structure tree (Acrobat \"Tagged content\" / orphan MCIDs).",
+          "count": 3
+        },
+        {
+          "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+          "count": 3
+        },
+        {
+          "key": "/MarkInfo dictionary is missing or /Marked is not true.",
+          "count": 2
+        },
+        {
+          "key": "1 heading appear out of page order, suggesting reading order issues.",
+          "count": 2
+        },
+        {
+          "key": "1 sampled structure-order drift event(s) were found across suspicious pages (5 sampled).",
+          "count": 2
+        },
+        {
+          "key": "2 font(s) are flagged for Acrobat \"Character encoding\" risk, but pdf.js extracted a dense text layer (5628 chars) — extraction likely works for AT; still prefer embedded fonts + ToUnicode for archival tooling.",
+          "count": 2
+        },
+        {
+          "key": "42 non-Figure structure element(s) carry /Alt or /ActualText while also owning marked content or child structure (other elements alternate text pattern).",
+          "count": 2
+        },
+        {
+          "key": "Document has extractable text but lacks accessibility tagging (no structure tree).",
+          "count": 2
+        },
+        {
+          "key": "Document is not tagged (no structure tree or /MarkInfo/Marked).",
+          "count": 2
+        }
+      ],
+      "manualReviewReasonFrequency": [
+        {
+          "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+          "count": 6
+        },
+        {
+          "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+          "count": 3
+        },
+        {
+          "key": "Reading order fell back to heading/paragraph heuristics because no structure tree was available.",
+          "count": 2
+        },
+        {
+          "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+          "count": 1
+        }
+      ],
+      "categoryManualReviewFrequency": [
+        {
+          "key": "color_contrast",
+          "count": 6
+        },
+        {
+          "key": "alt_text",
+          "count": 3
+        },
+        {
+          "key": "reading_order",
+          "count": 2
+        }
+      ],
+      "categoryVerificationLevels": {
+        "alt_text": {
+          "manual_review_required": 3,
+          "verified": 3
+        },
+        "bookmarks": {
+          "verified": 6
+        },
+        "color_contrast": {
+          "manual_review_required": 6
+        },
+        "form_accessibility": {
+          "verified": 6
+        },
+        "heading_structure": {
+          "verified": 6
+        },
+        "link_quality": {
+          "verified": 6
+        },
+        "pdf_ua_compliance": {
+          "heuristic": 6
+        },
+        "reading_order": {
+          "manual_review_required": 2,
+          "verified": 4
+        },
+        "table_markup": {
+          "verified": 6
+        },
+        "text_extractability": {
+          "verified": 6
+        },
+        "title_language": {
+          "verified": 6
+        }
+      },
+      "deterministicIssueFrequency": [
+        {
+          "key": "pdf_ua_compliance",
+          "count": 6
+        },
+        {
+          "key": "tagged_content_paint",
+          "count": 6
+        },
+        {
+          "key": "reading_order",
+          "count": 4
+        },
+        {
+          "key": "tagged_content_orphans",
+          "count": 4
+        },
+        {
+          "key": "heading_structure",
+          "count": 2
+        },
+        {
+          "key": "text_extractability",
+          "count": 2
+        },
+        {
+          "key": "title_language",
+          "count": 2
+        },
+        {
+          "key": "annotation_struct_parent",
+          "count": 1
+        },
+        {
+          "key": "annotation_tabs",
+          "count": 1
+        },
+        {
+          "key": "link_quality",
+          "count": 1
+        }
+      ],
+      "semanticIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 3
+        },
+        {
+          "key": "figure_meaning",
+          "count": 3
+        }
+      ],
+      "manualOnlyIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 3
+        },
+        {
+          "key": "reading_order",
+          "count": 2
+        }
+      ],
+      "readingOrderSignalFrequency": [
+        {
+          "key": "missing_structure_tree",
+          "count": 2
+        },
+        {
+          "key": "sampled_structure_page_order_drift",
+          "count": 2
+        },
+        {
+          "key": "annotation_struct_parent_risk",
+          "count": 1
+        },
+        {
+          "key": "header_footer_pollution_risk",
+          "count": 1
+        }
+      ],
+      "annotationSignalFrequency": [
+        {
+          "key": "link_annotations_missing_struct_parent",
+          "count": 1
+        },
+        {
+          "key": "pages_missing_tabs_s",
+          "count": 1
+        }
+      ],
+      "taggedContentSignalFrequency": [
+        {
+          "key": "path_paint_outside_mc",
+          "count": 6
+        },
+        {
+          "key": "orphan_mcids",
+          "count": 4
+        }
+      ],
+      "listTableSignalFrequency": [
+        {
+          "key": "irregular_tables",
+          "count": 1
+        },
+        {
+          "key": "strongly_irregular_tables",
+          "count": 1
+        }
+      ],
+      "manualReviewRequiredCount": 5,
+      "scoreCapsByCategory": []
+    },
+    "10-short-near-pass": {
+      "fileCount": 8,
+      "analyzeSuccess": 8,
+      "analyzeErrors": 0,
+      "remediateSuccess": 8,
+      "remediateErrors": 0,
+      "analyzeScore": {
+        "count": 8,
+        "mean": 48.25,
+        "median": 49,
+        "p95": 62,
+        "min": 33,
+        "max": 62
+      },
+      "analyzeDurationMs": {
+        "count": 8,
+        "mean": 593.875,
+        "median": 581,
+        "p95": 658,
+        "min": 551,
+        "max": 658
+      },
+      "wallAnalyzeMs": {
+        "count": 8,
+        "mean": 595.2723556250003,
+        "median": 582.5267800000001,
+        "p95": 660.029426000001,
+        "min": 552.3455889999968,
+        "max": 660.029426000001
+      },
+      "remediationDelta": {
+        "count": 8,
+        "mean": 49.25,
+        "median": 50,
+        "p95": 66,
+        "min": 28,
+        "max": 66
+      },
+      "remediationDurationMs": {
+        "count": 8,
+        "mean": 5068.25,
+        "median": 4951,
+        "p95": 6517,
+        "min": 3824,
+        "max": 6517
+      },
+      "wallRemediateMs": {
+        "count": 8,
+        "mean": 5742.8818725,
+        "median": 5541.440483999999,
+        "p95": 7837.242458999986,
+        "min": 4343.203598,
+        "max": 7837.242458999986
+      },
+      "totalPipelineMs": {
+        "count": 8,
+        "mean": 5742.8829705,
+        "median": 5541.440964000001,
+        "p95": 7837.243019000001,
+        "min": 4343.204850000002,
+        "max": 7837.243019000001
+      },
+      "costBenefit": {
+        "scoreDeltaPerSecond": 8.575833717882206,
+        "confidenceDeltaPerSecond": 0.08706430170438788
+      },
+      "structureClassDistribution": {
+        "partially_tagged": 4,
+        "untagged_digital": 4
+      },
+      "primaryFailureFamilyDistribution": {
+        "mixed_structural": 2,
+        "structure_reading_order_heavy": 6
+      },
+      "weakestCategories": [
+        {
+          "key": "alt_text",
+          "count": 4
+        },
+        {
+          "key": "pdf_ua_compliance",
+          "count": 4
+        },
+        {
+          "key": "reading_order",
+          "count": 3
+        },
+        {
+          "key": "title_language",
+          "count": 3
+        },
+        {
+          "key": "heading_structure",
+          "count": 2
+        },
+        {
+          "key": "table_markup",
+          "count": 1
+        }
+      ],
+      "topFindingMessages": [
+        {
+          "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+          "count": 8
+        },
+        {
+          "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+          "count": 8
+        },
+        {
+          "key": "Document language (/Lang) is not specified.",
+          "count": 7
+        },
+        {
+          "key": "/MarkInfo dictionary is missing or /Marked is not true.",
+          "count": 4
+        },
+        {
+          "key": "Document has extractable text but lacks accessibility tagging (no structure tree).",
+          "count": 4
+        },
+        {
+          "key": "Document is not tagged (no structure tree or /MarkInfo/Marked).",
+          "count": 4
+        },
+        {
+          "key": "Document language is not set (/Lang missing). Screen readers cannot select the correct voice/language.",
+          "count": 4
+        },
+        {
+          "key": "Reading order cannot be verified without a document structure tree.",
+          "count": 4
+        },
+        {
+          "key": "Structure tree (/StructTreeRoot) is absent.",
+          "count": 4
+        },
+        {
+          "key": "Document is missing both /Title and /Lang. Essential metadata for screen reader users is absent.",
+          "count": 3
+        }
+      ],
+      "manualReviewReasonFrequency": [
+        {
+          "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+          "count": 8
+        },
+        {
+          "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+          "count": 6
+        },
+        {
+          "key": "Reading order fell back to heading/paragraph heuristics because no structure tree was available.",
+          "count": 4
+        },
+        {
+          "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+          "count": 3
+        }
+      ],
+      "categoryManualReviewFrequency": [
+        {
+          "key": "color_contrast",
+          "count": 8
+        },
+        {
+          "key": "reading_order",
+          "count": 8
+        },
+        {
+          "key": "alt_text",
+          "count": 3
+        }
+      ],
+      "categoryVerificationLevels": {
+        "alt_text": {
+          "manual_review_required": 3,
+          "verified": 5
+        },
+        "bookmarks": {
+          "verified": 8
+        },
+        "color_contrast": {
+          "manual_review_required": 8
+        },
+        "form_accessibility": {
+          "verified": 8
+        },
+        "heading_structure": {
+          "verified": 8
+        },
+        "link_quality": {
+          "verified": 8
+        },
+        "pdf_ua_compliance": {
+          "heuristic": 7,
+          "verified": 1
+        },
+        "reading_order": {
+          "manual_review_required": 8
+        },
+        "table_markup": {
+          "verified": 8
+        },
+        "text_extractability": {
+          "verified": 8
+        },
+        "title_language": {
+          "verified": 8
+        }
+      },
+      "deterministicIssueFrequency": [
+        {
+          "key": "pdf_ua_compliance",
+          "count": 8
+        },
+        {
+          "key": "reading_order",
+          "count": 8
+        },
+        {
+          "key": "title_language",
+          "count": 8
+        },
+        {
+          "key": "tagged_content_paint",
+          "count": 7
+        },
+        {
+          "key": "annotation_tabs",
+          "count": 5
+        },
+        {
+          "key": "heading_structure",
+          "count": 4
+        },
+        {
+          "key": "tagged_content_orphans",
+          "count": 4
+        },
+        {
+          "key": "text_extractability",
+          "count": 4
+        },
+        {
+          "key": "annotation_order",
+          "count": 3
+        },
+        {
+          "key": "annotation_struct_parent",
+          "count": 2
+        }
+      ],
+      "semanticIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 4
+        },
+        {
+          "key": "figure_meaning",
+          "count": 4
+        }
+      ],
+      "manualOnlyIssueFrequency": [
+        {
+          "key": "reading_order",
+          "count": 8
+        },
+        {
+          "key": "alt_text",
+          "count": 3
+        }
+      ],
+      "readingOrderSignalFrequency": [
+        {
+          "key": "missing_structure_tree",
+          "count": 4
+        },
+        {
+          "key": "annotation_order_risk",
+          "count": 3
+        },
+        {
+          "key": "annotation_struct_parent_risk",
+          "count": 3
+        }
+      ],
+      "annotationSignalFrequency": [
+        {
+          "key": "pages_missing_tabs_s",
+          "count": 5
+        },
+        {
+          "key": "pages_annotation_order_differs",
+          "count": 3
+        },
+        {
+          "key": "link_annotations_missing_struct_parent",
+          "count": 2
+        },
+        {
+          "key": "nonlink_annotations_missing_struct_parent",
+          "count": 1
+        },
+        {
+          "key": "nonlink_annotations_missing_structure",
+          "count": 1
+        }
+      ],
+      "taggedContentSignalFrequency": [
+        {
+          "key": "path_paint_outside_mc",
+          "count": 7
+        },
+        {
+          "key": "orphan_mcids",
+          "count": 4
+        },
+        {
+          "key": "tagged_annotation_risk",
+          "count": 1
+        }
+      ],
+      "listTableSignalFrequency": [],
+      "manualReviewRequiredCount": 8,
+      "scoreCapsByCategory": []
+    },
+    "20-figure-ownership": {
+      "fileCount": 10,
+      "analyzeSuccess": 10,
+      "analyzeErrors": 0,
+      "remediateSuccess": 10,
+      "remediateErrors": 0,
+      "analyzeScore": {
+        "count": 10,
+        "mean": 62,
+        "median": 56,
+        "p95": 95,
+        "min": 31,
+        "max": 95
+      },
+      "analyzeDurationMs": {
+        "count": 10,
+        "mean": 812.7,
+        "median": 710,
+        "p95": 1257,
+        "min": 569,
+        "max": 1257
+      },
+      "wallAnalyzeMs": {
+        "count": 10,
+        "mean": 814.3102307000066,
+        "median": 711.4013850000047,
+        "p95": 1260.0476339999877,
+        "min": 570.543411000006,
+        "max": 1260.0476339999877
+      },
+      "remediationDelta": {
+        "count": 10,
+        "mean": 36.1,
+        "median": 38,
+        "p95": 67,
+        "min": 2,
+        "max": 67
+      },
+      "remediationDurationMs": {
+        "count": 10,
+        "mean": 7571.7,
+        "median": 6198,
+        "p95": 14918,
+        "min": 4705,
+        "max": 14918
+      },
+      "wallRemediateMs": {
+        "count": 10,
+        "mean": 8398.598154300002,
+        "median": 7137.385840000003,
+        "p95": 16163.372418999992,
+        "min": 5283.006581000009,
+        "max": 16163.372418999992
+      },
+      "totalPipelineMs": {
+        "count": 10,
+        "mean": 8398.598768599999,
+        "median": 7137.386853999997,
+        "p95": 16163.372920000009,
+        "min": 5283.007050999993,
+        "max": 16163.372920000009
+      },
+      "costBenefit": {
+        "scoreDeltaPerSecond": 4.298336381473038,
+        "confidenceDeltaPerSecond": 0.023813497958299373
+      },
+      "structureClassDistribution": {
+        "partially_tagged": 8,
+        "untagged_digital": 2
+      },
+      "primaryFailureFamilyDistribution": {
+        "mixed_structural": 2,
+        "structure_reading_order_heavy": 8
+      },
+      "weakestCategories": [
+        {
+          "key": "title_language",
+          "count": 6
+        },
+        {
+          "key": "alt_text",
+          "count": 4
+        },
+        {
+          "key": "pdf_ua_compliance",
+          "count": 3
+        },
+        {
+          "key": "reading_order",
+          "count": 3
+        },
+        {
+          "key": "heading_structure",
+          "count": 2
+        }
+      ],
+      "topFindingMessages": [
+        {
+          "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+          "count": 10
+        },
+        {
+          "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+          "count": 10
+        },
+        {
+          "key": "Document language (/Lang) is not specified.",
+          "count": 7
+        },
+        {
+          "key": "Document is missing both /Title and /Lang. Essential metadata for screen reader users is absent.",
+          "count": 6
+        },
+        {
+          "key": "64 marked-content MCID(s) appear outside the structure tree (Acrobat \"Tagged content\" / orphan MCIDs).",
+          "count": 4
+        },
+        {
+          "key": "2 page(s) lack /Tabs /S (tab order vs structure; PDF/UA-1 clause 7.20).",
+          "count": 3
+        },
+        {
+          "key": "/MarkInfo dictionary is missing or /Marked is not true.",
+          "count": 2
+        },
+        {
+          "key": "3 of 3 images lack alternative text.",
+          "count": 2
+        },
+        {
+          "key": "4 page(s) lack /Tabs /S (tab order vs structure; PDF/UA-1 clause 7.20).",
+          "count": 2
+        },
+        {
+          "key": "Document has extractable text but lacks accessibility tagging (no structure tree).",
+          "count": 2
+        }
+      ],
+      "manualReviewReasonFrequency": [
+        {
+          "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+          "count": 10
+        },
+        {
+          "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+          "count": 8
+        },
+        {
+          "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+          "count": 4
+        },
+        {
+          "key": "Reading order fell back to heading/paragraph heuristics because no structure tree was available.",
+          "count": 2
+        }
+      ],
+      "categoryManualReviewFrequency": [
+        {
+          "key": "color_contrast",
+          "count": 10
+        },
+        {
+          "key": "reading_order",
+          "count": 10
+        },
+        {
+          "key": "alt_text",
+          "count": 4
+        }
+      ],
+      "categoryVerificationLevels": {
+        "alt_text": {
+          "manual_review_required": 4,
+          "verified": 6
+        },
+        "bookmarks": {
+          "verified": 10
+        },
+        "color_contrast": {
+          "manual_review_required": 10
+        },
+        "form_accessibility": {
+          "verified": 10
+        },
+        "heading_structure": {
+          "verified": 10
+        },
+        "link_quality": {
+          "verified": 10
+        },
+        "pdf_ua_compliance": {
+          "heuristic": 9,
+          "verified": 1
+        },
+        "reading_order": {
+          "manual_review_required": 10
+        },
+        "table_markup": {
+          "verified": 10
+        },
+        "text_extractability": {
+          "verified": 10
+        },
+        "title_language": {
+          "verified": 10
+        }
+      },
+      "deterministicIssueFrequency": [
+        {
+          "key": "pdf_ua_compliance",
+          "count": 10
+        },
+        {
+          "key": "reading_order",
+          "count": 9
+        },
+        {
+          "key": "tagged_content_orphans",
+          "count": 9
+        },
+        {
+          "key": "tagged_content_paint",
+          "count": 9
+        },
+        {
+          "key": "annotation_tabs",
+          "count": 7
+        },
+        {
+          "key": "title_language",
+          "count": 7
+        },
+        {
+          "key": "bookmarks",
+          "count": 4
+        },
+        {
+          "key": "heading_structure",
+          "count": 2
+        },
+        {
+          "key": "text_extractability",
+          "count": 2
+        },
+        {
+          "key": "annotation_order",
+          "count": 1
+        }
+      ],
+      "semanticIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 6
+        },
+        {
+          "key": "figure_meaning",
+          "count": 6
+        }
+      ],
+      "manualOnlyIssueFrequency": [
+        {
+          "key": "reading_order",
+          "count": 10
+        },
+        {
+          "key": "alt_text",
+          "count": 4
+        }
+      ],
+      "readingOrderSignalFrequency": [
+        {
+          "key": "missing_structure_tree",
+          "count": 2
+        },
+        {
+          "key": "annotation_order_risk",
+          "count": 1
+        },
+        {
+          "key": "annotation_struct_parent_risk",
+          "count": 1
+        }
+      ],
+      "annotationSignalFrequency": [
+        {
+          "key": "pages_missing_tabs_s",
+          "count": 7
+        },
+        {
+          "key": "link_annotations_missing_struct_parent",
+          "count": 1
+        },
+        {
+          "key": "pages_annotation_order_differs",
+          "count": 1
+        }
+      ],
+      "taggedContentSignalFrequency": [
+        {
+          "key": "orphan_mcids",
+          "count": 9
+        },
+        {
+          "key": "path_paint_outside_mc",
+          "count": 9
+        }
+      ],
+      "listTableSignalFrequency": [],
+      "manualReviewRequiredCount": 10,
+      "scoreCapsByCategory": []
+    },
+    "30-structure-reading-order": {
+      "fileCount": 10,
+      "analyzeSuccess": 10,
+      "analyzeErrors": 0,
+      "remediateSuccess": 10,
+      "remediateErrors": 0,
+      "analyzeScore": {
+        "count": 10,
+        "mean": 49.9,
+        "median": 45,
+        "p95": 66,
+        "min": 36,
+        "max": 66
+      },
+      "analyzeDurationMs": {
+        "count": 10,
+        "mean": 1038,
+        "median": 699,
+        "p95": 3733,
+        "min": 572,
+        "max": 3733
+      },
+      "wallAnalyzeMs": {
+        "count": 10,
+        "mean": 1039.760276399998,
+        "median": 701.2284069999878,
+        "p95": 3734.05017100001,
+        "min": 573.349859000009,
+        "max": 3734.05017100001
+      },
+      "remediationDelta": {
+        "count": 10,
+        "mean": 48,
+        "median": 49,
+        "p95": 62,
+        "min": 30,
+        "max": 62
+      },
+      "remediationDurationMs": {
+        "count": 10,
+        "mean": 34059.6,
+        "median": 5932,
+        "p95": 200868,
+        "min": 5047,
+        "max": 200868
+      },
+      "wallRemediateMs": {
+        "count": 10,
+        "mean": 35290.9741092,
+        "median": 6613.394591999997,
+        "p95": 205482.95715399995,
+        "min": 5643.628423999995,
+        "max": 205482.95715399995
+      },
+      "totalPipelineMs": {
+        "count": 10,
+        "mean": 35290.97465540001,
+        "median": 6613.39495300001,
+        "p95": 205482.95761500002,
+        "min": 5643.628925999976,
+        "max": 205482.95761500002
+      },
+      "costBenefit": {
+        "scoreDeltaPerSecond": 1.3601211417818837,
+        "confidenceDeltaPerSecond": 0.011334342848182365
+      },
+      "structureClassDistribution": {
+        "partially_tagged": 6,
+        "untagged_digital": 4
+      },
+      "primaryFailureFamilyDistribution": {
+        "mixed_structural": 3,
+        "structure_reading_order_heavy": 7
+      },
+      "weakestCategories": [
+        {
+          "key": "heading_structure",
+          "count": 5
+        },
+        {
+          "key": "reading_order",
+          "count": 5
+        },
+        {
+          "key": "alt_text",
+          "count": 4
+        },
+        {
+          "key": "pdf_ua_compliance",
+          "count": 4
+        },
+        {
+          "key": "title_language",
+          "count": 3
+        },
+        {
+          "key": "table_markup",
+          "count": 2
+        }
+      ],
+      "topFindingMessages": [
+        {
+          "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+          "count": 10
+        },
+        {
+          "key": "Document language (/Lang) is not specified.",
+          "count": 10
+        },
+        {
+          "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+          "count": 10
+        },
+        {
+          "key": "Document language is not set (/Lang missing). Screen readers cannot select the correct voice/language.",
+          "count": 7
+        },
+        {
+          "key": "/MarkInfo dictionary is missing or /Marked is not true.",
+          "count": 5
+        },
+        {
+          "key": "Document has extractable text but lacks accessibility tagging (no structure tree).",
+          "count": 4
+        },
+        {
+          "key": "Document is not tagged (no structure tree or /MarkInfo/Marked).",
+          "count": 4
+        },
+        {
+          "key": "Reading order cannot be verified without a document structure tree.",
+          "count": 4
+        },
+        {
+          "key": "Structure tree (/StructTreeRoot) is absent.",
+          "count": 4
+        },
+        {
+          "key": "Document is missing both /Title and /Lang. Essential metadata for screen reader users is absent.",
+          "count": 3
+        }
+      ],
+      "manualReviewReasonFrequency": [
+        {
+          "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+          "count": 10
+        },
+        {
+          "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+          "count": 7
+        },
+        {
+          "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+          "count": 5
+        },
+        {
+          "key": "Reading order fell back to heading/paragraph heuristics because no structure tree was available.",
+          "count": 4
+        }
+      ],
+      "categoryManualReviewFrequency": [
+        {
+          "key": "color_contrast",
+          "count": 10
+        },
+        {
+          "key": "reading_order",
+          "count": 10
+        },
+        {
+          "key": "alt_text",
+          "count": 5
+        }
+      ],
+      "categoryVerificationLevels": {
+        "alt_text": {
+          "manual_review_required": 5,
+          "verified": 5
+        },
+        "bookmarks": {
+          "verified": 10
+        },
+        "color_contrast": {
+          "manual_review_required": 10
+        },
+        "form_accessibility": {
+          "verified": 10
+        },
+        "heading_structure": {
+          "verified": 10
+        },
+        "link_quality": {
+          "verified": 10
+        },
+        "pdf_ua_compliance": {
+          "heuristic": 10
+        },
+        "reading_order": {
+          "manual_review_required": 10
+        },
+        "table_markup": {
+          "verified": 10
+        },
+        "text_extractability": {
+          "verified": 10
+        },
+        "title_language": {
+          "verified": 10
+        }
+      },
+      "deterministicIssueFrequency": [
+        {
+          "key": "pdf_ua_compliance",
+          "count": 10
+        },
+        {
+          "key": "reading_order",
+          "count": 10
+        },
+        {
+          "key": "tagged_content_paint",
+          "count": 10
+        },
+        {
+          "key": "title_language",
+          "count": 10
+        },
+        {
+          "key": "annotation_tabs",
+          "count": 7
+        },
+        {
+          "key": "heading_structure",
+          "count": 6
+        },
+        {
+          "key": "tagged_content_orphans",
+          "count": 6
+        },
+        {
+          "key": "bookmarks",
+          "count": 4
+        },
+        {
+          "key": "text_extractability",
+          "count": 4
+        },
+        {
+          "key": "annotation_struct_parent",
+          "count": 2
+        }
+      ],
+      "semanticIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 5
+        },
+        {
+          "key": "figure_meaning",
+          "count": 4
+        }
+      ],
+      "manualOnlyIssueFrequency": [
+        {
+          "key": "reading_order",
+          "count": 10
+        },
+        {
+          "key": "alt_text",
+          "count": 5
+        }
+      ],
+      "readingOrderSignalFrequency": [
+        {
+          "key": "missing_structure_tree",
+          "count": 4
+        },
+        {
+          "key": "annotation_struct_parent_risk",
+          "count": 2
+        }
+      ],
+      "annotationSignalFrequency": [
+        {
+          "key": "pages_missing_tabs_s",
+          "count": 7
+        },
+        {
+          "key": "link_annotations_missing_struct_parent",
+          "count": 2
+        }
+      ],
+      "taggedContentSignalFrequency": [
+        {
+          "key": "path_paint_outside_mc",
+          "count": 10
+        },
+        {
+          "key": "orphan_mcids",
+          "count": 6
+        }
+      ],
+      "listTableSignalFrequency": [
+        {
+          "key": "lists_without_items",
+          "count": 1
+        }
+      ],
+      "manualReviewRequiredCount": 10,
+      "scoreCapsByCategory": []
+    },
+    "40-font-extractability": {
+      "fileCount": 8,
+      "analyzeSuccess": 8,
+      "analyzeErrors": 0,
+      "remediateSuccess": 8,
+      "remediateErrors": 0,
+      "analyzeScore": {
+        "count": 8,
+        "mean": 38,
+        "median": 33,
+        "p95": 73,
+        "min": 16,
+        "max": 73
+      },
+      "analyzeDurationMs": {
+        "count": 8,
+        "mean": 902.875,
+        "median": 681,
+        "p95": 1766,
+        "min": 535,
+        "max": 1766
+      },
+      "wallAnalyzeMs": {
+        "count": 8,
+        "mean": 903.3425145000074,
+        "median": 683.1131729999324,
+        "p95": 1765.6740330000175,
+        "min": 535.5403919999953,
+        "max": 1765.6740330000175
+      },
+      "remediationDelta": {
+        "count": 8,
+        "mean": 59.125,
+        "median": 55,
+        "p95": 80,
+        "min": 26,
+        "max": 80
+      },
+      "remediationDurationMs": {
+        "count": 8,
+        "mean": 28690.75,
+        "median": 8325,
+        "p95": 85399,
+        "min": 5408,
+        "max": 85399
+      },
+      "wallRemediateMs": {
+        "count": 8,
+        "mean": 29765.407656375,
+        "median": 9337.24850700004,
+        "p95": 87237.83810000005,
+        "min": 6078.930379999918,
+        "max": 87237.83810000005
+      },
+      "totalPipelineMs": {
+        "count": 8,
+        "mean": 29765.408212750015,
+        "median": 9337.24913900008,
+        "p95": 87237.83863100002,
+        "min": 6078.93100099999,
+        "max": 87237.83863100002
+      },
+      "costBenefit": {
+        "scoreDeltaPerSecond": 1.9863662101512296,
+        "confidenceDeltaPerSecond": 0.008399011459413233
+      },
+      "structureClassDistribution": {
+        "partially_tagged": 3,
+        "untagged_digital": 5
+      },
+      "primaryFailureFamilyDistribution": {
+        "mixed_structural": 2,
+        "structure_reading_order_heavy": 6
+      },
+      "weakestCategories": [
+        {
+          "key": "heading_structure",
+          "count": 6
+        },
+        {
+          "key": "pdf_ua_compliance",
+          "count": 5
+        },
+        {
+          "key": "alt_text",
+          "count": 3
+        },
+        {
+          "key": "title_language",
+          "count": 3
+        },
+        {
+          "key": "reading_order",
+          "count": 1
+        },
+        {
+          "key": "table_markup",
+          "count": 1
+        }
+      ],
+      "topFindingMessages": [
+        {
+          "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+          "count": 8
+        },
+        {
+          "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+          "count": 8
+        },
+        {
+          "key": "/MarkInfo dictionary is missing or /Marked is not true.",
+          "count": 6
+        },
+        {
+          "key": "Document language (/Lang) is not specified.",
+          "count": 6
+        },
+        {
+          "key": "Document is not tagged (no structure tree or /MarkInfo/Marked).",
+          "count": 5
+        },
+        {
+          "key": "Reading order cannot be verified without a document structure tree.",
+          "count": 5
+        },
+        {
+          "key": "Structure tree (/StructTreeRoot) is absent.",
+          "count": 5
+        },
+        {
+          "key": "16-page document has no bookmarks/outlines. Screen reader users cannot navigate by document sections.",
+          "count": 3
+        },
+        {
+          "key": "Document is missing both /Title and /Lang. Essential metadata for screen reader users is absent.",
+          "count": 3
+        },
+        {
+          "key": "Document language is not set (/Lang missing). Screen readers cannot select the correct voice/language.",
+          "count": 3
+        }
+      ],
+      "manualReviewReasonFrequency": [
+        {
+          "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+          "count": 8
+        },
+        {
+          "key": "Reading order fell back to heading/paragraph heuristics because no structure tree was available.",
+          "count": 5
+        },
+        {
+          "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+          "count": 3
+        }
+      ],
+      "categoryManualReviewFrequency": [
+        {
+          "key": "color_contrast",
+          "count": 8
+        },
+        {
+          "key": "reading_order",
+          "count": 7
+        }
+      ],
+      "categoryVerificationLevels": {
+        "alt_text": {
+          "verified": 8
+        },
+        "bookmarks": {
+          "verified": 8
+        },
+        "color_contrast": {
+          "manual_review_required": 8
+        },
+        "form_accessibility": {
+          "verified": 8
+        },
+        "heading_structure": {
+          "verified": 8
+        },
+        "link_quality": {
+          "verified": 8
+        },
+        "pdf_ua_compliance": {
+          "heuristic": 5,
+          "verified": 3
+        },
+        "reading_order": {
+          "manual_review_required": 7,
+          "verified": 1
+        },
+        "table_markup": {
+          "verified": 8
+        },
+        "text_extractability": {
+          "verified": 8
+        },
+        "title_language": {
+          "verified": 8
+        }
+      },
+      "deterministicIssueFrequency": [
+        {
+          "key": "pdf_ua_compliance",
+          "count": 8
+        },
+        {
+          "key": "title_language",
+          "count": 8
+        },
+        {
+          "key": "heading_structure",
+          "count": 7
+        },
+        {
+          "key": "reading_order",
+          "count": 7
+        },
+        {
+          "key": "tagged_content_paint",
+          "count": 5
+        },
+        {
+          "key": "text_extractability",
+          "count": 5
+        },
+        {
+          "key": "annotation_tabs",
+          "count": 3
+        },
+        {
+          "key": "bookmarks",
+          "count": 3
+        },
+        {
+          "key": "tagged_content_orphans",
+          "count": 3
+        },
+        {
+          "key": "annotation_struct_parent",
+          "count": 1
+        }
+      ],
+      "semanticIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 3
+        },
+        {
+          "key": "figure_meaning",
+          "count": 3
+        }
+      ],
+      "manualOnlyIssueFrequency": [
+        {
+          "key": "reading_order",
+          "count": 7
+        }
+      ],
+      "readingOrderSignalFrequency": [
+        {
+          "key": "missing_structure_tree",
+          "count": 5
+        },
+        {
+          "key": "annotation_struct_parent_risk",
+          "count": 1
+        }
+      ],
+      "annotationSignalFrequency": [
+        {
+          "key": "pages_missing_tabs_s",
+          "count": 3
+        },
+        {
+          "key": "link_annotations_missing_struct_parent",
+          "count": 1
+        }
+      ],
+      "taggedContentSignalFrequency": [
+        {
+          "key": "path_paint_outside_mc",
+          "count": 5
+        },
+        {
+          "key": "orphan_mcids",
+          "count": 3
+        }
+      ],
+      "listTableSignalFrequency": [],
+      "manualReviewRequiredCount": 7,
+      "scoreCapsByCategory": []
+    },
+    "50-long-report-mixed": {
+      "fileCount": 8,
+      "analyzeSuccess": 8,
+      "analyzeErrors": 0,
+      "remediateSuccess": 8,
+      "remediateErrors": 0,
+      "analyzeScore": {
+        "count": 8,
+        "mean": 68.375,
+        "median": 72,
+        "p95": 81,
+        "min": 54,
+        "max": 81
+      },
+      "analyzeDurationMs": {
+        "count": 8,
+        "mean": 833.125,
+        "median": 799,
+        "p95": 1021,
+        "min": 710,
+        "max": 1021
+      },
+      "wallAnalyzeMs": {
+        "count": 8,
+        "mean": 835.1472231250082,
+        "median": 799.6008569999831,
+        "p95": 1021.6316560000414,
+        "min": 709.9592039999552,
+        "max": 1021.6316560000414
+      },
+      "remediationDelta": {
+        "count": 8,
+        "mean": 29.25,
+        "median": 25,
+        "p95": 45,
+        "min": 17,
+        "max": 45
+      },
+      "remediationDurationMs": {
+        "count": 8,
+        "mean": 15443.875,
+        "median": 10153,
+        "p95": 53469,
+        "min": 3984,
+        "max": 53469
+      },
+      "wallRemediateMs": {
+        "count": 8,
+        "mean": 16389.168078250004,
+        "median": 10938.028123999946,
+        "p95": 54502.64323699998,
+        "min": 4672.563379999949,
+        "max": 54502.64323699998
+      },
+      "totalPipelineMs": {
+        "count": 8,
+        "mean": 16389.168666875004,
+        "median": 10938.02845600003,
+        "p95": 54502.643677999964,
+        "min": 4672.563901000074,
+        "max": 54502.643677999964
+      },
+      "costBenefit": {
+        "scoreDeltaPerSecond": 1.7847153595805483,
+        "confidenceDeltaPerSecond": 0.053388921013093324
+      },
+      "structureClassDistribution": {
+        "partially_tagged": 8
+      },
+      "primaryFailureFamilyDistribution": {
+        "mixed_structural": 3,
+        "structure_reading_order_heavy": 5
+      },
+      "weakestCategories": [
+        {
+          "key": "alt_text",
+          "count": 5
+        },
+        {
+          "key": "title_language",
+          "count": 5
+        },
+        {
+          "key": "reading_order",
+          "count": 2
+        }
+      ],
+      "topFindingMessages": [
+        {
+          "key": "64 marked-content MCID(s) appear outside the structure tree (Acrobat \"Tagged content\" / orphan MCIDs).",
+          "count": 8
+        },
+        {
+          "key": "Color contrast was not evaluated (no pixel sampling in this build).",
+          "count": 8
+        },
+        {
+          "key": "XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).",
+          "count": 8
+        },
+        {
+          "key": "Document is missing both /Title and /Lang. Essential metadata for screen reader users is absent.",
+          "count": 5
+        },
+        {
+          "key": "Document language (/Lang) is not specified.",
+          "count": 5
+        },
+        {
+          "key": "2 page(s) lack /Tabs /S (tab order vs structure; PDF/UA-1 clause 7.20).",
+          "count": 2
+        },
+        {
+          "key": "40 page(s) lack /Tabs /S (tab order vs structure; PDF/UA-1 clause 7.20).",
+          "count": 2
+        },
+        {
+          "key": "1 of 1 image lack alternative text.",
+          "count": 1
+        },
+        {
+          "key": "1 page(s) lack /Tabs /S (tab order vs structure; PDF/UA-1 clause 7.20).",
+          "count": 1
+        },
+        {
+          "key": "1 table has rows with different column counts (regularity).",
+          "count": 1
+        }
+      ],
+      "manualReviewReasonFrequency": [
+        {
+          "key": "Color contrast was not machine-verified because this build does not perform rendered pixel contrast analysis.",
+          "count": 8
+        },
+        {
+          "key": "Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.",
+          "count": 5
+        },
+        {
+          "key": "Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.",
+          "count": 5
+        }
+      ],
+      "categoryManualReviewFrequency": [
+        {
+          "key": "color_contrast",
+          "count": 8
+        },
+        {
+          "key": "alt_text",
+          "count": 5
+        },
+        {
+          "key": "reading_order",
+          "count": 5
+        }
+      ],
+      "categoryVerificationLevels": {
+        "alt_text": {
+          "manual_review_required": 5,
+          "verified": 3
+        },
+        "bookmarks": {
+          "verified": 8
+        },
+        "color_contrast": {
+          "manual_review_required": 8
+        },
+        "form_accessibility": {
+          "verified": 8
+        },
+        "heading_structure": {
+          "verified": 8
+        },
+        "link_quality": {
+          "verified": 8
+        },
+        "pdf_ua_compliance": {
+          "heuristic": 5,
+          "verified": 3
+        },
+        "reading_order": {
+          "manual_review_required": 5,
+          "verified": 3
+        },
+        "table_markup": {
+          "verified": 8
+        },
+        "text_extractability": {
+          "verified": 8
+        },
+        "title_language": {
+          "verified": 8
+        }
+      },
+      "deterministicIssueFrequency": [
+        {
+          "key": "pdf_ua_compliance",
+          "count": 8
+        },
+        {
+          "key": "tagged_content_orphans",
+          "count": 8
+        },
+        {
+          "key": "title_language",
+          "count": 6
+        },
+        {
+          "key": "annotation_tabs",
+          "count": 5
+        },
+        {
+          "key": "reading_order",
+          "count": 5
+        },
+        {
+          "key": "tagged_content_paint",
+          "count": 5
+        },
+        {
+          "key": "bookmarks",
+          "count": 3
+        },
+        {
+          "key": "empty_lists",
+          "count": 2
+        },
+        {
+          "key": "table_markup",
+          "count": 2
+        },
+        {
+          "key": "annotation_order",
+          "count": 1
+        }
+      ],
+      "semanticIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 7
+        },
+        {
+          "key": "figure_meaning",
+          "count": 6
+        }
+      ],
+      "manualOnlyIssueFrequency": [
+        {
+          "key": "alt_text",
+          "count": 5
+        },
+        {
+          "key": "reading_order",
+          "count": 5
+        }
+      ],
+      "readingOrderSignalFrequency": [
+        {
+          "key": "annotation_order_risk",
+          "count": 1
+        }
+      ],
+      "annotationSignalFrequency": [
+        {
+          "key": "pages_missing_tabs_s",
+          "count": 5
+        },
+        {
+          "key": "link_annotations_missing_structure",
+          "count": 1
+        },
+        {
+          "key": "pages_annotation_order_differs",
+          "count": 1
+        }
+      ],
+      "taggedContentSignalFrequency": [
+        {
+          "key": "orphan_mcids",
+          "count": 8
+        },
+        {
+          "key": "path_paint_outside_mc",
+          "count": 5
+        },
+        {
+          "key": "tagged_annotation_risk",
+          "count": 1
+        }
+      ],
+      "listTableSignalFrequency": [
+        {
+          "key": "lists_without_items",
+          "count": 2
+        },
+        {
+          "key": "irregular_tables",
+          "count": 1
+        },
+        {
+          "key": "lbl_body_misplaced",
+          "count": 1
+        },
+        {
+          "key": "list_item_misplaced",
+          "count": 1
+        },
+        {
+          "key": "strongly_irregular_tables",
+          "count": 1
+        }
+      ],
+      "manualReviewRequiredCount": 5,
+      "scoreCapsByCategory": []
+    }
+  }
+}
