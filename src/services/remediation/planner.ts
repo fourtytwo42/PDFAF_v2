@@ -69,6 +69,18 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'set_document_title',
     'set_document_language',
   ],
+  structure_bootstrap_and_conformance: [
+    'synthesize_basic_structure_from_layout',
+    'repair_structure_conformance',
+    'artifact_repeating_page_furniture',
+  ],
+  post_bootstrap_heading_convergence: [
+    'artifact_repeating_page_furniture',
+    'create_heading_from_candidate',
+    'normalize_heading_hierarchy',
+    'repair_native_reading_order',
+    'repair_structure_conformance',
+  ],
   untagged_structure_recovery: [
     'synthesize_basic_structure_from_layout',
     'repair_structure_conformance',
@@ -102,7 +114,12 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'tag_native_text_blocks',
     'mark_untagged_content_as_artifact',
   ],
+  font_unicode_tail_recovery: [
+    'substitute_legacy_fonts_in_place',
+    'finalize_substituted_font_conformance',
+  ],
   figure_semantics: [
+    'normalize_nested_figure_containers',
     'canonicalize_figure_alt_ownership',
     'set_figure_alt_text',
     'mark_figure_decorative',
@@ -111,6 +128,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'retag_as_figure',
   ],
   near_pass_figure_recovery: [
+    'normalize_nested_figure_containers',
     'canonicalize_figure_alt_ownership',
     'repair_annotation_alt_text',
   ],
@@ -169,6 +187,19 @@ function toolApplicableToPdfClass(
   if (toolName === 'artifact_repeating_page_furniture') {
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0;
+  }
+  if (toolName === 'create_heading_from_candidate') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.structureTree !== null && (snapshot.paragraphStructElems?.length ?? 0) > 0;
+  }
+  if (toolName === 'normalize_nested_figure_containers') {
+    return pdfClass !== 'scanned' && snapshot.structureTree !== null && snapshot.figures.length > 0;
+  }
+  if (toolName === 'substitute_legacy_fonts_in_place' || toolName === 'finalize_substituted_font_conformance') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.textCharCount > 0 && snapshot.fonts.some(font =>
+      (font.subtype ?? '').toLowerCase() === 'type1' && (!font.isEmbedded || !font.hasUnicode || font.encodingRisk),
+    );
   }
   if (toolName === 'ocr_scanned_pdf') {
     if (pdfClass === 'scanned' || pdfClass === 'mixed') return true;
@@ -373,12 +404,22 @@ export function planForRemediation(
   const structurePrimary =
     analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
     analysis.failureProfile?.primaryFailureFamily === 'mixed_structural';
+  const fontTailCandidate =
+    categoryFailing('text_extractability')
+    && snapshot.textCharCount > 0
+    && analysis.pdfClass !== 'scanned'
+    && !categoryFailing('heading_structure')
+    && !categoryFailing('reading_order')
+    && snapshot.fonts.some(font =>
+      (font.subtype ?? '').toLowerCase() === 'type1' && (!font.isEmbedded || !font.hasUnicode || font.encodingRisk),
+    );
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
     if (
       routing.deferredRoutes.includes('figure_semantics')
       && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)
       && toolName !== 'canonicalize_figure_alt_ownership'
+      && toolName !== 'normalize_nested_figure_containers'
     ) {
       return { allowed: false, reason: 'semantic_deferred' };
     }
@@ -420,7 +461,17 @@ export function planForRemediation(
     }
     if (
       toolName === 'artifact_repeating_page_furniture'
-      && !(categoryFailing('reading_order') || hasReadingOrderSignals || categoryFailing('pdf_ua_compliance'))
+      && !(categoryFailing('reading_order') || hasReadingOrderSignals || categoryFailing('pdf_ua_compliance') || categoryFailing('heading_structure'))
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'create_heading_from_candidate'
+      && !(
+        headingNeedsRepair
+        && snapshot.structureTree !== null
+        && (snapshot.paragraphStructElems?.length ?? 0) > 0
+      )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -454,6 +505,16 @@ export function planForRemediation(
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (
+      toolName === 'normalize_nested_figure_containers'
+      && !(
+        categoryFailing('alt_text')
+        && snapshot.structureTree !== null
+        && snapshot.figures.length > 0
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
       (toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
       && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals) && (structureConfidenceHigh || categoryFailing('table_markup')))
     ) {
@@ -479,6 +540,12 @@ export function planForRemediation(
         categoryFailing('alt_text')
         && snapshot.figures.length > 0
       )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      (toolName === 'substitute_legacy_fonts_in_place' || toolName === 'finalize_substituted_font_conformance')
+      && !fontTailCandidate
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -624,6 +691,21 @@ export function buildDefaultParams(
       const target = candidates[0];
       return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
     }
+    case 'create_heading_from_candidate': {
+      const candidate = (snapshot.paragraphStructElems ?? [])
+        .filter(item => item.structRef && item.text.trim())
+        .sort((a, b) => a.page - b.page || a.text.length - b.text.length)[0];
+      if (!candidate) return {};
+      return {
+        targetRef: candidate.structRef,
+        level: candidate.page === 0 ? 1 : 2,
+        text: candidate.text.slice(0, 200),
+      };
+    }
+    case 'substitute_legacy_fonts_in_place':
+      return { maxWidthDrift: 0.12 };
+    case 'finalize_substituted_font_conformance':
+      return { maxWidthDrift: 0.35 };
     case 'mark_figure_decorative': {
       const candidates = snapshot.figures
         .filter(f => !f.isArtifact && !f.hasAlt && f.structRef)

@@ -2230,7 +2230,33 @@ def _font_descriptor_flags(urw_stem: str, italic_angle: float) -> int:
     return flags
 
 
-def _apply_urw_substitute_to_font(pdf: pikepdf.Pdf, font: pikepdf.Dictionary) -> bool:
+def _font_width_drift_exceeds(font: pikepdf.Dictionary, widths_list: list[int], first_c: int, max_width_drift: float | None) -> bool:
+    if max_width_drift is None:
+        return False
+    try:
+        existing_first = font.get("/FirstChar")
+        existing_widths = font.get("/Widths")
+        if not isinstance(existing_first, (int, pikepdf.Integer)) or not isinstance(existing_widths, pikepdf.Array):
+            return False
+        for idx, width in enumerate(widths_list):
+            code = first_c + idx
+            current_idx = code - int(existing_first)
+            if current_idx < 0 or current_idx >= len(existing_widths):
+                continue
+            try:
+                existing_width = int(existing_widths[current_idx])
+            except Exception:
+                continue
+            if existing_width <= 0:
+                continue
+            if abs(width - existing_width) / existing_width > max_width_drift:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _apply_urw_substitute_to_font(pdf: pikepdf.Pdf, font: pikepdf.Dictionary, max_width_drift: float | None = None) -> bool:
     try:
         sub = safe_str(font.get("/Subtype", "")).lstrip("/")
         if sub != "Type1":
@@ -2252,6 +2278,8 @@ def _apply_urw_substitute_to_font(pdf: pikepdf.Pdf, font: pikepdf.Dictionary) ->
         afm_path, t1_path = paths
         code_wx, fb, cap_h, ascent, descent, italic_angle, stem_v = _parse_afm_winansi_widths(afm_path)
         first_c, last_c, widths_list = _build_winansi_widths_array(code_wx)
+        if _font_width_drift_exceeds(font, widths_list, first_c, max_width_drift):
+            return False
         try:
             with open(t1_path, "rb") as tf:
                 t1_bytes = tf.read()
@@ -2351,6 +2379,35 @@ def _op_embed_urw_type1_substitutes(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
     for font in _collect_all_page_fonts(pdf):
         if _apply_urw_substitute_to_font(pdf, font):
+            changed = True
+    return changed
+
+
+def _op_substitute_legacy_fonts_in_place(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Conservative Type1 fallback substitution with width-drift guardrails."""
+    try:
+        max_width_drift = float(params.get("maxWidthDrift", 0.12))
+    except (TypeError, ValueError):
+        max_width_drift = 0.12
+    changed = False
+    for font in _collect_all_page_fonts(pdf):
+        if _apply_urw_substitute_to_font(pdf, font, max_width_drift=max_width_drift):
+            changed = True
+    return changed
+
+
+def _op_finalize_substituted_font_conformance(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Second-pass Type1 substitute finalization. Uses a looser width drift threshold so a file that
+    remains blocked after the strict first pass can still settle on embedded, width-populated fonts.
+    """
+    try:
+        max_width_drift = float(params.get("maxWidthDrift", 0.35))
+    except (TypeError, ValueError):
+        max_width_drift = 0.35
+    changed = False
+    for font in _collect_all_page_fonts(pdf):
+        if _apply_urw_substitute_to_font(pdf, font, max_width_drift=max_width_drift):
             changed = True
     return changed
 
@@ -3993,6 +4050,122 @@ def _op_canonicalize_figure_alt_ownership(pdf: pikepdf.Pdf, _params: dict) -> bo
     return _op_repair_alt_text_structure(pdf, _params)
 
 
+def _elem_has_direct_mcid_content(elem) -> bool:
+    try:
+        return _k_has_mcid_association(elem.get("/K"))
+    except Exception:
+        return False
+
+
+def _descendant_leaf_figures_with_direct_content(node) -> list:
+    figures: list = []
+    visited: set = set()
+
+    def visit(value, is_root: bool = False) -> None:
+        if not isinstance(value, pikepdf.Dictionary):
+            return
+        vk = _struct_elem_visit_key(value)
+        if vk in visited:
+            return
+        visited.add(vk)
+        if not is_root and (get_name(value) or "") == "Figure" and _elem_has_direct_mcid_content(value):
+            figures.append(value)
+        for child in _direct_role_children(value):
+            visit(child)
+
+    visit(node, is_root=True)
+    return figures
+
+
+def _count_descendant_figures(node) -> int:
+    count = 0
+    visited: set = set()
+
+    def visit(value, is_root: bool = False) -> None:
+        nonlocal count
+        if not isinstance(value, pikepdf.Dictionary):
+            return
+        vk = _struct_elem_visit_key(value)
+        if vk in visited:
+            return
+        visited.add(vk)
+        if not is_root and (get_name(value) or "") == "Figure":
+            count += 1
+        for child in _direct_role_children(value):
+            visit(child)
+
+    visit(node, is_root=True)
+    return count
+
+
+def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Move wrapper /Alt onto one unambiguous leaf figure and retag empty wrapper /Figure nodes to /Sect.
+    Ambiguous multi-leaf cases are left unchanged.
+    """
+    try:
+        max_repairs = int(params.get("maxRepairsPerRun", 6))
+    except (TypeError, ValueError):
+        max_repairs = 6
+    max_repairs = max(1, min(max_repairs, 32))
+
+    changed = False
+    repairs = 0
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(sr, pikepdf.Dictionary):
+        return False
+
+    q: deque = deque()
+    _enqueue_children(q, sr.get("/K"))
+    visited: set = set()
+    n = 0
+    while q and n < MAX_ITEMS * 6 and repairs < max_repairs:
+        n += 1
+        try:
+            obj = q.popleft()
+        except Exception:
+            break
+        if not isinstance(obj, pikepdf.Dictionary):
+            continue
+        vk = _struct_elem_visit_key(obj)
+        if vk in visited:
+            continue
+        visited.add(vk)
+        if (get_name(obj) or "") == "Figure" and not _elem_has_direct_mcid_content(obj) and _count_descendant_figures(obj) > 0:
+            leaf_figures = [
+                figure for figure in _descendant_leaf_figures_with_direct_content(obj)
+                if not str(figure.get("/Alt") or "").replace("u:", "").strip()
+            ]
+            before_alt = obj.get("/Alt")
+            before_alt_text = str(before_alt or "").replace("u:", "").strip()
+            if before_alt_text and len(leaf_figures) == 1:
+                try:
+                    leaf_figures[0]["/Alt"] = before_alt
+                    changed = True
+                except Exception:
+                    pass
+            if before_alt is not None:
+                try:
+                    del obj["/Alt"]
+                    changed = True
+                except Exception:
+                    pass
+            try:
+                obj["/S"] = pikepdf.Name("/Sect")
+                changed = True
+                repairs += 1
+            except Exception:
+                pass
+        try:
+            _enqueue_children(q, obj.get("/K"))
+        except Exception:
+            pass
+    return changed
+
+
 def _op_set_figure_alt_text(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = params.get("structRef")
     if not ref:
@@ -4301,6 +4474,31 @@ def _repair_table_role_misplacement(pdf: pikepdf.Pdf) -> bool:
     return changed
 
 
+def _iter_top_level_struct_elems(struct_root) -> list:
+    try:
+        k = struct_root.get("/K")
+    except Exception:
+        return []
+    if isinstance(k, pikepdf.Dictionary):
+        return [k] if _is_struct_elem_dict(k) else []
+    if isinstance(k, pikepdf.Array):
+        return [item for item in k if isinstance(item, pikepdf.Dictionary) and _is_struct_elem_dict(item)]
+    return []
+
+
+def _ensure_parent_tree_entry(nums: pikepdf.Array, key: int, value) -> None:
+    for idx in range(0, len(nums), 2):
+        try:
+            existing_key = int(nums[idx])
+        except Exception:
+            continue
+        if existing_key == key:
+            nums[idx + 1] = value
+            return
+    nums.append(pikepdf.Integer(key))
+    nums.append(value)
+
+
 def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
     root = pdf.Root
@@ -4315,6 +4513,70 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
     else:
         root["/MarkInfo"] = pikepdf.Dictionary(Marked=True, Suspects=False)
         changed = True
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if sr is not None and doc_elem is not None:
+        pt = sr.get("/ParentTree")
+        if not isinstance(pt, pikepdf.Dictionary):
+            pt = pikepdf.Dictionary(Nums=pikepdf.Array([]))
+            sr["/ParentTree"] = pt
+            changed = True
+        nums = pt.get("/Nums")
+        if not isinstance(nums, pikepdf.Array):
+            nums = pikepdf.Array([])
+            pt["/Nums"] = nums
+            changed = True
+        next_key = int(sr.get("/ParentTreeNextKey", 0) or 0)
+        top_level = _iter_top_level_struct_elems(sr)
+        page_backed = [elem for elem in top_level if isinstance(elem.get("/Pg"), pikepdf.Dictionary)]
+        for page_idx, page in enumerate(pdf.pages):
+            page_obj = page.obj
+            try:
+                sp = page_obj.get("/StructParents")
+                if not isinstance(sp, (int, pikepdf.Integer)):
+                    page_obj["/StructParents"] = pikepdf.Integer(next_key)
+                    page_key = next_key
+                    next_key += 1
+                    changed = True
+                else:
+                    page_key = int(sp)
+            except Exception:
+                page_obj["/StructParents"] = pikepdf.Integer(next_key)
+                page_key = next_key
+                next_key += 1
+                changed = True
+
+            page_elem = None
+            for elem in page_backed:
+                try:
+                    if elem.get("/Pg") is page_obj:
+                        page_elem = elem
+                        break
+                except Exception:
+                    continue
+            if page_elem is None:
+                page_elem = pdf.make_indirect(pikepdf.Dictionary(
+                    Type=pikepdf.Name("/StructElem"),
+                    S=pikepdf.Name("/Sect"),
+                    P=doc_elem,
+                    Pg=page_obj,
+                    K=pikepdf.Array([]),
+                ))
+                dk = doc_elem.get("/K")
+                if isinstance(dk, pikepdf.Array):
+                    dk.append(page_elem)
+                elif dk is None:
+                    doc_elem["/K"] = pikepdf.Array([page_elem])
+                else:
+                    doc_elem["/K"] = pikepdf.Array([dk, page_elem])
+                page_backed.append(page_elem)
+                changed = True
+
+            _ensure_parent_tree_entry(nums, page_key, pikepdf.Array([page_elem]))
+        sr["/ParentTreeNextKey"] = pikepdf.Integer(next_key)
+        if _mut_tag_unowned_annotations(pdf):
+            changed = True
+        if _mut_repair_native_link_structure(pdf):
+            changed = True
     try:
         if _repair_table_role_misplacement(pdf):
             changed = True
@@ -4412,6 +4674,22 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
             prev_level = level
 
     return changed
+
+
+def _op_create_heading_from_candidate(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Promote a safe structural paragraph-like target to a heading level."""
+    target_ref = params.get("targetRef") or params.get("structRef")
+    if not target_ref:
+        return False
+    try:
+        level = int(params.get("level", 2))
+    except (TypeError, ValueError):
+        level = 2
+    level = max(1, min(level, 6))
+    return _op_retag_struct_as_heading(pdf, {
+        "structRef": target_ref,
+        "level": level,
+    })
 
 
 def _op_golden_v1_promote_p_to_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
@@ -5068,11 +5346,15 @@ MUTATORS = {
     "set_pdfua_identification": _op_set_pdfua_identification,
     "synthesize_basic_structure_from_layout": _op_synthesize_basic_structure_from_layout,
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
+    "create_heading_from_candidate": _op_create_heading_from_candidate,
     "set_figure_alt_text": _op_set_figure_alt_text,
     "mark_figure_decorative": _op_mark_figure_decorative,
+    "normalize_nested_figure_containers": _op_normalize_nested_figure_containers,
     "canonicalize_figure_alt_ownership": _op_canonicalize_figure_alt_ownership,
     "repair_alt_text_structure": _op_repair_alt_text_structure,
     "repair_structure_conformance": _op_repair_structure_conformance,
+    "substitute_legacy_fonts_in_place": _op_substitute_legacy_fonts_in_place,
+    "finalize_substituted_font_conformance": _op_finalize_substituted_font_conformance,
     "bootstrap_struct_tree": _op_bootstrap_struct_tree,
     "mark_untagged_content_as_artifact": _op_mark_untagged_content_as_artifact,
     "tag_ocr_text_blocks": _op_tag_ocr_text_blocks,

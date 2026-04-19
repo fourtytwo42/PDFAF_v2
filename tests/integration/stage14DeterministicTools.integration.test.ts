@@ -109,4 +109,49 @@ describe('Stage 14 deterministic tools', () => {
     expect(nonArtifactFigures.length).toBeGreaterThan(0);
     expect(nonArtifactFigures.filter(figure => figure.hasAlt && figure.altText?.trim()).length).toBe(1);
   });
+
+  it('create_heading_from_candidate promotes a paragraph-like struct elem to a heading', async () => {
+    const buf = await buildUntaggedStructurePdf();
+    const synthesized = await runPythonMutationBatch(buf, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(synthesized.result.success).toBe(true);
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage141-heading-'));
+    const beforePath = join(dir, 'before.pdf');
+    await writeFile(beforePath, synthesized.buffer);
+    const before = await runPythonAnalysis(beforePath);
+    const paragraph = (before.paragraphStructElems ?? [])[0];
+    expect(paragraph?.structRef).toBeTruthy();
+
+    const promoted = await runPythonMutationBatch(synthesized.buffer, [
+      { op: 'create_heading_from_candidate', params: { targetRef: paragraph!.structRef, level: 2 } },
+    ]);
+    expect(promoted.result.success).toBe(true);
+    expect(promoted.result.applied).toContain('create_heading_from_candidate');
+
+    const outPath = join(dir, 'out.pdf');
+    await writeFile(outPath, promoted.buffer);
+    const after = await runPythonAnalysis(outPath);
+    expect(after.headings.some(item => item.structRef === paragraph!.structRef && item.level === 2)).toBe(true);
+  });
+
+  it('normalize_nested_figure_containers clears nested figure alt debt before ownership cleanup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage141-nested-'));
+    const pdfPath = join(dir, 'nested.pdf');
+    const script = join(process.cwd(), 'tests/fixtures/scripts/write_nested_figure_alt_pdf.py');
+    await execFileAsync('python3', [script, pdfPath]);
+
+    const buf = await readFile(pdfPath);
+    const { buffer, result } = await runPythonMutationBatch(buf, [
+      { op: 'normalize_nested_figure_containers', params: {} },
+    ]);
+    expect(result.success).toBe(true);
+    expect(result.applied).toContain('normalize_nested_figure_containers');
+
+    const outPath = join(dir, 'out.pdf');
+    await writeFile(outPath, buffer);
+    const after = await runPythonAnalysis(outPath);
+    expect(after.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBe(0);
+  });
 });

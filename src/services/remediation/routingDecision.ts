@@ -15,6 +15,7 @@ export interface RoutingDecision {
   primaryRoute: RemediationRoute | null;
   secondaryRoutes: RemediationRoute[];
   triggeringSignals: string[];
+  residualFamilies: string[];
   deferredRoutes: RemediationRoute[];
   semanticDeferred: boolean;
 }
@@ -127,6 +128,51 @@ function failingCategories(analysis: AnalysisResult): ScoredCategory['key'][] {
     .map(category => category.key);
 }
 
+function fontDebtSignals(snapshot: DocumentSnapshot): {
+  fontRiskCount: number;
+  legacyType1RiskCount: number;
+} {
+  const riskyFonts = snapshot.fonts.filter(font =>
+    font.encodingRisk || !font.hasUnicode || !font.isEmbedded,
+  );
+  const legacyType1RiskCount = riskyFonts.filter(font =>
+    (font.subtype ?? '').toLowerCase() === 'type1' && !font.isEmbedded,
+  ).length;
+  return {
+    fontRiskCount: riskyFonts.length,
+    legacyType1RiskCount,
+  };
+}
+
+function deriveResidualFamilies(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  detection?: DetectionProfile | null;
+  nearPassFigureRecovery: boolean;
+  postBootstrapHeadingConvergence: boolean;
+  fontUnicodeTailRecovery: boolean;
+  structureBootstrapAndConformance: boolean;
+}): string[] {
+  const families: string[] = [];
+  if (
+    input.structureBootstrapAndConformance
+    || categoryFailing(input.analysis, 'pdf_ua_compliance')
+    || hasStrongTaggedContentDebt(input.detection)
+  ) {
+    families.push('logical_structure_marked_content');
+  }
+  if (input.postBootstrapHeadingConvergence) {
+    families.push('post_bootstrap_heading_convergence');
+  }
+  if (input.nearPassFigureRecovery || categoryFailing(input.analysis, 'alt_text')) {
+    families.push('native_figure_convergence');
+  }
+  if (input.fontUnicodeTailRecovery) {
+    families.push('font_embedding_and_unicode');
+  }
+  return families;
+}
+
 export function deriveRoutingDecision(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
@@ -139,14 +185,19 @@ export function deriveRoutingDecision(
   const detection = analysis.detectionProfile;
   const semanticDeferred = failureProfile?.routingHints.includes('semantic_not_primary') ?? false;
   const failing = failingCategories(analysis);
+  const fontSignals = fontDebtSignals(snapshot);
 
   const metadataDebt =
     categoryFailing(analysis, 'title_language') || !snapshot.pdfUaVersion;
-  const untaggedStructureRecovery =
+  const structureBootstrapAndConformance =
     (snapshot.pdfClass === 'native_untagged' || snapshot.pdfClass === 'mixed')
     && hasExtractableNativeText(snapshot)
     && !hasUsableStructureTree(snapshot, detection)
-    && categoryFailing(analysis, 'pdf_ua_compliance')
+    && categoryFailing(analysis, 'pdf_ua_compliance');
+  const postBootstrapHeadingConvergence =
+    hasExtractableNativeText(snapshot)
+    && hasUsableStructureTree(snapshot, detection)
+    && !categoryFailing(analysis, 'text_extractability')
     && (categoryFailing(analysis, 'heading_structure') || categoryFailing(analysis, 'reading_order'));
   const bootstrapDebt =
     snapshot.pdfClass !== 'scanned' &&
@@ -159,6 +210,16 @@ export function deriveRoutingDecision(
   const annotationDebt =
     hasAnnotationDebt(detection) || categoryFailing(analysis, 'link_quality');
   const fontDebt = hasFontDebt(snapshot, analysis, failureProfile);
+  const fontUnicodeTailRecovery =
+    hasExtractableNativeText(snapshot)
+    && !categoryFailing(analysis, 'heading_structure')
+    && !categoryFailing(analysis, 'reading_order')
+    && categoryFailing(analysis, 'text_extractability')
+    && snapshot.pdfClass !== 'scanned'
+    && fontSignals.fontRiskCount > 0
+    && fontSignals.legacyType1RiskCount > 0
+    && (analysis.failureProfile?.primaryFailureFamily === 'font_extractability_heavy'
+      || fontSignals.fontRiskCount >= Math.ceil(Math.max(snapshot.fonts.length, 1) / 2));
   const figureDebt =
     hasFigureDebt(snapshot, failureProfile) || categoryFailing(analysis, 'alt_text');
   const nearPassFigureRecovery =
@@ -178,7 +239,8 @@ export function deriveRoutingDecision(
   const navigationDebt =
     categoryFailing(analysis, 'bookmarks') || categoryFailing(analysis, 'form_accessibility');
   const structureDominant =
-    untaggedStructureRecovery ||
+    structureBootstrapAndConformance ||
+    postBootstrapHeadingConvergence ||
     bootstrapDebt ||
     annotationDebt ||
     nativeStructureDebt ||
@@ -189,7 +251,8 @@ export function deriveRoutingDecision(
 
   pushSignal(signals, 'title_language_debt', metadataDebt);
   pushSignal(signals, 'missing_pdfua_identification', !snapshot.pdfUaVersion);
-  pushSignal(signals, 'untagged_structure_recovery', untaggedStructureRecovery);
+  pushSignal(signals, 'structure_bootstrap_and_conformance', structureBootstrapAndConformance);
+  pushSignal(signals, 'post_bootstrap_heading_convergence', postBootstrapHeadingConvergence);
   pushSignal(signals, 'structure_class_untagged_or_partial', structural?.structureClass === 'untagged_digital' || structural?.structureClass === 'partially_tagged');
   pushSignal(signals, 'missing_structure_tree', snapshot.structureTree === null);
   pushSignal(signals, 'tagged_content_debt', hasStrongTaggedContentDebt(detection));
@@ -197,13 +260,16 @@ export function deriveRoutingDecision(
   pushSignal(signals, 'reading_order_debt', hasReadingOrderDebt(detection) || categoryFailing(analysis, 'reading_order'));
   pushSignal(signals, 'table_debt', hasTableDebt(snapshot, detection) || categoryFailing(analysis, 'table_markup'));
   pushSignal(signals, 'font_or_ocr_debt', fontDebt);
+  pushSignal(signals, 'font_unicode_tail_recovery', fontUnicodeTailRecovery);
   pushSignal(signals, 'figure_semantic_debt', figureDebt);
   pushSignal(signals, 'near_pass_figure_recovery', nearPassFigureRecovery);
   pushSignal(signals, 'navigation_or_forms_debt', navigationDebt);
 
-  if (fontDominant) pushRoute(routes, 'font_ocr_repair');
+  if (fontUnicodeTailRecovery) pushRoute(routes, 'font_unicode_tail_recovery');
+  if (fontDominant && !fontUnicodeTailRecovery) pushRoute(routes, 'font_ocr_repair');
   if (structureDominant) {
-    if (untaggedStructureRecovery) pushRoute(routes, 'untagged_structure_recovery');
+    if (structureBootstrapAndConformance) pushRoute(routes, 'structure_bootstrap_and_conformance');
+    if (postBootstrapHeadingConvergence) pushRoute(routes, 'post_bootstrap_heading_convergence');
     if (bootstrapDebt) pushRoute(routes, 'structure_bootstrap');
     if (annotationDebt) pushRoute(routes, 'annotation_link_normalization');
     if (nativeStructureDebt) pushRoute(routes, 'native_structure_repair');
@@ -215,13 +281,14 @@ export function deriveRoutingDecision(
     if (bootstrapDebt) pushRoute(routes, 'structure_bootstrap');
     if (annotationDebt) pushRoute(routes, 'annotation_link_normalization');
     if (nativeStructureDebt) pushRoute(routes, 'native_structure_repair');
+    if (postBootstrapHeadingConvergence) pushRoute(routes, 'post_bootstrap_heading_convergence');
   }
   if (navigationDebt) pushRoute(routes, 'document_navigation_forms');
   if (nearPassFigureRecovery) pushRoute(routes, 'near_pass_figure_recovery');
   if (figureDebt) {
     if (nearPassFigureRecovery) {
       pushRoute(deferredRoutes, 'figure_semantics');
-    } else if (semanticDeferred || bootstrapDebt || nativeStructureDebt || untaggedStructureRecovery) {
+    } else if (semanticDeferred || bootstrapDebt || nativeStructureDebt || structureBootstrapAndConformance || postBootstrapHeadingConvergence) {
       pushRoute(deferredRoutes, 'figure_semantics');
     } else {
       pushRoute(routes, 'figure_semantics');
@@ -240,6 +307,15 @@ export function deriveRoutingDecision(
     primaryRoute: routes[0] ?? null,
     secondaryRoutes: routes.slice(1),
     triggeringSignals: signals,
+    residualFamilies: deriveResidualFamilies({
+      analysis,
+      snapshot,
+      detection,
+      nearPassFigureRecovery,
+      postBootstrapHeadingConvergence,
+      fontUnicodeTailRecovery,
+      structureBootstrapAndConformance,
+    }),
     deferredRoutes,
     semanticDeferred,
   };
@@ -260,6 +336,7 @@ export function buildPlanningSummary(input: {
     primaryRoute: input.routing.primaryRoute,
     secondaryRoutes: input.routing.secondaryRoutes,
     triggeringSignals: input.routing.triggeringSignals,
+    residualFamilies: input.routing.residualFamilies,
     scheduledTools: input.scheduledTools.map(tool => tool.toolName),
     skippedTools: input.skippedTools,
     semanticDeferred: input.routing.semanticDeferred,

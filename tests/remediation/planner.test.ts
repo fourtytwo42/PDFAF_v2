@@ -284,7 +284,7 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('bootstrap_struct_tree');
   });
 
-  it('routes untagged digital structure debt into untagged_structure_recovery', () => {
+  it('routes untagged digital structure debt into structure_bootstrap_and_conformance', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 4,
@@ -344,12 +344,12 @@ describe('planForRemediation', () => {
     );
     const plan = planForRemediation(analysis, snap, []);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
-    expect(plan.planningSummary?.primaryRoute).toBe('untagged_structure_recovery');
+    expect(plan.planningSummary?.primaryRoute).toBe('structure_bootstrap_and_conformance');
     expect(names).toContain('synthesize_basic_structure_from_layout');
     expect(names).toContain('artifact_repeating_page_furniture');
   });
 
-  it('does not route already-tagged near-pass files into untagged_structure_recovery', () => {
+  it('does not route already-tagged near-pass files into structure_bootstrap_and_conformance', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 3,
@@ -367,7 +367,7 @@ describe('planForRemediation', () => {
       alt_text: 50,
     });
     const plan = planForRemediation(analysis, snap, []);
-    expect(plan.planningSummary?.primaryRoute).not.toBe('untagged_structure_recovery');
+    expect(plan.planningSummary?.primaryRoute).not.toBe('structure_bootstrap_and_conformance');
   });
 
   it('routes high-score alt residuals into near_pass_figure_recovery', () => {
@@ -428,7 +428,77 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, []);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(plan.planningSummary?.primaryRoute).toBe('near_pass_figure_recovery');
+    expect(names).toContain('normalize_nested_figure_containers');
     expect(names).toContain('canonicalize_figure_alt_ownership');
+  });
+
+  it('routes tagged heading debt into post_bootstrap_heading_convergence', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 4,
+      textByPage: ['Title', 'Body', 'Body', 'Body'],
+      textCharCount: 1200,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      headings: [
+        { level: 1, text: 'Executive Summary', page: 0, structRef: '10_0' },
+        { level: 2, text: 'Overview', page: 1, structRef: '10_1' },
+      ],
+      paragraphStructElems: [
+        { tag: 'P', text: 'Executive Summary', page: 0, structRef: '20_0' },
+      ],
+    };
+    const base = score(snap, META);
+    const analysis = withCategoryScores(base, {
+      heading_structure: 55,
+      reading_order: 82,
+      text_extractability: 96,
+    });
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(plan.planningSummary?.primaryRoute).toBe('post_bootstrap_heading_convergence');
+    expect(names).toContain('create_heading_from_candidate');
+    expect(names).toContain('normalize_heading_hierarchy');
+  });
+
+  it('routes native Type1 font survivors into font_unicode_tail_recovery', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 3,
+      textByPage: ['Text', 'More text', 'Body'],
+      textCharCount: 800,
+      pdfClass: 'native_untagged',
+      fonts: [
+        { name: 'CenturyBold', subtype: 'Type1', isEmbedded: false, hasUnicode: false, encodingRisk: true },
+      ],
+    };
+    const base = score(snap, META);
+    const analysis = withRoutingContext(
+      withCategoryScores(base, {
+        text_extractability: 45,
+        heading_structure: 95,
+        reading_order: 95,
+      }),
+      {
+        failureProfile: {
+          deterministicIssues: ['text_extractability'],
+          semanticIssues: [],
+          manualOnlyIssues: [],
+          primaryFailureFamily: 'font_extractability_heavy',
+          secondaryFailureFamilies: [],
+          routingHints: ['prefer_font_repair'],
+        },
+      },
+    );
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(plan.planningSummary?.primaryRoute).toBe('font_unicode_tail_recovery');
+    expect(names).toContain('substitute_legacy_fonts_in_place');
+    expect(names).toContain('finalize_substituted_font_conformance');
+    expect(names).not.toContain('ocr_scanned_pdf');
   });
 
   it('does not schedule OCR for native text-rich PDFs when extractability is not text-starved', () => {

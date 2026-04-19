@@ -389,6 +389,8 @@ export async function runSingleTool(
       case 'bootstrap_struct_tree':
       case 'synthesize_basic_structure_from_layout':
       case 'repair_structure_conformance':
+      case 'substitute_legacy_fonts_in_place':
+      case 'finalize_substituted_font_conformance':
       case 'wrap_singleton_orphan_mcid':
       case 'remap_orphan_mcids_as_artifacts':
       case 'artifact_repeating_page_furniture':
@@ -399,7 +401,9 @@ export async function runSingleTool(
       case 'set_link_annotation_contents':
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
+      case 'create_heading_from_candidate':
       case 'normalize_heading_hierarchy':
+      case 'normalize_nested_figure_containers':
       case 'canonicalize_figure_alt_ownership':
       case 'repair_annotation_alt_text':
       case 'set_figure_alt_text':

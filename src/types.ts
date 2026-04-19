@@ -26,10 +26,13 @@ export type FailureRoutingHint =
 export type RemediationRoute =
   | 'metadata_foundation'
   | 'untagged_structure_recovery'
+  | 'structure_bootstrap_and_conformance'
+  | 'post_bootstrap_heading_convergence'
   | 'structure_bootstrap'
   | 'annotation_link_normalization'
   | 'native_structure_repair'
   | 'font_ocr_repair'
+  | 'font_unicode_tail_recovery'
   | 'figure_semantics'
   | 'near_pass_figure_recovery'
   | 'document_navigation_forms'
@@ -623,6 +626,7 @@ export interface PlanningSummary {
   primaryRoute: RemediationRoute | null;
   secondaryRoutes: RemediationRoute[];
   triggeringSignals: string[];
+  residualFamilies?: string[];
   scheduledTools: string[];
   skippedTools: Array<{
     toolName: string;
