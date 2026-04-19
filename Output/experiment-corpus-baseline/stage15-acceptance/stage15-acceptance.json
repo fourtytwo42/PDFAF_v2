@@ -1,0 +1,694 @@
+{
+  "generatedAt": "2026-04-19T05:48:07.785Z",
+  "baselineRunDir": "Output/experiment-corpus-baseline/run-stage14.1-full",
+  "stage15RunDir": "Output/experiment-corpus-baseline/run-stage15-full",
+  "comparisonDir": "Output/experiment-corpus-baseline/comparison-stage15-full-vs-stage14.1",
+  "stage15Passed": true,
+  "summary": {
+    "targetFileCount": 17,
+    "targetReachedACount": 15,
+    "targetStillNonACount": 2,
+    "structureSurvivorImprovedCount": 4,
+    "fontSurvivorImprovedCount": 5,
+    "totalNonACountBefore": 17,
+    "totalNonACountAfter": 2,
+    "acceptedConfidenceRegressionCount": 0,
+    "semanticOnlyTrustedPassCount": 0,
+    "remediateWallMedianDeltaMs": -592.185140000016,
+    "remediateWallP95DeltaMs": 1033.4317980001215,
+    "dispositionFrequency": [
+      {
+        "key": "reached_A",
+        "count": 15
+      },
+      {
+        "key": "still_non_A",
+        "count": 2
+      }
+    ]
+  },
+  "gates": [
+    {
+      "key": "target_non_a_reach_a",
+      "passed": true,
+      "detail": "targetReachedACount=15 threshold=5"
+    },
+    {
+      "key": "structure_survivors_material_delta",
+      "passed": true,
+      "detail": "structureSurvivorImprovedCount=4 threshold=4"
+    },
+    {
+      "key": "font_survivors_material_delta",
+      "passed": true,
+      "detail": "fontSurvivorImprovedCount=5 threshold=2"
+    },
+    {
+      "key": "accepted_confidence_regressions",
+      "passed": true,
+      "detail": "acceptedConfidenceRegressionCount=0"
+    },
+    {
+      "key": "semantic_only_trusted_passes",
+      "passed": true,
+      "detail": "semanticOnlyTrustedPassCount=0"
+    },
+    {
+      "key": "runtime_not_regressed",
+      "passed": true,
+      "detail": "wallMedianDeltaMs=-592.19, wallP95DeltaMs=1033.43 medianThreshold<=0 p95Threshold<=5000"
+    }
+  ],
+  "targetFiles": [
+    {
+      "id": "fixture-adam2",
+      "file": "00-fixtures/ADAM2.pdf",
+      "cohort": "00-fixtures",
+      "stage141Score": 33,
+      "stage15Score": 99,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 66
+    },
+    {
+      "id": "short-3981",
+      "file": "10-short-near-pass/3981-Illinois Bill of Rights for Victims and Witnesses of Violent Crime _Polish_.pdf",
+      "cohort": "10-short-near-pass",
+      "stage141Score": 33,
+      "stage15Score": 99,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 66
+    },
+    {
+      "id": "font-4035",
+      "file": "40-font-extractability/4035-Comparison of official and unofficial sources of criminal history record information.pdf",
+      "cohort": "40-font-extractability",
+      "stage141Score": 33,
+      "stage15Score": 99,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 66
+    },
+    {
+      "id": "short-4101",
+      "file": "10-short-near-pass/4101-Implementing restorative justice A guide for schools.pdf",
+      "cohort": "10-short-near-pass",
+      "stage141Score": 42,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 56
+    },
+    {
+      "id": "figure-4194",
+      "file": "20-figure-ownership/4194-Childrens risk of homicide Victimization from birth to age 14 1965 to 1995.pdf",
+      "cohort": "20-figure-ownership",
+      "stage141Score": 42,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 56
+    },
+    {
+      "id": "structure-3661",
+      "file": "30-structure-reading-order/3661-A Generation of Change 30 Years of Criminal Justice in Illinois.pdf",
+      "cohort": "30-structure-reading-order",
+      "stage141Score": 42,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 56
+    },
+    {
+      "id": "structure-3994",
+      "file": "30-structure-reading-order/3994-Community Policing in Chicago The Chicago Alternative Policing Strategy _CAPS_ Year Ten.pdf",
+      "cohort": "30-structure-reading-order",
+      "stage141Score": 42,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 56
+    },
+    {
+      "id": "structure-4131",
+      "file": "30-structure-reading-order/4131-Redeploy Illinois 2nd Judicial Circuit Pilot Site Impact and Implementation Evaluation Report.pdf",
+      "cohort": "30-structure-reading-order",
+      "stage141Score": 42,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 56
+    },
+    {
+      "id": "structure-3775",
+      "file": "30-structure-reading-order/3775-Criminal Justice Plan for the State of Illinois.pdf",
+      "cohort": "30-structure-reading-order",
+      "stage141Score": 45,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 53
+    },
+    {
+      "id": "font-4156",
+      "file": "40-font-extractability/4156-2009 Annual Report Motor Vehicle Theft Prevention Council.pdf",
+      "cohort": "40-font-extractability",
+      "stage141Score": 42,
+      "stage15Score": 95,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 53
+    },
+    {
+      "id": "fixture-inaccessible",
+      "file": "00-fixtures/pdfaf_fixture_inaccessible.pdf",
+      "cohort": "00-fixtures",
+      "stage141Score": 57,
+      "stage15Score": 98,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 41
+    },
+    {
+      "id": "font-3437",
+      "file": "40-font-extractability/3437-Information Networks Expanding.pdf",
+      "cohort": "40-font-extractability",
+      "stage141Score": 55,
+      "stage15Score": 96,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 41
+    },
+    {
+      "id": "font-3448",
+      "file": "40-font-extractability/3448-Flow of Funds in Illinois Criminal Justice System.pdf",
+      "cohort": "40-font-extractability",
+      "stage141Score": 55,
+      "stage15Score": 96,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 41
+    },
+    {
+      "id": "font-3529",
+      "file": "40-font-extractability/3529-Information Technology for Criminal Justice.pdf",
+      "cohort": "40-font-extractability",
+      "stage141Score": 55,
+      "stage15Score": 96,
+      "stage141Grade": "F",
+      "stage15Grade": "A",
+      "scoreDelta": 41
+    },
+    {
+      "id": "figure-4609",
+      "file": "20-figure-ownership/4609-Domestic Violence Trends in Illinois_ Victimization Characteristics_ Help-Seeking_ and Service Utilization.pdf",
+      "cohort": "20-figure-ownership",
+      "stage141Score": 60,
+      "stage15Score": 98,
+      "stage141Grade": "D",
+      "stage15Grade": "A",
+      "scoreDelta": 38
+    },
+    {
+      "id": "short-4176",
+      "file": "10-short-near-pass/4176-Illinois Offense and Arrest Trends Property Index Arrests 19992008.pdf",
+      "cohort": "10-short-near-pass",
+      "stage141Score": 53,
+      "stage15Score": 83,
+      "stage141Grade": "F",
+      "stage15Grade": "B",
+      "scoreDelta": 30
+    },
+    {
+      "id": "short-4214",
+      "file": "10-short-near-pass/4214-Illinois Crime Victim Trends Reported Elder Abuse 20002009.pdf",
+      "cohort": "10-short-near-pass",
+      "stage141Score": 55,
+      "stage15Score": 85,
+      "stage141Grade": "F",
+      "stage15Grade": "B",
+      "scoreDelta": 30
+    }
+  ],
+  "categoryDeltas": [
+    {
+      "key": "pdf_ua_compliance",
+      "meanDelta": 92.94,
+      "improvedCount": 17,
+      "stillFailingCount": 0
+    },
+    {
+      "key": "heading_structure",
+      "meanDelta": 88.24,
+      "improvedCount": 15,
+      "stillFailingCount": 2
+    },
+    {
+      "key": "reading_order",
+      "meanDelta": 64.82,
+      "improvedCount": 17,
+      "stillFailingCount": 1
+    },
+    {
+      "key": "text_extractability",
+      "meanDelta": 26.12,
+      "improvedCount": 15,
+      "stillFailingCount": 5
+    },
+    {
+      "key": "alt_text",
+      "meanDelta": 0,
+      "improvedCount": 0,
+      "stillFailingCount": 0
+    }
+  ],
+  "routeEfficiency": [
+    {
+      "route": "structure_bootstrap_and_conformance",
+      "fileCount": 10,
+      "totalScoreDelta": 479,
+      "totalAddedWallMs": 1374.3,
+      "scoreGainPerAddedSecond": 348.542
+    },
+    {
+      "route": "font_unicode_tail_recovery",
+      "fileCount": 4,
+      "totalScoreDelta": 244,
+      "totalAddedWallMs": 1588.21,
+      "scoreGainPerAddedSecond": 153.632
+    },
+    {
+      "route": "structure_bootstrap",
+      "fileCount": 3,
+      "totalScoreDelta": 123,
+      "totalAddedWallMs": 3271.66,
+      "scoreGainPerAddedSecond": 37.596
+    }
+  ],
+  "topSlowestFiles": [
+    {
+      "id": "structure-4438",
+      "file": "30-structure-reading-order/4438-Inventorying Employment Restrictions Task Force Final Report.pdf",
+      "cohort": "30-structure-reading-order",
+      "metricMs": 204744.01320100005
+    },
+    {
+      "id": "structure-4076",
+      "file": "30-structure-reading-order/4076-Juvenile Justice Data 2004 Annual Report APPENDIX H Data Tables.pdf",
+      "cohort": "30-structure-reading-order",
+      "metricMs": 89711.57499800003
+    },
+    {
+      "id": "font-3529",
+      "file": "40-font-extractability/3529-Information Technology for Criminal Justice.pdf",
+      "cohort": "40-font-extractability",
+      "metricMs": 88159.28570500005
+    },
+    {
+      "id": "font-3448",
+      "file": "40-font-extractability/3448-Flow of Funds in Illinois Criminal Justice System.pdf",
+      "cohort": "40-font-extractability",
+      "metricMs": 67788.95675199991
+    },
+    {
+      "id": "long-4516",
+      "file": "50-long-report-mixed/4516-An Exploratory Study of the Discretionary Use of Electronic Monitoring for Individuals Upon Release to Mandatory Supervised Release _MSR_ in Illinois.pdf",
+      "cohort": "50-long-report-mixed",
+      "metricMs": 56582.46256700007
+    },
+    {
+      "id": "font-3437",
+      "file": "40-font-extractability/3437-Information Networks Expanding.pdf",
+      "cohort": "40-font-extractability",
+      "metricMs": 45492.02161299996
+    },
+    {
+      "id": "long-4606",
+      "file": "50-long-report-mixed/4606-Illinois Criminal Justice Information Authority 2018 Annual Report.pdf",
+      "cohort": "50-long-report-mixed",
+      "metricMs": 16926.05475900008
+    },
+    {
+      "id": "figure-4466",
+      "file": "20-figure-ownership/4466-Victim Need Report_ Service Providers_ Perspectives on the Needs of Crime Victims and Service Gaps.pdf",
+      "cohort": "20-figure-ownership",
+      "metricMs": 15983.252032999997
+    },
+    {
+      "id": "long-4146",
+      "file": "50-long-report-mixed/4146-ICJIA 2008 Annual Report.pdf",
+      "cohort": "50-long-report-mixed",
+      "metricMs": 14451.127618000028
+    },
+    {
+      "id": "figure-4754",
+      "file": "20-figure-ownership/4754-2023 Domestic Violence Fatality Review Committee Annual Report.pdf",
+      "cohort": "20-figure-ownership",
+      "metricMs": 12780.698227999994
+    }
+  ],
+  "comparison": {
+    "beforeRunId": "run-2026-04-19T04-48-46-340Z",
+    "afterRunId": "run-2026-04-19T05-30-39-879Z",
+    "generatedAt": "2026-04-19T05:46:11.404Z",
+    "analyze": {
+      "scoreMeanDelta": -0.20000000000000284,
+      "scoreMedianDelta": 0,
+      "scoreP95Delta": 0,
+      "runtimeMedianDeltaMs": 5.753798000019742,
+      "runtimeP95DeltaMs": 7.351879999856465,
+      "manualReviewRequiredDelta": 0,
+      "scoreCapFrequencyDelta": [
+        {
+          "key": "alt_text",
+          "before": 1,
+          "after": 1,
+          "delta": 0
+        }
+      ]
+    },
+    "remediate": {
+      "beforeMeanDelta": -0.20000000000000284,
+      "afterMeanDelta": 16.92,
+      "reanalyzedMeanDelta": 16.92,
+      "deltaMeanDelta": 17.12,
+      "wallMedianDeltaMs": -592.185140000016,
+      "wallP95DeltaMs": 1033.4317980001215,
+      "totalMedianDeltaMs": -592.1851899999892,
+      "totalP95DeltaMs": 1033.4313170000678,
+      "beforeManualReviewRequiredDelta": 0,
+      "afterManualReviewRequiredDelta": -13,
+      "reanalyzedManualReviewRequiredDelta": -13,
+      "scoreCapFrequencyDelta": [
+        {
+          "key": "text_extractability",
+          "before": 0,
+          "after": 3,
+          "delta": 3
+        }
+      ],
+      "stageRuntimeMedianDeltaMs": [
+        {
+          "key": "planner:stage1",
+          "beforeMedianMs": 986.3113309999462,
+          "afterMedianMs": 996.8654779999051,
+          "deltaMedianMs": 10.554146999958903
+        },
+        {
+          "key": "planner:stage2",
+          "beforeMedianMs": 1008.1801120000309,
+          "afterMedianMs": 1023.3582849999657,
+          "deltaMedianMs": 15.178172999934759
+        },
+        {
+          "key": "planner:stage3",
+          "beforeMedianMs": 373.99312899999495,
+          "afterMedianMs": 398.56988699999056,
+          "deltaMedianMs": 24.576757999995607
+        },
+        {
+          "key": "planner:stage4",
+          "beforeMedianMs": 823.9052160000429,
+          "afterMedianMs": 817.1967799999984,
+          "deltaMedianMs": -6.708436000044458
+        },
+        {
+          "key": "planner:stage5",
+          "beforeMedianMs": 762.7142100000056,
+          "afterMedianMs": 767.6188540000003,
+          "deltaMedianMs": 4.904643999994732
+        },
+        {
+          "key": "planner:stage6",
+          "beforeMedianMs": 260.2209959999891,
+          "afterMedianMs": 266.4046259999741,
+          "deltaMedianMs": 6.183629999984987
+        },
+        {
+          "key": "planner:stage7",
+          "beforeMedianMs": 49543.47346599994,
+          "afterMedianMs": 50409.89308299997,
+          "deltaMedianMs": 866.4196170000359
+        },
+        {
+          "key": "planner:stage8",
+          "beforeMedianMs": 833.0098130000115,
+          "afterMedianMs": 111.58045499993023,
+          "deltaMedianMs": -721.4293580000813
+        },
+        {
+          "key": "planner:stage9",
+          "beforeMedianMs": 775.2670730000027,
+          "afterMedianMs": 739.1211760000151,
+          "deltaMedianMs": -36.1458969999876
+        },
+        {
+          "key": "post_pass:stage11",
+          "beforeMedianMs": 130.30497499997728,
+          "afterMedianMs": 110.69117200002074,
+          "deltaMedianMs": -19.613802999956533
+        },
+        {
+          "key": "post_pass:stage12",
+          "beforeMedianMs": 0.019777000066824257,
+          "afterMedianMs": 0.019367000000784174,
+          "deltaMedianMs": -0.00041000006604008377
+        }
+      ],
+      "toolRuntimeMedianDeltaMs": [
+        {
+          "key": "add_page_outline_bookmarks",
+          "beforeMedianMs": 104.8830939999898,
+          "afterMedianMs": 119.75841999996919,
+          "deltaMedianMs": 14.875325999979395
+        },
+        {
+          "key": "artifact_repeating_page_furniture",
+          "beforeMedianMs": 106.22876299999916,
+          "afterMedianMs": 107.92796900001122,
+          "deltaMedianMs": 1.6992060000120546
+        },
+        {
+          "key": "bootstrap_struct_tree",
+          "beforeMedianMs": 101.67109699999855,
+          "afterMedianMs": 106.602458999987,
+          "deltaMedianMs": 4.9313619999884395
+        },
+        {
+          "key": "create_heading_from_candidate",
+          "beforeMedianMs": 0,
+          "afterMedianMs": 142.74010900000576,
+          "deltaMedianMs": 142.74010900000576
+        },
+        {
+          "key": "ensure_accessibility_tagging",
+          "beforeMedianMs": 651.0598570000002,
+          "afterMedianMs": 0,
+          "deltaMedianMs": -651.0598570000002
+        },
+        {
+          "key": "mark_untagged_content_as_artifact",
+          "beforeMedianMs": 157.62477599999693,
+          "afterMedianMs": 178.2814219999127,
+          "deltaMedianMs": 20.65664599991578
+        },
+        {
+          "key": "normalize_annotation_tab_order",
+          "beforeMedianMs": 102.83034799993038,
+          "afterMedianMs": 110.41214699996635,
+          "deltaMedianMs": 7.581799000035971
+        },
+        {
+          "key": "normalize_heading_hierarchy",
+          "beforeMedianMs": 0,
+          "afterMedianMs": 298.0614330000244,
+          "deltaMedianMs": 298.0614330000244
+        },
+        {
+          "key": "ocr_scanned_pdf",
+          "beforeMedianMs": 47861.75209099997,
+          "afterMedianMs": 48713.41511199996,
+          "deltaMedianMs": 851.6630209999857
+        },
+        {
+          "key": "remap_orphan_mcids_as_artifacts",
+          "beforeMedianMs": 597.5866819999992,
+          "afterMedianMs": 601.1617200000001,
+          "deltaMedianMs": 3.575038000000859
+        },
+        {
+          "key": "repair_native_link_structure",
+          "beforeMedianMs": 111.9448679999914,
+          "afterMedianMs": 110.43794699999853,
+          "deltaMedianMs": -1.5069209999928717
+        },
+        {
+          "key": "repair_native_table_headers",
+          "beforeMedianMs": 159.78470600000583,
+          "afterMedianMs": 0,
+          "deltaMedianMs": -159.78470600000583
+        },
+        {
+          "key": "repair_structure_conformance",
+          "beforeMedianMs": 104.26015900005586,
+          "afterMedianMs": 112.61394499999005,
+          "deltaMedianMs": 8.353785999934189
+        },
+        {
+          "key": "replace_bookmarks_from_headings",
+          "beforeMedianMs": 0,
+          "afterMedianMs": 153.88695099999313,
+          "deltaMedianMs": 153.88695099999313
+        },
+        {
+          "key": "set_document_language",
+          "beforeMedianMs": 106.9391539999051,
+          "afterMedianMs": 114.85841599999912,
+          "deltaMedianMs": 7.919262000094022
+        },
+        {
+          "key": "set_document_title",
+          "beforeMedianMs": 104.72612200002186,
+          "afterMedianMs": 110.0443919999525,
+          "deltaMedianMs": 5.318269999930635
+        },
+        {
+          "key": "set_link_annotation_contents",
+          "beforeMedianMs": 104.46494199999142,
+          "afterMedianMs": 106.39876499993261,
+          "deltaMedianMs": 1.9338229999411851
+        },
+        {
+          "key": "set_pdfua_identification",
+          "beforeMedianMs": 103.3882680000097,
+          "afterMedianMs": 110.15970299998298,
+          "deltaMedianMs": 6.77143499997328
+        },
+        {
+          "key": "set_table_header_cells",
+          "beforeMedianMs": 170.39682000002358,
+          "afterMedianMs": 0,
+          "deltaMedianMs": -170.39682000002358
+        },
+        {
+          "key": "synthesize_basic_structure_from_layout",
+          "beforeMedianMs": 98.7284150000196,
+          "afterMedianMs": 104.90066299994942,
+          "deltaMedianMs": 6.172247999929823
+        },
+        {
+          "key": "tag_native_text_blocks",
+          "beforeMedianMs": 167.09631300000183,
+          "afterMedianMs": 108.98026400001254,
+          "deltaMedianMs": -58.11604899998929
+        },
+        {
+          "key": "tag_ocr_text_blocks",
+          "beforeMedianMs": 917.7765039999504,
+          "afterMedianMs": 952.1579380000476,
+          "deltaMedianMs": 34.381434000097215
+        },
+        {
+          "key": "tag_unowned_annotations",
+          "beforeMedianMs": 111.29752900000312,
+          "afterMedianMs": 112.04578700003913,
+          "deltaMedianMs": 0.7482580000360031
+        }
+      ],
+      "semanticLaneRuntimeMedianDeltaMs": [
+        {
+          "key": "headings",
+          "beforeMedianMs": 1,
+          "afterMedianMs": 0,
+          "deltaMedianMs": -1
+        }
+      ],
+      "costBenefitDelta": {
+        "scoreDeltaPerSecond": 0.9820999615634951,
+        "confidenceDeltaPerSecond": -0.002060772834481365
+      }
+    },
+    "cohorts": {
+      "00-fixtures": {
+        "analyzeMeanDelta": -0.1666666666666714,
+        "analyzeRuntimeMedianDeltaMs": 12.841491000001042,
+        "manualReviewRequiredDelta": 0,
+        "scoreCapFrequencyDelta": [],
+        "remediationDeltaMeanDelta": 18,
+        "remediationRuntimeMedianDeltaMs": 87.97128299999895,
+        "costBenefitDelta": {
+          "scoreDeltaPerSecond": 3.840072246676201,
+          "confidenceDeltaPerSecond": 0.006517846411370154
+        }
+      },
+      "10-short-near-pass": {
+        "analyzeMeanDelta": 0,
+        "analyzeRuntimeMedianDeltaMs": 3.6696650000012596,
+        "manualReviewRequiredDelta": 0,
+        "scoreCapFrequencyDelta": [],
+        "remediationDeltaMeanDelta": 22.75,
+        "remediationRuntimeMedianDeltaMs": 6.673202999998466,
+        "costBenefitDelta": {
+          "scoreDeltaPerSecond": 4.055428143542073,
+          "confidenceDeltaPerSecond": 0.0032336688737893693
+        }
+      },
+      "20-figure-ownership": {
+        "analyzeMeanDelta": 0,
+        "analyzeRuntimeMedianDeltaMs": 7.300264999968931,
+        "manualReviewRequiredDelta": 0,
+        "scoreCapFrequencyDelta": [],
+        "remediationDeltaMeanDelta": 9.600000000000001,
+        "remediationRuntimeMedianDeltaMs": -502.6422420000017,
+        "costBenefitDelta": {
+          "scoreDeltaPerSecond": 1.275205192200683,
+          "confidenceDeltaPerSecond": -0.010758654264577207
+        }
+      },
+      "30-structure-reading-order": {
+        "analyzeMeanDelta": 0.8000000000000043,
+        "analyzeRuntimeMedianDeltaMs": -16.232517000025837,
+        "manualReviewRequiredDelta": 0,
+        "scoreCapFrequencyDelta": [
+          {
+            "key": "alt_text",
+            "before": 1,
+            "after": 1,
+            "delta": 0
+          }
+        ],
+        "remediationDeltaMeanDelta": 21.3,
+        "remediationRuntimeMedianDeltaMs": -1102.859547,
+        "costBenefitDelta": {
+          "scoreDeltaPerSecond": 0.6275280027276696,
+          "confidenceDeltaPerSecond": 0.00019674797450178194
+        }
+      },
+      "40-font-extractability": {
+        "analyzeMeanDelta": 0,
+        "analyzeRuntimeMedianDeltaMs": 3.114136000047438,
+        "manualReviewRequiredDelta": 0,
+        "scoreCapFrequencyDelta": [],
+        "remediationDeltaMeanDelta": 30,
+        "remediationRuntimeMedianDeltaMs": 1178.7508309999248,
+        "costBenefitDelta": {
+          "scoreDeltaPerSecond": 0.9718637234360391,
+          "confidenceDeltaPerSecond": -0.004371522420866785
+        }
+      },
+      "50-long-report-mixed": {
+        "analyzeMeanDelta": -2.125,
+        "analyzeRuntimeMedianDeltaMs": 11.981908999965526,
+        "manualReviewRequiredDelta": 0,
+        "scoreCapFrequencyDelta": [],
+        "remediationDeltaMeanDelta": 2.125,
+        "remediationRuntimeMedianDeltaMs": -63.61641900008544,
+        "costBenefitDelta": {
+          "scoreDeltaPerSecond": 0.10939165773892379,
+          "confidenceDeltaPerSecond": -0.0005503715283622299
+        }
+      }
+    }
+  }
+}
