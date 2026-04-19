@@ -25,16 +25,19 @@ export type FailureRoutingHint =
   | 'manual_review_likely_after_fix';
 export type RemediationRoute =
   | 'metadata_foundation'
+  | 'untagged_structure_recovery'
   | 'structure_bootstrap'
   | 'annotation_link_normalization'
   | 'native_structure_repair'
   | 'font_ocr_repair'
   | 'figure_semantics'
+  | 'near_pass_figure_recovery'
   | 'document_navigation_forms'
   | 'safe_cleanup';
 export type PlanningSkipReason =
   | 'route_not_active'
   | 'missing_precondition'
+  | 'not_applicable'
   | 'already_succeeded'
   | 'reliability_filtered'
   | 'semantic_deferred'

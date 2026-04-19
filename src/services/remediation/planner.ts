@@ -69,6 +69,11 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'set_document_title',
     'set_document_language',
   ],
+  untagged_structure_recovery: [
+    'synthesize_basic_structure_from_layout',
+    'repair_structure_conformance',
+    'artifact_repeating_page_furniture',
+  ],
   structure_bootstrap: [
     'bootstrap_struct_tree',
     'repair_structure_conformance',
@@ -98,11 +103,16 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'mark_untagged_content_as_artifact',
   ],
   figure_semantics: [
+    'canonicalize_figure_alt_ownership',
     'set_figure_alt_text',
     'mark_figure_decorative',
     'repair_alt_text_structure',
     'repair_annotation_alt_text',
     'retag_as_figure',
+  ],
+  near_pass_figure_recovery: [
+    'canonicalize_figure_alt_ownership',
+    'repair_annotation_alt_text',
   ],
   document_navigation_forms: [
     'replace_bookmarks_from_headings',
@@ -152,6 +162,14 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return pdfClass === 'native_untagged' || pdfClass === 'mixed';
   }
+  if (toolName === 'synthesize_basic_structure_from_layout') {
+    if (pdfClass === 'scanned') return false;
+    return (pdfClass === 'native_untagged' || pdfClass === 'mixed') && snapshot.textCharCount > 0;
+  }
+  if (toolName === 'artifact_repeating_page_furniture') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.textCharCount > 0;
+  }
   if (toolName === 'ocr_scanned_pdf') {
     if (pdfClass === 'scanned' || pdfClass === 'mixed') return true;
     if (
@@ -196,7 +214,12 @@ function toolApplicableToPdfClass(
     if (paint >= 5) return true;
     return false;
   }
-  if (toolName === 'set_figure_alt_text' || toolName === 'mark_figure_decorative' || toolName === 'retag_as_figure') {
+  if (
+    toolName === 'set_figure_alt_text'
+    || toolName === 'mark_figure_decorative'
+    || toolName === 'retag_as_figure'
+    || toolName === 'canonicalize_figure_alt_ownership'
+  ) {
     return pdfClass !== 'scanned';
   }
   if (toolName === 'tag_unowned_annotations' || toolName === 'repair_native_link_structure') {
@@ -313,6 +336,7 @@ export function planForRemediation(
     if (!skippedTools.has(toolName)) skippedTools.set(toolName, reason);
   };
   const activeRouteSet = new Set(activeRoutes);
+  const minExtractableCharsForNativeOcr = Math.max(120, snapshot.pageCount * 40);
 
   const categoryFailing = (key: CategoryKey) => failCats.includes(key);
   const hasAnnotationSignals =
@@ -351,7 +375,11 @@ export function planForRemediation(
     analysis.failureProfile?.primaryFailureFamily === 'mixed_structural';
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
-    if (routing.deferredRoutes.includes('figure_semantics') && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)) {
+    if (
+      routing.deferredRoutes.includes('figure_semantics')
+      && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)
+      && toolName !== 'canonicalize_figure_alt_ownership'
+    ) {
       return { allowed: false, reason: 'semantic_deferred' };
     }
     if (toolName === 'repair_annotation_alt_text' && !hasAnnotationSignals) {
@@ -362,25 +390,78 @@ export function planForRemediation(
       || toolName === 'normalize_annotation_tab_order'
       || toolName === 'repair_native_link_structure')
       && !hasAnnotationSignals
+      && !categoryFailing('link_quality')
+    ) {
+      // Allow annotation/link repair when link_quality is failing even without detection
+      // profile annotation signals. Partially-tagged and untagged files can have link
+      // quality failures that aren't surfaced in detectionProfile but are real and fixable.
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'set_link_annotation_contents'
+      && !hasAnnotationSignals
+      && !categoryFailing('link_quality')
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (toolName === 'repair_native_reading_order' && !(categoryFailing('reading_order') || hasReadingOrderSignals)) {
       return { allowed: false, reason: 'missing_precondition' };
     }
+    if (
+      toolName === 'synthesize_basic_structure_from_layout'
+      && !(
+        snapshot.textCharCount > 0
+        && (analysis.pdfClass === 'native_untagged' || analysis.pdfClass === 'mixed')
+        && categoryFailing('pdf_ua_compliance')
+        && (categoryFailing('heading_structure') || categoryFailing('reading_order'))
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'artifact_repeating_page_furniture'
+      && !(categoryFailing('reading_order') || hasReadingOrderSignals || categoryFailing('pdf_ua_compliance'))
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
     if (toolName === 'repair_list_li_wrong_parent' && !hasListSignals) {
       return { allowed: false, reason: 'missing_precondition' };
     }
-    if ((toolName === 'wrap_singleton_orphan_mcid' || toolName === 'remap_orphan_mcids_as_artifacts') && !hasTaggedContentSignals) {
-      return { allowed: false, reason: 'missing_precondition' };
+    if (toolName === 'wrap_singleton_orphan_mcid' || toolName === 'remap_orphan_mcids_as_artifacts') {
+      // Only attempt orphan MCID repair when pdf_ua_compliance is actually failing.
+      // Without this gate, the repair runs on near-passing files where orphan MCIDs
+      // are present in snapshot data but aren't the real score bottleneck, causing
+      // structural mutations that regress scores rather than improve them.
+      if (!categoryFailing('pdf_ua_compliance')) {
+        return { allowed: false, reason: 'category_not_failing' };
+      }
+      // Consolidate all three orphan-MCID data sources: detectionProfile (Stage 3),
+      // taggedContentAudit (Python/QPDF), and raw snapshot orphanMcids array. These
+      // can disagree when detectionProfile is absent or stale, causing the tool to be
+      // incorrectly blocked even though the applicability checks would pass.
+      const hasOrphanMcidEvidence =
+        (snapshot.detectionProfile?.pdfUaSignals.orphanMcidCount ?? 0) > 0 ||
+        (snapshot.taggedContentAudit?.orphanMcidCount ?? 0) > 0 ||
+        (snapshot.orphanMcids?.length ?? 0) > 0;
+      const hasOtherTaggedContentSignals =
+        (snapshot.detectionProfile?.pdfUaSignals.suspectedPathPaintOutsideMc ?? 0) > 0 ||
+        (snapshot.detectionProfile?.pdfUaSignals.taggedAnnotationRiskCount ?? 0) > 0;
+      if (!hasOrphanMcidEvidence && !hasOtherTaggedContentSignals) {
+        return { allowed: false, reason: 'missing_precondition' };
+      }
     }
     if (toolName === 'normalize_heading_hierarchy' && !headingNeedsRepair) {
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (
       (toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
-      && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals) && structureConfidenceHigh)
+      && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals) && (structureConfidenceHigh || categoryFailing('table_markup')))
     ) {
+      // Allow table header repair when table_markup is failing regardless of structural
+      // confidence. Medium-confidence partially-tagged files (e.g. native_tagged with
+      // incomplete tag tree) have failing table_markup that can't get worse than 0.
+      // structureConfidenceHigh is still required when only hasTableSignals triggers
+      // the gate, preserving safety for files that aren't actually failing table_markup.
       return { allowed: false, reason: 'missing_precondition' };
     }
     if ((toolName === 'replace_bookmarks_from_headings' || toolName === 'add_page_outline_bookmarks') && !categoryFailing('bookmarks')) {
@@ -392,7 +473,26 @@ export function planForRemediation(
     if (ROUTE_TOOL_MAP.figure_semantics.includes(toolName) && structurePrimary) {
       return { allowed: false, reason: 'semantic_deferred' };
     }
-    if (toolName === 'ocr_scanned_pdf' && !(analysis.failureProfile?.primaryFailureFamily === 'font_extractability_heavy' || categoryFailing('text_extractability') || analysis.pdfClass === 'scanned' || analysis.pdfClass === 'mixed')) {
+    if (
+      toolName === 'canonicalize_figure_alt_ownership'
+      && !(
+        categoryFailing('alt_text')
+        && snapshot.figures.length > 0
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'ocr_scanned_pdf'
+      && !(
+        analysis.pdfClass === 'scanned'
+        || analysis.pdfClass === 'mixed'
+        || (
+          categoryFailing('text_extractability')
+          && snapshot.textCharCount < minExtractableCharsForNativeOcr
+        )
+      )
+    ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
     return { allowed: true };
@@ -414,7 +514,11 @@ export function planForRemediation(
         continue;
       }
       if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
-        addSkipped(toolName, 'missing_precondition');
+        // 'not_applicable' = the tool genuinely cannot run on this PDF (no structure tree,
+        // too few headings, no misplaced list items, etc.) — distinct from 'missing_precondition'
+        // which signals a gate that *might* be too strict. 'not_applicable' does not trigger
+        // unsafe_to_autofix in outcomeSummary.ts.
+        addSkipped(toolName, 'not_applicable');
         continue;
       }
       if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) {

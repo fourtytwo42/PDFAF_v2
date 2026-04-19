@@ -387,9 +387,11 @@ export async function runSingleTool(
         return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
       }
       case 'bootstrap_struct_tree':
+      case 'synthesize_basic_structure_from_layout':
       case 'repair_structure_conformance':
       case 'wrap_singleton_orphan_mcid':
       case 'remap_orphan_mcids_as_artifacts':
+      case 'artifact_repeating_page_furniture':
       case 'mark_untagged_content_as_artifact':
       case 'tag_ocr_text_blocks':
       case 'tag_native_text_blocks':
@@ -398,6 +400,7 @@ export async function runSingleTool(
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
       case 'normalize_heading_hierarchy':
+      case 'canonicalize_figure_alt_ownership':
       case 'repair_annotation_alt_text':
       case 'set_figure_alt_text':
       case 'mark_figure_decorative':

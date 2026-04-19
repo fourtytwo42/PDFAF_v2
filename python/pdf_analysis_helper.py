@@ -3988,6 +3988,11 @@ def _op_repair_alt_text_structure(pdf: pikepdf.Pdf, _params: dict) -> bool:
         return False
 
 
+def _op_canonicalize_figure_alt_ownership(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """Stage 14 deterministic wrapper around the existing nested/duplicate alt cleanup."""
+    return _op_repair_alt_text_structure(pdf, _params)
+
+
 def _op_set_figure_alt_text(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = params.get("structRef")
     if not ref:
@@ -4583,6 +4588,302 @@ def _wrap_do_operators_as_artifact(insts: list) -> list:
     return result
 
 
+def _extract_text_from_instruction_segment(seg_insts: list) -> str:
+    """Best-effort plain text extracted from a BT…ET instruction segment."""
+    try:
+        raw = pikepdf.unparse_content_stream(seg_insts)
+    except Exception:
+        return ""
+    parts: list[str] = []
+    try:
+        for seg_m in re.finditer(rb"\(((?:\\.|[^\\\)])+)\)|<([0-9A-Fa-f]+)>", raw):
+            if seg_m.group(1):
+                inner = seg_m.group(1)
+                s = inner.decode("latin-1", errors="replace")
+                s = s.replace("\\)", ")").replace("\\(", "(").replace("\\\\", "\\")
+                parts.append(s)
+            elif seg_m.group(2):
+                parts.append(_decode_pdf_hex_string(seg_m.group(2)))
+    except Exception:
+        pass
+    text = " ".join(part.strip() for part in parts if part and part.strip())
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:500]
+
+
+def _bt_et_text_groups(insts: list) -> list[tuple[int, int, str]]:
+    """Return BT…ET spans plus extracted text."""
+    groups: list[tuple[int, int, str]] = []
+    in_bt = False
+    bt_start = 0
+    for idx, inst in enumerate(insts):
+        op = str(inst.operator)
+        if op == "BT" and not in_bt:
+            in_bt = True
+            bt_start = idx
+        elif op == "ET" and in_bt:
+            in_bt = False
+            text = _extract_text_from_instruction_segment(insts[bt_start : idx + 1])
+            groups.append((bt_start, idx, text))
+    return groups
+
+
+def _looks_like_heading_text(text: str, page_idx: int, block_idx: int, page_count: int) -> bool:
+    s = re.sub(r"\s+", " ", (text or "")).strip()
+    if len(s) < 4 or len(s) > 140:
+        return False
+    words = [w for w in re.split(r"\s+", s) if w]
+    if len(words) == 0 or len(words) > 16:
+        return False
+    if page_idx == 0 and block_idx == 0:
+        return True
+    if block_idx > 1:
+        return False
+    if s.endswith("."):
+        return False
+    alpha_chars = sum(1 for ch in s if ch.isalpha())
+    if alpha_chars < max(3, len(s) // 3):
+        return False
+    titleish_words = sum(1 for w in words if any(ch.isalpha() for ch in w) and w[:1].isupper())
+    upperish = s.upper() == s and alpha_chars >= 4
+    return upperish or titleish_words >= max(1, int(len(words) * 0.6)) or (page_count > 1 and block_idx == 0)
+
+
+def _find_or_create_document_elem(pdf: pikepdf.Pdf) -> tuple[object | None, object | None]:
+    root = pdf.Root
+    sr = root.get("/StructTreeRoot")
+    if sr is None:
+      _op_bootstrap_struct_tree(pdf, {})
+      sr = root.get("/StructTreeRoot")
+    if sr is None:
+      return None, None
+    k_root = sr.get("/K")
+    doc_elem = None
+    if isinstance(k_root, pikepdf.Array) and len(k_root) > 0:
+        candidate = k_root[0]
+        if isinstance(candidate, pikepdf.Dictionary):
+            s = candidate.get("/S")
+            if s is not None and str(s).lstrip("/").upper() in ("DOCUMENT", "SECT"):
+                doc_elem = candidate
+    if doc_elem is None:
+        doc_elem = pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name("/StructElem"),
+                S=pikepdf.Name("/Document"),
+            )
+        )
+        sr["/K"] = pikepdf.Array([doc_elem])
+    return sr, doc_elem
+
+
+def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """
+    Build a minimal structure tree from BT…ET text groups on native digital PDFs.
+    Heuristic-only and intentionally conservative: create one H/P StructElem per text block
+    and leave non-text / ambiguous content unclaimed.
+    """
+    if len(pdf.pages) == 0 or pdf.Root is None:
+        return False
+    if _is_ocrmypdf_produced(pdf):
+        return False
+
+    changed = False
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if sr is None or doc_elem is None:
+        return False
+
+    try:
+        existing_ck = doc_elem.get("/K")
+        if isinstance(existing_ck, pikepdf.Array) and len(existing_ck) > 0:
+            return False
+        if isinstance(existing_ck, pikepdf.Dictionary):
+            return False
+    except Exception:
+        pass
+
+    pt = sr.get("/ParentTree")
+    if not isinstance(pt, pikepdf.Dictionary):
+        pt = pikepdf.Dictionary(Nums=pikepdf.Array([]))
+        sr["/ParentTree"] = pt
+        changed = True
+    nums = pt.get("/Nums")
+    if not isinstance(nums, pikepdf.Array):
+        nums = pikepdf.Array([])
+        pt["/Nums"] = nums
+        changed = True
+
+    next_mcid = int(sr.get("/ParentTreeNextKey", 0) or 0)
+    page_children = pikepdf.Array([])
+
+    for page_idx, page in enumerate(pdf.pages):
+        page_obj = page.obj
+        try:
+            insts = list(pikepdf.parse_content_stream(page_obj))
+        except Exception:
+            continue
+        if any(str(i.operator) == "BDC" for i in insts):
+            continue
+
+        groups = _bt_et_text_groups(insts)
+        if not groups:
+            continue
+
+        sect = pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name("/StructElem"),
+                S=pikepdf.Name("/Sect"),
+                P=doc_elem,
+                Pg=page_obj,
+                K=pikepdf.Array([]),
+            )
+        )
+        sect_children = pikepdf.Array([])
+        rewritten: list = []
+        prev_end = 0
+        heading_count = 0
+
+        for block_idx, (grp_start, grp_end, text) in enumerate(groups):
+            cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+            if not cleaned:
+                continue
+            mcid = next_mcid
+            next_mcid += 1
+            tag_name = "/P"
+            if _looks_like_heading_text(cleaned, page_idx, block_idx, len(pdf.pages)):
+                if page_idx == 0 and heading_count == 0:
+                    tag_name = "/H1"
+                elif heading_count == 0:
+                    tag_name = "/H2"
+                elif heading_count == 1 and page_idx == 0:
+                    tag_name = "/H2"
+                heading_count += 1
+
+            elem = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    Type=pikepdf.Name("/StructElem"),
+                    S=pikepdf.Name(tag_name),
+                    K=mcid,
+                    Pg=page_obj,
+                    P=sect,
+                    ActualText=_pdf_text_string(cleaned, 500),
+                )
+            )
+            sect_children.append(elem)
+            nums.append(mcid)
+            nums.append(elem)
+            rewritten.extend(insts[prev_end:grp_start])
+            rewritten.append(
+                pikepdf.ContentStreamInstruction(
+                    [pikepdf.Name("/P"), pikepdf.Dictionary(MCID=mcid)],
+                    pikepdf.Operator("BDC"),
+                )
+            )
+            rewritten.extend(insts[grp_start : grp_end + 1])
+            rewritten.append(pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC")))
+            prev_end = grp_end + 1
+
+        if len(sect_children) == 0:
+            continue
+
+        rewritten.extend(insts[prev_end:])
+        final_rewritten = _wrap_do_operators_as_artifact(rewritten)
+        try:
+            page_obj["/Contents"] = pdf.make_stream(
+                pikepdf.unparse_content_stream(final_rewritten)
+            )
+        except Exception as e:
+            print(f"[warn] synthesize_basic_structure_from_layout page {page_idx}: {e}", file=sys.stderr)
+            continue
+        sect["/K"] = sect_children
+        page_children.append(sect)
+        changed = True
+
+    if len(page_children) > 0:
+        doc_elem["/K"] = page_children
+        sr["/ParentTreeNextKey"] = next_mcid
+        changed = True
+    return changed
+
+
+def _op_artifact_repeating_page_furniture(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """
+    Convert repeated short first/last text elements that recur across 3+ pages into Artifacts.
+    This is intentionally bounded and only touches obvious repeated page furniture.
+    """
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(sr, pikepdf.Dictionary) or len(pdf.pages) < 3:
+        return False
+
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    page_map = build_page_map(pdf)
+
+    q: deque = deque()
+    _enqueue_children(q, sr.get("/K"))
+    visited: set = set()
+    page_entries: dict[int, list[tuple[int, object, str]]] = {}
+    seq = 0
+    while q and seq < MAX_ITEMS * 6:
+        seq += 1
+        try:
+            elem = q.popleft()
+        except Exception:
+            break
+        if not isinstance(elem, pikepdf.Dictionary):
+            continue
+        vk = _struct_elem_visit_key(elem)
+        if vk in visited:
+            continue
+        visited.add(vk)
+        tag = (get_name(elem) or "").lstrip("/").upper()
+        page = get_page_number(elem, page_map)
+        if tag in ("P", "SPAN", "DIV", "H", "H1", "H2", "H3", "H4", "H5", "H6"):
+            text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
+            text = re.sub(r"\s+", " ", text).strip()
+            if text:
+                page_entries.setdefault(page, []).append((seq, elem, text[:200]))
+        try:
+            _enqueue_children(q, elem.get("/K"))
+        except Exception:
+            pass
+
+    counts: dict[str, set[int]] = {}
+    first_last_refs: set[str] = set()
+    for page, entries in page_entries.items():
+        if not entries:
+            continue
+        ordered = sorted(entries, key=lambda row: row[0])
+        for _, elem, text in (ordered[0], ordered[-1]):
+            ref = object_ref_str(elem) or str(id(elem))
+            first_last_refs.add(ref)
+            norm = re.sub(r"\s+", " ", text).strip().lower()
+            if len(norm) <= 80 and len(norm.split()) <= 10:
+                counts.setdefault(norm, set()).add(page)
+    repeated_texts = {text for text, pages in counts.items() if len(pages) >= 3}
+    if not repeated_texts:
+        return False
+
+    changed = False
+    for entries in page_entries.values():
+        for _seq, elem, text in entries:
+            ref = object_ref_str(elem) or str(id(elem))
+            norm = re.sub(r"\s+", " ", text).strip().lower()
+            if ref not in first_last_refs or norm not in repeated_texts:
+                continue
+            try:
+                elem["/S"] = pikepdf.Name("/Artifact")
+                _clear_alt_actual_and_title(elem)
+                changed = True
+            except Exception:
+                pass
+    return changed
+
+
 def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool) -> bool:
     """
     Wrap each BT…ET block in /P <</MCID N>> BDC … EMC and attach ONE P struct element
@@ -4765,8 +5066,11 @@ MUTATORS = {
     "set_document_title": _op_set_document_title,
     "set_document_language": _op_set_document_language,
     "set_pdfua_identification": _op_set_pdfua_identification,
+    "synthesize_basic_structure_from_layout": _op_synthesize_basic_structure_from_layout,
+    "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "set_figure_alt_text": _op_set_figure_alt_text,
     "mark_figure_decorative": _op_mark_figure_decorative,
+    "canonicalize_figure_alt_ownership": _op_canonicalize_figure_alt_ownership,
     "repair_alt_text_structure": _op_repair_alt_text_structure,
     "repair_structure_conformance": _op_repair_structure_conformance,
     "bootstrap_struct_tree": _op_bootstrap_struct_tree,

@@ -112,6 +112,21 @@ function hasFontDebt(snapshot: DocumentSnapshot, analysis: AnalysisResult, failu
   );
 }
 
+function hasUsableStructureTree(snapshot: DocumentSnapshot, detection?: DetectionProfile | null): boolean {
+  if (!snapshot.structureTree) return false;
+  return detection?.readingOrderSignals.missingStructureTree !== true;
+}
+
+function hasExtractableNativeText(snapshot: DocumentSnapshot): boolean {
+  return snapshot.pdfClass !== 'scanned' && (snapshot.textCharCount ?? 0) > 0;
+}
+
+function failingCategories(analysis: AnalysisResult): ScoredCategory['key'][] {
+  return analysis.categories
+    .filter(category => category.applicable && category.score < REMEDIATION_CATEGORY_THRESHOLD)
+    .map(category => category.key);
+}
+
 export function deriveRoutingDecision(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
@@ -123,9 +138,16 @@ export function deriveRoutingDecision(
   const structural = analysis.structuralClassification;
   const detection = analysis.detectionProfile;
   const semanticDeferred = failureProfile?.routingHints.includes('semantic_not_primary') ?? false;
+  const failing = failingCategories(analysis);
 
   const metadataDebt =
     categoryFailing(analysis, 'title_language') || !snapshot.pdfUaVersion;
+  const untaggedStructureRecovery =
+    (snapshot.pdfClass === 'native_untagged' || snapshot.pdfClass === 'mixed')
+    && hasExtractableNativeText(snapshot)
+    && !hasUsableStructureTree(snapshot, detection)
+    && categoryFailing(analysis, 'pdf_ua_compliance')
+    && (categoryFailing(analysis, 'heading_structure') || categoryFailing(analysis, 'reading_order'));
   const bootstrapDebt =
     snapshot.pdfClass !== 'scanned' &&
     (structural?.structureClass === 'untagged_digital' ||
@@ -136,19 +158,27 @@ export function deriveRoutingDecision(
         hasStrongTaggedContentDebt(detection)));
   const annotationDebt =
     hasAnnotationDebt(detection) || categoryFailing(analysis, 'link_quality');
+  const fontDebt = hasFontDebt(snapshot, analysis, failureProfile);
+  const figureDebt =
+    hasFigureDebt(snapshot, failureProfile) || categoryFailing(analysis, 'alt_text');
+  const nearPassFigureRecovery =
+    analysis.score >= 85
+    && categoryFailing(analysis, 'alt_text')
+    && (snapshot.isTagged || snapshot.structureTree !== null)
+    && analysis.structuralClassification?.confidence !== 'low'
+    && failing.every(key => key === 'alt_text' || key === 'pdf_ua_compliance' || key === 'color_contrast')
+    && categoryScore(analysis, 'alt_text') <= categoryScore(analysis, 'pdf_ua_compliance');
   const nativeStructureDebt =
     categoryFailing(analysis, 'reading_order') ||
     categoryFailing(analysis, 'heading_structure') ||
     categoryFailing(analysis, 'table_markup') ||
-    categoryFailing(analysis, 'pdf_ua_compliance') ||
+    (categoryFailing(analysis, 'pdf_ua_compliance') && !nearPassFigureRecovery) ||
     hasReadingOrderDebt(detection) ||
     hasTableDebt(snapshot, detection);
-  const fontDebt = hasFontDebt(snapshot, analysis, failureProfile);
-  const figureDebt =
-    hasFigureDebt(snapshot, failureProfile) || categoryFailing(analysis, 'alt_text');
   const navigationDebt =
     categoryFailing(analysis, 'bookmarks') || categoryFailing(analysis, 'form_accessibility');
   const structureDominant =
+    untaggedStructureRecovery ||
     bootstrapDebt ||
     annotationDebt ||
     nativeStructureDebt ||
@@ -159,6 +189,7 @@ export function deriveRoutingDecision(
 
   pushSignal(signals, 'title_language_debt', metadataDebt);
   pushSignal(signals, 'missing_pdfua_identification', !snapshot.pdfUaVersion);
+  pushSignal(signals, 'untagged_structure_recovery', untaggedStructureRecovery);
   pushSignal(signals, 'structure_class_untagged_or_partial', structural?.structureClass === 'untagged_digital' || structural?.structureClass === 'partially_tagged');
   pushSignal(signals, 'missing_structure_tree', snapshot.structureTree === null);
   pushSignal(signals, 'tagged_content_debt', hasStrongTaggedContentDebt(detection));
@@ -167,10 +198,12 @@ export function deriveRoutingDecision(
   pushSignal(signals, 'table_debt', hasTableDebt(snapshot, detection) || categoryFailing(analysis, 'table_markup'));
   pushSignal(signals, 'font_or_ocr_debt', fontDebt);
   pushSignal(signals, 'figure_semantic_debt', figureDebt);
+  pushSignal(signals, 'near_pass_figure_recovery', nearPassFigureRecovery);
   pushSignal(signals, 'navigation_or_forms_debt', navigationDebt);
 
   if (fontDominant) pushRoute(routes, 'font_ocr_repair');
   if (structureDominant) {
+    if (untaggedStructureRecovery) pushRoute(routes, 'untagged_structure_recovery');
     if (bootstrapDebt) pushRoute(routes, 'structure_bootstrap');
     if (annotationDebt) pushRoute(routes, 'annotation_link_normalization');
     if (nativeStructureDebt) pushRoute(routes, 'native_structure_repair');
@@ -184,8 +217,11 @@ export function deriveRoutingDecision(
     if (nativeStructureDebt) pushRoute(routes, 'native_structure_repair');
   }
   if (navigationDebt) pushRoute(routes, 'document_navigation_forms');
+  if (nearPassFigureRecovery) pushRoute(routes, 'near_pass_figure_recovery');
   if (figureDebt) {
-    if (semanticDeferred || bootstrapDebt || nativeStructureDebt) {
+    if (nearPassFigureRecovery) {
+      pushRoute(deferredRoutes, 'figure_semantics');
+    } else if (semanticDeferred || bootstrapDebt || nativeStructureDebt || untaggedStructureRecovery) {
       pushRoute(deferredRoutes, 'figure_semantics');
     } else {
       pushRoute(routes, 'figure_semantics');
