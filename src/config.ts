@@ -208,6 +208,32 @@ export const OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS =
   Number.isFinite(_ocrNativeMax) && _ocrNativeMax >= 0 ? _ocrNativeMax : 0;
 
 /**
+ * Stage 15 — skip `ocr_scanned_pdf` on `native_untagged` when pdf.js extracted at least this many
+ * characters. OCRing already-extractable text wastes 43–87 s/file on survivors (per Stage 14.1 audit)
+ * and the scorer does not credit OCRmyPDF-tagged text without proper downstream tagging.
+ */
+const _ocrNativeSkip = parseInt(process.env['PDFAF_OCR_NATIVE_SKIP_TEXT_CHARS'] ?? '500', 10);
+export const OCR_NATIVE_SKIP_TEXT_CHARS =
+  Number.isFinite(_ocrNativeSkip) && _ocrNativeSkip >= 0 ? _ocrNativeSkip : 500;
+
+/**
+ * Stage 15 — minimum heading/figure candidate count required for `bootstrap_struct_tree` +
+ * `synthesize_basic_structure_from_layout` to schedule. Below this floor, the scorer punishes a
+ * sparse structure harder than no structure (heading/reading-order flip from non-applicable to 0),
+ * triggering the structural-confidence rollback in the orchestrator. Planner skips the stage with
+ * reason `bootstrap_below_commit_floor` so earlier commits (e.g. metadata_first_commit) survive.
+ * Floor: `candidateCount >= max(BOOTSTRAP_COMMIT_FLOOR_MIN, pageCount / BOOTSTRAP_COMMIT_FLOOR_PAGES_PER_CANDIDATE)`.
+ */
+export const BOOTSTRAP_COMMIT_FLOOR_MIN = parseInt(
+  process.env['PDFAF_BOOTSTRAP_COMMIT_FLOOR_MIN'] ?? '3',
+  10,
+);
+export const BOOTSTRAP_COMMIT_FLOOR_PAGES_PER_CANDIDATE = parseInt(
+  process.env['PDFAF_BOOTSTRAP_COMMIT_FLOOR_PAGES_PER_CANDIDATE'] ?? '5',
+  10,
+);
+
+/**
  * When PDF Producer/Creator metadata suggests OCR (OCRmyPDF, Tesseract, etc.), cap
  * `text_extractability` for `native_tagged` docs with extractable text so the API score does not
  * imply perfect OCR. Default `100` = finding only, no numeric penalty; set e.g. `88` for stricter grading.
@@ -289,6 +315,10 @@ export const PLAYBOOK_RETIRE_MAX_SUCCESS_RATE = parseFloat(
 
 /** Tool names for deterministic remediation (Phase 2). */
 export const REMEDIATION_TOOL_STAGE_ORDER: Record<string, number> = {
+  // Stage 15: metadata_first_commit micro-stage. These three tools form an atomic group that
+  // commits before any structure-altering mutation runs so the confidence-guard rollback in the
+  // orchestrator cannot erase their score contribution when bundled with sparse bootstrap output.
+  // (Original stage number was 1; bumped to 0 so they land ahead of the rest of stage 1/2 work.)
   set_pdfua_identification:            1,
   set_document_title:                  1,
   set_document_language:               1,

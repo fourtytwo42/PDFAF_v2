@@ -4,6 +4,7 @@ import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
   OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS,
+  OCR_NATIVE_SKIP_TEXT_CHARS,
   REMEDIATION_CATEGORY_THRESHOLD,
   REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN,
   REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
@@ -64,6 +65,11 @@ function failingCategories(analysis: AnalysisResult): CategoryKey[] {
 }
 
 const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
+  metadata_first_commit: [
+    'set_pdfua_identification',
+    'set_document_title',
+    'set_document_language',
+  ],
   metadata_foundation: [
     'set_pdfua_identification',
     'set_document_title',
@@ -205,7 +211,8 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned' || pdfClass === 'mixed') return true;
     if (
       (pdfClass === 'native_untagged' || pdfClass === 'native_tagged') &&
-      snapshot.textCharCount <= OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS
+      snapshot.textCharCount <= OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS &&
+      snapshot.textCharCount < OCR_NATIVE_SKIP_TEXT_CHARS
     ) {
       return true;
     }
@@ -408,8 +415,6 @@ export function planForRemediation(
     categoryFailing('text_extractability')
     && snapshot.textCharCount > 0
     && analysis.pdfClass !== 'scanned'
-    && !categoryFailing('heading_structure')
-    && !categoryFailing('reading_order')
     && snapshot.fonts.some(font =>
       (font.subtype ?? '').toLowerCase() === 'type1' && (!font.isEmbedded || !font.hasUnicode || font.encodingRisk),
     );

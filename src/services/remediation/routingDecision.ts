@@ -212,8 +212,6 @@ export function deriveRoutingDecision(
   const fontDebt = hasFontDebt(snapshot, analysis, failureProfile);
   const fontUnicodeTailRecovery =
     hasExtractableNativeText(snapshot)
-    && !categoryFailing(analysis, 'heading_structure')
-    && !categoryFailing(analysis, 'reading_order')
     && categoryFailing(analysis, 'text_extractability')
     && snapshot.pdfClass !== 'scanned'
     && fontSignals.fontRiskCount > 0

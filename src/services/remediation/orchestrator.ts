@@ -109,6 +109,13 @@ export function compareStructuralConfidence(
   if (STRUCTURAL_CONFIDENCE_RANK[afterConfidence] >= STRUCTURAL_CONFIDENCE_RANK[beforeConfidence]) {
     return { regressed: false, reason: null };
   }
+  // Untagged/partially-tagged starting states legitimately drop from high→medium as nascent
+  // structure appears (e.g. MarkInfo.Marked flips untagged_digital→partially_tagged). Score-up
+  // progression out of these states is expected; do not roll back.
+  const beforeClass = before.structuralClassification?.structureClass;
+  if (beforeClass === 'untagged_digital' || beforeClass === 'partially_tagged') {
+    return { regressed: false, reason: null };
+  }
   return {
     regressed: true,
     reason: `stage_regressed_structural_confidence(${beforeConfidence}->${afterConfidence})`,

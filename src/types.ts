@@ -24,6 +24,7 @@ export type FailureRoutingHint =
   | 'semantic_not_primary'
   | 'manual_review_likely_after_fix';
 export type RemediationRoute =
+  | 'metadata_first_commit'
   | 'metadata_foundation'
   | 'untagged_structure_recovery'
   | 'structure_bootstrap_and_conformance'
@@ -44,7 +45,9 @@ export type PlanningSkipReason =
   | 'already_succeeded'
   | 'reliability_filtered'
   | 'semantic_deferred'
-  | 'category_not_failing';
+  | 'category_not_failing'
+  | 'bootstrap_below_commit_floor'
+  | 'ocr_skipped_native_text_present';
 export type DetectionConfidence = 'high' | 'medium' | 'low';
 
 export interface ReadingOrderSignals {
@@ -289,6 +292,21 @@ export interface DocumentSnapshot {
     page: number;
   }>;
   structureTree: StructNode | null;
+  /**
+   * Stage 15: structural bootstrap commit-floor gate input.
+   * `candidateCount` = heading/figure candidates collected from layout; `disorderScore` in [0,1]
+   * summarises per-page MCID range disorder; `expectedFloor` is the planner-visible pass/fail
+   * against `BOOTSTRAP_COMMIT_FLOOR`. Absent when the python analysis did not populate it
+   * (e.g. scanned documents or early failures). Additive; not part of the scoring wire shape.
+   */
+  structureBootstrapGate?: {
+    candidateCount: number;
+    headingCandidateCount: number;
+    pageCount: number;
+    disorderScore: number;
+    expectedFloor: number;
+    passesFloor: boolean;
+  };
 
   // --- computed during merge in pdfAnalyzer ---
   pdfClass: PdfClass;
@@ -395,6 +413,7 @@ export interface PythonAnalysisResult {
   taggedContentAudit?: DocumentSnapshot['taggedContentAudit'];
   listStructureAudit?: DocumentSnapshot['listStructureAudit'];
   acrobatStyleAltRisks?: DocumentSnapshot['acrobatStyleAltRisks'];
+  structureBootstrapGate?: DocumentSnapshot['structureBootstrapGate'];
 }
 
 // ─── Phase 2 — remediation ────────────────────────────────────────────────────
