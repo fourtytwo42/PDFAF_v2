@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
-import { planForRemediation } from '../../src/services/remediation/planner.js';
+import { buildDefaultParams, planForRemediation } from '../../src/services/remediation/planner.js';
 import { score } from '../../src/services/scorer/scorer.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot } from '../../src/types.js';
 
@@ -72,6 +72,19 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_document_title');
     expect(names).toContain('set_document_language');
     expect(names).toContain('set_pdfua_identification');
+  });
+
+  it('prefers first-page text over filename for fallback document title', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 2,
+      textByPage: ['Actual Human Title\nBody copy', 'More copy'],
+      textCharCount: 32,
+    };
+    const analysis = score(snap, META);
+    expect(buildDefaultParams('set_document_title', analysis, snap)).toEqual({
+      title: 'Actual Human Title',
+    });
   });
 
   it('records a metadata-first planning summary for near-pass metadata debt', () => {

@@ -2970,6 +2970,78 @@ def _upsert_parent_tree_entry(nums: pikepdf.Array, key: int, value) -> None:
     nums.append(value)
 
 
+def _get_parent_tree_entry(nums: pikepdf.Array, key: int):
+    key = int(key)
+    index = 0
+    while index + 1 < len(nums):
+        try:
+            ek = int(nums[index])
+        except Exception:
+            index += 2
+            continue
+        if ek == key:
+            return nums[index + 1]
+        index += 2
+    return None
+
+
+def _page_max_mcid(page_obj) -> int:
+    try:
+        raw = _read_page_contents_raw(page_obj)
+    except Exception:
+        return -1
+    out = -1
+    try:
+        for m in MCID_OP_RE.finditer(raw):
+            out = max(out, int(m.group(1)))
+    except Exception:
+        pass
+    return out
+
+
+def _ensure_page_parent_tree_array(
+    pdf: pikepdf.Pdf,
+    struct_root: pikepdf.Dictionary,
+    page_obj,
+) -> tuple[pikepdf.Array | None, int | None, bool]:
+    changed = False
+    _parent_tree, nums = _ensure_parent_tree(struct_root, pdf)
+    try:
+        key_obj = page_obj.get("/StructParents")
+        page_key = int(key_obj) if isinstance(key_obj, (int, pikepdf.Integer)) else None
+    except Exception:
+        page_key = None
+    if page_key is None:
+        page_key = int(struct_root.get("/ParentTreeNextKey", 0) or 0)
+        page_obj["/StructParents"] = pikepdf.Integer(page_key)
+        struct_root["/ParentTreeNextKey"] = pikepdf.Integer(page_key + 1)
+        changed = True
+    entry = _get_parent_tree_entry(nums, page_key)
+    if isinstance(entry, pikepdf.Array):
+        arr = entry
+    else:
+        arr = pdf.make_indirect(pikepdf.Array([]))
+        _upsert_parent_tree_entry(nums, page_key, arr)
+        changed = True
+    return arr, page_key, changed
+
+
+def _set_page_parent_tree_mcid(arr: pikepdf.Array, mcid: int, value) -> bool:
+    mcid = int(mcid)
+    changed = False
+    while len(arr) <= mcid:
+        arr.append(None)
+        changed = True
+    try:
+        prev = arr[mcid]
+    except Exception:
+        prev = None
+    if prev != value:
+        arr[mcid] = value
+        changed = True
+    return changed
+
+
 def _ensure_document_struct_elem(pdf: pikepdf.Pdf, struct_root: pikepdf.Dictionary):
     kids = struct_root.get("/K")
     if isinstance(kids, pikepdf.Array):
@@ -4444,6 +4516,10 @@ def _op_set_document_title(pdf: pikepdf.Pdf, params: dict) -> bool:
             if prev != text:
                 meta["dc:title"] = text
                 changed = True
+            pdf_title_prev = str(meta.get("pdf:Title") or "").strip()
+            if pdf_title_prev != text:
+                meta["pdf:Title"] = text
+                changed = True
     except Exception:
         pass
     # Acrobat DocTitle check: /Catalog /ViewerPreferences /DisplayDocTitle must be true.
@@ -4824,26 +4900,10 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
             nums = pikepdf.Array([])
             pt["/Nums"] = nums
             changed = True
-        next_key = int(sr.get("/ParentTreeNextKey", 0) or 0)
         top_level = _iter_top_level_struct_elems(sr)
         page_backed = [elem for elem in top_level if isinstance(elem.get("/Pg"), pikepdf.Dictionary)]
         for page_idx, page in enumerate(pdf.pages):
             page_obj = page.obj
-            try:
-                sp = page_obj.get("/StructParents")
-                if not isinstance(sp, (int, pikepdf.Integer)):
-                    page_obj["/StructParents"] = pikepdf.Integer(next_key)
-                    page_key = next_key
-                    next_key += 1
-                    changed = True
-                else:
-                    page_key = int(sp)
-            except Exception:
-                page_obj["/StructParents"] = pikepdf.Integer(next_key)
-                page_key = next_key
-                next_key += 1
-                changed = True
-
             page_elem = None
             for elem in page_backed:
                 try:
@@ -4870,8 +4930,16 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
                 page_backed.append(page_elem)
                 changed = True
 
-            _ensure_parent_tree_entry(nums, page_key, pikepdf.Array([page_elem]))
-        sr["/ParentTreeNextKey"] = pikepdf.Integer(next_key)
+            # Page-backed shell nodes are useful for later synthesis, but `/StructParents`
+            # and ParentTree page entries are only valid when the page actually owns marked
+            # content. Do not stamp placeholder ParentTree arrays here.
+            try:
+                if _page_max_mcid(page_obj) >= 0:
+                    _arr, _key, page_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+                    if page_changed:
+                        changed = True
+            except Exception:
+                pass
         if _mut_tag_unowned_annotations(pdf):
             changed = True
         if _mut_repair_native_link_structure(pdf):
@@ -5254,6 +5322,20 @@ def _make_placeholder_heading_text(page_idx: int, page_count: int) -> str:
     return "Section"
 
 
+def _compact_heading_text(text: str, page_idx: int, page_count: int) -> str:
+    s = re.sub(r"\s+", " ", (text or "")).strip()
+    if not s:
+        return _make_placeholder_heading_text(page_idx, page_count)
+    primary = re.split(r"(?<=[.!?])\s+", s, maxsplit=1)[0].strip()
+    if len(primary) > 140:
+        words = [w for w in re.split(r"\s+", primary) if w]
+        primary = " ".join(words[:12]).strip()
+    primary = primary.rstrip(" ,;:-")
+    if len(primary) < 4 or not any(ch.isalpha() for ch in primary):
+        return _make_placeholder_heading_text(page_idx, page_count)
+    return primary[:140]
+
+
 def _choose_synthesized_tag_name(
     cleaned: str,
     page_idx: int,
@@ -5266,7 +5348,7 @@ def _choose_synthesized_tag_name(
     next_assigned_h1 = assigned_h1
     next_heading_count = heading_count
     looks_like_heading = bool(cleaned) and _looks_like_heading_text(cleaned, page_idx, block_idx, page_count)
-    should_force_heading = not cleaned and block_idx == 0 and page_idx < min(page_count, 3)
+    should_force_heading = block_idx == 0 and page_idx < min(page_count, 3) and heading_count < min(page_count, 3)
 
     if looks_like_heading or should_force_heading:
         if not next_assigned_h1:
@@ -5290,7 +5372,7 @@ def _append_structured_segments_for_page(
     insts: list,
     segments: list[tuple[int, int, str]],
     doc_elem,
-    nums: pikepdf.Array,
+    page_parent_tree: pikepdf.Array,
     next_mcid: int,
     assigned_h1: bool,
     heading_count: int,
@@ -5321,6 +5403,8 @@ def _append_structured_segments_for_page(
         actual_text = cleaned
         if tag_name != "/P" and not actual_text:
             actual_text = _make_placeholder_heading_text(page_idx, page_count)
+        elif tag_name != "/P":
+            actual_text = _compact_heading_text(actual_text, page_idx, page_count)
         mcid = next_mcid
         next_mcid += 1
         elem = pdf.make_indirect(
@@ -5334,8 +5418,7 @@ def _append_structured_segments_for_page(
             )
         )
         sect_children.append(elem)
-        nums.append(mcid)
-        nums.append(elem)
+        _set_page_parent_tree_mcid(page_parent_tree, mcid, elem)
         rewritten.extend(insts[prev_end:seg_start])
         rewritten.append(
             pikepdf.ContentStreamInstruction(
@@ -5365,27 +5448,77 @@ def _tree_depth(node) -> int:
     return 1 + max((_tree_depth(child) for child in kids), default=0)
 
 
+def _struct_elem_has_nonempty_children(elem) -> bool:
+    if not _is_struct_elem_dict(elem):
+        return False
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return False
+    if isinstance(k, pikepdf.Array):
+        return len(k) > 0
+    if isinstance(k, pikepdf.Dictionary):
+        return True
+    if isinstance(k, int):
+        return True
+    return False
+
+
 def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
     root = pdf.Root
     sr = root.get("/StructTreeRoot")
     parent_tree_entries = 0
     parent_tree_next_key = 0
+    page_struct_parents = 0
+    page_parent_tree_arrays = 0
+    page_parent_tree_nonempty = 0
+    top_level_nonempty = 0
     if isinstance(sr, pikepdf.Dictionary):
         pt = sr.get("/ParentTree")
         if isinstance(pt, pikepdf.Dictionary):
             nums = pt.get("/Nums")
             if isinstance(nums, pikepdf.Array):
                 parent_tree_entries = len(nums) // 2
+                idx = 0
+                while idx + 1 < len(nums):
+                    val = nums[idx + 1]
+                    if isinstance(val, pikepdf.Array):
+                        page_parent_tree_arrays += 1
+                        if any(item is not None for item in val):
+                            page_parent_tree_nonempty += 1
+                    idx += 2
         try:
             parent_tree_next_key = int(sr.get("/ParentTreeNextKey", 0) or 0)
         except Exception:
             parent_tree_next_key = 0
+        try:
+            k = sr.get("/K")
+            if isinstance(k, pikepdf.Array):
+                for child in k:
+                    if isinstance(child, pikepdf.Dictionary):
+                        ck = child.get("/K")
+                        if isinstance(ck, pikepdf.Array) and len(ck) > 0:
+                            top_level_nonempty += 1
+                        elif isinstance(ck, pikepdf.Dictionary):
+                            top_level_nonempty += 1
+        except Exception:
+            pass
     struct = traverse_struct_tree(pdf, build_page_map(pdf))
     headings = struct.get("headings") or []
+    for page in pdf.pages:
+        try:
+            if isinstance(page.obj.get("/StructParents"), (int, pikepdf.Integer)):
+                page_struct_parents += 1
+        except Exception:
+            pass
     return {
         "hasStructTreeRoot": isinstance(sr, pikepdf.Dictionary),
         "parentTreeEntries": parent_tree_entries,
         "parentTreeNextKey": parent_tree_next_key,
+        "pageStructParentsCount": page_struct_parents,
+        "pageParentTreeArrayCount": page_parent_tree_arrays,
+        "pageParentTreeNonEmptyCount": page_parent_tree_nonempty,
+        "topLevelNonEmptyCount": top_level_nonempty,
         "headingCount": len(headings),
         "structureDepth": _tree_depth(struct.get("structureTree")),
     }
@@ -5539,7 +5672,10 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
             if note not in ("existing_structure_has_no_paragraph_candidates", "paragraph_candidates_not_promotable_to_headings"):
                 _set_last_mutation_note(note)
                 return False
-            existing_doc_children = pikepdf.Array(list(existing_ck))
+            existing_doc_children = pikepdf.Array([
+                child for child in existing_ck
+                if not isinstance(child, pikepdf.Dictionary) or _struct_elem_has_nonempty_children(child)
+            ])
         if isinstance(existing_ck, pikepdf.Dictionary):
             if _promote_existing_structure_to_headings(pdf, doc_elem, len(pdf.pages)):
                 return True
@@ -5547,7 +5683,7 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
             if note not in ("existing_structure_has_no_paragraph_candidates", "paragraph_candidates_not_promotable_to_headings"):
                 _set_last_mutation_note(note)
                 return False
-            existing_doc_children = pikepdf.Array([existing_ck])
+            existing_doc_children = pikepdf.Array([existing_ck] if _struct_elem_has_nonempty_children(existing_ck) else [])
     except Exception:
         pass
 
@@ -5562,10 +5698,30 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         pt["/Nums"] = nums
         changed = True
 
-    next_mcid = int(sr.get("/ParentTreeNextKey", 0) or 0)
     page_children = pikepdf.Array([])
-    assigned_h1 = False
-    heading_count = 0
+    existing_heading_count = 0
+    try:
+        q = deque()
+        _enqueue_children(q, doc_elem.get("/K"))
+        seen = set()
+        while q and existing_heading_count < MAX_ITEMS:
+            elem = q.popleft()
+            if not _is_struct_elem_dict(elem):
+                continue
+            vk = _struct_elem_visit_key(elem)
+            if vk in seen:
+                continue
+            seen.add(vk)
+            if _struct_elem_heading_level(elem) is not None:
+                existing_heading_count += 1
+            try:
+                _enqueue_children(q, elem.get("/K"))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    assigned_h1 = existing_heading_count > 0
+    heading_count = existing_heading_count
     used_fallback_segments = False
     pages_with_existing_marked_content = 0
     pages_without_promotable_segments = 0
@@ -5580,6 +5736,12 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         if any(str(i.operator) == "BDC" for i in insts):
             pages_with_existing_marked_content += 1
             continue
+        page_parent_tree, _page_key, page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+        if page_parent_tree is None:
+            pages_without_promotable_segments += 1
+            continue
+        if page_pt_changed:
+            changed = True
 
         groups = _bt_et_text_groups(insts)
         segments = [(start, end + 1, text) for start, end, text in groups if text or (end + 1) > start]
@@ -5603,8 +5765,8 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
             insts,
             segments,
             doc_elem,
-            nums,
-            next_mcid,
+            page_parent_tree,
+            max(0, _page_max_mcid(page_obj) + 1),
             assigned_h1,
             heading_count,
         )
@@ -5629,7 +5791,6 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         for child in page_children:
             combined_children.append(child)
         doc_elem["/K"] = combined_children
-        sr["/ParentTreeNextKey"] = next_mcid
         changed = True
         if len(existing_doc_children) > 0:
             if used_fallback_segments:
@@ -5640,6 +5801,7 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
             _set_last_mutation_note("fallback_visible_segments_applied")
         else:
             _set_last_mutation_note("bt_et_groups_applied")
+        _op_normalize_heading_hierarchy(pdf, {})
         return changed
 
     if pages_with_existing_marked_content > 0:
@@ -5786,8 +5948,6 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
         nums = pikepdf.Array([])
         pt["/Nums"] = nums
 
-    next_mcid = int(sr.get("/ParentTreeNextKey", 0) or 0)
-
     changed = False
     new_p_elems = []
     pages_with_existing_marked_content = 0
@@ -5822,11 +5982,18 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
         if not bt_et_groups:
             pages_without_bt_et += 1
             continue
+        page_parent_tree, _page_key, page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+        if page_parent_tree is None:
+            pages_without_bt_et += 1
+            continue
+        if page_pt_changed:
+            changed = True
 
         # Assign MCIDs for this page's BT/ET groups
         page_mcids: list[int] = []
         rewritten: list = []
         prev_end = 0
+        next_mcid = max(0, _page_max_mcid(page_obj) + 1)
 
         for grp_start, grp_end in bt_et_groups:
             mcid = next_mcid
@@ -5870,8 +6037,7 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
 
         # ParentTree: each MCID → this P element
         for mcid in page_mcids:
-            nums.append(mcid)
-            nums.append(p_elem)
+            _set_page_parent_tree_mcid(page_parent_tree, mcid, p_elem)
 
         changed = True
 
@@ -5886,8 +6052,8 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
 
     # Attach all page P elements to Document
     doc_elem["/K"] = pikepdf.Array(new_p_elems)
-    sr["/ParentTreeNextKey"] = next_mcid
     _set_last_mutation_note("bt_et_page_wrapping_applied")
+    _op_normalize_heading_hierarchy(pdf, {})
     return True
 
 

@@ -71,11 +71,23 @@ async function buildEmbeddedPageXObjectPdf(): Promise<Buffer> {
 describe('Stage 14 deterministic tools', () => {
   it('synthesize_basic_structure_from_layout creates a tagged structure with headings', async () => {
     const buf = await buildUntaggedStructurePdf();
-    const { buffer, result } = await runPythonMutationBatch(buf, [
-      { op: 'synthesize_basic_structure_from_layout', params: {} },
-    ]);
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let buffer: Buffer;
+    let result: Awaited<ReturnType<typeof runPythonMutationBatch>>['result'];
+    try {
+      ({ buffer, result } = await runPythonMutationBatch(buf, [
+        { op: 'synthesize_basic_structure_from_layout', params: {} },
+      ]));
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
     expect(result.success).toBe(true);
     expect(result.applied).toContain('synthesize_basic_structure_from_layout');
+    const debug = result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.debug;
+    expect(debug?.pageStructParentsCount ?? 0).toBeGreaterThan(0);
+    expect(debug?.pageParentTreeArrayCount ?? 0).toBeGreaterThan(0);
+    expect(debug?.pageParentTreeNonEmptyCount ?? 0).toBeGreaterThan(0);
+    expect(debug?.topLevelNonEmptyCount ?? 0).toBeGreaterThan(0);
 
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-struct-'));
     const pdfPath = join(dir, 'out.pdf');

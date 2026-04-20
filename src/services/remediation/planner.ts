@@ -179,6 +179,28 @@ function tooltipNeedsRepair(tooltip: string | null | undefined): boolean {
   ].includes(t);
 }
 
+function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
+  const metaTitle = snapshot.metadata.title?.trim();
+  if (metaTitle) return metaTitle;
+  const headingTitle = snapshot.headings[0]?.text?.trim();
+  if (headingTitle) return headingTitle.slice(0, 500);
+  for (const pageText of snapshot.textByPage) {
+    const line = (pageText ?? '')
+      .split('\n')
+      .map(part => part.trim())
+      .find(part => part.length >= 4 && /[A-Za-z]/.test(part));
+    if (line) return line.slice(0, 500);
+    const sentence = (pageText ?? '')
+      .replace(/\s+/g, ' ')
+      .split(/(?<=[.!?])\s+/)[0]
+      ?.trim();
+    if (sentence && /[A-Za-z]/.test(sentence)) {
+      return sentence.split(/\s+/).slice(0, 12).join(' ').slice(0, 500);
+    }
+  }
+  return filename.replace(/\.pdf$/i, '').slice(0, 500);
+}
+
 /** One-shot tools: skip after first success. Figure alt/decorative + table headers: repeat until cap or no targets. */
 function shouldSkipAfterSuccessfulApply(toolName: string, applied: AppliedRemediationTool[]): boolean {
   if (toolName === 'set_figure_alt_text' || toolName === 'mark_figure_decorative') {
@@ -697,7 +719,7 @@ export function buildDefaultParams(
   switch (toolName) {
     case 'set_document_title':
       return {
-        title: (meta.title?.trim() || analysis.filename.replace(/\.pdf$/i, '')).slice(0, 500),
+        title: deriveFallbackDocumentTitle(snapshot, analysis.filename),
       };
     case 'set_document_language':
       return { language: (meta.language?.trim() || snapshot.lang?.trim() || 'en-US').slice(0, 32) };
