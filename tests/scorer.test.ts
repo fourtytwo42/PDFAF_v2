@@ -227,7 +227,7 @@ describe('textExtractability', () => {
 
 describe('titleLanguage', () => {
   it('penalises missing language', () => {
-    const snap = makeSnap({ lang: null, metadata: { title: 'Doc', language: undefined } });
+    const snap = makeSnap({ lang: null, metadata: { title: 'Document Title', language: undefined } });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'title_language')!;
     expect(cat.score).toBe(50);
@@ -245,6 +245,14 @@ describe('titleLanguage', () => {
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'title_language')!;
     expect(cat.score).toBe(0);
+  });
+
+  it('treats filename-like metadata titles as missing', () => {
+    const snap = makeSnap({ metadata: { title: 'report_v3_final.pdf', language: 'en-US' } });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'title_language')!;
+    expect(cat.score).toBe(50);
+    expect(cat.findings.some(f => /filename-like/i.test(f.message))).toBe(true);
   });
 });
 
@@ -389,6 +397,62 @@ describe('headingStructure', () => {
     const catNoSkip = noSkip.categories.find(c => c.key === 'heading_structure')!;
 
     expect(catSkip.score).toBeLessThan(catNoSkip.score);
+  });
+});
+
+describe('readingOrder', () => {
+  it('caps reading order for external parity risk when tree depth is <= 1', () => {
+    const snap = makeSnap({
+      structureTree: { type: 'Document', children: [] },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'medium',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBeLessThanOrEqual(30);
+    expect(cat.findings.some(f => /external parity risk/i.test(f.message))).toBe(true);
   });
 });
 

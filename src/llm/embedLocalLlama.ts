@@ -56,6 +56,12 @@ async function waitForModelsJson(baseV1: string, apiKey: string): Promise<{ firs
   return { firstModelId: null };
 }
 
+function applyCompatEnv(baseV1: string, apiKey: string, firstModelId: string): void {
+  process.env['OPENAI_COMPAT_BASE_URL'] = baseV1;
+  process.env['OPENAI_COMPAT_API_KEY'] = apiKey;
+  process.env['OPENAI_COMPAT_MODEL'] = firstModelId;
+}
+
 /**
  * If `PDFAF_RUN_LOCAL_LLM=1` and `OPENAI_COMPAT_BASE_URL` is unset, spawn `llama-server` (Gemma 4 E2B instruct
  * GGUF defaults: `unsloth/gemma-4-E2B-it-GGUF` + `gemma-4-E2B-it-Q4_K_M.gguf`, same weights family as
@@ -74,6 +80,18 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
 
   const host = '127.0.0.1';
   const port = PDFAF_LLAMA_PORT;
+  const baseV1 = `http://${host}:${port}/v1`;
+  const apiKey = (process.env['OPENAI_COMPAT_API_KEY'] ?? '').trim() || 'local';
+  const reused = await waitForModelsJson(baseV1, apiKey);
+  if (reused.firstModelId) {
+    applyCompatEnv(baseV1, apiKey, reused.firstModelId);
+    logInfo({
+      message: 'embed_llm_reused',
+      details: { baseV1, model: reused.firstModelId },
+    });
+    return;
+  }
+
   mkdirSync(PDFAF_LLAMA_WORKDIR, { recursive: true });
 
   const workGguf = preferWorkdirFile(GEMMA4_GGUF_FILE);
@@ -161,9 +179,6 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
     llamaChild = null;
   });
 
-  const baseV1 = `http://${host}:${port}/v1`;
-  const apiKey = (process.env['OPENAI_COMPAT_API_KEY'] ?? '').trim() || 'local';
-
   const { firstModelId } = await waitForModelsJson(baseV1, apiKey);
   if (!firstModelId) {
     logError({
@@ -176,10 +191,8 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
     );
   }
 
-  process.env['OPENAI_COMPAT_BASE_URL'] = baseV1;
-  process.env['OPENAI_COMPAT_API_KEY'] = apiKey;
   // Always use the id from llama-server (GGUF basename), not a HF Transformers id like google/gemma-4-E2B-it.
-  process.env['OPENAI_COMPAT_MODEL'] = firstModelId;
+  applyCompatEnv(baseV1, apiKey, firstModelId);
 
   logInfo({
     message: 'embed_llm_ready',

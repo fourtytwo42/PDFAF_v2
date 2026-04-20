@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compareStructuralConfidence, shouldRejectStageResult } from '../../src/services/remediation/orchestrator.js';
-import type { AnalysisResult, AppliedRemediationTool, RemediationStagePlan } from '../../src/types.js';
+import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, RemediationStagePlan } from '../../src/types.js';
 
 function makeAnalysis(input: {
   score: number;
@@ -65,6 +65,75 @@ function makeApplied(toolName = 'bootstrap_struct_tree'): AppliedRemediationTool
     delta: 0,
     outcome: 'applied',
   }];
+}
+
+function makeSnapshot(input: { depth: number; title?: string; textCharCount?: number }): DocumentSnapshot {
+  return {
+    pageCount: 4,
+    textByPage: Array(4).fill('Readable text'),
+    textCharCount: input.textCharCount ?? 1200,
+    imageOnlyPageCount: 0,
+    metadata: { title: input.title ?? 'Doc Title', language: 'en-US' },
+    links: [],
+    formFieldsFromPdfjs: [],
+    isTagged: true,
+    markInfo: { Marked: true },
+    lang: 'en-US',
+    pdfUaVersion: '1',
+    headings: [{ level: 1, text: 'Doc Title', page: 0 }],
+    figures: [],
+    tables: [],
+    fonts: [{ name: 'Arial', isEmbedded: true, hasUnicode: true }],
+    bookmarks: [],
+    formFields: [],
+    structureTree: input.depth > 0 ? { type: 'Document', children: input.depth > 1 ? [{ type: 'Sect', children: [] }] : [] } : null,
+    pdfClass: 'native_tagged',
+    imageToTextRatio: 0,
+    detectionProfile: {
+      readingOrderSignals: {
+        missingStructureTree: input.depth === 0,
+        structureTreeDepth: input.depth,
+        degenerateStructureTree: input.depth <= 1,
+        annotationOrderRiskCount: 0,
+        annotationStructParentRiskCount: 0,
+        headerFooterPollutionRisk: false,
+        sampledStructurePageOrderDriftCount: 0,
+        multiColumnOrderRiskPages: 0,
+        suspiciousPageCount: 1,
+      },
+      headingSignals: {
+        extractedHeadingCount: 1,
+        treeHeadingCount: input.depth > 1 ? 1 : 0,
+        headingTreeDepth: input.depth,
+        extractedHeadingsMissingFromTree: input.depth <= 1,
+      },
+      figureSignals: {
+        extractedFigureCount: 0,
+        treeFigureCount: 0,
+        nonFigureRoleCount: 0,
+        treeFigureMissingForExtractedFigures: false,
+      },
+      pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+      annotationSignals: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+      tableSignals: {
+        tablesWithMisplacedCells: 0,
+        misplacedCellCount: 0,
+        irregularTableCount: 0,
+        stronglyIrregularTableCount: 0,
+        directCellUnderTableCount: 0,
+      },
+      sampledPages: [0],
+      confidence: 'medium',
+    },
+  };
 }
 
 describe('compareStructuralConfidence', () => {
@@ -168,6 +237,21 @@ describe('shouldRejectStageResult', () => {
     expect(result).toEqual({
       reject: true,
       reason: 'stage_externally_incomplete(rootReachableDepth<=1)',
+    });
+  });
+
+  it('rejects score-improving structural stages when local parity still floors reading order at 30', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 85, confidence: 'medium' }),
+      beforeSnapshot: makeSnapshot({ depth: 1 }),
+      afterSnapshot: makeSnapshot({ depth: 1 }),
+      stage: makeStage('repair_structure_conformance'),
+      stageApplied: makeApplied('repair_structure_conformance'),
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_externally_incomplete(parityReadingOrder=30)',
     });
   });
 });

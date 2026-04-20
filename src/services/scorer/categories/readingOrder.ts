@@ -167,6 +167,16 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let score = Math.min(headingScore, tabScore, annotOrderScore, unowned.score);
+  if ((stage3?.structureTreeDepth ?? 0) <= 1 && snap.pageCount > 1) {
+    score = Math.min(score, 30);
+    findings.push({
+      category: 'reading_order',
+      severity: 'critical',
+      wcag: '1.3.2',
+      message:
+        'Reading-order score is capped for external parity risk: the exported structure tree is too shallow to satisfy qpdf-style traversal from StructTreeRoot/K.',
+    });
+  }
   if (stage3?.degenerateStructureTree) {
     score = Math.min(score, 35);
     findings.push({

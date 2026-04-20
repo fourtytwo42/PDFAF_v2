@@ -71,10 +71,13 @@ describe('embedLocalLlama', () => {
       path.endsWith('gemma-4-E2B-it-Q4_K_M.gguf') || path.endsWith('mmproj-F16.gguf'),
     );
 
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ data: [{ id: 'gemma-4-E2B-it-Q4_K_M.gguf' }] }),
-    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ data: [] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ id: 'gemma-4-E2B-it-Q4_K_M.gguf' }] }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
@@ -90,6 +93,24 @@ describe('embedLocalLlama', () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
+  it('reuses an already-running listener on the configured port instead of spawning', async () => {
+    process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
+    process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '50';
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'shared-model.gguf' }] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
+    await startEmbeddedLlmIfEnabled();
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(process.env['OPENAI_COMPAT_BASE_URL']).toBe('http://127.0.0.1:1234/v1');
+    expect(process.env['OPENAI_COMPAT_MODEL']).toBe('shared-model.gguf');
+  });
+
   it('spawns HF mode when local model files are absent', async () => {
     process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
     process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '50';
@@ -100,10 +121,13 @@ describe('embedLocalLlama', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ data: [{ id: 'remote-model.gguf' }] }),
-      })),
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, json: async () => ({ data: [] }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: [{ id: 'remote-model.gguf' }] }),
+        }),
     );
 
     const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
@@ -148,10 +172,13 @@ describe('embedLocalLlama', () => {
     existsSyncMock.mockReturnValue(false);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ data: [{ id: 'ready-model' }] }),
-      })),
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, json: async () => ({ data: [] }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: [{ id: 'ready-model' }] }),
+        }),
     );
 
     const { startEmbeddedLlmIfEnabled, stopEmbeddedLlm } = await import('../../src/llm/embedLocalLlama.js');

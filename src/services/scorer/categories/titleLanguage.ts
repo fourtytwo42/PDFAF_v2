@@ -1,9 +1,11 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
+import { isFilenameLikeTitle } from '../../compliance/icjiaParity.js';
 
 export function scoreTitleLanguage(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
 
-  const hasTitle = !!(snap.metadata.title?.trim() || snap.structTitle?.trim());
+  const metadataTitle = snap.metadata.title?.trim() ?? '';
+  const hasTitle = !!(metadataTitle && !isFilenameLikeTitle(metadataTitle));
   const hasLang = !!(snap.lang?.trim() || snap.metadata.language?.trim());
 
   let score: number;
@@ -24,7 +26,10 @@ export function scoreTitleLanguage(snap: DocumentSnapshot): ScoredCategory {
       category: 'title_language',
       severity: 'moderate',
       wcag: '2.4.2',
-      message: 'Document title is not set (/Title missing). Tab windows and screen readers show no meaningful title.',
+      message:
+        metadataTitle && isFilenameLikeTitle(metadataTitle)
+          ? 'Document title metadata is filename-like rather than descriptive. Screen readers will announce an unhelpful title.'
+          : 'Document title is not set (/Title missing). Tab windows and screen readers show no meaningful title.',
     });
   } else {
     score = 0;

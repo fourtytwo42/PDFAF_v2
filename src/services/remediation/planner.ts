@@ -16,6 +16,7 @@ import {
 import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
 import { buildPlanningSummary, deriveRoutingDecision } from './routingDecision.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
+import { isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -180,18 +181,8 @@ function tooltipNeedsRepair(tooltip: string | null | undefined): boolean {
 }
 
 export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
-  const looksFilenameLike = (value: string | null | undefined): boolean => {
-    const v = (value ?? '').trim();
-    if (!v) return true;
-    const lower = v.toLowerCase();
-    return (
-      lower.endsWith('.pdf')
-      || lower.endsWith('.docx')
-      || /^[a-z0-9._-]+$/i.test(v)
-    );
-  };
   const metaTitle = snapshot.metadata.title?.trim();
-  if (metaTitle && !looksFilenameLike(metaTitle)) return metaTitle;
+  if (metaTitle && !isFilenameLikeTitle(metaTitle)) return metaTitle;
   const headingTitle = snapshot.headings[0]?.text?.trim();
   if (headingTitle) return headingTitle.slice(0, 500);
   for (const pageText of snapshot.textByPage) {
@@ -199,12 +190,12 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
       .split('\n')
       .map(part => part.trim())
       .find(part => part.length >= 4 && /[A-Za-z]/.test(part));
-    if (line && !looksFilenameLike(line)) return line.slice(0, 500);
+    if (line && !isFilenameLikeTitle(line)) return line.slice(0, 500);
     const sentence = (pageText ?? '')
       .replace(/\s+/g, ' ')
       .split(/(?<=[.!?])\s+/)[0]
       ?.trim();
-    if (sentence && /[A-Za-z]/.test(sentence) && !looksFilenameLike(sentence)) {
+    if (sentence && /[A-Za-z]/.test(sentence) && !isFilenameLikeTitle(sentence)) {
       return sentence.split(/\s+/).slice(0, 12).join(' ').slice(0, 500);
     }
   }

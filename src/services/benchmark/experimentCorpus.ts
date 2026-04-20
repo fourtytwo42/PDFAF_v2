@@ -1,5 +1,6 @@
 import { access, readFile } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
+import type { IcjiaParityResult } from '../compliance/icjiaParity.js';
 import type {
   AnalysisResult,
   AppliedRemediationTool,
@@ -66,6 +67,7 @@ export interface AnalyzeBenchmarkRow {
   structuralClassification?: StructuralClassification;
   failureProfile?: FailureProfile;
   detectionProfile?: DetectionProfile;
+  icjiaParity?: IcjiaParityResult | null;
   error?: string;
 }
 
@@ -87,6 +89,7 @@ export interface RemediateBenchmarkRow {
   beforeStructuralClassification?: StructuralClassification | null;
   beforeFailureProfile?: FailureProfile | null;
   beforeDetectionProfile?: DetectionProfile | null;
+  beforeIcjiaParity?: IcjiaParityResult | null;
   afterScore: number | null;
   afterGrade: string | null;
   afterPdfClass: string | null;
@@ -98,6 +101,7 @@ export interface RemediateBenchmarkRow {
   afterStructuralClassification?: StructuralClassification | null;
   afterFailureProfile?: FailureProfile | null;
   afterDetectionProfile?: DetectionProfile | null;
+  afterIcjiaParity?: IcjiaParityResult | null;
   reanalyzedScore: number | null;
   reanalyzedGrade: string | null;
   reanalyzedPdfClass: string | null;
@@ -109,6 +113,7 @@ export interface RemediateBenchmarkRow {
   reanalyzedStructuralClassification?: StructuralClassification | null;
   reanalyzedFailureProfile?: FailureProfile | null;
   reanalyzedDetectionProfile?: DetectionProfile | null;
+  reanalyzedIcjiaParity?: IcjiaParityResult | null;
   planningSummary?: PlanningSummary | null;
   delta: number | null;
   appliedTools: AppliedRemediationTool[];

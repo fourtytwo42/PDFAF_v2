@@ -25,6 +25,7 @@ import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } 
 import { applySemanticPromoteHeadingRepairs } from '../src/services/semantic/promoteHeadingSemantic.js';
 import { applySemanticRepairs } from '../src/services/semantic/semanticService.js';
 import { applySemanticUntaggedHeadingRepairs } from '../src/services/semantic/untaggedHeadingSemantic.js';
+import { buildIcjiaParity } from '../src/services/compliance/icjiaParity.js';
 import {
   buildBenchmarkSummary,
   defaultExperimentCorpusPaths,
@@ -233,6 +234,7 @@ function makeAnalyzeRow(
   entry: ExperimentCorpusEntry,
   result: AnalysisResult,
   wallAnalyzeMs: number,
+  snapshot: DocumentSnapshot,
 ): AnalyzeBenchmarkRow {
   return {
     id: entry.id,
@@ -256,6 +258,7 @@ function makeAnalyzeRow(
     structuralClassification: result.structuralClassification,
     failureProfile: result.failureProfile,
     detectionProfile: result.detectionProfile,
+    icjiaParity: buildIcjiaParity(snapshot),
   };
 }
 
@@ -282,6 +285,7 @@ function makeAnalyzeErrorRow(entry: ExperimentCorpusEntry, error: unknown): Anal
     structuralClassification: undefined,
     failureProfile: undefined,
     detectionProfile: undefined,
+    icjiaParity: null,
     error: sanitizeError(error),
   };
 }
@@ -444,7 +448,7 @@ async function runAnalyzeStep(entry: ExperimentCorpusEntry): Promise<{
   const analyzed = await analyzePdf(entry.absolutePath, entry.filename, { bypassCache: true });
   const wallAnalyzeMs = performance.now() - wallStart;
   return {
-    row: makeAnalyzeRow(entry, analyzed.result, wallAnalyzeMs),
+    row: makeAnalyzeRow(entry, analyzed.result, wallAnalyzeMs, analyzed.snapshot),
     result: analyzed.result,
     snapshot: analyzed.snapshot,
   };
@@ -506,10 +510,12 @@ async function runRemediationStep(
     }
 
     let reanalyzed: AnalysisResult | null = null;
+    let reanalyzedSnapshot: DocumentSnapshot | null = null;
     let analysisAfterMs: number | null = null;
     if (mode === 'full') {
       const finalAnalyze = await reanalyzeBuffer(finalBuffer, entry.filename);
       reanalyzed = finalAnalyze.result;
+      reanalyzedSnapshot = finalAnalyze.snapshot;
       analysisAfterMs = finalAnalyze.result.analysisDurationMs;
     }
 
@@ -557,6 +563,7 @@ async function runRemediationStep(
       beforeStructuralClassification: remediation.before.structuralClassification ?? null,
       beforeFailureProfile: remediation.before.failureProfile ?? null,
       beforeDetectionProfile: remediation.before.detectionProfile ?? null,
+      beforeIcjiaParity: buildIcjiaParity(snapshot),
       afterScore: effectiveAfter.score,
       afterGrade: effectiveAfter.grade,
       afterPdfClass: effectiveAfter.pdfClass,
@@ -568,6 +575,7 @@ async function runRemediationStep(
       afterStructuralClassification: effectiveAfter.structuralClassification ?? null,
       afterFailureProfile: effectiveAfter.failureProfile ?? null,
       afterDetectionProfile: effectiveAfter.detectionProfile ?? null,
+      afterIcjiaParity: buildIcjiaParity(finalSnapshot),
       reanalyzedScore: reanalyzed?.score ?? null,
       reanalyzedGrade: reanalyzed?.grade ?? null,
       reanalyzedPdfClass: reanalyzed?.pdfClass ?? null,
@@ -579,6 +587,7 @@ async function runRemediationStep(
       reanalyzedStructuralClassification: reanalyzed?.structuralClassification ?? null,
       reanalyzedFailureProfile: reanalyzed?.failureProfile ?? null,
       reanalyzedDetectionProfile: reanalyzed?.detectionProfile ?? null,
+      reanalyzedIcjiaParity: reanalyzedSnapshot ? buildIcjiaParity(reanalyzedSnapshot) : null,
       planningSummary: remediation.planningSummary ?? null,
       delta: effectiveAfter.score - remediation.before.score,
       appliedTools: remediation.appliedTools,

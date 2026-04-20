@@ -45,6 +45,7 @@ import * as metadataTools from './tools/metadata.js';
 import { applyPostRemediationAltRepair } from './altStructureRepair.js';
 import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
+import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -148,16 +149,11 @@ function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): 
   return false;
 }
 
-function titleLooksFilenameLike(value: string | null | undefined): boolean {
-  const v = (value ?? '').trim();
-  if (!v) return true;
-  const lower = v.toLowerCase();
-  return lower.endsWith('.pdf') || lower.endsWith('.docx') || /^[a-z0-9._-]+$/i.test(v);
-}
-
 export function shouldRejectStageResult(input: {
   before: AnalysisResult;
   after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
   stage: RemediationStagePlan;
   stageApplied: AppliedRemediationTool[];
 }): { reject: boolean; reason: string | null } {
@@ -180,6 +176,20 @@ export function shouldRejectStageResult(input: {
         reject: true,
         reason: 'stage_externally_incomplete(rootReachableDepth<=1)',
       };
+    }
+    if (input.beforeSnapshot && input.afterSnapshot) {
+      const beforeParity = buildIcjiaParity(input.beforeSnapshot);
+      const afterParity = buildIcjiaParity(input.afterSnapshot);
+      if (
+        afterParity.categories.reading_order.score <= 30 &&
+        afterParity.signals.structTreeDepth <= 1 &&
+        afterParity.categories.reading_order.score <= beforeParity.categories.reading_order.score
+      ) {
+        return {
+          reject: true,
+          reason: 'stage_externally_incomplete(parityReadingOrder=30)',
+        };
+      }
     }
   }
   return {
@@ -627,7 +637,7 @@ async function applyIcjiaDocumentFinalization(args: {
   const stageStarted = performance.now();
 
   const existingTitle = currentSnapshot.metadata.title?.trim();
-  if (titleLooksFilenameLike(existingTitle)) {
+  if (isFilenameLikeTitle(existingTitle)) {
     const title = deriveFallbackDocumentTitle(currentSnapshot, filename);
     const next = await metadataTools.setDocumentTitle(currentBuffer, title);
     const accepted = await applyGuardedPostPass({
@@ -861,6 +871,7 @@ export async function executePlaybook(
   for (const stage of stages) {
     const stageStartBuffer = currentBuffer;
     const stageStartAnalysis = currentAnalysis;
+    const stageStartSnapshot = currentSnapshot;
     const stageStartScore = currentAnalysis.score;
     const stageApplied: AppliedRemediationTool[] = [];
     const stageStarted = performance.now();
@@ -908,6 +919,8 @@ export async function executePlaybook(
     const stageDecision = shouldRejectStageResult({
       before: stageStartAnalysis,
       after: analyzed.result,
+      beforeSnapshot: stageStartSnapshot,
+      afterSnapshot: analyzed.snapshot,
       stage,
       stageApplied,
     });
@@ -1137,6 +1150,7 @@ export async function remediatePdf(
       );
       const stageStartBuffer = currentBuffer;
       const stageStartAnalysis = currentAnalysis;
+      const stageStartSnapshot = currentSnapshot;
       const stageStartScore = currentAnalysis.score;
       const stageApplied: AppliedRemediationTool[] = [];
       const stageStarted = performance.now();
@@ -1184,6 +1198,8 @@ export async function remediatePdf(
       const stageDecision = shouldRejectStageResult({
         before: stageStartAnalysis,
         after: analyzed.result,
+        beforeSnapshot: stageStartSnapshot,
+        afterSnapshot: analyzed.snapshot,
         stage,
         stageApplied,
       });
