@@ -179,9 +179,19 @@ function tooltipNeedsRepair(tooltip: string | null | undefined): boolean {
   ].includes(t);
 }
 
-function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
+export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
+  const looksFilenameLike = (value: string | null | undefined): boolean => {
+    const v = (value ?? '').trim();
+    if (!v) return true;
+    const lower = v.toLowerCase();
+    return (
+      lower.endsWith('.pdf')
+      || lower.endsWith('.docx')
+      || /^[a-z0-9._-]+$/i.test(v)
+    );
+  };
   const metaTitle = snapshot.metadata.title?.trim();
-  if (metaTitle) return metaTitle;
+  if (metaTitle && !looksFilenameLike(metaTitle)) return metaTitle;
   const headingTitle = snapshot.headings[0]?.text?.trim();
   if (headingTitle) return headingTitle.slice(0, 500);
   for (const pageText of snapshot.textByPage) {
@@ -189,16 +199,16 @@ function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: strin
       .split('\n')
       .map(part => part.trim())
       .find(part => part.length >= 4 && /[A-Za-z]/.test(part));
-    if (line) return line.slice(0, 500);
+    if (line && !looksFilenameLike(line)) return line.slice(0, 500);
     const sentence = (pageText ?? '')
       .replace(/\s+/g, ' ')
       .split(/(?<=[.!?])\s+/)[0]
       ?.trim();
-    if (sentence && /[A-Za-z]/.test(sentence)) {
+    if (sentence && /[A-Za-z]/.test(sentence) && !looksFilenameLike(sentence)) {
       return sentence.split(/\s+/).slice(0, 12).join(' ').slice(0, 500);
     }
   }
-  return filename.replace(/\.pdf$/i, '').slice(0, 500);
+  return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').slice(0, 500);
 }
 
 /** One-shot tools: skip after first success. Figure alt/decorative + table headers: repeat until cap or no targets. */

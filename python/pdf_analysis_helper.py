@@ -4185,6 +4185,25 @@ def _k_has_mcid_association(k) -> bool:
     return False
 
 
+def _k_has_mcr_association(k) -> bool:
+    if k is None:
+        return False
+    if isinstance(k, pikepdf.Dictionary):
+        try:
+            return k.get("/Type") == pikepdf.Name("/MCR") and k.get("/MCID") is not None
+        except Exception:
+            return False
+    if isinstance(k, pikepdf.Array):
+        for ch in k:
+            if isinstance(ch, pikepdf.Dictionary):
+                try:
+                    if ch.get("/Type") == pikepdf.Name("/MCR") and ch.get("/MCID") is not None:
+                        return True
+                except Exception:
+                    pass
+    return False
+
+
 def _k_has_objr(k) -> bool:
     if isinstance(k, pikepdf.Array):
         for ch in k:
@@ -4902,6 +4921,11 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
             changed = True
         top_level = _iter_top_level_struct_elems(sr)
         page_backed = [elem for elem in top_level if isinstance(elem.get("/Pg"), pikepdf.Dictionary)]
+        dk = doc_elem.get("/K")
+        if isinstance(dk, pikepdf.Array):
+            for elem in dk:
+                if isinstance(elem, pikepdf.Dictionary) and isinstance(elem.get("/Pg"), pikepdf.Dictionary):
+                    page_backed.append(elem)
         for page_idx, page in enumerate(pdf.pages):
             page_obj = page.obj
             page_elem = None
@@ -4940,9 +4964,29 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
                         changed = True
             except Exception:
                 pass
+        try:
+            filtered_children = pikepdf.Array([])
+            dk = doc_elem.get("/K")
+            if isinstance(dk, pikepdf.Array):
+                for child in dk:
+                    if not isinstance(child, pikepdf.Dictionary) or not _is_struct_elem_dict(child):
+                        continue
+                    try:
+                        child["/P"] = doc_elem
+                    except Exception:
+                        pass
+                    if _struct_elem_has_nonempty_children(child) or _k_has_mcid_association(child.get("/K")):
+                        filtered_children.append(child)
+            if len(filtered_children) > 0:
+                doc_elem["/K"] = filtered_children
+                changed = True
+        except Exception:
+            pass
         if _mut_tag_unowned_annotations(pdf):
             changed = True
         if _mut_repair_native_link_structure(pdf):
+            changed = True
+        if _global_heading_cleanup(pdf):
             changed = True
     try:
         if _repair_table_role_misplacement(pdf):
@@ -5054,6 +5098,8 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
         else:
             prev_level = level
 
+    if _global_heading_cleanup(pdf):
+        changed = True
     return changed
 
 
@@ -5473,6 +5519,9 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
     page_parent_tree_arrays = 0
     page_parent_tree_nonempty = 0
     top_level_nonempty = 0
+    root_children_count = 0
+    uses_mcr_kids = 0
+    uses_integer_kids = 0
     if isinstance(sr, pikepdf.Dictionary):
         pt = sr.get("/ParentTree")
         if isinstance(pt, pikepdf.Dictionary):
@@ -5494,6 +5543,7 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
         try:
             k = sr.get("/K")
             if isinstance(k, pikepdf.Array):
+                root_children_count = len(k)
                 for child in k:
                     if isinstance(child, pikepdf.Dictionary):
                         ck = child.get("/K")
@@ -5501,10 +5551,33 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
                             top_level_nonempty += 1
                         elif isinstance(ck, pikepdf.Dictionary):
                             top_level_nonempty += 1
+            elif isinstance(k, pikepdf.Dictionary):
+                root_children_count = 1
         except Exception:
             pass
     struct = traverse_struct_tree(pdf, build_page_map(pdf))
     headings = struct.get("headings") or []
+    root_reachable = _iter_root_reachable_struct_elems(sr) if isinstance(sr, pikepdf.Dictionary) else []
+    global_heading_count = 0
+    global_h1_count = 0
+    root_reachable_heading_count = 0
+    for elem in _iter_struct_elems(pdf):
+        level = _struct_elem_heading_level(elem)
+        if level is not None:
+            global_heading_count += 1
+            if level == 1:
+                global_h1_count += 1
+        try:
+            k = elem.get("/K")
+            if _k_has_mcid_association(k):
+                uses_integer_kids += 1
+            if _k_has_mcr_association(k):
+                uses_mcr_kids += 1
+        except Exception:
+            pass
+    for elem in root_reachable:
+        if _struct_elem_heading_level(elem) is not None:
+            root_reachable_heading_count += 1
     for page in pdf.pages:
         try:
             if isinstance(page.obj.get("/StructParents"), (int, pikepdf.Integer)):
@@ -5519,6 +5592,13 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
         "pageParentTreeArrayCount": page_parent_tree_arrays,
         "pageParentTreeNonEmptyCount": page_parent_tree_nonempty,
         "topLevelNonEmptyCount": top_level_nonempty,
+        "rootChildrenCount": root_children_count,
+        "rootReachableDepth": _root_reachable_depth(sr),
+        "rootReachableHeadingCount": root_reachable_heading_count,
+        "globalHeadingCount": global_heading_count,
+        "globalH1Count": global_h1_count,
+        "usesMcrKidsCount": uses_mcr_kids,
+        "usesIntegerKidsCount": uses_integer_kids,
         "headingCount": len(headings),
         "structureDepth": _tree_depth(struct.get("structureTree")),
     }
@@ -5643,6 +5723,75 @@ def _find_or_create_document_elem(pdf: pikepdf.Pdf) -> tuple[object | None, obje
         )
         sr["/K"] = pikepdf.Array([doc_elem])
     return sr, doc_elem
+
+
+def _iter_root_reachable_struct_elems(struct_root) -> list:
+    out: list = []
+    if not isinstance(struct_root, pikepdf.Dictionary):
+        return out
+    q: deque = deque()
+    _enqueue_children(q, struct_root.get("/K"))
+    seen: set = set()
+    limit = MAX_ITEMS * 8
+    while q and len(out) < limit:
+        elem = q.popleft()
+        if not _is_struct_elem_dict(elem):
+            continue
+        vk = _struct_elem_visit_key(elem)
+        if vk in seen:
+            continue
+        seen.add(vk)
+        out.append(elem)
+        try:
+            _enqueue_children(q, elem.get("/K"))
+        except Exception:
+            pass
+    return out
+
+
+def _root_reachable_depth(struct_root) -> int:
+    if not isinstance(struct_root, pikepdf.Dictionary):
+        return 0
+
+    max_depth = 0
+    seen: set = set()
+
+    def walk(node, depth: int) -> None:
+        nonlocal max_depth
+        if depth > MAX_ITEMS:
+            return
+        if not _is_struct_elem_dict(node):
+            return
+        vk = _struct_elem_visit_key(node)
+        if vk in seen:
+            return
+        seen.add(vk)
+        max_depth = max(max_depth, depth)
+        for child in _direct_role_children(node):
+            walk(child, depth + 1)
+
+    for child in _iter_top_level_struct_elems(struct_root):
+        walk(child, 1)
+    return max_depth
+
+
+def _global_heading_cleanup(pdf: pikepdf.Pdf) -> bool:
+    changed = False
+    h1_seen = False
+    for elem in _iter_struct_elems(pdf):
+        level = _struct_elem_heading_level(elem)
+        if level is None:
+            continue
+        if level == 1:
+            if h1_seen:
+                try:
+                    elem["/S"] = pikepdf.Name("/H2")
+                    changed = True
+                except Exception:
+                    pass
+            else:
+                h1_seen = True
+    return changed
 
 
 def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) -> bool:
@@ -5802,6 +5951,7 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         else:
             _set_last_mutation_note("bt_et_groups_applied")
         _op_normalize_heading_hierarchy(pdf, {})
+        _global_heading_cleanup(pdf)
         return changed
 
     if pages_with_existing_marked_content > 0:

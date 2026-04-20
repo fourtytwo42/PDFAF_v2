@@ -38,7 +38,7 @@ import type {
   StructuralConfidenceGuardSummary,
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
-import { buildDefaultParams, planForRemediation } from './planner.js';
+import { buildDefaultParams, deriveFallbackDocumentTitle, planForRemediation } from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import * as metadataTools from './tools/metadata.js';
@@ -123,6 +123,38 @@ export function compareStructuralConfidence(
   };
 }
 
+function parseMutationDetails(details: string | undefined): { debug?: { rootReachableDepth?: number } } | null {
+  if (!details?.startsWith('{')) return null;
+  try {
+    return JSON.parse(details) as { debug?: { rootReachableDepth?: number } };
+  } catch {
+    return null;
+  }
+}
+
+function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): boolean {
+  const structuralTools = new Set([
+    'repair_structure_conformance',
+    'synthesize_basic_structure_from_layout',
+    'tag_native_text_blocks',
+    'normalize_heading_hierarchy',
+  ]);
+  for (const row of stageApplied) {
+    if (row.outcome !== 'applied' || !structuralTools.has(row.toolName)) continue;
+    const parsed = parseMutationDetails(row.details);
+    const depth = parsed?.debug?.rootReachableDepth;
+    if (typeof depth === 'number' && depth <= 1) return true;
+  }
+  return false;
+}
+
+function titleLooksFilenameLike(value: string | null | undefined): boolean {
+  const v = (value ?? '').trim();
+  if (!v) return true;
+  const lower = v.toLowerCase();
+  return lower.endsWith('.pdf') || lower.endsWith('.docx') || /^[a-z0-9._-]+$/i.test(v);
+}
+
 export function shouldRejectStageResult(input: {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -141,6 +173,12 @@ export function shouldRejectStageResult(input: {
       return {
         reject: true,
         reason: confidence.reason,
+      };
+    }
+    if (stageHasExternalStructureDebt(input.stageApplied)) {
+      return {
+        reject: true,
+        reason: 'stage_externally_incomplete(rootReachableDepth<=1)',
       };
     }
   }
@@ -588,8 +626,9 @@ async function applyIcjiaDocumentFinalization(args: {
   const { filename, signal, round } = args;
   const stageStarted = performance.now();
 
-  if (!currentSnapshot.metadata.title?.trim()) {
-    const title = filename.replace(/\.pdf$/i, '').slice(0, 500);
+  const existingTitle = currentSnapshot.metadata.title?.trim();
+  if (titleLooksFilenameLike(existingTitle)) {
+    const title = deriveFallbackDocumentTitle(currentSnapshot, filename);
     const next = await metadataTools.setDocumentTitle(currentBuffer, title);
     const accepted = await applyGuardedPostPass({
       filename,

@@ -143,4 +143,31 @@ describe('shouldRejectStageResult', () => {
       reason: null,
     });
   });
+
+  it('rejects score-improving structural stages when ICJIA-parity debug says the root tree is still shallow', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 85, confidence: 'medium' }),
+      stage: makeStage('synthesize_basic_structure_from_layout'),
+      stageApplied: [{
+        toolName: 'synthesize_basic_structure_from_layout',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 80,
+        delta: 0,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          debug: {
+            rootReachableDepth: 1,
+          },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_externally_incomplete(rootReachableDepth<=1)',
+    });
+  });
 });

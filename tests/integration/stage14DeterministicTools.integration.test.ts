@@ -84,6 +84,9 @@ describe('Stage 14 deterministic tools', () => {
     expect(result.success).toBe(true);
     expect(result.applied).toContain('synthesize_basic_structure_from_layout');
     const debug = result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.debug;
+    expect(debug?.rootReachableDepth ?? 0).toBeGreaterThanOrEqual(2);
+    expect(debug?.rootChildrenCount ?? 0).toBeGreaterThan(0);
+    expect(debug?.rootReachableHeadingCount ?? 0).toBeGreaterThan(0);
     expect(debug?.pageStructParentsCount ?? 0).toBeGreaterThan(0);
     expect(debug?.pageParentTreeArrayCount ?? 0).toBeGreaterThan(0);
     expect(debug?.pageParentTreeNonEmptyCount ?? 0).toBeGreaterThan(0);
@@ -101,23 +104,34 @@ describe('Stage 14 deterministic tools', () => {
 
   it('bootstrap alone does not count as heading recovery, but synthesize fixes shell-tree PDFs', async () => {
     const buf = await buildUntaggedStructurePdf();
-    const bootstrapped = await runPythonMutationBatch(buf, [
-      { op: 'bootstrap_struct_tree', params: {} },
-    ]);
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let bootstrapped: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    let synthesized: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    try {
+      bootstrapped = await runPythonMutationBatch(buf, [
+        { op: 'bootstrap_struct_tree', params: {} },
+      ]);
+      synthesized = await runPythonMutationBatch(bootstrapped.buffer, [
+        { op: 'synthesize_basic_structure_from_layout', params: {} },
+      ]);
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
     expect(bootstrapped.result.success).toBe(true);
     expect(bootstrapped.result.applied).toContain('bootstrap_struct_tree');
 
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-shell-'));
     const bootstrapPath = join(dir, 'bootstrap.pdf');
     await writeFile(bootstrapPath, bootstrapped.buffer);
+    const bootstrapDebug = bootstrapped.result.opResults?.find(row => row.op === 'bootstrap_struct_tree')?.debug;
+    expect(bootstrapDebug?.rootReachableDepth ?? 0).toBeLessThanOrEqual(1);
     const bootstrapAnalysis = await analyzePdf(bootstrapPath, 'bootstrap.pdf', { bypassCache: true });
     expect(bootstrapAnalysis.result.categories.find(c => c.key === 'heading_structure')?.score).toBe(0);
 
-    const synthesized = await runPythonMutationBatch(bootstrapped.buffer, [
-      { op: 'synthesize_basic_structure_from_layout', params: {} },
-    ]);
     expect(synthesized.result.success).toBe(true);
     expect(synthesized.result.applied).toContain('synthesize_basic_structure_from_layout');
+    const synthDebug = synthesized.result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.debug;
+    expect(synthDebug?.rootReachableDepth ?? 0).toBeGreaterThanOrEqual(2);
 
     const synthesizedPath = join(dir, 'synthesized.pdf');
     await writeFile(synthesizedPath, synthesized.buffer);
@@ -126,6 +140,60 @@ describe('Stage 14 deterministic tools', () => {
     expect(after.snapshot.headings.length).toBeGreaterThan(0);
     expect(after.result.categories.find(c => c.key === 'heading_structure')?.score ?? 0).toBeGreaterThan(0);
     expect(after.result.categories.find(c => c.key === 'reading_order')?.score ?? 0).toBeGreaterThanOrEqual(90);
+  });
+
+  it('normalize_heading_hierarchy eliminates duplicate global H1 objects', async () => {
+    const buf = await buildUntaggedStructurePdf();
+    const synthesized = await runPythonMutationBatch(buf, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(synthesized.result.success).toBe(true);
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-h1-'));
+    const beforePath = join(dir, 'before.pdf');
+    await writeFile(beforePath, synthesized.buffer);
+    const before = await runPythonAnalysis(beforePath);
+    const paragraph = (before.paragraphStructElems ?? [])[0];
+    expect(paragraph?.structRef).toBeTruthy();
+
+    const withDuplicate = await runPythonMutationBatch(synthesized.buffer, [
+      { op: 'create_heading_from_candidate', params: { targetRef: paragraph!.structRef, level: 1 } },
+    ]);
+    expect(withDuplicate.result.success).toBe(true);
+
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let normalized: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    try {
+      normalized = await runPythonMutationBatch(withDuplicate.buffer, [
+        { op: 'normalize_heading_hierarchy', params: {} },
+      ]);
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
+    expect(normalized.result.success).toBe(true);
+    expect(normalized.result.applied).toContain('normalize_heading_hierarchy');
+    const debug = normalized.result.opResults?.find(row => row.op === 'normalize_heading_hierarchy')?.debug;
+    expect(debug?.globalH1Count).toBe(1);
+
+    const afterPath = join(dir, 'after.pdf');
+    await writeFile(afterPath, normalized.buffer);
+    const after = await runPythonAnalysis(afterPath);
+    expect(after.headings.filter(item => item.level === 1)).toHaveLength(1);
+  });
+
+  it('set_document_title survives final output with a descriptive metadata title', async () => {
+    const buf = await buildUntaggedStructurePdf();
+    const titled = await runPythonMutationBatch(buf, [
+      { op: 'set_document_title', params: { title: 'Runtime Neutral Accessibility Upgrade' } },
+    ]);
+    expect(titled.result.success).toBe(true);
+    expect(titled.result.applied).toContain('set_document_title');
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-title-'));
+    const pdfPath = join(dir, 'report_v3_final.pdf');
+    await writeFile(pdfPath, titled.buffer);
+    const analyzed = await analyzePdf(pdfPath, 'report_v3_final.pdf', { bypassCache: true });
+    expect(analyzed.snapshot.metadata.title).toBe('Runtime Neutral Accessibility Upgrade');
   });
 
   it('synthesize_basic_structure_from_layout falls back to visible page segments for XObject-heavy pages', async () => {

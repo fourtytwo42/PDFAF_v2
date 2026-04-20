@@ -32,6 +32,17 @@ export interface BatchMutationResult {
       parentTreeNextKey?: number;
       headingCount?: number;
       structureDepth?: number;
+      rootReachableDepth?: number;
+      rootReachableHeadingCount?: number;
+      globalHeadingCount?: number;
+      globalH1Count?: number;
+      rootChildrenCount?: number;
+      pageStructParentsCount?: number;
+      pageParentTreeArrayCount?: number;
+      pageParentTreeNonEmptyCount?: number;
+      topLevelNonEmptyCount?: number;
+      usesMcrKidsCount?: number;
+      usesIntegerKidsCount?: number;
     };
   }>;
 }
