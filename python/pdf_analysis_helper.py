@@ -1786,6 +1786,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                         "altText": alt,
                         "isArtifact": is_artifact,
                         "page": page,
+                        "role": tag,
                     }
                     if ref:
                         row["structRef"] = ref

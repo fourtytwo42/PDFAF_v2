@@ -24,6 +24,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
   const unowned = unownedAnnotationReadingOrderScore(snap);
   const stage3 = snap.detectionProfile?.readingOrderSignals;
+  const headingSignals = snap.detectionProfile?.headingSignals;
   const sampledPages = snap.detectionProfile?.sampledPages ?? [];
   const readingOrderRiskPresent =
     (snap.annotationAccessibility?.pagesMissingTabsS ?? 0) > 0 ||
@@ -48,8 +49,9 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
       }
       // Tagged PDFs still have an implicit content order even when the tree JSON is absent.
       if (snap.isTagged && unowned.total === 0) {
-        // Dense extract + tagged: implicit order is usually usable even when the structure JSON is absent.
-        const floor = (snap.textCharCount ?? 0) >= 3500 ? 98 : 96;
+        // Dense extract + tagged: implicit order is usually usable even when the structure JSON is absent,
+        // but keep the score below a full-confidence pass until a real tree is present.
+        const floor = (snap.textCharCount ?? 0) >= 3500 ? 86 : 82;
         score = Math.max(score, floor);
       }
       findings.push({
@@ -165,6 +167,24 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let score = Math.min(headingScore, tabScore, annotOrderScore, unowned.score);
+  if (stage3?.degenerateStructureTree) {
+    score = Math.min(score, 35);
+    findings.push({
+      category: 'reading_order',
+      severity: 'critical',
+      wcag: '1.3.2',
+      message: `Structure tree depth is only ${stage3.structureTreeDepth}, which is too shallow for reliable multi-page reading order.`,
+    });
+  }
+  if (headingSignals?.extractedHeadingsMissingFromTree) {
+    score = Math.min(score, 45);
+    findings.push({
+      category: 'reading_order',
+      severity: 'moderate',
+      wcag: '1.3.2',
+      message: 'Heading nodes detected during analysis are not reachable from the exported structure tree, which weakens reading-order confidence.',
+    });
+  }
   if (qualifiesForEngineOwnedOcrReadingOrderCredit(snap) && !stage3?.headerFooterPollutionRisk) {
     score = Math.max(score, Math.min(ENGINE_OCR_READING_ORDER_FLOOR, unowned.score));
   }

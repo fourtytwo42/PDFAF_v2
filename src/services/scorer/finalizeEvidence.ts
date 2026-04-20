@@ -59,6 +59,7 @@ function policyForCategory(snap: DocumentSnapshot, category: ScoredCategory): Ca
 
     case 'reading_order': {
       const missingStructureTree = snap.structureTree === null;
+      const degenerateStructureTree = snap.detectionProfile?.readingOrderSignals.degenerateStructureTree === true;
       const annotationSignals =
         (snap.annotationAccessibility?.pagesMissingTabsS ?? 0) > 0 ||
         (snap.annotationAccessibility?.pagesAnnotationOrderDiffers ?? 0) > 0 ||
@@ -69,6 +70,9 @@ function policyForCategory(snap: DocumentSnapshot, category: ScoredCategory): Ca
       if (missingStructureTree) {
         manualReviewReasons.push('Reading order fell back to heading/paragraph heuristics because no structure tree was available.');
       }
+      if (degenerateStructureTree) {
+        manualReviewReasons.push('Reading order uses a shallow or degenerate structure tree that should be checked manually with assistive technology.');
+      }
       if (annotationSignals) {
         manualReviewReasons.push('Annotation tab order or /StructParent issues mean reading order should be checked manually with assistive technology.');
       }
@@ -76,7 +80,9 @@ function policyForCategory(snap: DocumentSnapshot, category: ScoredCategory): Ca
         evidence: manualReviewReasons.length > 0 ? 'manual_review_required' : heuristicOnly ? 'heuristic' : 'verified',
         manualReviewRequired: manualReviewReasons.length > 0,
         manualReviewReasons,
-        ...(heuristicOnly ? { cap: HEURISTIC_SCORE_CAP, capReason: 'Reading order relies on proxy heuristics without a structure tree.' } : {}),
+        ...((heuristicOnly || degenerateStructureTree)
+          ? { cap: HEURISTIC_SCORE_CAP, capReason: heuristicOnly ? 'Reading order relies on proxy heuristics without a structure tree.' : 'Reading order depends on a shallow or degenerate structure tree.' }
+          : {}),
       };
     }
 
@@ -109,7 +115,9 @@ function policyForCategory(snap: DocumentSnapshot, category: ScoredCategory): Ca
       const ownershipRisks =
         (snap.acrobatStyleAltRisks?.nonFigureWithAltCount ?? 0) > 0 ||
         (snap.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0) > 0 ||
-        (snap.acrobatStyleAltRisks?.orphanedAltEmptyElementCount ?? 0) > 0;
+        (snap.acrobatStyleAltRisks?.orphanedAltEmptyElementCount ?? 0) > 0 ||
+        (snap.detectionProfile?.figureSignals?.nonFigureRoleCount ?? 0) > 0 ||
+        snap.detectionProfile?.figureSignals?.treeFigureMissingForExtractedFigures === true;
       const manualReviewReasons: string[] = [];
       if (ownershipRisks) {
         manualReviewReasons.push('Alt text ownership or nested/orphaned alternate text risks were detected and need manual verification.');

@@ -44,6 +44,7 @@ import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge
 import * as metadataTools from './tools/metadata.js';
 import { applyPostRemediationAltRepair } from './altStructureRepair.js';
 import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.js';
+import { hasExternalReadinessDebt } from './externalReadiness.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -1027,7 +1028,7 @@ export async function remediatePdf(
   }
 
   for (let round = 1; round <= maxRounds; round++) {
-    if (currentAnalysis.score >= targetScore) {
+    if (currentAnalysis.score >= targetScore && !hasExternalReadinessDebt(currentAnalysis, currentSnapshot)) {
       noteEarlyExit(runtimeSummary, 'target_score_reached');
       break;
     }
@@ -1162,7 +1163,7 @@ export async function remediatePdf(
       source: 'planner',
     });
 
-    if (currentAnalysis.score >= targetScore) break;
+    if (currentAnalysis.score >= targetScore && !hasExternalReadinessDebt(currentAnalysis, currentSnapshot)) break;
     if (!improvedThisRound) {
       noteEarlyExit(runtimeSummary, 'round_no_improvement');
       break;

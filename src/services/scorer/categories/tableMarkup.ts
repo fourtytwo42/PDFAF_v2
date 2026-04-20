@@ -81,6 +81,20 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     score = Math.min(score, Math.max(0, 100 - advisoryCount * 4));
   }
 
+  const rowlessDenseTables = scoredTables.filter(
+    table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4,
+  ).length;
+  if (rowlessDenseTables > 0) {
+    findings.push({
+      category: 'table_markup',
+      severity: 'moderate',
+      wcag: '1.3.1',
+      message: `${rowlessDenseTables} table(s) expose multiple cells but almost no row structure, which usually fails external table-structure checks.`,
+      count: rowlessDenseTables,
+    });
+    score = Math.min(score, 70);
+  }
+
   return {
     key: 'table_markup',
     score,

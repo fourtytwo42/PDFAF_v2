@@ -532,7 +532,15 @@ describe('planForRemediation', () => {
   });
 
   it('returns empty plan when score already at target', () => {
-    const snap = bareSnapshot();
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 1,
+      isTagged: true,
+      structureTree: { type: 'Document', children: [] },
+      metadata: { title: 'Doc', language: 'en', author: '', subject: '' },
+      lang: 'en',
+      pdfUaVersion: '1',
+    };
     const analysis = score(snap, META);
     const high = {
       ...analysis,
@@ -541,6 +549,75 @@ describe('planForRemediation', () => {
     };
     const plan = planForRemediation(high, snap, []);
     expect(plan.stages).toHaveLength(0);
+  });
+
+  it('does not return an empty plan at target score when external-readiness debt remains', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 8,
+      textByPage: Array(8).fill('body text'),
+      textCharCount: 1200,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'P', children: [] }] },
+      headings: [{ level: 1, text: 'Intro', page: 0 }],
+      paragraphStructElems: [
+        { tag: 'P', text: 'Intro', page: 0, structRef: '1_0' },
+        { tag: 'P', text: 'Body', page: 1, structRef: '1_1' },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    };
+    const analysis = score(snap, META);
+    const high = {
+      ...analysis,
+      score: 96,
+      categories: analysis.categories.map(c => ({ ...c, score: c.applicable ? Math.max(c.score, 96) : c.score })),
+    };
+    const plan = planForRemediation(high, snap, []);
+    expect(plan.stages.length).toBeGreaterThan(0);
   });
 
   it('skips a tool after it was successfully applied', () => {

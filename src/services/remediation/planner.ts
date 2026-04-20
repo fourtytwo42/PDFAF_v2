@@ -15,6 +15,7 @@ import {
 } from '../../config.js';
 import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
 import { buildPlanningSummary, deriveRoutingDecision } from './routingDecision.js';
+import { hasExternalReadinessDebt } from './externalReadiness.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -372,7 +373,7 @@ export function planForRemediation(
   alreadyApplied: AppliedRemediationTool[],
   toolOutcomeStore?: ToolOutcomeStore,
 ): RemediationPlan {
-  if (analysis.score >= REMEDIATION_TARGET_SCORE) {
+  if (analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot)) {
     return {
       stages: [],
       planningSummary: buildPlanningSummary({

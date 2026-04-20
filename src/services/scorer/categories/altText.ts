@@ -11,6 +11,7 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
   const informativeFigures = allFigures.filter(f => !f.isArtifact);
   const otherMissing = snap.annotationAccessibility?.nonLinkAnnotationsMissingContents ?? 0;
   const risks = snap.acrobatStyleAltRisks;
+  const figureSignals = snap.detectionProfile?.figureSignals;
   const acrobatRiskTotal =
     (risks?.nonFigureWithAltCount ?? 0) +
     (risks?.nestedFigureAltCount ?? 0) +
@@ -61,6 +62,13 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
         weakAltFigures.length * ALT_TEXT_WEAK_ALT_PER_FIGURE,
       );
       figureScore = Math.max(0, figureScore - ded);
+    }
+    if ((figureSignals?.nonFigureRoleCount ?? 0) > 0) {
+      const nonFigureRoleCount = figureSignals?.nonFigureRoleCount ?? 0;
+      figureScore = Math.min(figureScore, Math.max(0, 88 - nonFigureRoleCount * 8));
+    }
+    if (figureSignals?.treeFigureMissingForExtractedFigures) {
+      figureScore = Math.min(figureScore, 45);
     }
   }
 
@@ -161,6 +169,25 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
       wcag: '1.1.1',
       message: `${nonFigN} non-Figure structure element(s) carry /Alt or /ActualText while also owning marked content or child structure (other elements alternate text pattern).`,
       count: nonFigN,
+    });
+  }
+
+  if ((figureSignals?.nonFigureRoleCount ?? 0) > 0) {
+    findings.push({
+      category: 'alt_text',
+      severity: (figureSignals?.nonFigureRoleCount ?? 0) > 2 ? 'moderate' : 'minor',
+      wcag: '1.1.1',
+      message: `${figureSignals?.nonFigureRoleCount} image structure element(s) use non-Figure roles (for example Word Shape/InlineShape), so alternate text may not be recognized by external PDF accessibility checkers.`,
+      count: figureSignals?.nonFigureRoleCount,
+    });
+  }
+  if (figureSignals?.treeFigureMissingForExtractedFigures) {
+    findings.push({
+      category: 'alt_text',
+      severity: 'critical',
+      wcag: '1.1.1',
+      message: `Detected ${figureSignals.extractedFigureCount} figure-like structure element(s), but none are reachable as /Figure nodes in the exported structure tree.`,
+      count: figureSignals.extractedFigureCount,
     });
   }
 

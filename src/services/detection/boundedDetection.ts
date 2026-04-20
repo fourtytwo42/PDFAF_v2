@@ -7,6 +7,54 @@ import {
 } from '../../config.js';
 import type { DetectionProfile, DocumentSnapshot } from '../../types.js';
 
+function normalizeStructType(type: string | undefined): string {
+  return (type ?? '').replace(/^\//, '').trim();
+}
+
+function walkTree(
+  node: DocumentSnapshot['structureTree'],
+  depth = 0,
+): Array<{ type: string; depth: number }> {
+  if (!node) return [];
+  const out = [{ type: normalizeStructType(node.type), depth }];
+  for (const child of node.children ?? []) {
+    out.push(...walkTree(child, depth + 1));
+  }
+  return out;
+}
+
+function headingSignals(snapshot: DocumentSnapshot) {
+  const nodes = walkTree(snapshot.structureTree);
+  const headingNodes = nodes.filter(node => /^H([1-6])?$/.test(node.type));
+  return {
+    extractedHeadingCount: snapshot.headings.length,
+    treeHeadingCount: headingNodes.length,
+    headingTreeDepth: headingNodes.length > 0 ? Math.max(...headingNodes.map(node => node.depth)) : 0,
+    extractedHeadingsMissingFromTree: snapshot.headings.length > 0 && headingNodes.length === 0,
+  };
+}
+
+function figureSignals(snapshot: DocumentSnapshot) {
+  const nodes = walkTree(snapshot.structureTree);
+  const figureNodes = nodes.filter(node => node.type === 'Figure');
+  const nonFigureRoleCount = snapshot.figures.filter(
+    figure => normalizeStructType(figure.role) !== '' && normalizeStructType(figure.role) !== 'Figure',
+  ).length;
+  return {
+    extractedFigureCount: snapshot.figures.length,
+    treeFigureCount: figureNodes.length,
+    nonFigureRoleCount,
+    treeFigureMissingForExtractedFigures:
+      snapshot.figures.length > 0 && figureNodes.length === 0,
+  };
+}
+
+function structureTreeDepth(snapshot: DocumentSnapshot): number {
+  const nodes = walkTree(snapshot.structureTree);
+  if (nodes.length === 0) return 0;
+  return Math.max(...nodes.map(node => node.depth));
+}
+
 function normalizeSnippet(text: string | undefined): string {
   return (text ?? '')
     .split(/\r?\n/)
@@ -126,6 +174,9 @@ function multiColumnOrderRiskPages(snapshot: DocumentSnapshot, samplePages: numb
 
 export function deriveDetectionProfile(snapshot: DocumentSnapshot): DetectionProfile {
   const samplePages = suspiciousPages(snapshot);
+  const treeDepth = structureTreeDepth(snapshot);
+  const heading = headingSignals(snapshot);
+  const figure = figureSignals(snapshot);
   const annotationSignals = {
     pagesMissingTabsS: snapshot.annotationAccessibility?.pagesMissingTabsS ?? 0,
     pagesAnnotationOrderDiffers: snapshot.annotationAccessibility?.pagesAnnotationOrderDiffers ?? 0,
@@ -154,6 +205,13 @@ export function deriveDetectionProfile(snapshot: DocumentSnapshot): DetectionPro
   const detectionProfile: DetectionProfile = {
     readingOrderSignals: {
       missingStructureTree: snapshot.structureTree === null,
+      structureTreeDepth: treeDepth,
+      degenerateStructureTree:
+        snapshot.structureTree !== null &&
+        snapshot.pageCount > 1 &&
+        (treeDepth <= 1 ||
+          (treeDepth <= 2 &&
+            ((snapshot.paragraphStructElems?.length ?? 0) >= 3 || (snapshot.textCharCount ?? 0) >= 400))),
       annotationOrderRiskCount: annotationSignals.pagesAnnotationOrderDiffers,
       annotationStructParentRiskCount:
         annotationSignals.linkAnnotationsMissingStructParent +
@@ -163,6 +221,8 @@ export function deriveDetectionProfile(snapshot: DocumentSnapshot): DetectionPro
       multiColumnOrderRiskPages: multiColumnOrderRiskPages(snapshot, samplePages),
       suspiciousPageCount: samplePages.length,
     },
+    headingSignals: heading,
+    figureSignals: figure,
     pdfUaSignals: {
       orphanMcidCount: snapshot.taggedContentAudit?.orphanMcidCount ?? snapshot.orphanMcids?.length ?? 0,
       suspectedPathPaintOutsideMc: snapshot.taggedContentAudit?.suspectedPathPaintOutsideMc ?? 0,

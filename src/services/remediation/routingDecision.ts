@@ -70,6 +70,7 @@ function hasReadingOrderDebt(profile?: DetectionProfile | null): boolean {
   if (!profile) return false;
   return (
     profile.readingOrderSignals.missingStructureTree ||
+    profile.readingOrderSignals.degenerateStructureTree ||
     profile.readingOrderSignals.annotationOrderRiskCount > 0 ||
     profile.readingOrderSignals.annotationStructParentRiskCount > 0 ||
     profile.readingOrderSignals.sampledStructurePageOrderDriftCount > 0 ||
@@ -92,9 +93,11 @@ function hasTableDebt(snapshot: DocumentSnapshot, profile?: DetectionProfile | n
 function hasFigureDebt(snapshot: DocumentSnapshot, failureProfile?: FailureProfile): boolean {
   return (
     snapshot.figures.length > 0 &&
-    (failureProfile?.primaryFailureFamily === 'figure_alt_ownership_heavy' ||
+      (failureProfile?.primaryFailureFamily === 'figure_alt_ownership_heavy' ||
       (failureProfile?.semanticIssues.includes('alt_text') ?? false) ||
-      (failureProfile?.manualOnlyIssues.includes('alt_text') ?? false))
+      (failureProfile?.manualOnlyIssues.includes('alt_text') ?? false) ||
+      snapshot.detectionProfile?.figureSignals?.treeFigureMissingForExtractedFigures === true ||
+      (snapshot.detectionProfile?.figureSignals?.nonFigureRoleCount ?? 0) > 0)
   );
 }
 

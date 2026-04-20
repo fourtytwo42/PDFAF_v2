@@ -96,6 +96,13 @@ describe('deriveDetectionProfile', () => {
     expect(profile.readingOrderSignals.headerFooterPollutionRisk).toBe(true);
     expect(profile.readingOrderSignals.sampledStructurePageOrderDriftCount).toBeGreaterThan(0);
     expect(profile.readingOrderSignals.multiColumnOrderRiskPages).toBeGreaterThan(0);
+    expect(profile.readingOrderSignals.structureTreeDepth).toBe(0);
+    expect(profile.readingOrderSignals.degenerateStructureTree).toBe(true);
+    expect(profile.headingSignals.extractedHeadingCount).toBe(3);
+    expect(profile.headingSignals.treeHeadingCount).toBe(0);
+    expect(profile.headingSignals.extractedHeadingsMissingFromTree).toBe(true);
+    expect(profile.figureSignals.extractedFigureCount).toBe(1);
+    expect(profile.figureSignals.treeFigureMissingForExtractedFigures).toBe(true);
     expect(profile.pdfUaSignals.orphanMcidCount).toBe(1);
     expect(profile.annotationSignals.linkAnnotationsMissingStructParent).toBe(1);
     expect(profile.listSignals.listsWithoutItems).toBe(1);

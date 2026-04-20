@@ -273,11 +273,11 @@ describe('headingStructure', () => {
     const snap = makeSnap({ headings: [], pageCount: 10, paragraphStructElems: elems });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'heading_structure')!;
-    expect(cat.score).toBe(100);
-    expect(cat.severity).toBe('pass');
+    expect(cat.score).toBe(0);
+    expect(cat.severity).toBe('critical');
   });
 
-  it('scores 100 for native_tagged multi-page with no H tags but substantial text (no P-struct list)', () => {
+  it('does not treat tagged body text as equivalent to heading navigation', () => {
     const snap = makeSnap({
       headings: [],
       pageCount: 10,
@@ -288,10 +288,64 @@ describe('headingStructure', () => {
     });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'heading_structure')!;
-    expect(cat.score).toBe(100);
+    expect(cat.score).toBe(0);
   });
 
-  it('scores 100 for tagged Marked multi-page with no H tags and pdf.js text length 0', () => {
+  it('does not pass heading_structure when exported headings are not reachable in the tree', () => {
+    const snap = makeSnap({
+      structureTree: { type: 'Document', children: [{ type: 'P', children: [] }] },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'medium',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBeLessThanOrEqual(45);
+    expect(cat.findings.some(f => /reachable as H1/i.test(f.message))).toBe(true);
+  });
+
+  it('does not pass heading_structure for tagged Marked multi-page with no H tags and pdf.js text length 0', () => {
     const snap = makeSnap({
       headings: [],
       pageCount: 12,
@@ -302,7 +356,7 @@ describe('headingStructure', () => {
     });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'heading_structure')!;
-    expect(cat.score).toBe(100);
+    expect(cat.score).toBe(0);
   });
 
   it('penalises skipped levels', () => {
@@ -349,8 +403,8 @@ describe('altText', () => {
   it('scores 100 when all figures have alt text', () => {
     const snap = makeSnap({
       figures: [
-        { hasAlt: true, altText: 'A bar chart', isArtifact: false, page: 1 },
-        { hasAlt: true, altText: 'A map',       isArtifact: false, page: 2 },
+        { hasAlt: true, altText: 'A bar chart', isArtifact: false, page: 1, role: 'Figure' },
+        { hasAlt: true, altText: 'A map',       isArtifact: false, page: 2, role: 'Figure' },
       ],
     });
     const result = score(snap, META);
@@ -401,8 +455,8 @@ describe('altText', () => {
   it('penalises generic alternate text on figures (Tier A)', () => {
     const snap = makeSnap({
       figures: [
-        { hasAlt: true, altText: 'image', isArtifact: false, page: 1 },
-        { hasAlt: true, altText: 'A bar chart', isArtifact: false, page: 2 },
+        { hasAlt: true, altText: 'image', isArtifact: false, page: 1, role: 'Figure' },
+        { hasAlt: true, altText: 'A bar chart', isArtifact: false, page: 2, role: 'Figure' },
       ],
     });
     const result = score(snap, META);
@@ -430,6 +484,62 @@ describe('altText', () => {
     expect(cat.applicable).toBe(true);
     expect(cat.score).toBeLessThan(100);
     expect(cat.findings.some(f => f.message.includes('non-link'))).toBe(true);
+  });
+
+  it('penalises figure-like content that is not exported as real /Figure roles', () => {
+    const snap = makeSnap({
+      figures: [
+        { hasAlt: true, altText: 'A diagram', isArtifact: false, page: 1, role: 'Shape' },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 6,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 1,
+          treeFigureMissingForExtractedFigures: true,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [1],
+        confidence: 'high',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'alt_text')!;
+    expect(cat.score).toBeLessThanOrEqual(45);
+    expect(cat.findings.some(f => /non-Figure roles/i.test(f.message))).toBe(true);
   });
 });
 
@@ -474,6 +584,59 @@ describe('annotationAccessibility signals', () => {
     expect(cat.score).toBeLessThanOrEqual(50);
     expect(cat.findings.some(f => f.message.includes('/Tabs'))).toBe(true);
     expect(cat.manualReviewRequired).toBe(true);
+  });
+
+  it('penalises reading_order for shallow or degenerate structure trees', () => {
+    const snap = makeSnap({
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'reading_order')!;
+    expect(cat.score).toBeLessThanOrEqual(35);
+    expect(cat.findings.some(f => /too shallow/i.test(f.message))).toBe(true);
   });
 
   it('penalises pdf_ua for tagged-content audit orphan MCIDs (Acrobat TaggedCont proxy)', () => {
@@ -763,6 +926,28 @@ describe('annotationAccessibility signals', () => {
     const cat = result.categories.find(c => c.key === 'table_markup')!;
     expect(cat.score).toBeLessThan(90);
     expect(cat.findings.some(f => f.message.includes('strongly irregular'))).toBe(true);
+  });
+});
+
+describe('tableMarkup', () => {
+  it('penalises dense tables with almost no row structure', () => {
+    const snap = makeSnap({
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 1,
+          totalCells: 8,
+          rowCount: 1,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+          page: 0,
+        },
+      ],
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'table_markup')!;
+    expect(cat.score).toBeLessThanOrEqual(70);
+    expect(cat.findings.some(f => /almost no row structure/i.test(f.message))).toBe(true);
   });
 });
 

@@ -52,12 +52,28 @@ export type DetectionConfidence = 'high' | 'medium' | 'low';
 
 export interface ReadingOrderSignals {
   missingStructureTree: boolean;
+  structureTreeDepth: number;
+  degenerateStructureTree: boolean;
   annotationOrderRiskCount: number;
   annotationStructParentRiskCount: number;
   headerFooterPollutionRisk: boolean;
   sampledStructurePageOrderDriftCount: number;
   multiColumnOrderRiskPages: number;
   suspiciousPageCount: number;
+}
+
+export interface HeadingSignals {
+  extractedHeadingCount: number;
+  treeHeadingCount: number;
+  headingTreeDepth: number;
+  extractedHeadingsMissingFromTree: boolean;
+}
+
+export interface FigureSignals {
+  extractedFigureCount: number;
+  treeFigureCount: number;
+  nonFigureRoleCount: number;
+  treeFigureMissingForExtractedFigures: boolean;
 }
 
 export interface PdfUaSignals {
@@ -91,6 +107,8 @@ export interface TableSignals {
 
 export interface DetectionProfile {
   readingOrderSignals: ReadingOrderSignals;
+  headingSignals: HeadingSignals;
+  figureSignals: FigureSignals;
   pdfUaSignals: PdfUaSignals;
   annotationSignals: AnnotationSignals;
   listSignals: ListSignals;
@@ -188,6 +206,7 @@ export interface DocumentSnapshot {
     altText?: string;
     isArtifact: boolean;
     page: number;
+    role?: string;
     structRef?: string;
     bbox?: [number, number, number, number];
   }>;
