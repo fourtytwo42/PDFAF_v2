@@ -270,6 +270,16 @@ export const REMEDIATION_MAX_NO_EFFECT_PER_TOOL = parseInt(
 );
 
 /**
+ * Max successful applications of `create_heading_from_candidate` per remediation run.
+ * Each application promotes one P/Span/Div to a heading; allows creating up to N headings
+ * before considering heading repair complete.
+ */
+export const REMEDIATION_MAX_HEADING_CREATES = parseInt(
+  process.env['PDFAF_MAX_HEADING_CREATES'] ?? '3',
+  10,
+);
+
+/**
  * Max successful applications per run for `set_figure_alt_text` and separately for
  * `mark_figure_decorative` (planner repeats until no targets or cap). Override via env on huge docs.
  */

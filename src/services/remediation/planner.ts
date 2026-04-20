@@ -8,6 +8,7 @@ import {
   OCR_NATIVE_SKIP_TEXT_CHARS,
   REMEDIATION_CATEGORY_THRESHOLD,
   REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN,
+  REMEDIATION_MAX_HEADING_CREATES,
   REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
   REMEDIATION_TARGET_SCORE,
   REMEDIATION_TOOL_STAGE_ORDER,
@@ -215,6 +216,10 @@ function shouldSkipAfterSuccessfulApply(toolName: string, applied: AppliedRemedi
   // Python fixes up to 64 orphans per pass; repeat until converged (matches pikepdf mutator rounds).
   if (toolName === 'remap_orphan_mcids_as_artifacts') {
     return successfulApplyCount(applied, toolName) >= 8;
+  }
+  // Each call promotes one P/Span/Div to a heading; allow up to N headings per remediation run.
+  if (toolName === 'create_heading_from_candidate') {
+    return successfulApplyCount(applied, toolName) >= REMEDIATION_MAX_HEADING_CREATES;
   }
   return wasSuccessfullyApplied(applied, toolName);
 }
@@ -774,9 +779,16 @@ export function buildDefaultParams(
       return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
     }
     case 'create_heading_from_candidate': {
-      const candidate = (snapshot.paragraphStructElems ?? [])
-        .filter(item => item.structRef && item.text.trim())
-        .sort((a, b) => a.page - b.page || a.text.length - b.text.length)[0];
+      const elems = (snapshot.paragraphStructElems ?? []).filter(
+        item => item.structRef && item.text.trim().length >= 4,
+      );
+      // For H1 on page 0: prefer longer text (more likely a meaningful section title).
+      // Fall back to any page, still preferring longer text.
+      const page0 = elems
+        .filter(e => e.page === 0)
+        .sort((a, b) => b.text.length - a.text.length)[0];
+      const candidate = page0
+        ?? elems.sort((a, b) => a.page - b.page || b.text.length - a.text.length)[0];
       if (!candidate) return {};
       return {
         targetRef: candidate.structRef,

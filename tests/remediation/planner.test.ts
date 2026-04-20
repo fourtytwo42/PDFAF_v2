@@ -1133,4 +1133,73 @@ describe('planForRemediation', () => {
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).not.toContain('synthesize_basic_structure_from_layout');
   });
+
+  it('schedules create_heading_from_candidate again when applied count < REMEDIATION_MAX_HEADING_CREATES', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 5,
+      textByPage: Array(5).fill('Page text content'),
+      textCharCount: 900,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      headings: [{ level: 1, text: 'Quick Start', page: 0, structRef: '50_0' }],
+      paragraphStructElems: [
+        { tag: 'SPAN', text: 'Getting started', page: 1, structRef: '60_0' },
+        { tag: 'SPAN', text: 'Next steps', page: 2, structRef: '61_0' },
+      ],
+    };
+    const base = score(snap, META);
+    const analysis = withCategoryScores(base, {
+      heading_structure: 55,
+      reading_order: 82,
+      text_extractability: 96,
+    });
+    // Already applied create_heading_from_candidate once (count=1 < MAX=3)
+    const applied: AppliedRemediationTool[] = [
+      { toolName: 'create_heading_from_candidate', stage: 1, round: 1, scoreBefore: 40, scoreAfter: 55, delta: 15, outcome: 'applied' },
+    ];
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('create_heading_from_candidate');
+  });
+
+  it('skips create_heading_from_candidate after REMEDIATION_MAX_HEADING_CREATES successful applications', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 5,
+      textByPage: Array(5).fill('Page text content'),
+      textCharCount: 900,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      headings: [
+        { level: 1, text: 'Quick Start', page: 0, structRef: '50_0' },
+        { level: 2, text: 'Getting started', page: 1, structRef: '60_0' },
+        { level: 2, text: 'Next steps', page: 2, structRef: '61_0' },
+      ],
+      paragraphStructElems: [
+        { tag: 'SPAN', text: 'More content', page: 3, structRef: '70_0' },
+      ],
+    };
+    const base = score(snap, META);
+    const analysis = withCategoryScores(base, {
+      heading_structure: 55,
+      reading_order: 82,
+      text_extractability: 96,
+    });
+    // 3 successful applications = at cap (REMEDIATION_MAX_HEADING_CREATES = 3)
+    const applied: AppliedRemediationTool[] = [
+      { toolName: 'create_heading_from_candidate', stage: 1, round: 1, scoreBefore: 0, scoreAfter: 40, delta: 40, outcome: 'applied' },
+      { toolName: 'create_heading_from_candidate', stage: 1, round: 2, scoreBefore: 40, scoreAfter: 50, delta: 10, outcome: 'applied' },
+      { toolName: 'create_heading_from_candidate', stage: 1, round: 3, scoreBefore: 50, scoreAfter: 55, delta: 5, outcome: 'applied' },
+    ];
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('create_heading_from_candidate');
+  });
 });
