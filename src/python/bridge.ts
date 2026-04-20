@@ -58,6 +58,7 @@ const EMPTY_RESULT: PythonAnalysisResult = {
   pdfUaVersion:  null,
   headings:      [],
   figures:       [],
+  checkerFigureTargets: [],
   tables:        [],
   fonts:         [],
   bookmarks:     [],

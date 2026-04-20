@@ -847,6 +847,30 @@ describe('planForRemediation', () => {
         { hasAlt: false, isArtifact: false, page: 0, structRef: '1_0', role: 'Shape' },
         { hasAlt: false, isArtifact: false, page: 1, structRef: '2_0', role: 'Figure' },
       ],
+      checkerFigureTargets: [
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 0,
+          structRef: '3_0',
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document@root', 'Figure@3_0'],
+        },
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 1,
+          structRef: '4_0',
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          reachable: true,
+          directContent: false,
+          parentPath: ['Document@root', 'Figure@4_0'],
+        },
+      ],
       detectionProfile: {
         readingOrderSignals: {
           missingStructureTree: false,
@@ -894,11 +918,11 @@ describe('planForRemediation', () => {
     };
     const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
     expect(buildDefaultParams('set_figure_alt_text', analysis, snap)).toEqual({
-      structRef: '2_0',
+      structRef: '3_0',
       altText: 'Image',
     });
     expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({
-      structRef: '2_0',
+      structRef: '3_0',
     });
   });
 

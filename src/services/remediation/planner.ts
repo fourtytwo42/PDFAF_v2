@@ -227,6 +227,10 @@ function hasAcrobatAltOwnershipRisk(snapshot: DocumentSnapshot): boolean {
     + (risks?.orphanedAltEmptyElementCount ?? 0)) > 0;
 }
 
+function sortFigureTargets<T extends { page: number; structRef?: string }>(targets: T[]): T[] {
+  return [...targets].sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
+}
+
 export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
   const metaTitle = snapshot.metadata.title?.trim();
   if (metaTitle && !isFilenameLikeTitle(metaTitle)) return metaTitle;
@@ -982,10 +986,16 @@ export function buildDefaultParams(
         forceOcr: true,
       };
     case 'set_figure_alt_text': {
-      const candidates = snapshot.figures
-        .filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure')
-        .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
-      const target = candidates[0];
+      const checkerCandidates = sortFigureTargets(
+        (snapshot.checkerFigureTargets ?? []).filter(f =>
+          !f.isArtifact
+          && !f.hasAlt
+          && f.structRef
+          && (f.role ?? '').toLowerCase() === 'figure'
+          && f.reachable,
+        ),
+      ).sort((a, b) => Number(b.directContent) - Number(a.directContent) || a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
+      const target = checkerCandidates[0];
       return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
     }
     case 'create_heading_from_candidate': {
@@ -1024,11 +1034,40 @@ export function buildDefaultParams(
     case 'finalize_substituted_font_conformance':
       return { maxWidthDrift: 0.35 };
     case 'mark_figure_decorative': {
-      const candidates = snapshot.figures
-        .filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure')
-        .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
-      const target = candidates[0];
+      const checkerCandidates = sortFigureTargets(
+        (snapshot.checkerFigureTargets ?? []).filter(f =>
+          !f.isArtifact
+          && !f.hasAlt
+          && f.structRef
+          && (f.role ?? '').toLowerCase() === 'figure'
+          && f.reachable,
+        ),
+      ).sort((a, b) => Number(b.directContent) - Number(a.directContent) || a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
+      const fallbackCandidates = sortFigureTargets(
+        snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure'),
+      );
+      const target = checkerCandidates[0] ?? fallbackCandidates[0];
       return target?.structRef ? { structRef: target.structRef } : {};
+    }
+    case 'canonicalize_figure_alt_ownership':
+    case 'normalize_nested_figure_containers': {
+      const checkerCandidates = sortFigureTargets(
+        (snapshot.checkerFigureTargets ?? []).filter(f =>
+          !f.isArtifact
+          && !f.hasAlt
+          && f.structRef
+          && (f.role ?? '').toLowerCase() === 'figure',
+        ),
+      ).sort((a, b) =>
+        Number(a.reachable) - Number(b.reachable)
+        || Number(b.directContent) - Number(a.directContent)
+        || a.page - b.page
+        || (a.structRef ?? '').localeCompare(b.structRef ?? '')
+      );
+      const target = checkerCandidates[0];
+      return target?.structRef
+        ? { structRef: target.structRef, maxRepairsPerRun: 1 }
+        : { maxRepairsPerRun: 1 };
     }
     case 'replace_bookmarks_from_headings':
       // force:true ensures we replace even when the PDF already has bookmarks (they may be inadequate).

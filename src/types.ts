@@ -221,6 +221,18 @@ export interface DocumentSnapshot {
     structRef?: string;
     bbox?: [number, number, number, number];
   }>;
+  checkerFigureTargets?: Array<{
+    hasAlt: boolean;
+    altText?: string;
+    isArtifact: boolean;
+    page: number;
+    role?: string;
+    resolvedRole?: string;
+    structRef?: string;
+    reachable: boolean;
+    directContent: boolean;
+    parentPath: string[];
+  }>;
   tables: Array<{
     hasHeaders: boolean;
     headerCount: number;
@@ -464,6 +476,7 @@ export interface PythonAnalysisResult {
   subject?: string;
   headings: DocumentSnapshot['headings'];
   figures: DocumentSnapshot['figures'];
+  checkerFigureTargets?: DocumentSnapshot['checkerFigureTargets'];
   tables: DocumentSnapshot['tables'];
   fonts: DocumentSnapshot['fonts'];
   bookmarks: DocumentSnapshot['bookmarks'];

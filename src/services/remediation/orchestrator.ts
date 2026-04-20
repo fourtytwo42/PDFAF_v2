@@ -165,6 +165,11 @@ const FIGURE_STRUCTURE_TOOLS = new Set([
   'canonicalize_figure_alt_ownership',
 ]);
 
+const FIGURE_OWNERSHIP_REFRESH_TOOLS = new Set([
+  'normalize_nested_figure_containers',
+  'canonicalize_figure_alt_ownership',
+]);
+
 const LINK_STRUCTURE_TOOLS = new Set([
   'set_link_annotation_contents',
   'repair_native_link_structure',
@@ -1605,6 +1610,21 @@ export async function remediatePdf(
           }
           continue;
         }
+        if (
+          (tool.toolName === 'set_figure_alt_text' || tool.toolName === 'mark_figure_decorative')
+          && !buf.equals(lastAnalyzedBuffer)
+        ) {
+          const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
+          await writeFile(tmp, buf);
+          try {
+            lastStageAnalysis = await analyzePdf(tmp, filename);
+            lastAnalyzedBuffer = buf;
+            workingAnalysis = lastStageAnalysis.result;
+            workingSnapshot = lastStageAnalysis.snapshot;
+          } finally {
+            await unlink(tmp).catch(() => {});
+          }
+        }
         const liveTool = tool.toolName === 'set_table_header_cells'
           || tool.toolName === 'set_figure_alt_text'
           || tool.toolName === 'mark_figure_decorative'
@@ -1638,6 +1658,18 @@ export async function remediatePdf(
           durationMs,
           outcome,
         });
+        if (outcome === 'applied' && FIGURE_OWNERSHIP_REFRESH_TOOLS.has(liveTool.toolName)) {
+          const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
+          await writeFile(tmp, buf);
+          try {
+            lastStageAnalysis = await analyzePdf(tmp, filename);
+            lastAnalyzedBuffer = buf;
+            workingAnalysis = lastStageAnalysis.result;
+            workingSnapshot = lastStageAnalysis.snapshot;
+          } finally {
+            await unlink(tmp).catch(() => {});
+          }
+        }
       }
 
       const stageHadEffect = stageApplied.some(a => a.outcome === 'applied');

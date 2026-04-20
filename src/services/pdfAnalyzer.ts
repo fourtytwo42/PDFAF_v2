@@ -289,6 +289,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     structTitle:   struct.title,
     headings:      struct.headings,
     figures:       struct.figures,
+    checkerFigureTargets: struct.checkerFigureTargets ?? [],
     tables:        struct.tables,
     fonts:         struct.fonts,
     bookmarks:     struct.bookmarks,

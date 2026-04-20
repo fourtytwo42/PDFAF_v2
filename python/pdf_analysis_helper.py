@@ -26,7 +26,7 @@ except ImportError:
     print(json.dumps({
         "error": "pikepdf not installed",
         "isTagged": False, "markInfo": None, "lang": None,
-        "pdfUaVersion": None, "headings": [], "figures": [],
+        "pdfUaVersion": None, "headings": [], "figures": [], "checkerFigureTargets": [],
         "tables": [], "fonts": [], "bookmarks": [], "formFields": [],
         "paragraphStructElems": [],
         "structureTree": None,
@@ -1742,6 +1742,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
     """
     headings   = []
     figures    = []
+    checker_figure_targets = []
     tables_out = []
     form_fields= []
     paragraph_struct_elems = []
@@ -1752,6 +1753,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
         str_root = root.get("/StructTreeRoot")
         if str_root is None:
             return {"headings": headings, "figures": figures,
+                    "checkerFigureTargets": checker_figure_targets,
                     "tables": tables_out, "formFields": form_fields,
                     "paragraphStructElems": paragraph_struct_elems,
                     "structureTree": None}
@@ -1914,12 +1916,44 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                 print(f"[warn] struct element error: {e}", file=sys.stderr)
                 continue
 
+        try:
+            seen_checker_targets = set()
+            for elem in _iter_struct_elems(pdf):
+                if len(checker_figure_targets) >= MAX_ITEMS:
+                    break
+                if not isinstance(elem, pikepdf.Dictionary):
+                    continue
+                ref = object_ref_str(elem)
+                if not ref or ref in seen_checker_targets:
+                    continue
+                raw_tag = (get_name(elem) or "").lstrip("/")
+                resolved_tag = _resolved_tag(elem)
+                if raw_tag.upper() != "FIGURE":
+                    continue
+                seen_checker_targets.add(ref)
+                alt = get_alt(elem)
+                checker_figure_targets.append({
+                    "structRef": ref,
+                    "role": raw_tag,
+                    "resolvedRole": resolved_tag,
+                    "page": get_page_number(elem, page_map),
+                    "hasAlt": alt is not None and len(alt) > 0,
+                    "altText": alt,
+                    "isArtifact": _is_artifact(elem),
+                    "reachable": _is_root_reachable_elem(str_root, elem),
+                    "directContent": _elem_has_direct_mcid_content(elem),
+                    "parentPath": _struct_parent_chain(elem),
+                })
+        except Exception:
+            pass
+
     except Exception as e:
         print(f"[warn] struct tree traversal failed: {e}", file=sys.stderr)
 
     return {
         "headings": headings,
         "figures": figures,
+        "checkerFigureTargets": checker_figure_targets,
         "tables": tables_out,
         "formFields": form_fields,
         "paragraphStructElems": paragraph_struct_elems,
@@ -4039,6 +4073,7 @@ def main():
         "subject": None,
         "headings": [],
         "figures": [],
+        "checkerFigureTargets": [],
         "tables": [],
         "fonts": [],
         "bookmarks": [],
@@ -4107,6 +4142,7 @@ def main():
         struct = traverse_struct_tree(pdf, page_map)
         result["headings"]     = struct["headings"]
         result["figures"]      = struct["figures"]
+        result["checkerFigureTargets"] = struct.get("checkerFigureTargets") or []
         result["tables"]       = struct["tables"]
         result["formFields"]   = struct["formFields"]
         result["structureTree"]= struct["structureTree"]
@@ -4706,7 +4742,20 @@ def _op_repair_alt_text_structure(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
 def _op_canonicalize_figure_alt_ownership(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """Bounded figure-ownership normalization without the broader destructive alt cleanup."""
-    return _op_normalize_nested_figure_containers(pdf, _params)
+    before_debug = _mutation_debug_snapshot(pdf)
+    before_root_figures = before_debug.get("rootReachableFigureCount", 0)
+    changed = _op_normalize_nested_figure_containers(pdf, _params)
+    after_debug = _mutation_debug_snapshot(pdf)
+    existing_debug = _consume_last_mutation_debug()
+    _set_last_mutation_debug({
+        **(existing_debug or after_debug),
+        "beforeSnapshot": before_debug,
+        "afterSnapshot": after_debug,
+    })
+    if after_debug.get("rootReachableFigureCount", 0) < before_root_figures:
+        _set_last_mutation_note("figure_ownership_not_preserved")
+        return False
+    return changed
 
 
 def _elem_has_direct_mcid_content(elem) -> bool:
@@ -4777,6 +4826,63 @@ def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bo
     if not isinstance(sr, pikepdf.Dictionary):
         return False
 
+    target_ref = params.get("structRef")
+    if isinstance(target_ref, str) and target_ref:
+        obj = _resolve_ref(pdf, target_ref)
+        if isinstance(obj, pikepdf.Dictionary) and (get_name(obj) or "").lstrip("/").upper() == "FIGURE":
+            before_debug = _figure_ownership_debug(pdf, obj, "before")
+            if not _is_root_reachable_elem(sr, obj):
+                _sr, doc_elem = _find_or_create_document_elem(pdf)
+                page_obj = _page_obj_for_struct_elem(obj)
+                if not isinstance(_sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+                    _set_last_mutation_debug(before_debug)
+                    _set_last_mutation_note("figure_ownership_not_preserved")
+                    return False
+                if not isinstance(page_obj, pikepdf.Dictionary):
+                    _set_last_mutation_debug(before_debug)
+                    _set_last_mutation_note("target_unreachable")
+                    return False
+                changed = False
+                try:
+                    prev_parent = obj.get("/P")
+                except Exception:
+                    prev_parent = None
+                page_container, created_container = _ensure_page_container_for_elem(pdf, _sr, doc_elem, page_obj)
+                if created_container:
+                    changed = True
+                if isinstance(prev_parent, pikepdf.Dictionary):
+                    if _remove_struct_child(prev_parent, obj):
+                        changed = True
+                if _append_struct_child(page_container, obj):
+                    changed = True
+                try:
+                    obj["/Pg"] = page_obj
+                except Exception:
+                    pass
+                arr, _page_key, page_tree_changed = _ensure_page_parent_tree_array(pdf, _sr, page_obj)
+                if page_tree_changed:
+                    changed = True
+                if isinstance(arr, pikepdf.Array):
+                    for mcid in _collect_subtree_mcids(obj):
+                        if _set_page_parent_tree_mcid(arr, mcid, obj):
+                            changed = True
+                after_debug = _figure_ownership_debug(pdf, obj, "after")
+                _set_last_mutation_debug({
+                    "before": before_debug,
+                    "after": after_debug,
+                })
+                if not after_debug.get("candidate", {}).get("rootReachable"):
+                    _set_last_mutation_note("target_unreachable")
+                    return False
+                _set_last_mutation_note("figure_ownership_canonicalized")
+                return changed
+            _set_last_mutation_debug({
+                "before": before_debug,
+                "after": _figure_ownership_debug(pdf, obj, "after"),
+            })
+            _set_last_mutation_note("figure_ownership_canonicalized")
+            return False
+
     q: deque = deque()
     _enqueue_children(q, sr.get("/K"))
     visited: set = set()
@@ -4794,6 +4900,7 @@ def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bo
             continue
         visited.add(vk)
         if (get_name(obj) or "") == "Figure" and not _elem_has_direct_mcid_content(obj) and _count_descendant_figures(obj) > 0:
+            before_debug = _figure_ownership_debug(pdf, obj, "before")
             leaf_figures = [
                 figure for figure in _descendant_leaf_figures_with_direct_content(obj)
                 if not str(figure.get("/Alt") or "").replace("u:", "").strip()
@@ -4802,6 +4909,11 @@ def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bo
             # to retain checker-visible ownership. Ambiguous or unresolved nested structures
             # should be preserved for later passes instead of erasing Figure coverage.
             if len(leaf_figures) != 1:
+                _set_last_mutation_note("no_unambiguous_figure_leaf")
+                _set_last_mutation_debug({
+                    **_figure_ownership_debug(pdf, obj, "after"),
+                    "before": before_debug,
+                })
                 try:
                     _enqueue_children(q, obj.get("/K"))
                 except Exception:
@@ -4821,12 +4933,12 @@ def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bo
                     changed = True
                 except Exception:
                     pass
-            try:
-                obj["/S"] = pikepdf.Name("/Sect")
-                changed = True
-                repairs += 1
-            except Exception:
-                pass
+            repairs += 1
+            _set_last_mutation_debug({
+                **_figure_ownership_debug(pdf, leaf_figures[0], "after"),
+                "before": before_debug,
+            })
+            _set_last_mutation_note("figure_ownership_canonicalized")
         try:
             _enqueue_children(q, obj.get("/K"))
         except Exception:
@@ -4841,13 +4953,32 @@ def _op_set_figure_alt_text(pdf: pikepdf.Pdf, params: dict) -> bool:
         return False
     elem = _resolve_ref(pdf, ref)
     if elem is None:
+        _set_last_mutation_debug(_figure_ownership_debug(pdf, None, "before"))
         _set_last_mutation_note("target_ref_not_found")
         return False
+    before_debug = _figure_ownership_debug(pdf, elem, "before")
+    _set_last_mutation_debug(before_debug)
     if (get_name(elem) or "").lstrip("/").upper() != "FIGURE":
         _set_last_mutation_note("target_not_checker_visible_figure")
         return False
+    sr = pdf.Root.get("/StructTreeRoot")
+    if not _is_root_reachable_elem(sr, elem):
+        _set_last_mutation_note("target_unreachable")
+        return False
     alt = params.get("altText", "Image")
     elem["/Alt"] = _pdf_text_string(str(alt), 2000)
+    after_debug = _figure_ownership_debug(pdf, elem, "after")
+    _set_last_mutation_debug({
+        **after_debug,
+        "before": before_debug,
+    })
+    if (
+        (get_name(elem) or "").lstrip("/").upper() != "FIGURE"
+        or not _is_root_reachable_elem(sr, elem)
+        or not bool(get_alt(elem))
+    ):
+        _set_last_mutation_note("figure_ownership_not_preserved")
+        return False
     _set_last_mutation_note("figure_alt_set")
     return True
 
@@ -6296,12 +6427,16 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
     global_heading_count = 0
     global_h1_count = 0
     root_reachable_heading_count = 0
+    global_figure_count = 0
+    root_reachable_figure_count = 0
     for elem in _iter_struct_elems(pdf):
         level = _struct_elem_heading_level(elem)
         if level is not None:
             global_heading_count += 1
             if level == 1:
                 global_h1_count += 1
+        if (get_name(elem) or "").lstrip("/").upper() == "FIGURE":
+            global_figure_count += 1
         try:
             k = elem.get("/K")
             if _k_has_mcid_association(k):
@@ -6313,6 +6448,8 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
     for elem in root_reachable:
         if _struct_elem_heading_level(elem) is not None:
             root_reachable_heading_count += 1
+        if (get_name(elem) or "").lstrip("/").upper() == "FIGURE":
+            root_reachable_figure_count += 1
     for page in pdf.pages:
         try:
             if isinstance(page.obj.get("/StructParents"), (int, pikepdf.Integer)):
@@ -6348,8 +6485,10 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
         "rootChildrenCount": root_children_count,
         "rootReachableDepth": _root_reachable_depth(sr),
         "rootReachableHeadingCount": root_reachable_heading_count,
+        "rootReachableFigureCount": root_reachable_figure_count,
         "globalHeadingCount": global_heading_count,
         "globalH1Count": global_h1_count,
+        "globalFigureCount": global_figure_count,
         "usesMcrKidsCount": uses_mcr_kids,
         "usesIntegerKidsCount": uses_integer_kids,
         "headingCount": len(headings),
@@ -6585,6 +6724,27 @@ def _heading_promotion_debug(pdf: pikepdf.Pdf, elem, reason: str | None = None) 
         "mcids": elem_mcids,
         "pageParentTreeKey": page_parent_tree_key,
         "pageParentTreeHits": page_parent_tree_hits,
+    }
+    return {
+        **snapshot,
+        "candidate": candidate,
+        **({"reason": reason} if reason else {}),
+    }
+
+
+def _figure_ownership_debug(pdf: pikepdf.Pdf, elem, reason: str | None = None) -> dict:
+    sr = pdf.Root.get("/StructTreeRoot")
+    snapshot = _mutation_debug_snapshot(pdf)
+    page_map = build_page_map(pdf)
+    candidate = {
+        "structRef": object_ref_str(elem) if isinstance(elem, pikepdf.Dictionary) else None,
+        "tag": (str(elem.get("/S") or "").lstrip("/") if isinstance(elem, pikepdf.Dictionary) else None),
+        "page": get_page_number(elem, page_map) if isinstance(elem, pikepdf.Dictionary) else 0,
+        "parentPath": _struct_parent_chain(elem) if isinstance(elem, pikepdf.Dictionary) else [],
+        "rootReachable": _is_root_reachable_elem(sr, elem) if isinstance(sr, pikepdf.Dictionary) and isinstance(elem, pikepdf.Dictionary) else False,
+        "directContent": _elem_has_direct_mcid_content(elem) if isinstance(elem, pikepdf.Dictionary) else False,
+        "hasAlt": bool(get_alt(elem)) if isinstance(elem, pikepdf.Dictionary) else False,
+        "altOnFigureNode": bool(get_alt(elem)) and (get_name(elem) or "").lstrip("/").upper() == "FIGURE" if isinstance(elem, pikepdf.Dictionary) else False,
     }
     return {
         **snapshot,
