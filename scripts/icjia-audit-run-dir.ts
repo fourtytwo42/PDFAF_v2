@@ -19,7 +19,7 @@
  */
 import 'dotenv/config';
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import type { IcjiaAnalyzeJson } from './icjia-api-client.js';
 import { DEFAULT_ICJIA_URL, postIcjiaAnalyze, sleep } from './icjia-api-client.js';
@@ -97,6 +97,50 @@ type AggregateCategory = {
 
 const SAFE_RATE_LIMIT_INTERVAL_MS = 110_000;
 
+type ParsedArgs = {
+  runDir: string;
+  limit: number;
+  offset: number;
+  force: boolean;
+};
+
+function parseArgs(argv: string[]): ParsedArgs {
+  let runDir = join(process.cwd(), 'Output', 'experiment-corpus-baseline', 'run-stage20-full');
+  let limit = 0;
+  let offset = 0;
+  let force = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (!arg) continue;
+    if (!arg.startsWith('-') && runDir.endsWith('run-stage20-full')) {
+      runDir = arg;
+      continue;
+    }
+    switch (arg) {
+      case '--limit': {
+        const value = parseInt(argv[++i] ?? '', 10);
+        if (!Number.isFinite(value) || value < 0) throw new Error('Invalid --limit value.');
+        limit = value;
+        break;
+      }
+      case '--offset': {
+        const value = parseInt(argv[++i] ?? '', 10);
+        if (!Number.isFinite(value) || value < 0) throw new Error('Invalid --offset value.');
+        offset = value;
+        break;
+      }
+      case '--force':
+        force = true;
+        break;
+      default:
+        throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  return { runDir: resolve(runDir), limit, offset, force };
+}
+
 function parseMinIntervalMs(): number {
   const raw = (process.env['PDFAF_ICJIA_MIN_INTERVAL_MS'] ?? '').trim();
   if (!raw) return SAFE_RATE_LIMIT_INTERVAL_MS;
@@ -147,6 +191,15 @@ function mean(sum: number, count: number): string {
 
 function escapePipe(value: string): string {
   return value.replace(/\|/g, '\\|');
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function renderMarkdown(args: {
@@ -297,7 +350,8 @@ function renderMarkdown(args: {
 }
 
 async function main(): Promise<void> {
-  const runDir = resolve(process.argv[2] ?? join(process.cwd(), 'Output', 'experiment-corpus-baseline', 'run-stage20-full'));
+  const args = parseArgs(process.argv.slice(2));
+  const runDir = args.runDir;
   const icjiaUrl = (process.env['PDFAF_ICJIA_ANALYZE_URL'] ?? DEFAULT_ICJIA_URL).trim() || DEFAULT_ICJIA_URL;
   const minIntervalMs = parseMinIntervalMs();
   const rawDir = join(runDir, 'icjia_api_raw');
@@ -313,8 +367,9 @@ async function main(): Promise<void> {
 
   const auditRows: AuditRow[] = [];
   let lastAuditAt = 0;
+  const selectedRows = (args.limit > 0 ? remediateRows.slice(args.offset, args.offset + args.limit) : remediateRows.slice(args.offset));
 
-  for (const row of remediateRows) {
+  for (const row of selectedRows) {
     const pdfPath = join(runDir, 'pdfs', `${row.id}.pdf`);
     const local = localScoreFor(row);
     const localCategoryScores = scoreMap(local.categories);
@@ -339,6 +394,31 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const outJsonPath = join(rawDir, `${row.id}_icjia.json`);
+    if (!args.force && (await exists(outJsonPath))) {
+      const cached = JSON.parse(await readFile(outJsonPath, 'utf8')) as IcjiaAnalyzeJson;
+      const apiCategoryScores = scoreMap(cached.categories);
+      const apiScore = typeof cached.overallScore === 'number' ? cached.overallScore : null;
+      auditRows.push({
+        id: row.id,
+        file: row.file,
+        cohort: row.cohort,
+        sourceType: row.sourceType,
+        localScore: local.score,
+        localGrade: local.grade,
+        apiScore,
+        apiGrade: cached.grade ?? null,
+        delta: typeof local.score === 'number' && typeof apiScore === 'number' ? local.score - apiScore : null,
+        httpStatus: 200,
+        ok: true,
+        localCategoryScores,
+        apiCategoryScores,
+        topApiIssues: topApiIssues(cached.categories),
+      });
+      console.log(`[${row.id}] reused cached ICJIA result`);
+      continue;
+    }
+
     const waitMs = Math.max(0, minIntervalMs - (Date.now() - lastAuditAt));
     if (waitMs > 0 && lastAuditAt > 0) {
       console.log(`[${row.id}] waiting ${Math.round(waitMs / 1000)}s before next ICJIA request`);
@@ -350,7 +430,6 @@ async function main(): Promise<void> {
     console.log(`[${row.id}] auditing ${basename(pdfPath)} via ${icjiaUrl}`);
     const result = await postIcjiaAnalyze(icjiaUrl, pdfBuffer, `${row.id}.pdf`);
     const apiCategoryScores = scoreMap(result.json?.categories);
-    const outJsonPath = join(rawDir, `${row.id}_icjia.json`);
     if (result.rawBody) {
       try {
         const pretty = JSON.stringify(JSON.parse(result.rawBody), null, 2);
@@ -385,6 +464,9 @@ async function main(): Promise<void> {
     generatedAt: new Date().toISOString(),
     icjiaUrl,
     minIntervalMs,
+    offset: args.offset,
+    limit: args.limit,
+    force: args.force,
     rows: auditRows,
   };
   const report = renderMarkdown({ runDir, manifest, rows: auditRows, minIntervalMs, icjiaUrl });
