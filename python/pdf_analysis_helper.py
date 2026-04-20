@@ -11,6 +11,7 @@ Exit 0 always (errors produce empty/partial results, never crash the caller).
 import sys
 import json
 import os
+import math
 import re
 import shutil
 import subprocess
@@ -5464,8 +5465,186 @@ def _op_orphan_v1_promote_p_to_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     return _op_retag_struct_as_heading(pdf, params)
 
 
+def _score_mcid_text_as_heading(text: str, prefer_text: str = "") -> int | None:
+    """Score raw MCID text for heading suitability. Returns None if text is filtered.
+
+    Mirrors the spirit of scoreHeadingBootstrapCandidate (TS) but operates on raw MCID
+    text with no structural context — used only for the synthesize-from-MCID fallback.
+    """
+    if not text:
+        return None
+    normalized = re.sub(r"\s+", " ", text.strip())
+    if len(normalized) < 4 or len(normalized) > 200:
+        return None
+    if re.match(r"^(https?://|www\.)", normalized, re.IGNORECASE):
+        return None
+    words = normalized.split()
+    if len(words) > 20:
+        return None
+    if re.search(r"[.!?]\s+\S", normalized) and len(words) > 10:
+        return None
+    score = 0
+    if len(normalized) <= 80:
+        score += 18
+    if len(words) <= 12:
+        score += 20
+    alpha_words = [w for w in words if re.match(r"[A-Za-z]", w)]
+    if alpha_words:
+        tc = sum(1 for w in alpha_words if re.match(r"^[A-Z]", w))
+        if tc / len(alpha_words) >= 0.6:
+            score += 22
+    letters = re.sub(r"[^A-Za-z]", "", normalized)
+    if letters:
+        caps = re.sub(r"[^A-Z]", "", letters)
+        if len(caps) / len(letters) >= 0.85:
+            score += 18
+    if not re.search(r"[.!?]$", normalized):
+        score += 6
+    if prefer_text:
+        pt = re.sub(r"\s+", " ", prefer_text.strip()).lower()
+        if pt and (pt == normalized.lower() or pt in normalized.lower()):
+            score += 30
+    return score
+
+
+def _find_mcid_owner_in_struct(pdf: pikepdf.Pdf, mcid: int):
+    """Return (owner_elem, index_or_None) for the struct elem whose /K directly contains mcid."""
+    try:
+        for elem in _iter_struct_elems(pdf):
+            try:
+                k = elem.get("/K")
+            except Exception:
+                continue
+            if isinstance(k, (int, pikepdf.Integer)) and int(k) == mcid:
+                return elem, None
+            if isinstance(k, pikepdf.Array):
+                for idx, ch in enumerate(k):
+                    if isinstance(ch, (int, pikepdf.Integer)) and int(ch) == mcid:
+                        return elem, idx
+                    if isinstance(ch, pikepdf.Dictionary):
+                        try:
+                            if ch.get("/Type") == pikepdf.Name("/MCR"):
+                                mid = ch.get("/MCID")
+                                if isinstance(mid, (int, pikepdf.Integer)) and int(mid) == mcid:
+                                    return elem, idx
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    return None, None
+
+
+def _synthesize_heading_from_page_mcid(
+    pdf: pikepdf.Pdf,
+    sr,
+    doc_elem,
+    level: int,
+    prefer_text: str = "",
+):
+    """Last-resort: create a new /H{level} struct elem from a title-like page-0 MCID.
+
+    Used when the PDF has no /P, /Span, or /Div elements available for promotion.
+    Detaches the MCID from its current owner, wraps it in a new heading elem under
+    /Document, sets /Pg to page 0, and updates ParentTree so the MCID resolves to
+    the new element.
+
+    Returns (new_elem, note) on success, (None, failure_note) otherwise.
+    """
+    try:
+        lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        return None, "mcid_lookup_failed"
+    page0_rows = [(mcid, text) for (page, mcid), text in lookup.items() if page == 0 and text]
+    if not page0_rows:
+        return None, "no_page0_mcid_text"
+    scored: list[tuple[int, int, str]] = []
+    for mcid, text in page0_rows:
+        s = _score_mcid_text_as_heading(text, prefer_text)
+        if s is None:
+            continue
+        scored.append((s, mcid, text))
+    if not scored:
+        return None, "no_titleish_page0_mcid"
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    _best_score, best_mcid, best_text = scored[0]
+    owner, _owner_idx = _find_mcid_owner_in_struct(pdf, best_mcid)
+    if owner is None:
+        return None, "mcid_owner_not_found"
+    try:
+        page_obj = pdf.pages[0].obj
+    except Exception:
+        return None, "page0_unavailable"
+    if not isinstance(page_obj, pikepdf.Dictionary):
+        return None, "page0_not_dict"
+
+    try:
+        k = owner.get("/K")
+    except Exception:
+        k = None
+    if isinstance(k, (int, pikepdf.Integer)) and int(k) == best_mcid:
+        try:
+            owner["/K"] = pikepdf.Array([])
+        except Exception:
+            return None, "failed_to_detach_mcid"
+    elif isinstance(k, pikepdf.Array):
+        new_k = pikepdf.Array()
+        detached = False
+        for ch in k:
+            if isinstance(ch, (int, pikepdf.Integer)) and int(ch) == best_mcid:
+                detached = True
+                continue
+            matched_mcr = False
+            if isinstance(ch, pikepdf.Dictionary):
+                try:
+                    if ch.get("/Type") == pikepdf.Name("/MCR"):
+                        mid = ch.get("/MCID")
+                        if isinstance(mid, (int, pikepdf.Integer)) and int(mid) == best_mcid:
+                            matched_mcr = True
+                except Exception:
+                    pass
+            if matched_mcr:
+                detached = True
+                continue
+            new_k.append(ch)
+        if not detached:
+            return None, "mcid_not_in_owner_k"
+        try:
+            owner["/K"] = new_k
+        except Exception:
+            return None, "failed_to_rewrite_owner_k"
+
+    tag = "/H1" if level == 1 else f"/H{level}"
+    try:
+        new_elem = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name(tag),
+            P=doc_elem,
+            Pg=page_obj,
+            K=pikepdf.Integer(int(best_mcid)),
+        ))
+    except Exception:
+        return None, "failed_to_create_heading_elem"
+    try:
+        new_elem["/T"] = _pdf_text_string(best_text, 500)
+    except Exception:
+        pass
+    if not _append_struct_child(doc_elem, new_elem):
+        return None, "failed_to_append_to_document"
+    try:
+        arr, _page_key, _pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+        if isinstance(arr, pikepdf.Array):
+            _set_page_parent_tree_mcid(arr, int(best_mcid), new_elem)
+    except Exception:
+        pass
+    return new_elem, "synthesized_from_page0_mcid"
+
+
 def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
-    """Promote /P, /Span, or /Div structure elements to /H1–/H6 (Office-tagged PDFs often use Span/Div)."""
+    """Promote /P, /Span, or /Div structure elements to /H1–/H6 (Office-tagged PDFs often use Span/Div).
+
+    Last-resort fallback: when no P/Span/Div candidate is available, synthesize a new
+    /H1 structure element from a title-like page-0 MCID detached from its current owner.
+    """
     ref = params.get("structRef")
     target_text = str(params.get("text") or "").strip()
     level = params.get("level")
@@ -5513,6 +5692,21 @@ def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
             except Exception:
                 tnorm = ""
     if tnorm not in ("P", "SPAN", "DIV"):
+        # Synthesize a new heading from a page-0 title-like MCID. Used when the PDF
+        # has no paragraph-like tags at all (only MCID children under a container).
+        sr_syn, doc_elem_syn = _find_or_create_document_elem(pdf)
+        if isinstance(sr_syn, pikepdf.Dictionary) and isinstance(doc_elem_syn, pikepdf.Dictionary):
+            syn_elem, syn_note = _synthesize_heading_from_page_mcid(
+                pdf, sr_syn, doc_elem_syn, level, target_text,
+            )
+            if syn_elem is not None:
+                after_debug = _heading_promotion_debug(pdf, syn_elem, "after")
+                _set_last_mutation_debug({"before": before_debug, "after": after_debug})
+                _set_last_mutation_note(syn_note)
+                return True
+            _set_last_mutation_debug(before_debug)
+            _set_last_mutation_note(f"synthesize_failed:{syn_note}")
+            return False
         _set_last_mutation_debug(before_debug)
         _set_last_mutation_note("target_not_paragraph_like")
         return False
