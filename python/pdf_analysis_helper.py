@@ -1759,6 +1759,37 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
         # Build a minimal JSON struct tree for reading-order heuristic (depth-limited)
         struct_tree_json = _build_mini_tree(str_root, depth=0, max_depth=4)
 
+        # Build a RoleMap dictionary { "/customTag": "/StandardType" } for resolution.
+        role_map_resolved: dict[str, str] = {}
+        try:
+            rm = str_root.get("/RoleMap")
+            if isinstance(rm, pikepdf.Dictionary):
+                for rk in list(rm.keys()):
+                    try:
+                        rv = rm.get(rk)
+                        if rv is None:
+                            continue
+                        role_map_resolved[str(rk)] = str(rv)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        def _resolved_tag(elem) -> str:
+            raw = get_name(elem)
+            if not raw:
+                return raw
+            lookup = raw if raw.startswith("/") else "/" + raw
+            seen = set()
+            cur = lookup
+            while cur in role_map_resolved and cur not in seen:
+                seen.add(cur)
+                mapped = role_map_resolved[cur]
+                if not mapped:
+                    break
+                cur = mapped if mapped.startswith("/") else "/" + mapped
+            return cur.lstrip("/")
+
         try:
             mcid_lookup = _build_mcid_resolved_lookup(pdf)
         except Exception:
@@ -1790,7 +1821,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                 except Exception:
                     pass
 
-                tag = get_name(elem)
+                tag = _resolved_tag(elem)
                 page = get_page_number(elem, page_map)
 
                 # Headings
@@ -5196,9 +5227,85 @@ def _ensure_parent_tree_entry(nums: pikepdf.Array, key: int, value) -> None:
     nums.append(value)
 
 
+_HEADING_ROLEMAP_REJECT_RE = re.compile(r"(figure|caption|table|toc|toa|tof|footnote|endnote|byline|reference|^index)", re.IGNORECASE)
+_HEADING_ROLEMAP_LEVELED_RE = re.compile(r"^/?\s*(sub)?(heading|head|title|h)[\s_-]*([1-6])\s*$", re.IGNORECASE)
+_HEADING_ROLEMAP_IMPLICIT_RE = re.compile(r"^/?\s*(?:heading|subhead|subtitle|sub[_\s-]*head|page[_\s-]*head(?:ing)?|(?:sub)?sect(?:ion)?[_\s-]*head(?:ing)?|title)\b", re.IGNORECASE)
+_HEADING_ROLEMAP_TRUNCATED_RE = re.compile(r"h(?:ead(?:ing)?|ea)[a-z_\s-]*$", re.IGNORECASE)
+
+
+def _classify_heading_rolemap_key(key: str) -> int | None:
+    """Return heading level 1-6 if key name clearly represents a heading style, else None."""
+    if not key:
+        return None
+    bare = key.lstrip("/")
+    if _HEADING_ROLEMAP_REJECT_RE.search(bare):
+        return None
+    m = _HEADING_ROLEMAP_LEVELED_RE.match(key)
+    if m:
+        level = int(m.group(3))
+        if m.group(1):  # "sub" prefix demotes one level
+            level = min(6, level + 1)
+        return level
+    low = bare.lower()
+    if _HEADING_ROLEMAP_IMPLICIT_RE.match(key):
+        if low.startswith("subhead") or low.startswith("sub-head") or low.startswith("sub_head") or low.startswith("subtitle"):
+            return 2
+        if low.startswith("title"):
+            return 1
+        if "page" in low:
+            return 1
+        if "sect" in low:
+            return 2
+        return 2
+    # Last-resort: keys ending in head/heading/hea (e.g. Grants_list_page_hea truncated)
+    if _HEADING_ROLEMAP_TRUNCATED_RE.search(bare) and len(bare) <= 40:
+        return 2
+    return None
+
+
+def _rewrite_heading_rolemap(pdf: pikepdf.Pdf) -> bool:
+    """Rewrite StructTreeRoot /RoleMap entries that map heading-style keys to /P
+    so they map to /H{n}. Pure metadata rewrite — no content or tree mutation.
+    Returns True if any entry was changed.
+    """
+    try:
+        st = pdf.Root.get("/StructTreeRoot")
+        if not isinstance(st, pikepdf.Dictionary):
+            return False
+        rm = st.get("/RoleMap")
+        if not isinstance(rm, pikepdf.Dictionary):
+            return False
+        changed = False
+        for key in list(rm.keys()):
+            try:
+                val = rm.get(key)
+                if val is None:
+                    continue
+                val_name = str(val).lstrip("/").upper()
+                if val_name.startswith("H") and (val_name == "H" or (len(val_name) == 2 and val_name[1].isdigit())):
+                    continue
+                if val_name != "P":
+                    continue
+                level = _classify_heading_rolemap_key(str(key))
+                if level is None:
+                    continue
+                rm[key] = pikepdf.Name(f"/H{level}")
+                changed = True
+            except Exception:
+                continue
+        return changed
+    except Exception:
+        return False
+
+
 def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
     root = pdf.Root
+    try:
+        if _rewrite_heading_rolemap(pdf):
+            changed = True
+    except Exception as e:
+        print(f"[warn] repair_structure_conformance rolemap: {e}", file=sys.stderr)
     mi = root.get("/MarkInfo")
     if mi is not None:
         try:
