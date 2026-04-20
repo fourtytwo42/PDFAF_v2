@@ -230,6 +230,11 @@ export function deriveRoutingDecision(
     && analysis.structuralClassification?.confidence !== 'low'
     && failing.every(key => key === 'alt_text' || key === 'pdf_ua_compliance' || key === 'color_contrast')
     && categoryScore(analysis, 'alt_text') <= categoryScore(analysis, 'pdf_ua_compliance');
+  const zeroHeadingFigureRecovery =
+    categoryFailing(analysis, 'heading_structure')
+    && categoryFailing(analysis, 'alt_text')
+    && snapshot.headings.length === 0
+    && (snapshot.paragraphStructElems?.length ?? 0) > 0;
   const nativeStructureDebt =
     categoryFailing(analysis, 'reading_order') ||
     categoryFailing(analysis, 'heading_structure') ||
@@ -264,6 +269,7 @@ export function deriveRoutingDecision(
   pushSignal(signals, 'font_unicode_tail_recovery', fontUnicodeTailRecovery);
   pushSignal(signals, 'figure_semantic_debt', figureDebt);
   pushSignal(signals, 'near_pass_figure_recovery', nearPassFigureRecovery);
+  pushSignal(signals, 'zero_heading_figure_recovery', zeroHeadingFigureRecovery);
   pushSignal(signals, 'navigation_or_forms_debt', navigationDebt);
 
   if (fontUnicodeTailRecovery) pushRoute(routes, 'font_unicode_tail_recovery');
@@ -286,6 +292,9 @@ export function deriveRoutingDecision(
   }
   if (navigationDebt) pushRoute(routes, 'document_navigation_forms');
   if (nearPassFigureRecovery) pushRoute(routes, 'near_pass_figure_recovery');
+  if (zeroHeadingFigureRecovery && !routes.includes('post_bootstrap_heading_convergence')) {
+    pushRoute(routes, 'post_bootstrap_heading_convergence');
+  }
   if (figureDebt) {
     if (nearPassFigureRecovery) {
       pushRoute(deferredRoutes, 'figure_semantics');

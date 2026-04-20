@@ -34,9 +34,9 @@ const META = { id: 'u1', filename: 'u.pdf', timestamp: new Date().toISOString(),
 
 function goldenSnap(structRef: string): DocumentSnapshot {
   return {
-    pageCount: 1,
-    textByPage: ['Golden Title'],
-    textCharCount: 12,
+    pageCount: 2,
+    textByPage: ['Golden Title', 'Golden body'],
+    textCharCount: 23,
     imageOnlyPageCount: 0,
     metadata: { title: 'G', language: 'en' },
     links: [],

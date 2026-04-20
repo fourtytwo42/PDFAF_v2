@@ -279,6 +279,29 @@ export const REMEDIATION_MAX_HEADING_CREATES = parseInt(
   10,
 );
 
+/** When enabled, prefer Stage 24 ranked zero-heading bootstrap candidates over legacy text-length fallback. */
+export function stage24ZeroHeadingBootstrapEnabled(): boolean {
+  return process.env['PDFAF_STAGE24_ZERO_HEADING_BOOTSTRAP'] !== '0';
+}
+
+/** Reject bootstrap candidates longer than this many visible characters. */
+export const HEADING_BOOTSTRAP_MAX_TEXT_LEN = parseInt(
+  process.env['PDFAF_HEADING_BOOTSTRAP_MAX_TEXT_LEN'] ?? '120',
+  10,
+);
+
+/** Prefer title-like candidates at or below this word count. */
+export const HEADING_BOOTSTRAP_TITLE_MAX_WORDS = parseInt(
+  process.env['PDFAF_HEADING_BOOTSTRAP_TITLE_MAX_WORDS'] ?? '12',
+  10,
+);
+
+/** Minimum score for a ranked heading bootstrap candidate to be considered safe. */
+export const HEADING_BOOTSTRAP_MIN_SCORE = parseInt(
+  process.env['PDFAF_HEADING_BOOTSTRAP_MIN_SCORE'] ?? '60',
+  10,
+);
+
 /**
  * Max successful applications per run for `set_figure_alt_text` and separately for
  * `mark_figure_decorative` (planner repeats until no targets or cap). Override via env on huge docs.

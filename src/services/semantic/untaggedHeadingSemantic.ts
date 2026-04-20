@@ -20,6 +20,7 @@ import type {
 import { analyzePdf } from '../pdfAnalyzer.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import { analyzeLayout, type LayoutAnalysis } from '../layout/layoutAnalyzer.js';
+import { buildHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { detectDomain, DOMAIN_ALT_TEXT_GUIDANCE, type DocumentDomain } from './domainDetector.js';
 import { chatCompletionToolCall } from './openAiCompatClient.js';
 import { isLlmTimeoutOrAbortError } from './llmBatchGuard.js';
@@ -89,26 +90,15 @@ function normalizeParagraphTag(tag: string): string {
 }
 
 function buildUntaggedCandidates(snapshot: DocumentSnapshot): UntaggedCandidateRow[] {
-  const rows = snapshot.paragraphStructElems ?? [];
-  const seen = new Set<string>();
-  const out: UntaggedCandidateRow[] = [];
-  for (const r of rows) {
-    if (!PROMOTE_SOURCE_TAGS.has(normalizeParagraphTag(r.tag))) continue;
-    const ref = (r.structRef ?? '').trim();
-    if (!ref || seen.has(ref)) continue;
-    seen.add(ref);
-    const row: UntaggedCandidateRow = {
-      structRef: ref,
-      text: (r.text ?? '').trim().slice(0, 500),
-      page: r.page,
-    };
-    if (Array.isArray(r.bbox) && r.bbox.length === 4) {
-      row.bbox = r.bbox as [number, number, number, number];
-    }
-    out.push(row);
-  }
-  out.sort((a, b) => a.page - b.page || a.text.length - b.text.length);
-  return out.slice(0, SEMANTIC_MAX_PROMOTE_CANDIDATES);
+  return buildHeadingBootstrapCandidates(snapshot)
+    .filter(row => PROMOTE_SOURCE_TAGS.has(normalizeParagraphTag(row.tag)))
+    .map(row => ({
+      structRef: row.structRef,
+      text: row.text,
+      page: row.page,
+      ...(row.bbox ? { bbox: row.bbox } : {}),
+    }))
+    .slice(0, SEMANTIC_MAX_PROMOTE_CANDIDATES);
 }
 
 function untaggedPromoteOp(snapshot: DocumentSnapshot): string {

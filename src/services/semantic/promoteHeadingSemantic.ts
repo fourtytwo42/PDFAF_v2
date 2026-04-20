@@ -20,6 +20,7 @@ import type {
 import { analyzePdf } from '../pdfAnalyzer.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import { analyzeLayout, type LayoutAnalysis } from '../layout/layoutAnalyzer.js';
+import { buildHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { detectDomain, DOMAIN_ALT_TEXT_GUIDANCE, type DocumentDomain } from './domainDetector.js';
 import { chatCompletionToolCall } from './openAiCompatClient.js';
 import { isLlmTimeoutOrAbortError } from './llmBatchGuard.js';
@@ -94,27 +95,16 @@ function normalizeParagraphTag(tag: string): string {
 /** Phase 3c-a: paragraph-like roles Python emits (structure /S). Exported for untagged heading pass. */
 export const PROMOTE_SOURCE_TAGS = new Set(['P', 'SPAN', 'DIV']);
 
-function buildPromoteCandidates(snapshot: DocumentSnapshot): PromoteCandidateRow[] {
-  const rows = snapshot.paragraphStructElems ?? [];
-  const seen = new Set<string>();
-  const out: PromoteCandidateRow[] = [];
-  for (const r of rows) {
-    if (!PROMOTE_SOURCE_TAGS.has(normalizeParagraphTag(r.tag))) continue;
-    const ref = (r.structRef ?? '').trim();
-    if (!ref || seen.has(ref)) continue;
-    seen.add(ref);
-    const row: PromoteCandidateRow = {
-      structRef: ref,
-      text: (r.text ?? '').trim().slice(0, 500),
-      page: r.page,
-    };
-    if (Array.isArray(r.bbox) && r.bbox.length === 4) {
-      row.bbox = r.bbox as [number, number, number, number];
-    }
-    out.push(row);
-  }
-  out.sort((a, b) => a.page - b.page || a.text.length - b.text.length);
-  return out.slice(0, SEMANTIC_MAX_PROMOTE_CANDIDATES);
+export function buildPromoteCandidates(snapshot: DocumentSnapshot): PromoteCandidateRow[] {
+  return buildHeadingBootstrapCandidates(snapshot)
+    .filter(row => PROMOTE_SOURCE_TAGS.has(normalizeParagraphTag(row.tag)))
+    .map(row => ({
+      structRef: row.structRef,
+      text: row.text,
+      page: row.page,
+      ...(row.bbox ? { bbox: row.bbox } : {}),
+    }))
+    .slice(0, SEMANTIC_MAX_PROMOTE_CANDIDATES);
 }
 
 function normLayoutText(s: string): string {
@@ -146,12 +136,22 @@ export function filterPromoteCandidatesByLayout(
     });
   }
   const hfZones = layout.zones.filter(z => z.type === 'header' || z.type === 'footer');
-  if (hfZones.length === 0) return out;
-  return out.filter(c => {
+  const withoutHeaderFooter = hfZones.length === 0 ? out : out.filter(c => {
     if (!c.bbox) return true;
     for (const z of hfZones) {
       if (z.pageNumber !== c.page) continue;
       if (rectsOverlap(c.bbox, z.bbox)) return false;
+    }
+    return true;
+  });
+  const captions = layout.captionCandidates ?? [];
+  if (captions.length === 0) return withoutHeaderFooter;
+  return withoutHeaderFooter.filter(c => {
+    const text = normLayoutText(c.text);
+    for (const caption of captions) {
+      if (caption.pageNumber !== c.page) continue;
+      if (text.length > 0 && text === normLayoutText(caption.text)) return false;
+      if (c.bbox && rectsOverlap(c.bbox, caption.bbox)) return false;
     }
     return true;
   });

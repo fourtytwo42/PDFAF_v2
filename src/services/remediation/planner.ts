@@ -4,6 +4,7 @@ import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
   FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD,
+  HEADING_BOOTSTRAP_MIN_SCORE,
   OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS,
   OCR_NATIVE_SKIP_TEXT_CHARS,
   REMEDIATION_CATEGORY_THRESHOLD,
@@ -14,11 +15,13 @@ import {
   REMEDIATION_TOOL_STAGE_ORDER,
   TOOL_RELIABILITY_FILTER_MAX_SUCCESS_RATE,
   TOOL_RELIABILITY_FILTER_MIN_ATTEMPTS,
+  stage24ZeroHeadingBootstrapEnabled,
 } from '../../config.js';
 import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
 import { buildPlanningSummary, deriveRoutingDecision } from './routingDecision.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { isFilenameLikeTitle } from '../compliance/icjiaParity.js';
+import { selectHeadingBootstrapCandidate } from '../headingBootstrapCandidates.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -88,6 +91,8 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'artifact_repeating_page_furniture',
     'create_heading_from_candidate',
     'normalize_heading_hierarchy',
+    'normalize_nested_figure_containers',
+    'canonicalize_figure_alt_ownership',
     'repair_native_reading_order',
     'repair_structure_conformance',
   ],
@@ -531,6 +536,10 @@ export function planForRemediation(
         headingNeedsRepair
         && snapshot.structureTree !== null
         && (snapshot.paragraphStructElems?.length ?? 0) > 0
+        && (
+          !stage24ZeroHeadingBootstrapEnabled()
+          || (selectHeadingBootstrapCandidate(snapshot)?.score ?? -1) >= HEADING_BOOTSTRAP_MIN_SCORE
+        )
       )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
@@ -779,20 +788,30 @@ export function buildDefaultParams(
       return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
     }
     case 'create_heading_from_candidate': {
-      const elems = (snapshot.paragraphStructElems ?? []).filter(
-        item => item.structRef && item.text.trim().length >= 4,
-      );
-      // For H1 on page 0: prefer longer text (more likely a meaningful section title).
-      // Fall back to any page, still preferring longer text.
-      const page0 = elems
-        .filter(e => e.page === 0)
-        .sort((a, b) => b.text.length - a.text.length)[0];
-      const candidate = page0
-        ?? elems.sort((a, b) => a.page - b.page || b.text.length - a.text.length)[0];
-      if (!candidate) return {};
+      const candidate = stage24ZeroHeadingBootstrapEnabled()
+        ? selectHeadingBootstrapCandidate(snapshot)
+        : null;
+      if (!candidate) {
+        const elems = (snapshot.paragraphStructElems ?? []).filter(
+          item => item.structRef && item.text.trim().length >= 4,
+        );
+        const page0 = elems
+          .filter(e => e.page === 0)
+          .sort((a, b) => b.text.length - a.text.length)[0];
+        const legacyCandidate = page0
+          ?? elems.sort((a, b) => a.page - b.page || b.text.length - a.text.length)[0];
+        if (!legacyCandidate) return {};
+        return {
+          targetRef: legacyCandidate.structRef,
+          level: legacyCandidate.page === 0 ? 1 : 2,
+          text: legacyCandidate.text.slice(0, 200),
+        };
+      }
+      const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
+      const zeroExportedHeadings = snapshot.headings.length === 0;
       return {
         targetRef: candidate.structRef,
-        level: candidate.page === 0 ? 1 : 2,
+        level: !hasExistingH1 && zeroExportedHeadings && candidate.page === 0 ? 1 : 2,
         text: candidate.text.slice(0, 200),
       };
     }

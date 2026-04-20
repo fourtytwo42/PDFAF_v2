@@ -87,6 +87,54 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('picks a title-like bootstrap heading candidate over long body text and captions', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 3,
+      textByPage: ['EXECUTIVE SUMMARY', 'Body', 'More body'],
+      textCharCount: 600,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        {
+          tag: 'P',
+          text: 'Figure 1: Population by age group',
+          page: 0,
+          structRef: '41_0',
+          bbox: [40, 540, 320, 556],
+        },
+        {
+          tag: 'P',
+          text: 'EXECUTIVE SUMMARY',
+          page: 0,
+          structRef: '40_0',
+          bbox: [40, 710, 220, 734],
+        },
+        {
+          tag: 'P',
+          text: 'This paragraph is long enough to look like body copy and should not be selected as a heading candidate because it is a sentence with punctuation.',
+          page: 0,
+          structRef: '42_0',
+          bbox: [40, 420, 520, 440],
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      alt_text: 0,
+      reading_order: 0,
+    });
+
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap)).toEqual({
+      targetRef: '40_0',
+      level: 1,
+      text: 'EXECUTIVE SUMMARY',
+    });
+  });
+
   it('records a metadata-first planning summary for near-pass metadata debt', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -1164,6 +1212,40 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, applied);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).toContain('create_heading_from_candidate');
+  });
+
+  it('keeps figure ownership cleanup active for zero-heading figure files', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 4,
+      textByPage: ['EXECUTIVE SUMMARY', 'Chart page', 'Body', 'Body'],
+      textCharCount: 900,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'EXECUTIVE SUMMARY', page: 0, structRef: '60_0', bbox: [50, 700, 240, 725] },
+        { tag: 'P', text: 'Program Overview', page: 1, structRef: '61_0', bbox: [60, 650, 240, 670] },
+      ],
+      figures: [
+        { hasAlt: false, isArtifact: false, page: 1, role: 'Figure', structRef: '70_0' },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      alt_text: 0,
+      reading_order: 0,
+      pdf_ua_compliance: 55,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(plan.planningSummary?.triggeringSignals).toContain('zero_heading_figure_recovery');
+    expect(names).toContain('create_heading_from_candidate');
+    expect(names).toContain('normalize_nested_figure_containers');
+    expect(names).toContain('canonicalize_figure_alt_ownership');
   });
 
   it('skips create_heading_from_candidate after REMEDIATION_MAX_HEADING_CREATES successful applications', () => {

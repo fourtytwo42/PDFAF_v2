@@ -27,9 +27,13 @@ vi.mock('../../src/services/pdfAnalyzer.js', () => ({
   analyzePdf: vi.fn(),
 }));
 
-vi.mock('../../src/services/remediation/orchestrator.js', () => ({
-  remediatePdf: vi.fn(),
-}));
+vi.mock('../../src/services/remediation/orchestrator.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../src/services/remediation/orchestrator.js')>();
+  return {
+    ...actual,
+    remediatePdf: vi.fn(),
+  };
+});
 
 import { analyzePdf } from '../../src/services/pdfAnalyzer.js';
 import { runPythonMutationBatch } from '../../src/python/bridge.js';

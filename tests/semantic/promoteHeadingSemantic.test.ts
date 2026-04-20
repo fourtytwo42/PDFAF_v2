@@ -22,6 +22,7 @@ import { analyzePdf } from '../../src/services/pdfAnalyzer.js';
 import { analyzeLayout } from '../../src/services/layout/layoutAnalyzer.js';
 import {
   applySemanticPromoteHeadingRepairs,
+  buildPromoteCandidates,
   filterPromoteCandidatesByLayout,
 } from '../../src/services/semantic/promoteHeadingSemantic.js';
 import { score } from '../../src/services/scorer/scorer.js';
@@ -120,6 +121,37 @@ describe('filterPromoteCandidatesByLayout', () => {
       headerFooterBandTexts: [{ pageNumber: 0, kind: 'header', text: 'OFFICIAL REPORT HEADER LINE' }],
     });
     expect(out.map(c => c.structRef)).toEqual(['2_0']);
+  });
+
+  it('drops candidates that match caption text or overlap caption boxes', () => {
+    const cands = [
+      { structRef: '1_0', text: 'Figure 2: Annual trend', page: 0, bbox: [50, 300, 250, 320] as const },
+      { structRef: '2_0', text: 'Program Overview', page: 0, bbox: [50, 600, 260, 625] as const },
+    ];
+    const out = filterPromoteCandidatesByLayout(cands, {
+      isMultiColumn: false,
+      columnCount: 1,
+      zones: [],
+      captionCandidates: [{ text: 'Figure 2: Annual trend', pageNumber: 0, bbox: [40, 295, 255, 325] }],
+      medianFontSizePtByPage: {},
+      headerFooterBandTexts: [],
+    });
+    expect(out.map(c => c.structRef)).toEqual(['2_0']);
+  });
+});
+
+describe('buildPromoteCandidates', () => {
+  it('prefers compact title-like candidates over body paragraphs', () => {
+    const snap = snapWithParagraphs([
+      { tag: 'P', text: 'This is a very long paragraph sentence that should be filtered out because it looks like body content rather than a title line.', page: 0, structRef: '20_0' },
+      { tag: 'P', text: 'PROGRAM OVERVIEW', page: 0, structRef: '21_0', bbox: [50, 700, 220, 724] },
+      { tag: 'P', text: 'Figure 1: Enrollment trend', page: 0, structRef: '22_0', bbox: [50, 300, 240, 318] },
+      { tag: 'Div', text: 'Regional Results', page: 1, structRef: '23_0', bbox: [55, 650, 240, 670] },
+    ], {
+      headings: [],
+    });
+    const out = buildPromoteCandidates(snap);
+    expect(out.map(row => row.structRef)).toEqual(['21_0', '23_0']);
   });
 });
 
