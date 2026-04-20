@@ -6,6 +6,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runPythonAnalysis, runPythonMutationBatch } from '../../src/python/bridge.js';
+import { analyzePdf } from '../../src/services/pdfAnalyzer.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +35,39 @@ async function buildUntaggedStructurePdf(): Promise<Buffer> {
   return Buffer.from(await doc.save({ useObjectStreams: false }));
 }
 
+async function buildEmbeddedPageXObjectPdf(): Promise<Buffer> {
+  const source = await PDFDocument.create();
+  const font = await source.embedFont(StandardFonts.Helvetica);
+  for (let pageIndex = 0; pageIndex < 2; pageIndex++) {
+    const page = source.addPage([612, 792]);
+    page.drawText(pageIndex === 0 ? 'Embedded Accessibility Plan' : `Embedded Section ${pageIndex + 1}`, {
+      x: 72,
+      y: 720,
+      size: pageIndex === 0 ? 20 : 18,
+      font,
+    });
+    page.drawText(
+      `This content is drawn inside a form XObject wrapper so the outer page stream mainly contains Do operators instead of direct BT/ET groups.`,
+      {
+        x: 72,
+        y: 680,
+        size: 12,
+        font,
+        maxWidth: 420,
+        lineHeight: 14,
+      },
+    );
+  }
+
+  const outer = await PDFDocument.create();
+  const embeddedPages = await outer.embedPages(source.getPages());
+  for (const embedded of embeddedPages) {
+    const page = outer.addPage([612, 792]);
+    page.drawPage(embedded, { x: 0, y: 0, width: 612, height: 792 });
+  }
+  return Buffer.from(await outer.save({ useObjectStreams: false }));
+}
+
 describe('Stage 14 deterministic tools', () => {
   it('synthesize_basic_structure_from_layout creates a tagged structure with headings', async () => {
     const buf = await buildUntaggedStructurePdf();
@@ -51,6 +85,58 @@ describe('Stage 14 deterministic tools', () => {
     expect(after.structureTree).not.toBeNull();
     expect(after.headings.length).toBeGreaterThanOrEqual(2);
     expect((after.paragraphStructElems?.length ?? 0)).toBeGreaterThanOrEqual(2);
+  });
+
+  it('bootstrap alone does not count as heading recovery, but synthesize fixes shell-tree PDFs', async () => {
+    const buf = await buildUntaggedStructurePdf();
+    const bootstrapped = await runPythonMutationBatch(buf, [
+      { op: 'bootstrap_struct_tree', params: {} },
+    ]);
+    expect(bootstrapped.result.success).toBe(true);
+    expect(bootstrapped.result.applied).toContain('bootstrap_struct_tree');
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-shell-'));
+    const bootstrapPath = join(dir, 'bootstrap.pdf');
+    await writeFile(bootstrapPath, bootstrapped.buffer);
+    const bootstrapAnalysis = await analyzePdf(bootstrapPath, 'bootstrap.pdf', { bypassCache: true });
+    expect(bootstrapAnalysis.result.categories.find(c => c.key === 'heading_structure')?.score).toBe(0);
+
+    const synthesized = await runPythonMutationBatch(bootstrapped.buffer, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(synthesized.result.success).toBe(true);
+    expect(synthesized.result.applied).toContain('synthesize_basic_structure_from_layout');
+
+    const synthesizedPath = join(dir, 'synthesized.pdf');
+    await writeFile(synthesizedPath, synthesized.buffer);
+    const after = await analyzePdf(synthesizedPath, 'synthesized.pdf', { bypassCache: true });
+    expect(after.snapshot.structureTree).not.toBeNull();
+    expect(after.snapshot.headings.length).toBeGreaterThan(0);
+    expect(after.result.categories.find(c => c.key === 'heading_structure')?.score ?? 0).toBeGreaterThan(0);
+    expect(after.result.categories.find(c => c.key === 'reading_order')?.score ?? 0).toBeGreaterThanOrEqual(90);
+  });
+
+  it('synthesize_basic_structure_from_layout falls back to visible page segments for XObject-heavy pages', async () => {
+    const buf = await buildEmbeddedPageXObjectPdf();
+    const bootstrapped = await runPythonMutationBatch(buf, [
+      { op: 'bootstrap_struct_tree', params: {} },
+    ]);
+    const synthesized = await runPythonMutationBatch(bootstrapped.buffer, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(synthesized.result.success).toBe(true);
+    expect(synthesized.result.applied).toContain('synthesize_basic_structure_from_layout');
+    expect(
+      synthesized.result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.note,
+    ).toContain('fallback_visible_segments_applied');
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-xobject-'));
+    const synthesizedPath = join(dir, 'xobject.pdf');
+    await writeFile(synthesizedPath, synthesized.buffer);
+    const after = await analyzePdf(synthesizedPath, 'xobject.pdf', { bypassCache: true });
+    expect(after.snapshot.structureTree).not.toBeNull();
+    expect(after.snapshot.headings.length).toBeGreaterThan(0);
+    expect(after.result.categories.find(c => c.key === 'heading_structure')?.score ?? 0).toBeGreaterThan(0);
   });
 
   it('artifact_repeating_page_furniture removes repeated header/footer text from structured text elements', async () => {

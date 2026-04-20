@@ -54,6 +54,7 @@ PDFAF_ENGINE_OCR_MARKER = "/PDFAFEngineOcr"
 PDFAF_ENGINE_OCR_TAGGED_MARKER = "/PDFAFEngineTaggedOcrText"
 PDFAF_BOOKMARK_STRATEGY_MARKER = "/PDFAFBookmarkStrategy"
 PDFAF_BOOKMARK_PAGE_COUNT_MARKER = "/PDFAFBookmarkPageCount"
+_LAST_MUTATION_NOTE = None
 
 MCID_OP_RE = re.compile(rb"/MCID\s+(\d+)", re.IGNORECASE)
 TJ_AFTER_MCID_RE = re.compile(rb"\(((?:\\.|[^\\\)])+)\)\s*Tj")
@@ -69,6 +70,18 @@ _PAINT_OPS = frozenset({
     "Do",                            # external object (image / form XObject)
     "EI",                            # end inline image
 })
+
+
+def _set_last_mutation_note(note: str | None) -> None:
+    global _LAST_MUTATION_NOTE
+    _LAST_MUTATION_NOTE = note
+
+
+def _consume_last_mutation_note() -> str | None:
+    global _LAST_MUTATION_NOTE
+    note = _LAST_MUTATION_NOTE
+    _LAST_MUTATION_NOTE = None
+    return note
 
 
 def _mcid_max_pages() -> int:
@@ -5206,6 +5219,251 @@ def _bt_et_text_groups(insts: list) -> list[tuple[int, int, str]]:
     return groups
 
 
+def _outside_paint_segments(insts: list) -> list[tuple[int, int]]:
+    """Outside any marked-content block, group visible paint instructions into taggable segments."""
+    depth = 0
+    outside_segs: list[tuple[int, int]] = []
+    seg_start = 0
+
+    for i, inst in enumerate(insts):
+        op = str(inst.operator)
+        if op in ("BDC", "BMC"):
+            if depth == 0 and i > seg_start:
+                outside_segs.append((seg_start, i))
+            depth += 1
+        elif op == "EMC":
+            depth = max(0, depth - 1)
+            if depth == 0:
+                seg_start = i + 1
+
+    if depth == 0 and seg_start < len(insts):
+        outside_segs.append((seg_start, len(insts)))
+
+    return [
+        (s, e)
+        for s, e in outside_segs
+        if any(str(insts[j].operator) in _PAINT_OPS for j in range(s, e))
+    ]
+
+
+def _make_placeholder_heading_text(page_idx: int, page_count: int) -> str:
+    if page_idx == 0:
+        return "Document title"
+    if page_idx < min(page_count, 5):
+        return f"Section {page_idx + 1}"
+    return "Section"
+
+
+def _choose_synthesized_tag_name(
+    cleaned: str,
+    page_idx: int,
+    block_idx: int,
+    page_count: int,
+    assigned_h1: bool,
+    heading_count: int,
+) -> tuple[str, bool, int]:
+    tag_name = "/P"
+    next_assigned_h1 = assigned_h1
+    next_heading_count = heading_count
+    looks_like_heading = bool(cleaned) and _looks_like_heading_text(cleaned, page_idx, block_idx, page_count)
+    should_force_heading = not cleaned and block_idx == 0 and page_idx < min(page_count, 3)
+
+    if looks_like_heading or should_force_heading:
+        if not next_assigned_h1:
+            tag_name = "/H1"
+            next_assigned_h1 = True
+        elif next_heading_count < 4:
+            tag_name = "/H2" if page_idx <= 1 else "/H3"
+        else:
+            tag_name = "/P"
+        if tag_name != "/P":
+            next_heading_count += 1
+
+    return tag_name, next_assigned_h1, next_heading_count
+
+
+def _append_structured_segments_for_page(
+    pdf: pikepdf.Pdf,
+    page_obj,
+    page_idx: int,
+    page_count: int,
+    insts: list,
+    segments: list[tuple[int, int, str]],
+    doc_elem,
+    nums: pikepdf.Array,
+    next_mcid: int,
+    assigned_h1: bool,
+    heading_count: int,
+) -> tuple[bool, int, bool, int, list]:
+    sect = pdf.make_indirect(
+        pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Sect"),
+            P=doc_elem,
+            Pg=page_obj,
+            K=pikepdf.Array([]),
+        )
+    )
+    sect_children = pikepdf.Array([])
+    rewritten: list = []
+    prev_end = 0
+
+    for block_idx, (seg_start, seg_end, text) in enumerate(segments):
+        cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+        tag_name, assigned_h1, heading_count = _choose_synthesized_tag_name(
+            cleaned,
+            page_idx,
+            block_idx,
+            page_count,
+            assigned_h1,
+            heading_count,
+        )
+        actual_text = cleaned
+        if tag_name != "/P" and not actual_text:
+            actual_text = _make_placeholder_heading_text(page_idx, page_count)
+        mcid = next_mcid
+        next_mcid += 1
+        elem = pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name("/StructElem"),
+                S=pikepdf.Name(tag_name),
+                K=mcid,
+                Pg=page_obj,
+                P=sect,
+                ActualText=_pdf_text_string(actual_text, 500),
+            )
+        )
+        sect_children.append(elem)
+        nums.append(mcid)
+        nums.append(elem)
+        rewritten.extend(insts[prev_end:seg_start])
+        rewritten.append(
+            pikepdf.ContentStreamInstruction(
+                [pikepdf.Name("/P"), pikepdf.Dictionary(MCID=mcid)],
+                pikepdf.Operator("BDC"),
+            )
+        )
+        rewritten.extend(insts[seg_start:seg_end])
+        rewritten.append(pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC")))
+        prev_end = seg_end
+
+    if len(sect_children) == 0:
+        return False, next_mcid, assigned_h1, heading_count, []
+
+    rewritten.extend(insts[prev_end:])
+    final_rewritten = _wrap_do_operators_as_artifact(rewritten)
+    sect["/K"] = sect_children
+    return True, next_mcid, assigned_h1, heading_count, [sect, final_rewritten]
+
+
+def _tree_depth(node) -> int:
+    if not isinstance(node, dict):
+        return 0
+    kids = node.get("children") or []
+    if not kids:
+        return 1
+    return 1 + max((_tree_depth(child) for child in kids), default=0)
+
+
+def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
+    root = pdf.Root
+    sr = root.get("/StructTreeRoot")
+    parent_tree_entries = 0
+    parent_tree_next_key = 0
+    if isinstance(sr, pikepdf.Dictionary):
+        pt = sr.get("/ParentTree")
+        if isinstance(pt, pikepdf.Dictionary):
+            nums = pt.get("/Nums")
+            if isinstance(nums, pikepdf.Array):
+                parent_tree_entries = len(nums) // 2
+        try:
+            parent_tree_next_key = int(sr.get("/ParentTreeNextKey", 0) or 0)
+        except Exception:
+            parent_tree_next_key = 0
+    struct = traverse_struct_tree(pdf, build_page_map(pdf))
+    headings = struct.get("headings") or []
+    return {
+        "hasStructTreeRoot": isinstance(sr, pikepdf.Dictionary),
+        "parentTreeEntries": parent_tree_entries,
+        "parentTreeNextKey": parent_tree_next_key,
+        "headingCount": len(headings),
+        "structureDepth": _tree_depth(struct.get("structureTree")),
+    }
+
+
+def _promote_existing_structure_to_headings(pdf: pikepdf.Pdf, doc_elem, page_count: int) -> bool:
+    page_map = build_page_map(pdf)
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+
+    queue = deque()
+    _enqueue_children(queue, doc_elem.get("/K"))
+    visited: set = set()
+    candidates = []
+    candidate_idx = 0
+
+    while queue and len(candidates) < MAX_ITEMS:
+        elem = queue.popleft()
+        if not _is_struct_elem_dict(elem):
+            continue
+        vk = _struct_elem_visit_key(elem)
+        if vk in visited:
+            continue
+        visited.add(vk)
+        if _struct_elem_heading_level(elem) is not None:
+            _set_last_mutation_note("existing_heading_nodes_present")
+            return False
+        tag = (get_name(elem) or "").lstrip("/").upper()
+        if tag in ("P", "SPAN", "DIV"):
+            page = get_page_number(elem, page_map)
+            text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
+            cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+            candidates.append((candidate_idx, elem, cleaned, page))
+            candidate_idx += 1
+        try:
+            _enqueue_children(queue, elem.get("/K"))
+        except Exception:
+            pass
+
+    if not candidates:
+        _set_last_mutation_note("existing_structure_has_no_paragraph_candidates")
+        return False
+
+    changed = False
+    assigned_h1 = False
+    heading_count = 0
+    for idx, elem, cleaned, page in candidates:
+        tag_name, assigned_h1, heading_count = _choose_synthesized_tag_name(
+            cleaned,
+            page,
+            idx,
+            page_count,
+            assigned_h1,
+            heading_count,
+        )
+        if tag_name == "/P":
+            continue
+        elem["/S"] = pikepdf.Name(tag_name)
+        if not cleaned:
+            elem["/ActualText"] = _pdf_text_string(_make_placeholder_heading_text(page, page_count), 500)
+        changed = True
+        if heading_count >= min(4, page_count):
+            break
+
+    if not changed:
+        _set_last_mutation_note("paragraph_candidates_not_promotable_to_headings")
+        return False
+    for page in pdf.pages:
+        try:
+            page.obj["/Tabs"] = pikepdf.Name("/S")
+        except Exception:
+            pass
+    _set_last_mutation_note("existing_structure_promoted_to_headings")
+    return True
+
+
 def _looks_like_heading_text(text: str, page_idx: int, block_idx: int, page_count: int) -> bool:
     s = re.sub(r"\s+", " ", (text or "")).strip()
     if len(s) < 4 or len(s) > 140:
@@ -5268,14 +5526,28 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
     changed = False
     sr, doc_elem = _find_or_create_document_elem(pdf)
     if sr is None or doc_elem is None:
+        _set_last_mutation_note("missing_struct_tree_root")
         return False
+    existing_doc_children = pikepdf.Array([])
 
     try:
         existing_ck = doc_elem.get("/K")
         if isinstance(existing_ck, pikepdf.Array) and len(existing_ck) > 0:
-            return False
+            if _promote_existing_structure_to_headings(pdf, doc_elem, len(pdf.pages)):
+                return True
+            note = _consume_last_mutation_note()
+            if note not in ("existing_structure_has_no_paragraph_candidates", "paragraph_candidates_not_promotable_to_headings"):
+                _set_last_mutation_note(note)
+                return False
+            existing_doc_children = pikepdf.Array(list(existing_ck))
         if isinstance(existing_ck, pikepdf.Dictionary):
-            return False
+            if _promote_existing_structure_to_headings(pdf, doc_elem, len(pdf.pages)):
+                return True
+            note = _consume_last_mutation_note()
+            if note not in ("existing_structure_has_no_paragraph_candidates", "paragraph_candidates_not_promotable_to_headings"):
+                _set_last_mutation_note(note)
+                return False
+            existing_doc_children = pikepdf.Array([existing_ck])
     except Exception:
         pass
 
@@ -5292,94 +5564,90 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
 
     next_mcid = int(sr.get("/ParentTreeNextKey", 0) or 0)
     page_children = pikepdf.Array([])
+    assigned_h1 = False
+    heading_count = 0
+    used_fallback_segments = False
+    pages_with_existing_marked_content = 0
+    pages_without_promotable_segments = 0
 
     for page_idx, page in enumerate(pdf.pages):
         page_obj = page.obj
         try:
             insts = list(pikepdf.parse_content_stream(page_obj))
         except Exception:
+            pages_without_promotable_segments += 1
             continue
         if any(str(i.operator) == "BDC" for i in insts):
+            pages_with_existing_marked_content += 1
             continue
 
         groups = _bt_et_text_groups(insts)
-        if not groups:
+        segments = [(start, end + 1, text) for start, end, text in groups if text or (end + 1) > start]
+        if not segments:
+            paint_segments = _outside_paint_segments(insts)
+            segments = [
+                (start, end, _extract_text_from_instruction_segment(insts[start:end]))
+                for start, end in paint_segments
+            ]
+            if segments:
+                used_fallback_segments = True
+        if not segments:
+            pages_without_promotable_segments += 1
             continue
 
-        sect = pdf.make_indirect(
-            pikepdf.Dictionary(
-                Type=pikepdf.Name("/StructElem"),
-                S=pikepdf.Name("/Sect"),
-                P=doc_elem,
-                Pg=page_obj,
-                K=pikepdf.Array([]),
-            )
+        ok, next_mcid, assigned_h1, heading_count, payload = _append_structured_segments_for_page(
+            pdf,
+            page_obj,
+            page_idx,
+            len(pdf.pages),
+            insts,
+            segments,
+            doc_elem,
+            nums,
+            next_mcid,
+            assigned_h1,
+            heading_count,
         )
-        sect_children = pikepdf.Array([])
-        rewritten: list = []
-        prev_end = 0
-        heading_count = 0
-
-        for block_idx, (grp_start, grp_end, text) in enumerate(groups):
-            cleaned = re.sub(r"\s+", " ", (text or "")).strip()
-            if not cleaned:
-                continue
-            mcid = next_mcid
-            next_mcid += 1
-            tag_name = "/P"
-            if _looks_like_heading_text(cleaned, page_idx, block_idx, len(pdf.pages)):
-                if page_idx == 0 and heading_count == 0:
-                    tag_name = "/H1"
-                elif heading_count == 0:
-                    tag_name = "/H2"
-                elif heading_count == 1 and page_idx == 0:
-                    tag_name = "/H2"
-                heading_count += 1
-
-            elem = pdf.make_indirect(
-                pikepdf.Dictionary(
-                    Type=pikepdf.Name("/StructElem"),
-                    S=pikepdf.Name(tag_name),
-                    K=mcid,
-                    Pg=page_obj,
-                    P=sect,
-                    ActualText=_pdf_text_string(cleaned, 500),
-                )
-            )
-            sect_children.append(elem)
-            nums.append(mcid)
-            nums.append(elem)
-            rewritten.extend(insts[prev_end:grp_start])
-            rewritten.append(
-                pikepdf.ContentStreamInstruction(
-                    [pikepdf.Name("/P"), pikepdf.Dictionary(MCID=mcid)],
-                    pikepdf.Operator("BDC"),
-                )
-            )
-            rewritten.extend(insts[grp_start : grp_end + 1])
-            rewritten.append(pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC")))
-            prev_end = grp_end + 1
-
-        if len(sect_children) == 0:
+        if not ok:
+            pages_without_promotable_segments += 1
             continue
 
-        rewritten.extend(insts[prev_end:])
-        final_rewritten = _wrap_do_operators_as_artifact(rewritten)
+        sect, final_rewritten = payload
         try:
             page_obj["/Contents"] = pdf.make_stream(
                 pikepdf.unparse_content_stream(final_rewritten)
             )
+            page_obj["/Tabs"] = pikepdf.Name("/S")
         except Exception as e:
             print(f"[warn] synthesize_basic_structure_from_layout page {page_idx}: {e}", file=sys.stderr)
             continue
-        sect["/K"] = sect_children
         page_children.append(sect)
         changed = True
 
     if len(page_children) > 0:
-        doc_elem["/K"] = page_children
+        combined_children = pikepdf.Array(list(existing_doc_children))
+        for child in page_children:
+            combined_children.append(child)
+        doc_elem["/K"] = combined_children
         sr["/ParentTreeNextKey"] = next_mcid
         changed = True
+        if len(existing_doc_children) > 0:
+            if used_fallback_segments:
+                _set_last_mutation_note("existing_shell_structure_augmented_with_fallback_segments")
+            else:
+                _set_last_mutation_note("existing_shell_structure_augmented_with_bt_et_groups")
+        elif used_fallback_segments:
+            _set_last_mutation_note("fallback_visible_segments_applied")
+        else:
+            _set_last_mutation_note("bt_et_groups_applied")
+        return changed
+
+    if pages_with_existing_marked_content > 0:
+        _set_last_mutation_note("existing_marked_content_blocks_without_promotable_structure")
+    elif pages_without_promotable_segments > 0:
+        _set_last_mutation_note("no_promotable_segments_found")
+    else:
+        _set_last_mutation_note("no_pages_processed")
     return changed
 
 
@@ -5471,6 +5739,7 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
     When False, runs on any PDF with suitable BT/ET groups (legacy untagged exports).
     """
     if require_ocrmypdf and not _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("ocr_only_tagger_skipped_for_non_ocr_pdf")
         return False
 
     root = pdf.Root
@@ -5479,6 +5748,7 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
         _op_bootstrap_struct_tree(pdf, {})
         sr = root.get("/StructTreeRoot")
     if sr is None:
+        _set_last_mutation_note("missing_struct_tree_root")
         return False
 
     # Ensure Document element exists
@@ -5501,6 +5771,7 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
     try:
         existing_ck = doc_elem.get("/K")
         if existing_ck is not None:
+            _set_last_mutation_note("already_has_document_children")
             return False
     except Exception:
         pass
@@ -5519,16 +5790,20 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
 
     changed = False
     new_p_elems = []
+    pages_with_existing_marked_content = 0
+    pages_without_bt_et = 0
 
     for page_idx, page in enumerate(pdf.pages):
         page_obj = page.obj
         try:
             insts = list(pikepdf.parse_content_stream(page_obj))
         except Exception:
+            pages_without_bt_et += 1
             continue
 
         # Skip pages that already have BDC markers
         if any(str(i.operator) == "BDC" for i in insts):
+            pages_with_existing_marked_content += 1
             continue
 
         # Find BT…ET groups
@@ -5545,6 +5820,7 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
                 bt_et_groups.append((bt_start, idx))
 
         if not bt_et_groups:
+            pages_without_bt_et += 1
             continue
 
         # Assign MCIDs for this page's BT/ET groups
@@ -5577,6 +5853,7 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
             page_obj["/Contents"] = pdf.make_stream(
                 pikepdf.unparse_content_stream(final_rewritten)
             )
+            page_obj["/Tabs"] = pikepdf.Name("/S")
         except Exception as e:
             print(f"[warn] tag_ocr_text_blocks page {page_idx}: {e}", file=sys.stderr)
             continue
@@ -5599,11 +5876,18 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
         changed = True
 
     if not changed:
+        if pages_with_existing_marked_content > 0:
+            _set_last_mutation_note("existing_marked_content_blocks_without_promotable_bt_et")
+        elif pages_without_bt_et > 0:
+            _set_last_mutation_note("no_bt_et_groups_found")
+        else:
+            _set_last_mutation_note("no_pages_processed")
         return False
 
     # Attach all page P elements to Document
     doc_elem["/K"] = pikepdf.Array(new_p_elems)
     sr["/ParentTreeNextKey"] = next_mcid
+    _set_last_mutation_note("bt_et_page_wrapping_applied")
     return True
 
 
@@ -5618,8 +5902,25 @@ def _op_tag_ocr_text_blocks(pdf: pikepdf.Pdf, _params: dict) -> bool:
 def _op_tag_native_text_blocks(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """Legacy native PDFs with extractable BT/ET text but no marked-content IDs."""
     if _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("native_text_tagger_skipped_for_ocr_pdf")
         return False
-    return _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=False)
+    changed = _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=False)
+    if changed:
+        return True
+    note = _consume_last_mutation_note()
+    changed = _op_synthesize_basic_structure_from_layout(pdf, {})
+    if changed:
+        if note:
+            _set_last_mutation_note(f"{note};fallback_synthesize_applied")
+        return True
+    fallback_note = _consume_last_mutation_note()
+    if fallback_note and note:
+        _set_last_mutation_note(f"{note};{fallback_note}")
+    elif fallback_note:
+        _set_last_mutation_note(fallback_note)
+    elif note:
+        _set_last_mutation_note(note)
+    return False
 
 
 def _op_ensure_accessibility_tagging(pdf: pikepdf.Pdf, params: dict) -> bool:
@@ -5769,6 +6070,7 @@ def mutate_main(request_path: str) -> int:
 
     applied = []
     failed = []
+    op_results = []
 
     try:
         pdf = pikepdf.open(input_path, allow_overwriting_input=False)
@@ -5781,6 +6083,7 @@ def mutate_main(request_path: str) -> int:
         for m in mutations:
             op = m.get("op")
             params = m.get("params") or {}
+            _set_last_mutation_note(None)
             if op == "ocr_scanned_pdf":
                 tok = secrets.token_hex(8)
                 tmp_in = os.path.join(tempfile.gettempdir(), f"pdfaf-ocr-in-{tok}.pdf")
@@ -5815,22 +6118,40 @@ def mutate_main(request_path: str) -> int:
                     break
                 _set_pdfaf_remediation_marker(pdf, PDFAF_ENGINE_OCR_MARKER, True)
                 applied.append(op)
+                op_results.append({"op": op, "outcome": "applied", "note": "ocr_applied"})
                 continue
 
             fn = MUTATORS.get(op)
             if not fn:
                 failed.append({"op": op or "", "error": "unknown_op"})
+                op_results.append({"op": op or "", "outcome": "failed", "error": "unknown_op"})
                 continue
             if pdf is None:
                 failed.append({"op": op or "", "error": "no_pdf_handle"})
+                op_results.append({"op": op or "", "outcome": "failed", "error": "no_pdf_handle"})
                 break
             try:
                 ok = bool(fn(pdf, params))
+                note = _consume_last_mutation_note()
                 if ok:
                     applied.append(op)
+                    row = {"op": op, "outcome": "applied"}
+                    if note:
+                        row["note"] = note
+                    if os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
+                        row["debug"] = _mutation_debug_snapshot(pdf)
+                    op_results.append(row)
+                else:
+                    row = {"op": op, "outcome": "no_effect"}
+                    if note:
+                        row["note"] = note
+                    if os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
+                        row["debug"] = _mutation_debug_snapshot(pdf)
+                    op_results.append(row)
                 # no-op (False) is not a batch failure — caller treats empty `applied` as no_effect
             except Exception as ex:
                 failed.append({"op": op, "error": str(ex)})
+                op_results.append({"op": op, "outcome": "failed", "error": str(ex)})
         if pdf is not None:
             pdf.save(output_path)
     finally:
@@ -5847,7 +6168,7 @@ def mutate_main(request_path: str) -> int:
                 pass
 
     # Exit 0; Node reads stdout JSON `success` (true only if no hard failures).
-    print(json.dumps({"success": len(failed) == 0, "applied": applied, "failed": failed}, ensure_ascii=False))
+    print(json.dumps({"success": len(failed) == 0, "applied": applied, "failed": failed, "opResults": op_results}, ensure_ascii=False))
     return 0
 
 

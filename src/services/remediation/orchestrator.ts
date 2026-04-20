@@ -227,6 +227,19 @@ async function bufferSha256(buf: Buffer): Promise<string> {
   return createHash('sha256').update(buf).digest('hex');
 }
 
+function pythonMutationDetails(
+  result: Awaited<ReturnType<typeof runPythonMutationBatch>>['result'],
+  toolName: string,
+): string | undefined {
+  const op = result.opResults?.find(row => row.op === toolName);
+  if (!op) return undefined;
+  const payload: Record<string, unknown> = { outcome: op.outcome };
+  if (op.note) payload['note'] = op.note;
+  if (op.error) payload['error'] = op.error;
+  if (op.debug) payload['debug'] = op.debug;
+  return JSON.stringify(payload);
+}
+
 async function reanalyzeBufferForMutation(
   buf: Buffer,
   filename: string,
@@ -379,9 +392,19 @@ export async function runSingleTool(
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
         if (result.applied.length === 0) {
-          return { buffer, outcome: 'no_effect', durationMs: performance.now() - started };
+          return {
+            buffer,
+            outcome: 'no_effect',
+            details: pythonMutationDetails(result, 'set_pdfua_identification'),
+            durationMs: performance.now() - started,
+          };
         }
-        return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
+        return {
+          buffer: next,
+          outcome: 'applied',
+          details: pythonMutationDetails(result, 'set_pdfua_identification'),
+          durationMs: performance.now() - started,
+        };
       }
       case 'ocr_scanned_pdf': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
@@ -390,9 +413,19 @@ export async function runSingleTool(
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
         if (result.applied.length === 0) {
-          return { buffer, outcome: 'no_effect', durationMs: performance.now() - started };
+          return {
+            buffer,
+            outcome: 'no_effect',
+            details: pythonMutationDetails(result, toolName),
+            durationMs: performance.now() - started,
+          };
         }
-        return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
+        return {
+          buffer: next,
+          outcome: 'applied',
+          details: pythonMutationDetails(result, toolName),
+          durationMs: performance.now() - started,
+        };
       }
       case 'bootstrap_struct_tree':
       case 'synthesize_basic_structure_from_layout':
@@ -429,9 +462,19 @@ export async function runSingleTool(
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
         if (result.applied.length === 0) {
-          return { buffer, outcome: 'no_effect', durationMs: performance.now() - started };
+          return {
+            buffer,
+            outcome: 'no_effect',
+            details: pythonMutationDetails(result, toolName),
+            durationMs: performance.now() - started,
+          };
         }
-        return { buffer: next, outcome: 'applied', durationMs: performance.now() - started };
+        return {
+          buffer: next,
+          outcome: 'applied',
+          details: pythonMutationDetails(result, toolName),
+          durationMs: performance.now() - started,
+        };
       }
       default:
         return { buffer, outcome: 'rejected', details: 'not_implemented', durationMs: performance.now() - started };

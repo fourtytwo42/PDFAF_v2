@@ -21,6 +21,19 @@ export interface BatchMutationResult {
   success: boolean;
   applied: string[];
   failed: Array<{ op: string; error: string }>;
+  opResults?: Array<{
+    op: string;
+    outcome: 'applied' | 'no_effect' | 'failed';
+    note?: string;
+    error?: string;
+    debug?: {
+      hasStructTreeRoot?: boolean;
+      parentTreeEntries?: number;
+      parentTreeNextKey?: number;
+      headingCount?: number;
+      structureDepth?: number;
+    };
+  }>;
 }
 
 // Empty result returned on timeout or script failure.
