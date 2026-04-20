@@ -7,6 +7,7 @@ import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
   PLAYBOOK_LEARN_MIN_SCORE_DELTA,
+  REMEDIATION_CATEGORY_THRESHOLD,
   REMEDIATION_IMPLEMENTED_TOOLS,
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_MAX_ROUNDS,
@@ -45,6 +46,7 @@ import * as metadataTools from './tools/metadata.js';
 import { applyPostRemediationAltRepair } from './altStructureRepair.js';
 import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
+import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
@@ -279,6 +281,38 @@ function noteEarlyExit(runtimeSummary: RemediationRuntimeSummary, reason: string
   ];
   runtimeSummary.boundedWork.deterministicEarlyExitCount = reasons.length;
   runtimeSummary.boundedWork.deterministicEarlyExitReasons = frequencyRows(reasons);
+}
+
+function hasRemainingHeadingBootstrapAttempts(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  appliedTools: AppliedRemediationTool[],
+): boolean {
+  const heading = analysis.categories.find(category => category.key === 'heading_structure');
+  if (!heading?.applicable || heading.score >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if (analysis.pdfClass === 'scanned') return false;
+  if (snapshot.structureTree == null || (snapshot.paragraphStructElems?.length ?? 0) === 0) return false;
+  if (
+    snapshot.headings.length > 0 &&
+    snapshot.detectionProfile?.headingSignals.extractedHeadingsMissingFromTree !== true
+  ) {
+    return false;
+  }
+  const candidates = buildEligibleHeadingBootstrapCandidates(snapshot);
+  if (candidates.length === 0) return false;
+  const attempts = appliedTools.filter(tool => tool.toolName === 'create_heading_from_candidate').length;
+  return attempts < candidates.length;
+}
+
+function headingCreationConverged(snapshot: DocumentSnapshot): boolean {
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  const readingOrderSignals = snapshot.detectionProfile?.readingOrderSignals;
+  return (
+    snapshot.headings.length > 0 &&
+    headingSignals?.extractedHeadingsMissingFromTree !== true &&
+    (headingSignals?.treeHeadingCount ?? snapshot.headings.length) > 0 &&
+    (readingOrderSignals?.structureTreeDepth ?? 0) > 1
+  );
 }
 
 async function bufferSha256(buf: Buffer): Promise<string> {
@@ -1155,6 +1189,7 @@ export async function remediatePdf(
     }
     const roundBase = 24 + ((round - 1) / Math.max(1, maxRounds)) * 42;
     const roundSpan = 42 / Math.max(1, maxRounds);
+    let roundHeadingAttempted = false;
     await reportProgress(roundBase, 'Choosing fixes', `Pass ${round} of ${maxRounds}`);
 
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
@@ -1174,10 +1209,69 @@ export async function remediatePdf(
 
       let buf = currentBuffer;
       for (const tool of stage.tools) {
-        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, tool, currentSnapshot);
+        if (tool.toolName === 'create_heading_from_candidate') {
+          roundHeadingAttempted = true;
+          const initialParams = buildDefaultParams(
+            tool.toolName,
+            currentAnalysis,
+            currentSnapshot,
+            [...appliedTools, ...stageApplied],
+          );
+          let activeTool: PlannedRemediationTool | null = {
+            ...tool,
+            params: Object.keys(initialParams).length > 0 ? initialParams : tool.params,
+          };
+          while (activeTool) {
+            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, currentSnapshot);
+            buf = next;
+            stageApplied.push({
+              toolName: activeTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              scoreBefore: stageStartScore,
+              scoreAfter: stageStartScore,
+              delta: 0,
+              outcome,
+              details,
+              durationMs,
+              source: 'planner',
+            });
+            runtimeSummary.toolTimings.push({
+              toolName: activeTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              source: 'planner',
+              durationMs,
+              outcome,
+            });
+            if (outcome !== 'no_effect') break;
+            const nextParams = buildDefaultParams(
+              activeTool.toolName,
+              currentAnalysis,
+              currentSnapshot,
+              [...appliedTools, ...stageApplied],
+            );
+            if (typeof nextParams['targetRef'] !== 'string' || nextParams['targetRef'].length === 0) {
+              activeTool = null;
+            } else {
+              activeTool = { ...activeTool, params: nextParams };
+            }
+          }
+          continue;
+        }
+        const liveTool = tool.toolName === 'set_table_header_cells'
+          ? {
+            ...tool,
+            params: (() => {
+              const params = buildDefaultParams(tool.toolName, currentAnalysis, currentSnapshot, [...appliedTools, ...stageApplied]);
+              return Object.keys(params).length > 0 ? params : tool.params;
+            })(),
+          }
+          : tool;
+        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, currentSnapshot);
         buf = next;
         stageApplied.push({
-          toolName: tool.toolName,
+          toolName: liveTool.toolName,
           stage: stage.stageNumber,
           round,
           scoreBefore: stageStartScore,
@@ -1189,7 +1283,7 @@ export async function remediatePdf(
           source: 'planner',
         });
         runtimeSummary.toolTimings.push({
-          toolName: tool.toolName,
+          toolName: liveTool.toolName,
           stage: stage.stageNumber,
           round,
           source: 'planner',
@@ -1242,7 +1336,16 @@ export async function remediatePdf(
         currentBuffer = buf;
         currentAnalysis = analyzed.result;
         currentSnapshot = analyzed.snapshot;
+        const headingConverged = headingCreationConverged(analyzed.snapshot);
         for (const a of stageApplied) {
+          if (
+            a.toolName === 'create_heading_from_candidate' &&
+            a.outcome === 'applied' &&
+            !headingConverged
+          ) {
+            a.outcome = 'no_effect';
+            a.details = 'applied_without_exported_heading_convergence';
+          }
           a.scoreAfter = analyzed.result.score;
           a.delta = analyzed.result.score - stageStartScore;
         }
@@ -1280,6 +1383,12 @@ export async function remediatePdf(
 
     if (currentAnalysis.score >= targetScore && !hasExternalReadinessDebt(currentAnalysis, currentSnapshot)) break;
     if (!improvedThisRound) {
+      if (
+        roundHeadingAttempted &&
+        hasRemainingHeadingBootstrapAttempts(currentAnalysis, currentSnapshot, appliedTools)
+      ) {
+        continue;
+      }
       noteEarlyExit(runtimeSummary, 'round_no_improvement');
       break;
     }

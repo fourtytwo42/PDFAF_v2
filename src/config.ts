@@ -319,6 +319,12 @@ export const HEADING_BOOTSTRAP_MIN_SCORE = parseInt(
   10,
 );
 
+/** Small bounded retry pool for ranked heading bootstrap candidates on zero-heading convergence docs. */
+export const HEADING_BOOTSTRAP_RETRY_POOL_SIZE = parseInt(
+  process.env['PDFAF_HEADING_BOOTSTRAP_RETRY_POOL_SIZE'] ?? '3',
+  10,
+);
+
 /**
  * Max successful applications per run for `set_figure_alt_text` and separately for
  * `mark_figure_decorative` (planner repeats until no targets or cap). Override via env on huge docs.

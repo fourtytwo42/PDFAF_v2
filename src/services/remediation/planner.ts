@@ -21,7 +21,11 @@ import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
 import { buildPlanningSummary, deriveRoutingDecision } from './routingDecision.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { isFilenameLikeTitle } from '../compliance/icjiaParity.js';
-import { selectHeadingBootstrapCandidate } from '../headingBootstrapCandidates.js';
+import {
+  buildEligibleHeadingBootstrapCandidates,
+  selectHeadingBootstrapCandidate,
+  selectHeadingBootstrapCandidateForAttempt,
+} from '../headingBootstrapCandidates.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -168,6 +172,10 @@ function wasSuccessfullyApplied(applied: AppliedRemediationTool[], toolName: str
 
 function successfulApplyCount(applied: AppliedRemediationTool[], toolName: string): number {
   return applied.filter(a => a.toolName === toolName && a.outcome === 'applied').length;
+}
+
+function attemptCount(applied: AppliedRemediationTool[], toolName: string): number {
+  return applied.filter(a => a.toolName === toolName).length;
 }
 
 function tooltipNeedsRepair(tooltip: string | null | undefined): boolean {
@@ -329,8 +337,10 @@ function toolApplicableToPdfClass(
     return pdfClass === 'native_tagged' || pdfClass === 'native_untagged' || pdfClass === 'mixed';
   }
   if (toolName === 'normalize_heading_hierarchy') {
-    // Only useful when there is actually a structure tree with headings
-    return snapshot.structureTree !== null && snapshot.headings.length >= 2;
+    // Zero-heading convergence can create a new heading earlier in the same stage.
+    return snapshot.structureTree !== null && (
+      snapshot.headings.length >= 2 || (snapshot.paragraphStructElems?.length ?? 0) > 0
+    );
   }
   if (toolName === 'tag_ocr_text_blocks') {
     // Only for OCRmyPDF-produced PDFs that haven't been tagged yet
@@ -360,7 +370,7 @@ function toolApplicableToPdfClass(
   }
   if (toolName === 'repair_native_table_headers') {
     if (pdfClass === 'scanned') return false;
-    return snapshot.structureTree !== null && snapshot.tables.some(t => !t.hasHeaders);
+    return snapshot.structureTree !== null && snapshot.tables.length > 0;
   }
   if (toolName === 'wrap_singleton_orphan_mcid') {
     if (pdfClass === 'scanned') return false;
@@ -481,6 +491,10 @@ export function planForRemediation(
     && snapshot.fonts.some(font =>
       (font.subtype ?? '').toLowerCase() === 'type1' && (!font.isEmbedded || !font.hasUnicode || font.encodingRisk),
     );
+  const headingAttemptTotal = attemptCount(alreadyApplied, 'create_heading_from_candidate');
+  const eligibleHeadingCandidates = stage24ZeroHeadingBootstrapEnabled()
+    ? buildEligibleHeadingBootstrapCandidates(snapshot)
+    : [];
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
     if (
@@ -545,7 +559,11 @@ export function planForRemediation(
         && (snapshot.paragraphStructElems?.length ?? 0) > 0
         && (
           !stage24ZeroHeadingBootstrapEnabled()
-          || (selectHeadingBootstrapCandidate(snapshot)?.score ?? -1) >= HEADING_BOOTSTRAP_MIN_SCORE
+          || (
+            eligibleHeadingCandidates.length > 0
+            && headingAttemptTotal < eligibleHeadingCandidates.length
+            && (selectHeadingBootstrapCandidate(snapshot)?.score ?? -1) >= HEADING_BOOTSTRAP_MIN_SCORE
+          )
         )
       )
     ) {
@@ -671,12 +689,15 @@ export function planForRemediation(
         addSkipped(toolName, 'already_succeeded');
         continue;
       }
-      if (noEffectCountForTool(alreadyApplied, toolName) >= REMEDIATION_MAX_NO_EFFECT_PER_TOOL) {
+      const noEffectLimit = toolName === 'create_heading_from_candidate'
+        ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
+        : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
+      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (toolSet.has(toolName)) continue;
-      const params = buildDefaultParams(toolName, analysis, snapshot);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
       toolSet.set(toolName, {
         toolName,
         params,
@@ -703,7 +724,7 @@ export function planForRemediation(
     ) {
       toolSet.set(synToolName, {
         toolName: synToolName,
-        params: buildDefaultParams(synToolName, analysis, snapshot),
+        params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
         rationale: 'shallow-native-tagged structure depth forces synthesis to rebuild root-reachable tree',
       });
     }
@@ -775,6 +796,7 @@ export function buildDefaultParams(
   toolName: string,
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
 ): Record<string, unknown> {
   const meta = snapshot.metadata;
   switch (toolName) {
@@ -807,7 +829,10 @@ export function buildDefaultParams(
     }
     case 'create_heading_from_candidate': {
       const candidate = stage24ZeroHeadingBootstrapEnabled()
-        ? selectHeadingBootstrapCandidate(snapshot)
+        ? selectHeadingBootstrapCandidateForAttempt(
+          snapshot,
+          attemptCount(alreadyApplied, 'create_heading_from_candidate'),
+        )
         : null;
       if (!candidate) {
         const elems = (snapshot.paragraphStructElems ?? []).filter(

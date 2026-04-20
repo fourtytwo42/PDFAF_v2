@@ -1,7 +1,9 @@
 import {
   HEADING_BOOTSTRAP_MAX_TEXT_LEN,
   HEADING_BOOTSTRAP_MIN_SCORE,
+  HEADING_BOOTSTRAP_RETRY_POOL_SIZE,
   HEADING_BOOTSTRAP_TITLE_MAX_WORDS,
+  REMEDIATION_MAX_HEADING_CREATES,
 } from '../config.js';
 import type { DocumentSnapshot } from '../types.js';
 
@@ -174,10 +176,28 @@ export function buildHeadingBootstrapCandidates(snapshot: DocumentSnapshot): Hea
   return unique;
 }
 
-export function selectHeadingBootstrapCandidate(snapshot: DocumentSnapshot): HeadingBootstrapCandidate | null {
-  const ranked = buildHeadingBootstrapCandidates(snapshot);
-  const candidate = ranked[0] ?? null;
-  if (!candidate || candidate.score < HEADING_BOOTSTRAP_MIN_SCORE) return null;
-  return candidate;
+export function buildEligibleHeadingBootstrapCandidates(snapshot: DocumentSnapshot): HeadingBootstrapCandidate[] {
+  const retryPoolSize = Math.max(
+    1,
+    Math.min(
+      HEADING_BOOTSTRAP_RETRY_POOL_SIZE,
+      REMEDIATION_MAX_HEADING_CREATES,
+    ),
+  );
+  return buildHeadingBootstrapCandidates(snapshot)
+    .filter(candidate => candidate.score >= HEADING_BOOTSTRAP_MIN_SCORE)
+    .slice(0, retryPoolSize);
 }
 
+export function selectHeadingBootstrapCandidate(snapshot: DocumentSnapshot): HeadingBootstrapCandidate | null {
+  return buildEligibleHeadingBootstrapCandidates(snapshot)[0] ?? null;
+}
+
+export function selectHeadingBootstrapCandidateForAttempt(
+  snapshot: DocumentSnapshot,
+  attemptIndex = 0,
+): HeadingBootstrapCandidate | null {
+  const ranked = buildEligibleHeadingBootstrapCandidates(snapshot);
+  if (attemptIndex < 0 || attemptIndex >= ranked.length) return null;
+  return ranked[attemptIndex] ?? null;
+}
