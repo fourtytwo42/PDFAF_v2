@@ -200,6 +200,48 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('keeps score-regressing structural stages when checker-facing heading semantics improve', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 1 });
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      headings: [{ level: 1, text: 'Recovered Heading', page: 0 }],
+      detectionProfile: {
+        ...beforeSnapshot.detectionProfile!,
+        headingSignals: {
+          ...beforeSnapshot.detectionProfile!.headingSignals,
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+      },
+    };
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 76, confidence: 'high' }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('repair_structure_conformance'),
+      stageApplied: [{
+        toolName: 'repair_structure_conformance',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 76,
+        delta: -4,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          note: 'rolemap_heading_rewrite',
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
   it('does not reject score-improving stages when confidence is missing on either side', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80 }),

@@ -51,10 +51,10 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
     }
     if ((figureSignals?.nonFigureRoleCount ?? 0) > 0) {
       const nonFigureRoleCount = figureSignals?.nonFigureRoleCount ?? 0;
-      figureScore = Math.min(figureScore, Math.max(0, 88 - nonFigureRoleCount * 8));
+      figureScore = Math.min(figureScore, Math.max(0, 72 - nonFigureRoleCount * 10));
     }
     if (figureSignals?.treeFigureMissingForExtractedFigures) {
-      figureScore = Math.min(figureScore, 45);
+      figureScore = Math.min(figureScore, 20);
     }
   }
 

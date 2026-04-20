@@ -315,6 +315,67 @@ describe('titleLanguage', () => {
 });
 
 describe('headingStructure', () => {
+  it('does not treat single-page tagged body text as heading-passing without checker-visible headings', () => {
+    const snap = makeSnap({
+      pageCount: 1,
+      headings: [],
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      textCharCount: 800,
+      textByPage: ['Single-page body text'],
+      paragraphStructElems: [{ tag: 'P', text: 'Body text', page: 0, structRef: '1_0' }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBe(80);
+    expect(cat.severity).toBe('minor');
+    expect(cat.findings.some(f => /checker-visible H1-H6/i.test(f.message))).toBe(true);
+  });
+
   it('scores 0 for multi-page doc with no headings and sparse paragraph structure', () => {
     const snap = makeSnap({
       headings: [],
@@ -660,7 +721,7 @@ describe('altText', () => {
     });
     const result = score(snap, META);
     const cat = result.categories.find(c => c.key === 'alt_text')!;
-    expect(cat.score).toBeLessThanOrEqual(45);
+    expect(cat.score).toBeLessThanOrEqual(20);
     expect(cat.findings.some(f => /non-Figure roles/i.test(f.message))).toBe(true);
   });
 });

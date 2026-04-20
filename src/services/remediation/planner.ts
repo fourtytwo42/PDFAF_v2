@@ -248,7 +248,7 @@ function toolApplicableToPdfClass(
   }
   if (toolName === 'synthesize_basic_structure_from_layout') {
     if (pdfClass === 'scanned') return false;
-    return (pdfClass === 'native_untagged' || pdfClass === 'mixed') && snapshot.textCharCount > 0;
+    return (pdfClass === 'native_untagged' || pdfClass === 'mixed' || pdfClass === 'native_tagged') && snapshot.textCharCount > 0;
   }
   if (toolName === 'artifact_repeating_page_furniture') {
     if (pdfClass === 'scanned') return false;
@@ -520,6 +520,13 @@ export function planForRemediation(
   const protectedZeroHeadingTimedOut = alreadyApplied.some(
     tool => tool.toolName === 'repair_structure_conformance' && /timeout\s+\d+ms/i.test(tool.details ?? ''),
   );
+  const nativeTaggedNoHeadingSynthesisCandidate =
+    analysis.pdfClass === 'native_tagged' &&
+    headingNeedsRepair &&
+    snapshot.headings.length === 0 &&
+    snapshot.structureTree !== null &&
+    snapshot.textCharCount > 0 &&
+    (snapshot.paragraphStructElems?.length ?? 0) >= Math.max(3, Math.min(8, snapshot.pageCount));
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
     if (
@@ -782,6 +789,18 @@ export function planForRemediation(
         toolName: synToolName,
         params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
         rationale: 'shallow-native-tagged structure depth forces synthesis to rebuild root-reachable tree',
+      });
+    }
+    if (
+      nativeTaggedNoHeadingSynthesisCandidate &&
+      !toolSet.has(synToolName) &&
+      !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      toolSet.set(synToolName, {
+        toolName: synToolName,
+        params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
+        rationale: 'native-tagged P-only tree with zero headings triggers bounded heading synthesis',
       });
     }
   }

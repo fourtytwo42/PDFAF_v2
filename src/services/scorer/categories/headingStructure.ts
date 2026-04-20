@@ -5,6 +5,10 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
   const headings = snap.headings;
   const headingSignals = snap.detectionProfile?.headingSignals;
+  const exportedHeadingsReachable =
+    headings.length > 0 &&
+    headingSignals?.extractedHeadingsMissingFromTree !== true &&
+    (headingSignals?.treeHeadingCount ?? headings.length) > 0;
 
   // Single-page docs: headings optional
   if (snap.pageCount <= 1) {
@@ -16,11 +20,11 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
       );
     return {
       key: 'heading_structure',
-      score: headings.length > 0 || taggedSinglePageBody ? 100 : 80,
+      score: exportedHeadingsReachable ? 100 : 80,
       weight: CATEGORY_BASE_WEIGHTS.heading_structure,
       applicable: true,
-      severity: 'pass',
-      findings: headings.length > 0 || !taggedSinglePageBody
+      severity: exportedHeadingsReachable ? 'pass' : 'minor',
+      findings: exportedHeadingsReachable || !taggedSinglePageBody
         ? []
         : [
             {
@@ -28,7 +32,7 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
               severity: 'minor',
               wcag: '2.4.6',
               message:
-                'Single-page tagged PDF has structured body text but no explicit H1-H6 role. Treating headings as optional for scoring; add a heading role if section navigation matters.',
+                'Single-page tagged PDF has structured body text but no checker-visible H1-H6 role. Do not treat this as heading-passing; add a real heading role if section navigation matters.',
             },
           ],
     };

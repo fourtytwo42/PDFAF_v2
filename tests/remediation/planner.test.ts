@@ -1450,6 +1450,84 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('synthesize_basic_structure_from_layout');
   });
 
+  it('allows synthesize_basic_structure_from_layout for native_tagged P-only trees with zero headings', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 6,
+      textByPage: Array(6).fill('Section body text'),
+      textCharCount: 2400,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: {
+        type: 'Document',
+        children: Array.from({ length: 6 }, () => ({ type: 'P', children: [] })),
+      },
+      headings: [],
+      paragraphStructElems: Array.from({ length: 8 }, (_, i) => ({
+        tag: 'P',
+        text: `Paragraph ${i + 1}`,
+        page: Math.min(5, Math.floor(i / 2)),
+        structRef: `${i + 1}_0`,
+      })),
+      metadata: { title: 'P Only Doc', language: 'en', author: '', subject: '' },
+      lang: 'en',
+      pdfUaVersion: '1',
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    };
+    const base = score(snap, META);
+    const analysis = withCategoryScores(base, {
+      heading_structure: 0,
+      reading_order: 96,
+    });
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('synthesize_basic_structure_from_layout');
+  });
+
   it('does not schedule create_heading_from_candidate again when exported headings already exist', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

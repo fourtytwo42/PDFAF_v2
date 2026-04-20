@@ -5301,9 +5301,11 @@ def _rewrite_heading_rolemap(pdf: pikepdf.Pdf) -> bool:
 def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
     root = pdf.Root
+    note_parts = []
     try:
         if _rewrite_heading_rolemap(pdf):
             changed = True
+            note_parts.append("rolemap_heading_rewrite")
     except Exception as e:
         print(f"[warn] repair_structure_conformance rolemap: {e}", file=sys.stderr)
     mi = root.get("/MarkInfo")
@@ -5403,6 +5405,8 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
             changed = True
     except Exception as e:
         print(f"[warn] repair_structure_conformance table roles: {e}", file=sys.stderr)
+    if changed and note_parts:
+        _set_last_mutation_note(";".join(note_parts))
     return changed
 
 

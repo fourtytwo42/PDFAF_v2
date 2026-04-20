@@ -133,16 +133,95 @@ export function compareStructuralConfidence(
 }
 
 function parseMutationDetails(details: string | undefined): {
+  note?: string;
   debug?: { rootReachableDepth?: number; qpdfVerifiedDepth?: number };
 } | null {
   if (!details?.startsWith('{')) return null;
   try {
     return JSON.parse(details) as {
+      note?: string;
       debug?: { rootReachableDepth?: number; qpdfVerifiedDepth?: number };
     };
   } catch {
     return null;
   }
+}
+
+const HEADING_STRUCTURE_TOOLS = new Set([
+  'repair_structure_conformance',
+  'synthesize_basic_structure_from_layout',
+  'create_heading_from_candidate',
+  'normalize_heading_hierarchy',
+]);
+
+const TABLE_STRUCTURE_TOOLS = new Set([
+  'repair_native_table_headers',
+  'set_table_header_cells',
+]);
+
+const FIGURE_STRUCTURE_TOOLS = new Set([
+  'normalize_nested_figure_containers',
+  'canonicalize_figure_alt_ownership',
+]);
+
+function stageHasCheckerFacingStructuralBenefit(input: {
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  const { beforeSnapshot, afterSnapshot, stageApplied } = input;
+  if (!beforeSnapshot || !afterSnapshot) return false;
+  const toolNames = new Set(stageApplied.map(tool => tool.toolName));
+  const details = stageApplied.map(tool => parseMutationDetails(tool.details)).filter(Boolean);
+
+  if ([...toolNames].some(name => HEADING_STRUCTURE_TOOLS.has(name))) {
+    const beforeParity = buildIcjiaParity(beforeSnapshot);
+    const afterParity = buildIcjiaParity(afterSnapshot);
+    const beforeTreeHeadings = beforeSnapshot.detectionProfile?.headingSignals.treeHeadingCount ?? beforeSnapshot.headings.length;
+    const afterTreeHeadings = afterSnapshot.detectionProfile?.headingSignals.treeHeadingCount ?? afterSnapshot.headings.length;
+    const beforeDepth = beforeSnapshot.detectionProfile?.readingOrderSignals.structureTreeDepth ?? 0;
+    const afterDepth = afterSnapshot.detectionProfile?.readingOrderSignals.structureTreeDepth ?? 0;
+    if (
+      afterParity.categories.heading_structure.score > beforeParity.categories.heading_structure.score ||
+      afterTreeHeadings > beforeTreeHeadings ||
+      afterSnapshot.headings.length > beforeSnapshot.headings.length ||
+      afterDepth > beforeDepth ||
+      details.some(detail =>
+        detail?.note === 'exported_heading_converged' ||
+        detail?.note === 'existing_structure_promoted_to_headings' ||
+        detail?.note === 'synthesized_from_page0_mcid' ||
+        detail?.note === 'rolemap_heading_rewrite',
+      )
+    ) {
+      return true;
+    }
+  }
+
+  if ([...toolNames].some(name => TABLE_STRUCTURE_TOOLS.has(name))) {
+    const beforeHeaders = beforeSnapshot.tables.filter(table => table.hasHeaders).length;
+    const afterHeaders = afterSnapshot.tables.filter(table => table.hasHeaders).length;
+    const beforeSignals = beforeSnapshot.detectionProfile?.tableSignals;
+    const afterSignals = afterSnapshot.detectionProfile?.tableSignals;
+    const beforeBroken = (beforeSignals?.misplacedCellCount ?? 0) + (beforeSignals?.directCellUnderTableCount ?? 0);
+    const afterBroken = (afterSignals?.misplacedCellCount ?? 0) + (afterSignals?.directCellUnderTableCount ?? 0);
+    if (afterHeaders > beforeHeaders || afterBroken < beforeBroken) {
+      return true;
+    }
+  }
+
+  if ([...toolNames].some(name => FIGURE_STRUCTURE_TOOLS.has(name))) {
+    const beforeFigureSignals = beforeSnapshot.detectionProfile?.figureSignals;
+    const afterFigureSignals = afterSnapshot.detectionProfile?.figureSignals;
+    const beforeTreeFigures = beforeFigureSignals?.treeFigureCount ?? 0;
+    const afterTreeFigures = afterFigureSignals?.treeFigureCount ?? 0;
+    const beforeNonFigureRoles = beforeFigureSignals?.nonFigureRoleCount ?? 0;
+    const afterNonFigureRoles = afterFigureSignals?.nonFigureRoleCount ?? 0;
+    if (afterTreeFigures > beforeTreeFigures || afterNonFigureRoles < beforeNonFigureRoles) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): boolean {
@@ -180,6 +259,15 @@ export function shouldRejectStageResult(input: {
   stageApplied: AppliedRemediationTool[];
 }): { reject: boolean; reason: string | null } {
   if (input.after.score < input.before.score && !keepOcrStageDespiteScoreDrop(input.stage, input.stageApplied)) {
+    if (
+      input.before.score - input.after.score <= 10 &&
+      stageHasCheckerFacingStructuralBenefit(input)
+    ) {
+      return {
+        reject: false,
+        reason: null,
+      };
+    }
     return {
       reject: true,
       reason: `stage_regressed_score(${input.after.score})`,
