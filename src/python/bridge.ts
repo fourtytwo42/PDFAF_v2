@@ -43,6 +43,8 @@ export interface BatchMutationResult {
       topLevelNonEmptyCount?: number;
       usesMcrKidsCount?: number;
       usesIntegerKidsCount?: number;
+      /** Depth computed by running qpdf --json, identical to ICJIA's calculateTreeDepth(). -1 = unavailable. */
+      qpdfVerifiedDepth?: number;
     };
   }>;
 }

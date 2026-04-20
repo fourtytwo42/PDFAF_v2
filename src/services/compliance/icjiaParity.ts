@@ -22,6 +22,8 @@ export interface IcjiaParityCategoryResult {
 export interface IcjiaParitySignals {
   hasStructTree: boolean;
   structTreeDepth: number;
+  /** Depth computed by running qpdf --json — matches ICJIA's calculateTreeDepth() exactly. -1 = unavailable. */
+  qpdfVerifiedDepth: number;
   hasText: boolean;
   textLength: number;
   title: string | null;
@@ -67,18 +69,22 @@ function effectiveMetadataTitle(snapshot: DocumentSnapshot): string | null {
   return title && !isFilenameLikeTitle(title) ? title : null;
 }
 
-function deriveSignals(snapshot: DocumentSnapshot): IcjiaParitySignals {
+function deriveSignals(snapshot: DocumentSnapshot, qpdfVerifiedDepth = -1): IcjiaParitySignals {
   const nodes = walkTree(snapshot.structureTree);
   const headingNodes = nodes.filter(node => /^H([1-6])?$/.test(node.type));
   const nonEmbeddedFontCount = snapshot.fonts.filter(font => !font.isEmbedded).length;
   const embeddedFontCount = snapshot.fonts.filter(font => font.isEmbedded).length;
   const title = effectiveMetadataTitle(snapshot);
   const lang = (snapshot.lang ?? snapshot.metadata.language ?? '').trim() || null;
+  const pikepdfDepth =
+    snapshot.detectionProfile?.readingOrderSignals.structureTreeDepth
+    ?? (nodes.length > 0 ? Math.max(...nodes.map(node => node.depth)) : 0);
+  // Prefer qpdf-verified depth when available: it is identical to ICJIA's algorithm.
+  const structTreeDepth = qpdfVerifiedDepth >= 0 ? qpdfVerifiedDepth : pikepdfDepth;
   return {
     hasStructTree: snapshot.structureTree !== null,
-    structTreeDepth:
-      snapshot.detectionProfile?.readingOrderSignals.structureTreeDepth
-      ?? (nodes.length > 0 ? Math.max(...nodes.map(node => node.depth)) : 0),
+    structTreeDepth,
+    qpdfVerifiedDepth,
     hasText: (snapshot.textCharCount ?? 0) > 0,
     textLength: snapshot.textCharCount ?? 0,
     title,
@@ -198,8 +204,8 @@ function overallScore(categories: Record<IcjiaParityCategoryKey, IcjiaParityCate
   return Math.round(raw / weightTotal);
 }
 
-export function buildIcjiaParity(snapshot: DocumentSnapshot): IcjiaParityResult {
-  const signals = deriveSignals(snapshot);
+export function buildIcjiaParity(snapshot: DocumentSnapshot, qpdfVerifiedDepth = -1): IcjiaParityResult {
+  const signals = deriveSignals(snapshot, qpdfVerifiedDepth);
   const categories = {
     text_extractability: scoreTextExtractability(signals),
     title_language: scoreTitleLanguage(signals),

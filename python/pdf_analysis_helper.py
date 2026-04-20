@@ -5226,16 +5226,20 @@ def _op_bootstrap_struct_tree(pdf: pikepdf.Pdf, _params: dict) -> bool:
     if root.get("/StructTreeRoot") is not None:
         return False
     try:
-        doc_elem = pikepdf.Dictionary(
+        # All three objects must be indirect so qpdf --json assigns them their own
+        # object references. An inline /StructTreeRoot is embedded inside the Catalog
+        # in qpdf JSON output and is not found by the depth-walker's top-level scan,
+        # causing calculateTreeDepth() to return 0 even when the tree is populated.
+        doc_elem = pdf.make_indirect(pikepdf.Dictionary(
             Type=pikepdf.Name("/StructElem"),
             S=pikepdf.Name("/Document"),
-        )
-        pt = pikepdf.Dictionary(Nums=pikepdf.Array([]))
-        str_root = pikepdf.Dictionary(
+        ))
+        pt = pdf.make_indirect(pikepdf.Dictionary(Nums=pikepdf.Array([])))
+        str_root = pdf.make_indirect(pikepdf.Dictionary(
             Type=pikepdf.Name("/StructTreeRoot"),
             K=pikepdf.Array([doc_elem]),
             ParentTree=pt,
-        )
+        ))
         pdf.Root["/StructTreeRoot"] = str_root
         # Ensure MarkInfo.Marked=True when bootstrapping
         if root.get("/MarkInfo") is None:
@@ -5584,6 +5588,24 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
                 page_struct_parents += 1
         except Exception:
             pass
+    # Run qpdf --json on a temp save to get the same depth signal the ICJIA API sees.
+    # Only executed in debug mode so the extra save+subprocess is acceptable.
+    qpdf_verified_depth = -1
+    tmp_snap_path = None
+    try:
+        tok = secrets.token_hex(8)
+        tmp_snap_path = os.path.join(tempfile.gettempdir(), f"pdfaf-snap-{tok}.pdf")
+        pdf.save(tmp_snap_path)
+        qpdf_verified_depth = _qpdf_json_struct_depth(tmp_snap_path)
+    except Exception:
+        qpdf_verified_depth = -1
+    finally:
+        if tmp_snap_path:
+            try:
+                os.unlink(tmp_snap_path)
+            except Exception:
+                pass
+
     return {
         "hasStructTreeRoot": isinstance(sr, pikepdf.Dictionary),
         "parentTreeEntries": parent_tree_entries,
@@ -5601,6 +5623,7 @@ def _mutation_debug_snapshot(pdf: pikepdf.Pdf) -> dict:
         "usesIntegerKidsCount": uses_integer_kids,
         "headingCount": len(headings),
         "structureDepth": _tree_depth(struct.get("structureTree")),
+        "qpdfVerifiedDepth": qpdf_verified_depth,
     }
 
 
@@ -5706,6 +5729,13 @@ def _find_or_create_document_elem(pdf: pikepdf.Pdf) -> tuple[object | None, obje
       sr = root.get("/StructTreeRoot")
     if sr is None:
       return None, None
+    # Ensure /StructTreeRoot itself is indirect so qpdf --json gives it its own object ref.
+    try:
+        if not sr.is_indirect:
+            sr = pdf.make_indirect(sr)
+            pdf.Root["/StructTreeRoot"] = sr
+    except Exception:
+        pass
     k_root = sr.get("/K")
     doc_elem = None
     if isinstance(k_root, pikepdf.Array) and len(k_root) > 0:
@@ -5713,6 +5743,13 @@ def _find_or_create_document_elem(pdf: pikepdf.Pdf) -> tuple[object | None, obje
         if isinstance(candidate, pikepdf.Dictionary):
             s = candidate.get("/S")
             if s is not None and str(s).lstrip("/").upper() in ("DOCUMENT", "SECT"):
+                # Promote inline /Document to indirect so qpdf can traverse it.
+                try:
+                    if not candidate.is_indirect:
+                        candidate = pdf.make_indirect(candidate)
+                        k_root[0] = candidate
+                except Exception:
+                    pass
                 doc_elem = candidate
     if doc_elem is None:
         doc_elem = pdf.make_indirect(
@@ -5773,6 +5810,65 @@ def _root_reachable_depth(struct_root) -> int:
     for child in _iter_top_level_struct_elems(struct_root):
         walk(child, 1)
     return max_depth
+
+
+def _qpdf_json_struct_depth(pdf_path: str) -> int:
+    """
+    Run qpdf --json on pdf_path and compute structure tree depth using the same
+    algorithm as ICJIA's qpdfService.ts calculateTreeDepth(). Returns -1 on failure.
+    This is the authoritative external check: it sees exactly what the ICJIA API sees.
+    """
+    try:
+        result = subprocess.run(
+            ["qpdf", "--json", pdf_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if not result.stdout:
+            return -1
+        data = json.loads(result.stdout)
+        # Normalise qpdf v1 ({ "objects": {...} }) and v2 ({ "qpdf": [null, {...}] })
+        raw = data.get("objects") or (data.get("qpdf") or [None, {}])[1] or {}
+        objects: dict = {}
+        for ref, obj in raw.items():
+            if obj and isinstance(obj, dict):
+                objects[ref] = obj.get("value", obj)
+            else:
+                objects[ref] = obj
+
+        def resolve_ref(ref_str: str):
+            return objects.get(ref_str)
+
+        max_depth = 0
+
+        def measure(node, depth: int) -> None:
+            nonlocal max_depth
+            if depth > 50 or not isinstance(node, dict):
+                return
+            max_depth = max(max_depth, depth)
+            kids = node.get("/K")
+            if kids is None:
+                return
+            if isinstance(kids, list):
+                for kid in kids:
+                    if isinstance(kid, str):
+                        child = resolve_ref(kid)
+                        if child:
+                            measure(child, depth + 1)
+                    elif isinstance(kid, dict):
+                        measure(kid, depth + 1)
+            elif isinstance(kids, str):
+                child = resolve_ref(kids)
+                if child:
+                    measure(child, depth + 1)
+
+        for obj in objects.values():
+            if isinstance(obj, dict) and obj.get("/Type") == "/StructTreeRoot":
+                measure(obj, 0)
+                break
+
+        return max_depth
+    except Exception:
+        return -1
 
 
 def _global_heading_cleanup(pdf: pikepdf.Pdf) -> bool:

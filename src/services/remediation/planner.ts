@@ -3,6 +3,7 @@ import type { AnalysisResult, DocumentSnapshot, AppliedRemediationTool, Remediat
 import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
+  FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD,
   OCR_NATIVE_ELIGIBLE_MAX_TEXT_CHARS,
   OCR_NATIVE_SKIP_TEXT_CHARS,
   REMEDIATION_CATEGORY_THRESHOLD,
@@ -499,16 +500,19 @@ export function planForRemediation(
     if (toolName === 'repair_native_reading_order' && !(categoryFailing('reading_order') || hasReadingOrderSignals)) {
       return { allowed: false, reason: 'missing_precondition' };
     }
-    if (
-      toolName === 'synthesize_basic_structure_from_layout'
-      && !(
-        snapshot.textCharCount > 0
-        && (analysis.pdfClass === 'native_untagged' || analysis.pdfClass === 'mixed')
-        && categoryFailing('pdf_ua_compliance')
-        && (categoryFailing('heading_structure') || categoryFailing('reading_order'))
-      )
-    ) {
-      return { allowed: false, reason: 'missing_precondition' };
+    if (toolName === 'synthesize_basic_structure_from_layout') {
+      const structDepth = snapshot.detectionProfile?.readingOrderSignals.structureTreeDepth ?? 2;
+      const isShallowNativeTagged =
+        analysis.pdfClass === 'native_tagged' &&
+        structDepth <= FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD &&
+        categoryFailing('reading_order');
+      const isNormalUntaggedOrMixed =
+        (analysis.pdfClass === 'native_untagged' || analysis.pdfClass === 'mixed') &&
+        categoryFailing('pdf_ua_compliance') &&
+        (categoryFailing('heading_structure') || categoryFailing('reading_order'));
+      if (!(snapshot.textCharCount > 0 && (isNormalUntaggedOrMixed || isShallowNativeTagged))) {
+        return { allowed: false, reason: 'missing_precondition' };
+      }
     }
     if (
       toolName === 'artifact_repeating_page_furniture'
@@ -656,6 +660,30 @@ export function planForRemediation(
         toolName,
         params,
         rationale: `Run deterministic route "${route}" for ${routing.triggeringSignals.join(', ') || 'residual debt'}.`,
+      });
+    }
+  }
+
+  // For native_tagged PDFs with pathologically shallow structure trees (depth <= threshold),
+  // the route loop above never selects synthesize_basic_structure_from_layout because
+  // structure_bootstrap_and_conformance is gated to native_untagged/mixed. Inject it directly
+  // so we can rebuild the root-reachable tree that qpdf/ICJIA requires for reading_order > 30.
+  {
+    const structDepth = snapshot.detectionProfile?.readingOrderSignals.structureTreeDepth ?? 2;
+    const synToolName = 'synthesize_basic_structure_from_layout';
+    if (
+      analysis.pdfClass === 'native_tagged' &&
+      structDepth <= FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD &&
+      categoryFailing('reading_order') &&
+      snapshot.textCharCount > 0 &&
+      !toolSet.has(synToolName) &&
+      !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      toolSet.set(synToolName, {
+        toolName: synToolName,
+        params: buildDefaultParams(synToolName, analysis, snapshot),
+        rationale: 'shallow-native-tagged structure depth forces synthesis to rebuild root-reachable tree',
       });
     }
   }

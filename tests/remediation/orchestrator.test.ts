@@ -240,6 +240,59 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects structural stage when qpdfVerifiedDepth=0 even if pikepdf rootReachableDepth looks healthy', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 85, confidence: 'medium' }),
+      stage: makeStage('synthesize_basic_structure_from_layout'),
+      stageApplied: [{
+        toolName: 'synthesize_basic_structure_from_layout',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 85,
+        delta: 5,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          debug: {
+            rootReachableDepth: 3,  // pikepdf sees depth 3 (inline objects)
+            qpdfVerifiedDepth: 0,   // qpdf sees depth 0 (inline /StructTreeRoot not in object dict)
+          },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_externally_incomplete(rootReachableDepth<=1)',
+    });
+  });
+
+  it('accepts structural stage when qpdfVerifiedDepth >= 2', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 85, confidence: 'medium' }),
+      stage: makeStage('synthesize_basic_structure_from_layout'),
+      stageApplied: [{
+        toolName: 'synthesize_basic_structure_from_layout',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 85,
+        delta: 5,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          debug: {
+            rootReachableDepth: 3,
+            qpdfVerifiedDepth: 2,
+          },
+        }),
+      }],
+    });
+    expect(result.reject).toBe(false);
+  });
+
   it('rejects score-improving structural stages when local parity still floors reading order at 30', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),

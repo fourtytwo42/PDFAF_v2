@@ -103,6 +103,14 @@ export const STAGE3_TABLE_STRONG_IRREGULAR_ROWS_THRESHOLD = 2;
 // Heading coverage: one heading per this many pages is considered adequate
 export const HEADING_COVERAGE_PAGES_PER_HEADING = 3;
 
+/**
+ * When a native_tagged PDF has a structure tree depth at or below this threshold
+ * (per qpdf/pikepdf walk), the planner is allowed to add synthesize_basic_structure_from_layout
+ * even for native_tagged class PDFs. Covers PDFs whose existing tree is too shallow to satisfy
+ * ICJIA's calculateTreeDepth() check (which floors reading_order to 30 when depth ≤ 1).
+ */
+export const FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD = 1;
+
 // Alt text scoring thresholds (ratio of figures with alt text)
 export const ALT_TEXT_THRESHOLDS = {
   FULL:     1.00,  // → 100

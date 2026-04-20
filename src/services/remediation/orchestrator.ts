@@ -124,10 +124,14 @@ export function compareStructuralConfidence(
   };
 }
 
-function parseMutationDetails(details: string | undefined): { debug?: { rootReachableDepth?: number } } | null {
+function parseMutationDetails(details: string | undefined): {
+  debug?: { rootReachableDepth?: number; qpdfVerifiedDepth?: number };
+} | null {
   if (!details?.startsWith('{')) return null;
   try {
-    return JSON.parse(details) as { debug?: { rootReachableDepth?: number } };
+    return JSON.parse(details) as {
+      debug?: { rootReachableDepth?: number; qpdfVerifiedDepth?: number };
+    };
   } catch {
     return null;
   }
@@ -143,7 +147,13 @@ function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): 
   for (const row of stageApplied) {
     if (row.outcome !== 'applied' || !structuralTools.has(row.toolName)) continue;
     const parsed = parseMutationDetails(row.details);
-    const depth = parsed?.debug?.rootReachableDepth;
+    // Prefer qpdf-verified depth (identical to ICJIA's algorithm) when available.
+    const qpdfDepth = parsed?.debug?.qpdfVerifiedDepth;
+    const pikepdfDepth = parsed?.debug?.rootReachableDepth;
+    const depth =
+      typeof qpdfDepth === 'number' && qpdfDepth >= 0
+        ? qpdfDepth
+        : pikepdfDepth;
     if (typeof depth === 'number' && depth <= 1) return true;
   }
   return false;

@@ -116,4 +116,29 @@ describe('icjiaParity', () => {
     }));
     expect(parity.categories.heading_structure.score).toBe(94);
   });
+
+  it('qpdfVerifiedDepth overrides pikepdf structTreeDepth in reading_order scoring', () => {
+    // Snapshot claims depth=3 (pikepdf optimistic), but qpdf sees depth=0
+    const snap = makeSnap({
+      detectionProfile: {
+        ...makeSnap().detectionProfile!,
+        readingOrderSignals: {
+          ...makeSnap().detectionProfile!.readingOrderSignals,
+          structureTreeDepth: 3,
+        },
+      },
+    });
+    const parityWithQpdf = buildIcjiaParity(snap, 0);
+    expect(parityWithQpdf.categories.reading_order.score).toBe(30);
+    expect(parityWithQpdf.signals.structTreeDepth).toBe(0);
+    expect(parityWithQpdf.signals.qpdfVerifiedDepth).toBe(0);
+  });
+
+  it('falls back to pikepdf depth when qpdfVerifiedDepth is -1 (unavailable)', () => {
+    const snap = makeSnap(); // depth=2 from detectionProfile
+    const parity = buildIcjiaParity(snap, -1);
+    expect(parity.signals.qpdfVerifiedDepth).toBe(-1);
+    // pikepdf depth=2 → reading_order should pass (not floored at 30)
+    expect(parity.categories.reading_order.score).toBe(100);
+  });
 });
