@@ -133,6 +133,12 @@ function mergeRuntimeSummary(
       deterministicEarlyExitCount: deterministic?.boundedWork.deterministicEarlyExitCount ?? 0,
       deterministicEarlyExitReasons: deterministic?.boundedWork.deterministicEarlyExitReasons ?? [],
       semanticSkipReasons,
+      zeroHeadingLaneActivations: deterministic?.boundedWork.zeroHeadingLaneActivations ?? 0,
+      headingConvergenceAttemptCount: deterministic?.boundedWork.headingConvergenceAttemptCount ?? 0,
+      headingConvergenceSuccessCount: deterministic?.boundedWork.headingConvergenceSuccessCount ?? 0,
+      headingConvergenceFailureCount: deterministic?.boundedWork.headingConvergenceFailureCount ?? 0,
+      headingConvergenceTimeoutCount: deterministic?.boundedWork.headingConvergenceTimeoutCount ?? 0,
+      structureConformanceTimeoutCount: deterministic?.boundedWork.structureConformanceTimeoutCount ?? 0,
     },
   };
 }

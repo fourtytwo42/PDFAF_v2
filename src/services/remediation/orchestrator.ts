@@ -13,6 +13,7 @@ import {
   REMEDIATION_MAX_ROUNDS,
   REMEDIATION_MIN_ROUND_IMPROVEMENT,
   REMEDIATION_TARGET_SCORE,
+  ZERO_HEADING_CONFORMANCE_TIMEOUT_MS,
 } from '../../config.js';
 import { getDb } from '../../db/client.js';
 import { buildFailureSignature } from '../learning/failureSignature.js';
@@ -39,7 +40,12 @@ import type {
   StructuralConfidenceGuardSummary,
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
-import { buildDefaultParams, deriveFallbackDocumentTitle, planForRemediation } from './planner.js';
+import {
+  buildDefaultParams,
+  deriveFallbackDocumentTitle,
+  isProtectedZeroHeadingConvergence,
+  planForRemediation,
+} from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import * as metadataTools from './tools/metadata.js';
@@ -161,6 +167,10 @@ function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): 
   return false;
 }
 
+function isMutationTimeout(outcome: AppliedRemediationTool['outcome'], details?: string): boolean {
+  return outcome === 'failed' && typeof details === 'string' && /timeout\s+\d+ms/i.test(details);
+}
+
 export function shouldRejectStageResult(input: {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -260,6 +270,12 @@ function emptyRuntimeSummary(before: AnalysisResult): RemediationRuntimeSummary 
       deterministicEarlyExitCount: 0,
       deterministicEarlyExitReasons: [],
       semanticSkipReasons: [],
+      zeroHeadingLaneActivations: 0,
+      headingConvergenceAttemptCount: 0,
+      headingConvergenceSuccessCount: 0,
+      headingConvergenceFailureCount: 0,
+      headingConvergenceTimeoutCount: 0,
+      structureConformanceTimeoutCount: 0,
     },
   };
 }
@@ -313,6 +329,18 @@ function headingCreationConverged(snapshot: DocumentSnapshot): boolean {
     (headingSignals?.treeHeadingCount ?? snapshot.headings.length) > 0 &&
     (readingOrderSignals?.structureTreeDepth ?? 0) > 1
   );
+}
+
+function protectedZeroHeadingBundleActive(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  stage: RemediationStagePlan,
+): boolean {
+  const toolNames = new Set(stage.tools.map(tool => tool.toolName));
+  return isProtectedZeroHeadingConvergence(analysis, snapshot)
+    && toolNames.has('create_heading_from_candidate')
+    && toolNames.has('normalize_heading_hierarchy')
+    && toolNames.has('repair_structure_conformance');
 }
 
 async function bufferSha256(buf: Buffer): Promise<string> {
@@ -448,6 +476,7 @@ export async function runSingleTool(
   buffer: Buffer,
   tool: PlannedRemediationTool,
   _snapshot: DocumentSnapshot,
+  options?: { timeoutMs?: number },
 ): Promise<{ buffer: Buffer; outcome: AppliedRemediationTool['outcome']; details?: string; durationMs: number }> {
   const { toolName, params } = tool;
   const beforeHash = await bufferSha256(buffer);
@@ -500,7 +529,7 @@ export async function runSingleTool(
       }
       case 'ocr_scanned_pdf': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
-        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
+        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations, { timeoutMs: options?.timeoutMs });
         if (!result.success) {
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
@@ -1206,55 +1235,209 @@ export async function remediatePdf(
       const stageStartScore = currentAnalysis.score;
       const stageApplied: AppliedRemediationTool[] = [];
       const stageStarted = performance.now();
+      const protectedZeroHeading = protectedZeroHeadingBundleActive(currentAnalysis, currentSnapshot, stage);
+      const handledInProtectedBundle = new Set<string>();
+      let workingAnalysis = currentAnalysis;
+      let workingSnapshot = currentSnapshot;
+      let lastStageAnalysis: Awaited<ReturnType<typeof analyzePdf>> | null = null;
+      let lastAnalyzedBuffer = currentBuffer;
+      let structureConformanceTimedOutInStage = false;
+
+      if (protectedZeroHeading) {
+        runtimeSummary.boundedWork.zeroHeadingLaneActivations += 1;
+      }
 
       let buf = currentBuffer;
       for (const tool of stage.tools) {
+        if (handledInProtectedBundle.has(tool.toolName)) continue;
         if (tool.toolName === 'create_heading_from_candidate') {
           roundHeadingAttempted = true;
-          const initialParams = buildDefaultParams(
-            tool.toolName,
-            currentAnalysis,
-            currentSnapshot,
-            [...appliedTools, ...stageApplied],
-          );
-          let activeTool: PlannedRemediationTool | null = {
-            ...tool,
-            params: Object.keys(initialParams).length > 0 ? initialParams : tool.params,
-          };
-          while (activeTool) {
-            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, currentSnapshot);
-            buf = next;
-            stageApplied.push({
-              toolName: activeTool.toolName,
-              stage: stage.stageNumber,
-              round,
-              scoreBefore: stageStartScore,
-              scoreAfter: stageStartScore,
-              delta: 0,
-              outcome,
-              details,
-              durationMs,
-              source: 'planner',
-            });
-            runtimeSummary.toolTimings.push({
-              toolName: activeTool.toolName,
-              stage: stage.stageNumber,
-              round,
-              source: 'planner',
-              durationMs,
-              outcome,
-            });
-            if (outcome !== 'no_effect') break;
-            const nextParams = buildDefaultParams(
-              activeTool.toolName,
-              currentAnalysis,
-              currentSnapshot,
+          if (protectedZeroHeading) {
+            handledInProtectedBundle.add('normalize_heading_hierarchy');
+            handledInProtectedBundle.add('repair_structure_conformance');
+            while (true) {
+              const headingParams = buildDefaultParams(
+                tool.toolName,
+                workingAnalysis,
+                workingSnapshot,
+                [...appliedTools, ...stageApplied],
+              );
+              if (typeof headingParams['targetRef'] !== 'string' || headingParams['targetRef'].length === 0) break;
+
+              runtimeSummary.boundedWork.headingConvergenceAttemptCount += 1;
+              const headingTool: PlannedRemediationTool = { ...tool, params: headingParams };
+              const headingResult = await runSingleTool(buf, headingTool, workingSnapshot);
+              buf = headingResult.buffer;
+              const headingRow: AppliedRemediationTool = {
+                toolName: headingTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                scoreBefore: stageStartScore,
+                scoreAfter: stageStartScore,
+                delta: 0,
+                outcome: headingResult.outcome,
+                details: headingResult.details,
+                durationMs: headingResult.durationMs,
+                source: 'planner',
+              };
+              stageApplied.push(headingRow);
+              runtimeSummary.toolTimings.push({
+                toolName: headingTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                source: 'planner',
+                durationMs: headingResult.durationMs,
+                outcome: headingResult.outcome,
+              });
+              if (headingResult.outcome !== 'applied') {
+                if (headingResult.outcome !== 'no_effect') {
+                  runtimeSummary.boundedWork.headingConvergenceFailureCount += 1;
+                  break;
+                }
+                continue;
+              }
+
+              const normalizeTool: PlannedRemediationTool = {
+                toolName: 'normalize_heading_hierarchy',
+                params: buildDefaultParams('normalize_heading_hierarchy', workingAnalysis, workingSnapshot, [...appliedTools, ...stageApplied]),
+                rationale: 'Protected zero-heading convergence bundle.',
+              };
+              const normalizeResult = await runSingleTool(buf, normalizeTool, workingSnapshot);
+              buf = normalizeResult.buffer;
+              stageApplied.push({
+                toolName: normalizeTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                scoreBefore: stageStartScore,
+                scoreAfter: stageStartScore,
+                delta: 0,
+                outcome: normalizeResult.outcome,
+                details: normalizeResult.details,
+                durationMs: normalizeResult.durationMs,
+                source: 'planner',
+              });
+              runtimeSummary.toolTimings.push({
+                toolName: normalizeTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                source: 'planner',
+                durationMs: normalizeResult.durationMs,
+                outcome: normalizeResult.outcome,
+              });
+
+              const conformanceTool: PlannedRemediationTool = {
+                toolName: 'repair_structure_conformance',
+                params: buildDefaultParams('repair_structure_conformance', workingAnalysis, workingSnapshot, [...appliedTools, ...stageApplied]),
+                rationale: 'Protected zero-heading convergence bundle.',
+              };
+              const conformanceResult = await runSingleTool(
+                buf,
+                conformanceTool,
+                workingSnapshot,
+                { timeoutMs: ZERO_HEADING_CONFORMANCE_TIMEOUT_MS },
+              );
+              buf = conformanceResult.buffer;
+              stageApplied.push({
+                toolName: conformanceTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                scoreBefore: stageStartScore,
+                scoreAfter: stageStartScore,
+                delta: 0,
+                outcome: conformanceResult.outcome,
+                details: conformanceResult.details,
+                durationMs: conformanceResult.durationMs,
+                source: 'planner',
+              });
+              runtimeSummary.toolTimings.push({
+                toolName: conformanceTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                source: 'planner',
+                durationMs: conformanceResult.durationMs,
+                outcome: conformanceResult.outcome,
+              });
+              if (isMutationTimeout(conformanceResult.outcome, conformanceResult.details)) {
+                runtimeSummary.boundedWork.structureConformanceTimeoutCount += 1;
+                runtimeSummary.boundedWork.headingConvergenceTimeoutCount += 1;
+                runtimeSummary.boundedWork.headingConvergenceFailureCount += 1;
+                structureConformanceTimedOutInStage = true;
+                break;
+              }
+
+              lastStageAnalysis = await reanalyzeBufferForMutation(buf, filename, 'pdfaf-zero-heading');
+              lastAnalyzedBuffer = buf;
+              workingAnalysis = lastStageAnalysis.result;
+              workingSnapshot = lastStageAnalysis.snapshot;
+              if (headingCreationConverged(workingSnapshot)) {
+                runtimeSummary.boundedWork.headingConvergenceSuccessCount += 1;
+                break;
+              }
+
+              runtimeSummary.boundedWork.headingConvergenceFailureCount += 1;
+              for (let idx = stageApplied.length - 1; idx >= 0; idx--) {
+                const row = stageApplied[idx]!;
+                if (
+                  row.stage === stage.stageNumber &&
+                  row.round === round &&
+                  (row.toolName === 'create_heading_from_candidate'
+                    || row.toolName === 'normalize_heading_hierarchy'
+                    || row.toolName === 'repair_structure_conformance')
+                  && row.outcome === 'applied'
+                ) {
+                  row.outcome = 'no_effect';
+                  row.details = 'protected_zero_heading_no_convergence';
+                }
+                if (row.toolName === 'create_heading_from_candidate') break;
+              }
+              if (structureConformanceTimedOutInStage) break;
+            }
+          } else {
+            const initialParams = buildDefaultParams(
+              tool.toolName,
+              workingAnalysis,
+              workingSnapshot,
               [...appliedTools, ...stageApplied],
             );
-            if (typeof nextParams['targetRef'] !== 'string' || nextParams['targetRef'].length === 0) {
-              activeTool = null;
-            } else {
-              activeTool = { ...activeTool, params: nextParams };
+            let activeTool: PlannedRemediationTool | null = {
+              ...tool,
+              params: Object.keys(initialParams).length > 0 ? initialParams : tool.params,
+            };
+            while (activeTool) {
+              const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, workingSnapshot);
+              buf = next;
+              stageApplied.push({
+                toolName: activeTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                scoreBefore: stageStartScore,
+                scoreAfter: stageStartScore,
+                delta: 0,
+                outcome,
+                details,
+                durationMs,
+                source: 'planner',
+              });
+              runtimeSummary.toolTimings.push({
+                toolName: activeTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                source: 'planner',
+                durationMs,
+                outcome,
+              });
+              if (outcome !== 'no_effect') break;
+              const nextParams = buildDefaultParams(
+                activeTool.toolName,
+                workingAnalysis,
+                workingSnapshot,
+                [...appliedTools, ...stageApplied],
+              );
+              if (typeof nextParams['targetRef'] !== 'string' || nextParams['targetRef'].length === 0) {
+                activeTool = null;
+              } else {
+                activeTool = { ...activeTool, params: nextParams };
+              }
             }
           }
           continue;
@@ -1263,12 +1446,12 @@ export async function remediatePdf(
           ? {
             ...tool,
             params: (() => {
-              const params = buildDefaultParams(tool.toolName, currentAnalysis, currentSnapshot, [...appliedTools, ...stageApplied]);
+              const params = buildDefaultParams(tool.toolName, workingAnalysis, workingSnapshot, [...appliedTools, ...stageApplied]);
               return Object.keys(params).length > 0 ? params : tool.params;
             })(),
           }
           : tool;
-        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, currentSnapshot);
+        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot);
         buf = next;
         stageApplied.push({
           toolName: liveTool.toolName,
@@ -1295,12 +1478,16 @@ export async function remediatePdf(
       const stageHadEffect = stageApplied.some(a => a.outcome === 'applied');
       let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
       if (stageHadEffect) {
-        const tmp = join(tmpdir(), `pdfaf-rem-${randomUUID()}.pdf`);
-        await writeFile(tmp, buf);
-        try {
-          analyzed = await analyzePdf(tmp, filename);
-        } finally {
-          await unlink(tmp).catch(() => {});
+        if (lastStageAnalysis && buf.equals(lastAnalyzedBuffer)) {
+          analyzed = lastStageAnalysis;
+        } else {
+          const tmp = join(tmpdir(), `pdfaf-rem-${randomUUID()}.pdf`);
+          await writeFile(tmp, buf);
+          try {
+            analyzed = await analyzePdf(tmp, filename);
+          } finally {
+            await unlink(tmp).catch(() => {});
+          }
         }
       } else {
         analyzed = { result: currentAnalysis, snapshot: currentSnapshot };

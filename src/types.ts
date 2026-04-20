@@ -768,6 +768,12 @@ export interface RemediationBoundedWorkSummary {
   deterministicEarlyExitCount: number;
   deterministicEarlyExitReasons: RuntimeCountRow[];
   semanticSkipReasons: RuntimeCountRow[];
+  zeroHeadingLaneActivations: number;
+  headingConvergenceAttemptCount: number;
+  headingConvergenceSuccessCount: number;
+  headingConvergenceFailureCount: number;
+  headingConvergenceTimeoutCount: number;
+  structureConformanceTimeoutCount: number;
 }
 
 export interface RemediationRuntimeSummary {

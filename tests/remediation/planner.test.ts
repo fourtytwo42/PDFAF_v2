@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
 import { buildDefaultParams, planForRemediation } from '../../src/services/remediation/planner.js';
+import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { score } from '../../src/services/scorer/scorer.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot } from '../../src/types.js';
 
@@ -167,6 +168,34 @@ describe('planForRemediation', () => {
       targetRef: '41_0',
       level: 1,
       text: 'Program Overview',
+    });
+  });
+
+  it('rejects bylines and weak single tokens while preferring multi-word report titles', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 2,
+      textByPage: ['Research at a Glance', 'Body'],
+      textCharCount: 200,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Illinois', page: 0, structRef: '10_0', bbox: [40, 720, 160, 736] },
+        { tag: 'P', text: 'RESEA', page: 0, structRef: '11_0', bbox: [40, 700, 140, 716] },
+        { tag: 'P', text: 'Rod R. Blagojevich, Governor', page: 0, structRef: '12_0', bbox: [40, 680, 260, 698] },
+        { tag: 'P', text: 'Research at a Glance', page: 0, structRef: '13_0', bbox: [40, 730, 250, 748] },
+      ],
+    };
+
+    const candidates = buildEligibleHeadingBootstrapCandidates(snap);
+    expect(candidates.map(candidate => candidate.structRef)).toEqual(['13_0']);
+    expect(buildDefaultParams('create_heading_from_candidate', score(snap, META), snap)).toEqual({
+      targetRef: '13_0',
+      level: 1,
+      text: 'Research at a Glance',
     });
   });
 
@@ -564,8 +593,8 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, []);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(plan.planningSummary?.primaryRoute).toBe('post_bootstrap_heading_convergence');
-    expect(names).toContain('create_heading_from_candidate');
     expect(names).toContain('normalize_heading_hierarchy');
+    expect(names).toContain('create_heading_from_candidate');
   });
 
   it('routes native Type1 font survivors into font_unicode_tail_recovery', () => {
@@ -912,6 +941,106 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, [], store);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).not.toContain('set_document_title');
+  });
+
+  it('does not reliability-filter the protected zero-heading convergence bundle', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const toolName of ['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance']) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName,
+          pdfClass: 'native_tagged',
+          outcome: 'no_effect',
+          scoreBefore: 58,
+          scoreAfter: 58,
+        });
+      }
+    }
+
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 4,
+      textByPage: ['Research at a Glance', 'Body', 'Body', 'Body'],
+      textCharCount: 800,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Research at a Glance', page: 0, structRef: '40_0', bbox: [40, 720, 260, 742] },
+        { tag: 'P', text: 'Program Overview', page: 1, structRef: '41_0', bbox: [40, 680, 240, 700] },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 0,
+          suspectedPathPaintOutsideMc: 0,
+          taggedAnnotationRiskCount: 0,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'high',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 35,
+    });
+    const plan = planForRemediation(analysis, snap, [], store);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('create_heading_from_candidate');
+    expect(names).toContain('normalize_heading_hierarchy');
+    expect(names).toContain('repair_structure_conformance');
   });
 
   it('still schedules table header repairs when table_markup is explicitly failing', () => {
@@ -1320,7 +1449,7 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('synthesize_basic_structure_from_layout');
   });
 
-  it('schedules create_heading_from_candidate again when applied count < REMEDIATION_MAX_HEADING_CREATES', () => {
+  it('does not schedule create_heading_from_candidate again when exported headings already exist', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 5,
@@ -1349,7 +1478,7 @@ describe('planForRemediation', () => {
     ];
     const plan = planForRemediation(analysis, snap, applied);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
-    expect(names).toContain('create_heading_from_candidate');
+    expect(names).not.toContain('create_heading_from_candidate');
   });
 
   it('keeps figure ownership cleanup active for zero-heading figure files', () => {

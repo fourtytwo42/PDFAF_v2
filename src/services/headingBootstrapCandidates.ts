@@ -1,6 +1,7 @@
 import {
   HEADING_BOOTSTRAP_MAX_TEXT_LEN,
   HEADING_BOOTSTRAP_MIN_SCORE,
+  HEADING_BOOTSTRAP_MIN_STRONG_TOKEN_LEN,
   HEADING_BOOTSTRAP_RETRY_POOL_SIZE,
   HEADING_BOOTSTRAP_TITLE_MAX_WORDS,
   REMEDIATION_MAX_HEADING_CREATES,
@@ -33,6 +34,10 @@ function wordCount(text: string): number {
   return trimmed ? trimmed.split(' ').length : 0;
 }
 
+function tokenCount(text: string): number {
+  return normalizeText(text).split(/\s+/).filter(Boolean).length;
+}
+
 function looksLikeRawUrl(text: string): boolean {
   return /^(https?:\/\/|www\.)/i.test(text.trim());
 }
@@ -46,6 +51,46 @@ function rawUrlTokenRatio(text: string): number {
 
 function looksLikeCaption(text: string): boolean {
   return /^(figure|fig\.|table|chart|graph|photo|image)\s+\d+[:.\- ]/i.test(text.trim());
+}
+
+function looksLikeDateOrReportId(text: string): boolean {
+  return /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/i.test(text)
+    || /\b(?:report|publication|document|case|file|id|no\.?|number)\s*[:#-]?\s*[A-Z0-9-]{3,}\b/i.test(text);
+}
+
+function looksLikeBylineOrOfficialLine(text: string): boolean {
+  const normalized = normalizeText(text);
+  return /\b(governor|director|chair|chairperson|secretary|commissioner|superintendent|president|author|prepared by|submitted by|committee)\b/i.test(normalized)
+    || /^[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,3},\s*(?:Governor|Director|Chair|Secretary|Commissioner|President)$/u.test(normalized);
+}
+
+function looksLikeFurnitureOrBoilerplate(text: string): boolean {
+  const normalized = normalizeText(text);
+  return /\b(page\s+\d+|www\.|http|copyright|all rights reserved|state of illinois|department of|research brief|source:)\b/i.test(normalized);
+}
+
+function looksLikeTruncatedFragment(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (normalized.length < MIN_TEXT_LEN) return true;
+  if (/^[A-Z]{4,7}$/.test(normalized)) return true;
+  if (/^[A-Z][a-z]{0,3}$/.test(normalized)) return true;
+  return false;
+}
+
+function looksLikeWeakSingleToken(text: string): boolean {
+  const normalized = normalizeText(text);
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length !== 1) return false;
+  const letters = normalized.replace(/[^A-Za-z]/g, '');
+  if (/\b(summary|overview|appendix|introduction|conclusion)\b/i.test(normalized)) return false;
+  return !(isAllCapsLike(normalized) && letters.length >= HEADING_BOOTSTRAP_MIN_STRONG_TOKEN_LEN + 2);
+}
+
+function mostlyProperNames(text: string): boolean {
+  const words = normalizeText(text).split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 5) return false;
+  const alphaWords = words.filter(word => /^[A-Z][A-Za-z.'’-]+$/.test(word));
+  return alphaWords.length >= words.length - 1;
 }
 
 function looksLikeBodyParagraph(text: string): boolean {
@@ -103,7 +148,18 @@ export function scoreHeadingBootstrapCandidate(
   const text = normalizeText(row.text);
   if (text.length < MIN_TEXT_LEN || text.length > HEADING_BOOTSTRAP_MAX_TEXT_LEN) return null;
   if (looksLikeRawUrl(text) || rawUrlTokenRatio(text) >= 0.5) return null;
-  if (looksLikeCaption(text) || looksLikeTableLine(text) || looksLikeBodyParagraph(text)) return null;
+  if (
+    looksLikeCaption(text)
+    || looksLikeTableLine(text)
+    || looksLikeBodyParagraph(text)
+    || looksLikeDateOrReportId(text)
+    || looksLikeBylineOrOfficialLine(text)
+    || looksLikeFurnitureOrBoilerplate(text)
+    || looksLikeTruncatedFragment(text)
+    || looksLikeWeakSingleToken(text)
+  ) {
+    return null;
+  }
 
   let score = 0;
   const reasons: string[] = [];
@@ -121,6 +177,10 @@ export function scoreHeadingBootstrapCandidate(
     score += 22;
     reasons.push('compact_phrase');
   }
+  if (row.page === 0 && words >= 2) {
+    score += 10;
+    reasons.push('page0_multiword');
+  }
   if (text.length >= 8 && text.length <= 80) {
     score += 18;
     reasons.push('title_length');
@@ -137,6 +197,10 @@ export function scoreHeadingBootstrapCandidate(
     score += 24;
     reasons.push('all_caps');
   }
+  if (/at a glance|executive summary|introduction|overview|findings|conclusion|summary/i.test(text)) {
+    score += 18;
+    reasons.push('report_title_pattern');
+  }
 
   const top = bboxTopScore(row.bbox);
   if (top > 0) {
@@ -147,6 +211,14 @@ export function scoreHeadingBootstrapCandidate(
   if (isolated > 0) {
     score += isolated;
     reasons.push('isolated_bbox');
+  }
+  if (mostlyProperNames(text)) {
+    score -= 30;
+    reasons.push('proper_name_penalty');
+  }
+  if (tokenCount(text) === 1) {
+    score -= 18;
+    reasons.push('single_token_penalty');
   }
 
   return {

@@ -325,6 +325,18 @@ export const HEADING_BOOTSTRAP_RETRY_POOL_SIZE = parseInt(
   10,
 );
 
+/** Reject weak all-caps / single-token bootstrap candidates below this visible character length. */
+export const HEADING_BOOTSTRAP_MIN_STRONG_TOKEN_LEN = parseInt(
+  process.env['PDFAF_HEADING_BOOTSTRAP_MIN_STRONG_TOKEN_LEN'] ?? '8',
+  10,
+);
+
+/** Protected wall-clock budget for `repair_structure_conformance` inside zero-heading convergence. */
+export const ZERO_HEADING_CONFORMANCE_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_ZERO_HEADING_CONFORMANCE_TIMEOUT_MS'] ?? '20000',
+  10,
+);
+
 /**
  * Max successful applications per run for `set_figure_alt_text` and separately for
  * `mark_figure_decorative` (planner repeats until no targets or cap). Override via env on huge docs.

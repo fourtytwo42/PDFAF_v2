@@ -393,9 +393,11 @@ export function filterPlannedToolsByReliability(
   tools: PlannedRemediationTool[],
   pdfClass: PdfClass,
   toolOutcomeStore: ToolOutcomeStore | undefined,
+  exemptToolNames: ReadonlySet<string> = new Set(),
 ): PlannedRemediationTool[] {
   if (!toolOutcomeStore) return tools;
   return tools.filter(tool => {
+    if (exemptToolNames.has(tool.toolName)) return true;
     const r = toolOutcomeStore.getReliability(tool.toolName, pdfClass);
     if (
       r.attempts >= TOOL_RELIABILITY_FILTER_MIN_ATTEMPTS &&
@@ -405,6 +407,25 @@ export function filterPlannedToolsByReliability(
     }
     return true;
   });
+}
+
+export function isProtectedZeroHeadingConvergence(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  if (analysis.pdfClass === 'scanned') return false;
+  const heading = analysis.categories.find(category => category.key === 'heading_structure');
+  if (!heading?.applicable || heading.score >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  const readingSignals = snapshot.detectionProfile?.readingOrderSignals;
+  const exportedHeadingsReachable =
+    snapshot.headings.length > 0 &&
+    headingSignals?.extractedHeadingsMissingFromTree !== true &&
+    (headingSignals?.treeHeadingCount ?? snapshot.headings.length) > 0 &&
+    (readingSignals?.structureTreeDepth ?? 0) > 1;
+  return !exportedHeadingsReachable
+    && snapshot.structureTree !== null
+    && (snapshot.paragraphStructElems?.length ?? 0) > 0;
 }
 
 /**
@@ -495,6 +516,10 @@ export function planForRemediation(
   const eligibleHeadingCandidates = stage24ZeroHeadingBootstrapEnabled()
     ? buildEligibleHeadingBootstrapCandidates(snapshot)
     : [];
+  const protectedZeroHeadingConvergence = isProtectedZeroHeadingConvergence(analysis, snapshot);
+  const protectedZeroHeadingTimedOut = alreadyApplied.some(
+    tool => tool.toolName === 'repair_structure_conformance' && /timeout\s+\d+ms/i.test(tool.details ?? ''),
+  );
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
     if (
@@ -554,6 +579,7 @@ export function planForRemediation(
     if (
       toolName === 'create_heading_from_candidate'
       && !(
+        !protectedZeroHeadingTimedOut &&
         headingNeedsRepair
         && snapshot.structureTree !== null
         && (snapshot.paragraphStructElems?.length ?? 0) > 0
@@ -566,6 +592,12 @@ export function planForRemediation(
           )
         )
       )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      protectedZeroHeadingTimedOut
+      && (toolName === 'normalize_heading_hierarchy' || toolName === 'repair_structure_conformance')
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -754,7 +786,15 @@ export function planForRemediation(
     }
   }
 
-  const planned = filterPlannedToolsByReliability(plannedMandatoryRaw, analysis.pdfClass, toolOutcomeStore);
+  const reliabilityExemptTools = protectedZeroHeadingConvergence
+    ? new Set(['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'])
+    : new Set<string>();
+  const planned = filterPlannedToolsByReliability(
+    plannedMandatoryRaw,
+    analysis.pdfClass,
+    toolOutcomeStore,
+    reliabilityExemptTools,
+  );
   for (const tool of plannedMandatoryRaw) {
     if (!planned.some(candidate => candidate.toolName === tool.toolName)) {
       addSkipped(tool.toolName, 'reliability_filtered');
