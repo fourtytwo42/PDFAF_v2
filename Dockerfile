@@ -26,6 +26,13 @@ WORKDIR /app
 
 COPY --from=llama_runtime /app /opt/llama
 
+# Download model weights before copying source so Docker layer cache survives code-only rebuilds.
+RUN mkdir -p /app/data/llama-work \
+  && curl -fL "https://huggingface.co/${HF_REPO}/resolve/main/${GGUF_FILE}" -o "/app/data/llama-work/${GGUF_FILE}" \
+  && curl -fL "https://huggingface.co/${HF_REPO}/resolve/main/${MMPROJ_FILE}" -o "/app/data/llama-work/${MMPROJ_FILE}" \
+  && test -s "/app/data/llama-work/${GGUF_FILE}" \
+  && test -s "/app/data/llama-work/${MMPROJ_FILE}"
+
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && corepack prepare pnpm@10 --activate \
   && pnpm install --frozen-lockfile \
@@ -37,12 +44,6 @@ COPY python ./python
 
 ENV NODE_ENV=production
 RUN pnpm build
-
-RUN mkdir -p /app/data/llama-work \
-  && curl -fL "https://huggingface.co/${HF_REPO}/resolve/main/${GGUF_FILE}" -o "/app/data/llama-work/${GGUF_FILE}" \
-  && curl -fL "https://huggingface.co/${HF_REPO}/resolve/main/${MMPROJ_FILE}" -o "/app/data/llama-work/${MMPROJ_FILE}" \
-  && test -s "/app/data/llama-work/${GGUF_FILE}" \
-  && test -s "/app/data/llama-work/${MMPROJ_FILE}"
 
 COPY docker/pdfaf-entrypoint.sh /usr/local/bin/pdfaf-entrypoint.sh
 RUN chmod +x /usr/local/bin/pdfaf-entrypoint.sh
