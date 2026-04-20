@@ -54,6 +54,7 @@ import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.j
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
+import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -164,6 +165,29 @@ const FIGURE_STRUCTURE_TOOLS = new Set([
   'canonicalize_figure_alt_ownership',
 ]);
 
+const LINK_STRUCTURE_TOOLS = new Set([
+  'set_link_annotation_contents',
+  'repair_native_link_structure',
+  'normalize_annotation_tab_order',
+  'tag_unowned_annotations',
+]);
+
+function countWeakLinkTexts(snapshot: DocumentSnapshot): number {
+  let bad = 0;
+  for (const link of snapshot.links) {
+    const raw = link.text.trim();
+    if (!raw || isGenericLinkText(raw) || isRawUrlLinkText(raw)) bad += 1;
+  }
+  return bad;
+}
+
+function hasAcrobatAltOwnershipRisk(snapshot: DocumentSnapshot): boolean {
+  const risks = snapshot.acrobatStyleAltRisks;
+  return ((risks?.nonFigureWithAltCount ?? 0)
+    + (risks?.nestedFigureAltCount ?? 0)
+    + (risks?.orphanedAltEmptyElementCount ?? 0)) > 0;
+}
+
 function stageHasCheckerFacingStructuralBenefit(input: {
   beforeSnapshot?: DocumentSnapshot;
   afterSnapshot?: DocumentSnapshot;
@@ -217,6 +241,24 @@ function stageHasCheckerFacingStructuralBenefit(input: {
     const beforeNonFigureRoles = beforeFigureSignals?.nonFigureRoleCount ?? 0;
     const afterNonFigureRoles = afterFigureSignals?.nonFigureRoleCount ?? 0;
     if (afterTreeFigures > beforeTreeFigures || afterNonFigureRoles < beforeNonFigureRoles) {
+      return true;
+    }
+  }
+
+  if ([...toolNames].some(name => LINK_STRUCTURE_TOOLS.has(name))) {
+    const beforeAnnotationSignals = beforeSnapshot.detectionProfile?.annotationSignals ?? beforeSnapshot.annotationAccessibility;
+    const afterAnnotationSignals = afterSnapshot.detectionProfile?.annotationSignals ?? afterSnapshot.annotationAccessibility;
+    const beforeWeakLinks = countWeakLinkTexts(beforeSnapshot);
+    const afterWeakLinks = countWeakLinkTexts(afterSnapshot);
+    const beforeMissingStructure = beforeAnnotationSignals?.linkAnnotationsMissingStructure ?? 0;
+    const afterMissingStructure = afterAnnotationSignals?.linkAnnotationsMissingStructure ?? 0;
+    const beforeMissingStructParent = beforeAnnotationSignals?.linkAnnotationsMissingStructParent ?? 0;
+    const afterMissingStructParent = afterAnnotationSignals?.linkAnnotationsMissingStructParent ?? 0;
+    if (
+      afterWeakLinks < beforeWeakLinks ||
+      afterMissingStructure < beforeMissingStructure ||
+      afterMissingStructParent < beforeMissingStructParent
+    ) {
       return true;
     }
   }
@@ -959,29 +1001,31 @@ export async function executePlaybook(
     currentBuffer = st0.buffer;
     currentAnalysis = st0.analysis;
     currentSnapshot = st0.snapshot;
-    const alt0 = await applyPostRemediationAltRepair(
-      currentBuffer,
-      filename,
-      currentAnalysis,
-      currentSnapshot,
-    );
-    const altAccepted = await applyGuardedPostPass({
-      filename,
-      toolName: 'repair_alt_text_structure',
-      stage: 9,
-      round: 1,
-      details: 'nested_alt_cleanup',
-      currentBuffer,
-      currentAnalysis,
-      currentSnapshot,
-      nextBuffer: alt0.buffer,
-      appliedTools,
-      runtimeSummary,
-      tempPrefix: 'pdfaf-alt',
-    });
-    currentBuffer = altAccepted.buffer;
-    currentAnalysis = altAccepted.analysis;
-    currentSnapshot = altAccepted.snapshot;
+    if (hasAcrobatAltOwnershipRisk(currentSnapshot)) {
+      const alt0 = await applyPostRemediationAltRepair(
+        currentBuffer,
+        filename,
+        currentAnalysis,
+        currentSnapshot,
+      );
+      const altAccepted = await applyGuardedPostPass({
+        filename,
+        toolName: 'repair_alt_text_structure',
+        stage: 9,
+        round: 1,
+        details: 'nested_alt_cleanup',
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        nextBuffer: alt0.buffer,
+        appliedTools,
+        runtimeSummary,
+        tempPrefix: 'pdfaf-alt',
+      });
+      currentBuffer = altAccepted.buffer;
+      currentAnalysis = altAccepted.analysis;
+      currentSnapshot = altAccepted.snapshot;
+    }
     const fin0 = await applyIcjiaDocumentFinalization({
       filename,
       round: 1,
@@ -1139,25 +1183,27 @@ export async function executePlaybook(
   }
 
   {
-    const scoreBefore = currentAnalysis.score;
-    const alt = await applyPostRemediationAltRepair(currentBuffer, filename, currentAnalysis, currentSnapshot);
-    if (!alt.buffer.equals(currentBuffer)) {
-      const durationMs = 0;
-      currentBuffer = alt.buffer;
-      currentAnalysis = alt.analysis;
-      currentSnapshot = alt.snapshot;
-      appliedTools.push({
-        toolName: 'repair_alt_text_structure',
-        stage: 9,
-        round: 1,
-        scoreBefore,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBefore,
-        outcome: 'applied',
-        details: 'nested_alt_cleanup',
-        durationMs,
-        source: 'post_pass',
-      });
+    if (hasAcrobatAltOwnershipRisk(currentSnapshot)) {
+      const scoreBefore = currentAnalysis.score;
+      const alt = await applyPostRemediationAltRepair(currentBuffer, filename, currentAnalysis, currentSnapshot);
+      if (!alt.buffer.equals(currentBuffer)) {
+        const durationMs = 0;
+        currentBuffer = alt.buffer;
+        currentAnalysis = alt.analysis;
+        currentSnapshot = alt.snapshot;
+        appliedTools.push({
+          toolName: 'repair_alt_text_structure',
+          stage: 9,
+          round: 1,
+          scoreBefore,
+          scoreAfter: currentAnalysis.score,
+          delta: currentAnalysis.score - scoreBefore,
+          outcome: 'applied',
+          details: 'nested_alt_cleanup',
+          durationMs,
+          source: 'post_pass',
+        });
+      }
     }
   }
 
@@ -1560,6 +1606,8 @@ export async function remediatePdf(
           continue;
         }
         const liveTool = tool.toolName === 'set_table_header_cells'
+          || tool.toolName === 'set_figure_alt_text'
+          || tool.toolName === 'mark_figure_decorative'
           ? {
             ...tool,
             params: (() => {
@@ -1717,7 +1765,7 @@ export async function remediatePdf(
 
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
-  if (currentSnapshot.isTagged || currentSnapshot.structureTree !== null) {
+  if ((currentSnapshot.isTagged || currentSnapshot.structureTree !== null) && hasAcrobatAltOwnershipRisk(currentSnapshot)) {
     await reportProgress(78, 'Cleaning up alt text');
     const alt = await applyPostRemediationAltRepair(
       currentBuffer,

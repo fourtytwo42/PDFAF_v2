@@ -242,6 +242,57 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('keeps score-regressing stages when checker-facing link semantics improve', () => {
+    const beforeSnapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 2 }),
+      links: [
+        { text: 'https://example.com/path', url: 'https://example.com/path', page: 0 },
+        { text: 'Read more', url: 'https://example.com/other', page: 0 },
+      ],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 2,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 2,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    };
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      links: [
+        { text: 'Example resource', url: 'https://example.com/path', page: 0 },
+        { text: 'Program overview', url: 'https://example.com/other', page: 0 },
+      ],
+      annotationAccessibility: {
+        ...beforeSnapshot.annotationAccessibility!,
+        linkAnnotationsMissingStructure: 0,
+        linkAnnotationsMissingStructParent: 0,
+      },
+    };
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 75, confidence: 'medium' }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('repair_native_link_structure'),
+      stageApplied: [{
+        toolName: 'repair_native_link_structure',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 75,
+        delta: -5,
+        outcome: 'applied',
+      }],
+    });
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
   it('does not reject score-improving stages when confidence is missing on either side', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80 }),

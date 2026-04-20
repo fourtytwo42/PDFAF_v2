@@ -346,10 +346,10 @@ describe('planForRemediation', () => {
     expect(names).toContain('repair_structure_conformance');
     expect(names).toContain('repair_native_reading_order');
     expect(names).toContain('normalize_annotation_tab_order');
-    expect(names).not.toContain('set_figure_alt_text');
+    expect(names).toContain('set_figure_alt_text');
     expect(plan.planningSummary?.skippedTools).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ toolName: 'set_figure_alt_text', reason: 'semantic_deferred' }),
+        expect.objectContaining({ toolName: 'retag_as_figure', reason: 'semantic_deferred' }),
       ]),
     );
   });
@@ -837,6 +837,194 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_figure_alt_text');
   });
 
+  it('targets only checker-visible Figure roles for deterministic alt assignment', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [
+        { hasAlt: false, isArtifact: false, page: 0, structRef: '1_0', role: 'Shape' },
+        { hasAlt: false, isArtifact: false, page: 1, structRef: '2_0', role: 'Figure' },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 2,
+          treeFigureCount: 1,
+          nonFigureRoleCount: 1,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    expect(buildDefaultParams('set_figure_alt_text', analysis, snap)).toEqual({
+      structRef: '2_0',
+      altText: 'Image',
+    });
+    expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({
+      structRef: '2_0',
+    });
+  });
+
+  it('does not schedule canonicalize_figure_alt_ownership without checker-visible ownership debt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, structRef: '1_0', role: 'Figure' }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 1,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('canonicalize_figure_alt_ownership');
+    expect(names).toContain('set_figure_alt_text');
+  });
+
+  it('does not schedule repair_alt_text_structure without Acrobat-style alt ownership risks', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, structRef: '1_0', role: 'Figure' }],
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 0,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+        sampleOwnershipModes: [],
+      },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 1,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('repair_alt_text_structure');
+  });
+
   it('routes Stage 3 survivors into structure and annotation families instead of broad semantic tools', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -915,7 +1103,8 @@ describe('planForRemediation', () => {
     expect(plan.planningSummary?.scheduledTools).toEqual(
       expect.arrayContaining(['repair_native_link_structure', 'tag_unowned_annotations']),
     );
-    expect(plan.planningSummary?.scheduledTools).not.toContain('set_figure_alt_text');
+    expect(plan.planningSummary?.scheduledTools).toContain('set_figure_alt_text');
+    expect(plan.planningSummary?.scheduledTools).not.toContain('retag_as_figure');
   });
 
   it('filters out low-reliability tools when tool outcome store has enough data', () => {
@@ -1306,6 +1495,28 @@ describe('planForRemediation', () => {
     else process.env['PDFAF_MAX_FIGURE_ALT_MUTATIONS_PER_RUN'] = prev;
     vi.resetModules();
     await import('../../src/services/remediation/planner.js');
+  });
+
+  it('targets malformed tables for set_table_header_cells even when headers already exist', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 1,
+          totalCells: 8,
+          page: 0,
+          structRef: '20_0',
+          rowCount: 1,
+          cellsMisplacedCount: 3,
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), { table_markup: 35 });
+    expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({ structRef: '20_0' });
   });
 
   it('allows synthesize_basic_structure_from_layout for native_tagged when structureTreeDepth <= 1 and reading_order is failing', () => {

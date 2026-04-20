@@ -26,6 +26,7 @@ import {
   selectHeadingBootstrapCandidate,
   selectHeadingBootstrapCandidateForAttempt,
 } from '../headingBootstrapCandidates.js';
+import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -162,6 +163,13 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   ],
 };
 
+const DETERMINISTIC_FIGURE_TOOLS = new Set([
+  'normalize_nested_figure_containers',
+  'canonicalize_figure_alt_ownership',
+  'set_figure_alt_text',
+  'mark_figure_decorative',
+]);
+
 function noEffectCountForTool(applied: AppliedRemediationTool[], toolName: string): number {
   return applied.filter(a => a.toolName === toolName && a.outcome === 'no_effect').length;
 }
@@ -193,6 +201,30 @@ function tooltipNeedsRepair(tooltip: string | null | undefined): boolean {
     'list field',
     'signature',
   ].includes(t);
+}
+
+function figureNeedsOwnershipRepair(snapshot: DocumentSnapshot): boolean {
+  const figureSignals = snapshot.detectionProfile?.figureSignals;
+  if (!figureSignals) return snapshot.figures.length > 0;
+  return (
+    (figureSignals?.treeFigureMissingForExtractedFigures ?? false) ||
+    (figureSignals?.nonFigureRoleCount ?? 0) > 0 ||
+    (figureSignals.extractedFigureCount > 0 && figureSignals.treeFigureCount < figureSignals.extractedFigureCount)
+  );
+}
+
+function hasWeakVisibleLinkTexts(snapshot: DocumentSnapshot): boolean {
+  return snapshot.links.some(link => {
+    const raw = link.text.trim();
+    return !raw || isGenericLinkText(raw) || isRawUrlLinkText(raw);
+  });
+}
+
+function hasAcrobatAltOwnershipRisk(snapshot: DocumentSnapshot): boolean {
+  const risks = snapshot.acrobatStyleAltRisks;
+  return ((risks?.nonFigureWithAltCount ?? 0)
+    + (risks?.nestedFigureAltCount ?? 0)
+    + (risks?.orphanedAltEmptyElementCount ?? 0)) > 0;
 }
 
 export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
@@ -532,8 +564,7 @@ export function planForRemediation(
     if (
       routing.deferredRoutes.includes('figure_semantics')
       && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)
-      && toolName !== 'canonicalize_figure_alt_ownership'
-      && toolName !== 'normalize_nested_figure_containers'
+      && !DETERMINISTIC_FIGURE_TOOLS.has(toolName)
       && toolName !== 'repair_annotation_alt_text'
     ) {
       return { allowed: false, reason: 'semantic_deferred' };
@@ -665,7 +696,7 @@ export function planForRemediation(
       return { allowed: false, reason: 'category_not_failing' };
     }
     if (ROUTE_TOOL_MAP.figure_semantics.includes(toolName) && structurePrimary) {
-      if (toolName === 'repair_annotation_alt_text') {
+      if (toolName === 'repair_annotation_alt_text' || DETERMINISTIC_FIGURE_TOOLS.has(toolName)) {
         return { allowed: true };
       }
       return { allowed: false, reason: 'semantic_deferred' };
@@ -675,7 +706,24 @@ export function planForRemediation(
       && !(
         categoryFailing('alt_text')
         && snapshot.figures.length > 0
+        && figureNeedsOwnershipRepair(snapshot)
       )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'repair_alt_text_structure'
+      && !(
+        categoryFailing('alt_text')
+        && hasAcrobatAltOwnershipRisk(snapshot)
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      (toolName === 'set_link_annotation_contents' || toolName === 'repair_native_link_structure')
+      && !hasAnnotationSignals
+      && !(categoryFailing('link_quality') && hasWeakVisibleLinkTexts(snapshot))
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -805,8 +853,38 @@ export function planForRemediation(
     }
   }
 
+  if (categoryFailing('alt_text') && structurePrimary && snapshot.figures.length > 0) {
+    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text']) {
+      if (toolSet.has(toolName)) continue;
+      const routeGate = toolIsRouteRelevant(toolName);
+      if (!routeGate.allowed) {
+        addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
+        continue;
+      }
+      if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
+        addSkipped(toolName, 'not_applicable');
+        continue;
+      }
+      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) {
+        addSkipped(toolName, 'already_succeeded');
+        continue;
+      }
+      if (noEffectCountForTool(alreadyApplied, toolName) >= REMEDIATION_MAX_NO_EFFECT_PER_TOOL) {
+        addSkipped(toolName, 'missing_precondition');
+        continue;
+      }
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      toolSet.set(toolName, {
+        toolName,
+        params,
+        rationale: 'Run deterministic figure ownership/alt lane alongside structure-primary remediation.',
+      });
+    }
+  }
+
   for (const route of routing.deferredRoutes) {
     for (const toolName of ROUTE_TOOL_MAP[route] ?? []) {
+      if (route === 'figure_semantics' && DETERMINISTIC_FIGURE_TOOLS.has(toolName)) continue;
       if (!toolSet.has(toolName)) {
         addSkipped(toolName, route === 'figure_semantics' ? 'semantic_deferred' : 'route_not_active');
       }
@@ -905,7 +983,7 @@ export function buildDefaultParams(
       };
     case 'set_figure_alt_text': {
       const candidates = snapshot.figures
-        .filter(f => !f.isArtifact && !f.hasAlt && f.structRef)
+        .filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure')
         .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
       const target = candidates[0];
       return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
@@ -947,7 +1025,7 @@ export function buildDefaultParams(
       return { maxWidthDrift: 0.35 };
     case 'mark_figure_decorative': {
       const candidates = snapshot.figures
-        .filter(f => !f.isArtifact && !f.hasAlt && f.structRef)
+        .filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure')
         .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
       const target = candidates[0];
       return target?.structRef ? { structRef: target.structRef } : {};
@@ -959,7 +1037,7 @@ export function buildDefaultParams(
       return { maxPages: BOOKMARKS_PAGE_OUTLINE_MAX_PAGES };
     case 'set_table_header_cells': {
       const t = snapshot.tables
-        .filter(row => !row.hasHeaders && row.structRef)
+        .filter(row => ((!row.hasHeaders) || (row.cellsMisplacedCount ?? 0) > 0 || (row.rowCount ?? 0) <= 1) && row.structRef)
         .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''))[0];
       return t?.structRef ? { structRef: t.structRef } : {};
     }

@@ -4705,8 +4705,8 @@ def _op_repair_alt_text_structure(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
 
 def _op_canonicalize_figure_alt_ownership(pdf: pikepdf.Pdf, _params: dict) -> bool:
-    """Stage 14 deterministic wrapper around the existing nested/duplicate alt cleanup."""
-    return _op_repair_alt_text_structure(pdf, _params)
+    """Bounded figure-ownership normalization without the broader destructive alt cleanup."""
+    return _op_normalize_nested_figure_containers(pdf, _params)
 
 
 def _elem_has_direct_mcid_content(elem) -> bool:
@@ -4798,9 +4798,18 @@ def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bo
                 figure for figure in _descendant_leaf_figures_with_direct_content(obj)
                 if not str(figure.get("/Alt") or "").replace("u:", "").strip()
             ]
+            # Only collapse a wrapper Figure when there is exactly one unambiguous leaf Figure
+            # to retain checker-visible ownership. Ambiguous or unresolved nested structures
+            # should be preserved for later passes instead of erasing Figure coverage.
+            if len(leaf_figures) != 1:
+                try:
+                    _enqueue_children(q, obj.get("/K"))
+                except Exception:
+                    pass
+                continue
             before_alt = obj.get("/Alt")
             before_alt_text = str(before_alt or "").replace("u:", "").strip()
-            if before_alt_text and len(leaf_figures) == 1:
+            if before_alt_text:
                 try:
                     leaf_figures[0]["/Alt"] = before_alt
                     changed = True
@@ -4828,12 +4837,18 @@ def _op_normalize_nested_figure_containers(pdf: pikepdf.Pdf, params: dict) -> bo
 def _op_set_figure_alt_text(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = params.get("structRef")
     if not ref:
+        _set_last_mutation_note("missing_struct_ref")
         return False
     elem = _resolve_ref(pdf, ref)
     if elem is None:
+        _set_last_mutation_note("target_ref_not_found")
+        return False
+    if (get_name(elem) or "").lstrip("/").upper() != "FIGURE":
+        _set_last_mutation_note("target_not_checker_visible_figure")
         return False
     alt = params.get("altText", "Image")
     elem["/Alt"] = _pdf_text_string(str(alt), 2000)
+    _set_last_mutation_note("figure_alt_set")
     return True
 
 
