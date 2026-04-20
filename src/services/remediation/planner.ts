@@ -738,6 +738,30 @@ export function planForRemediation(
     }
   }
 
+  if (
+    isProtectedZeroHeadingConvergence(analysis, snapshot)
+    && !toolSet.has('create_heading_from_candidate')
+    && (
+      snapshot.headings.length === 0
+      || snapshot.detectionProfile?.headingSignals.extractedHeadingsMissingFromTree === true
+    )
+    && !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied)
+    && noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+  ) {
+    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied);
+    if (
+      typeof fallbackParams['targetRef'] === 'string'
+      && fallbackParams['targetRef'].length > 0
+      && toolApplicableToPdfClass('create_heading_from_candidate', analysis.pdfClass, snapshot)
+    ) {
+      toolSet.set('create_heading_from_candidate', {
+        toolName: 'create_heading_from_candidate',
+        params: fallbackParams,
+        rationale: 'Protected zero-heading convergence fallback when heading bootstrap candidate selection remains eligible.',
+      });
+    }
+  }
+
   // For native_tagged PDFs with pathologically shallow structure trees (depth <= threshold),
   // the route loop above never selects synthesize_basic_structure_from_layout because
   // structure_bootstrap_and_conformance is gated to native_untagged/mixed. Inject it directly

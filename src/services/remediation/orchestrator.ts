@@ -1237,6 +1237,7 @@ export async function remediatePdf(
       const stageStarted = performance.now();
       const protectedZeroHeading = protectedZeroHeadingBundleActive(currentAnalysis, currentSnapshot, stage);
       const handledInProtectedBundle = new Set<string>();
+      const deferredProtectedTools: PlannedRemediationTool[] = [];
       let workingAnalysis = currentAnalysis;
       let workingSnapshot = currentSnapshot;
       let lastStageAnalysis: Awaited<ReturnType<typeof analyzePdf>> | null = null;
@@ -1250,6 +1251,10 @@ export async function remediatePdf(
       let buf = currentBuffer;
       for (const tool of stage.tools) {
         if (handledInProtectedBundle.has(tool.toolName)) continue;
+        if (protectedZeroHeading && tool.toolName === 'artifact_repeating_page_furniture') {
+          deferredProtectedTools.push(tool);
+          continue;
+        }
         if (tool.toolName === 'create_heading_from_candidate') {
           roundHeadingAttempted = true;
           if (protectedZeroHeading) {
@@ -1391,6 +1396,30 @@ export async function remediatePdf(
                 if (row.toolName === 'create_heading_from_candidate') break;
               }
               if (structureConformanceTimedOutInStage) break;
+            }
+            for (const deferredTool of deferredProtectedTools) {
+              const deferredResult = await runSingleTool(buf, deferredTool, workingSnapshot);
+              buf = deferredResult.buffer;
+              stageApplied.push({
+                toolName: deferredTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                scoreBefore: stageStartScore,
+                scoreAfter: stageStartScore,
+                delta: 0,
+                outcome: deferredResult.outcome,
+                details: deferredResult.details,
+                durationMs: deferredResult.durationMs,
+                source: 'planner',
+              });
+              runtimeSummary.toolTimings.push({
+                toolName: deferredTool.toolName,
+                stage: stage.stageNumber,
+                round,
+                source: 'planner',
+                durationMs: deferredResult.durationMs,
+                outcome: deferredResult.outcome,
+              });
             }
           } else {
             const initialParams = buildDefaultParams(

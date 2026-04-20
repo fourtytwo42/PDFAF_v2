@@ -290,16 +290,81 @@ describe('Stage 14 deterministic tools', () => {
     const paragraph = (before.paragraphStructElems ?? [])[0];
     expect(paragraph?.structRef).toBeTruthy();
 
-    const promoted = await runPythonMutationBatch(synthesized.buffer, [
-      { op: 'create_heading_from_candidate', params: { targetRef: paragraph!.structRef, level: 2 } },
-    ]);
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let promoted: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    try {
+      promoted = await runPythonMutationBatch(synthesized.buffer, [
+        { op: 'create_heading_from_candidate', params: { targetRef: paragraph!.structRef, level: 2 } },
+      ]);
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
     expect(promoted.result.success).toBe(true);
     expect(promoted.result.applied).toContain('create_heading_from_candidate');
+    const row = promoted.result.opResults?.find(item => item.op === 'create_heading_from_candidate');
+    expect(row?.note).toBe('exported_heading_converged');
+    expect((row?.debug as any)?.after?.candidate?.rootReachable).toBe(true);
+    expect(((row?.debug as any)?.after?.rootReachableHeadingCount ?? 0)).toBeGreaterThan(0);
 
     const outPath = join(dir, 'out.pdf');
     await writeFile(outPath, promoted.buffer);
     const after = await runPythonAnalysis(outPath);
     expect(after.headings.some(item => item.structRef === paragraph!.structRef && item.level === 2)).toBe(true);
+  });
+
+  it('create_heading_from_candidate returns no_effect when the target has no safe page ownership path', async () => {
+    const buf = await buildUntaggedStructurePdf();
+    const synthesized = await runPythonMutationBatch(buf, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(synthesized.result.success).toBe(true);
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage141-heading-invalid-'));
+    const beforePath = join(dir, 'before.pdf');
+    await writeFile(beforePath, synthesized.buffer);
+    const before = await runPythonAnalysis(beforePath);
+    const paragraph = (before.paragraphStructElems ?? [])[0];
+    expect(paragraph?.structRef).toBeTruthy();
+
+    const stripScript = `
+import sys, pikepdf
+path, struct_ref = sys.argv[1], sys.argv[2]
+num, gen = map(int, struct_ref.split('_', 1))
+pdf = pikepdf.open(path, allow_overwriting_input=True)
+elem = pdf.get_object(num, gen)
+cur = elem
+for _ in range(16):
+    if not isinstance(cur, pikepdf.Dictionary):
+        break
+    try:
+        if '/Pg' in cur:
+            del cur['/Pg']
+    except Exception:
+        pass
+    try:
+        cur = cur.get('/P')
+    except Exception:
+        break
+pdf.save(path)
+pdf.close()
+`;
+    await execFileAsync('python3', ['-c', stripScript, beforePath, paragraph!.structRef!]);
+    const strippedBuffer = await readFile(beforePath);
+
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let promoted: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    try {
+      promoted = await runPythonMutationBatch(strippedBuffer, [
+        { op: 'create_heading_from_candidate', params: { targetRef: paragraph!.structRef, level: 2 } },
+      ]);
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
+    expect(promoted.result.success).toBe(true);
+    expect(promoted.result.applied).not.toContain('create_heading_from_candidate');
+    const row = promoted.result.opResults?.find(item => item.op === 'create_heading_from_candidate');
+    expect(row?.outcome).toBe('no_effect');
+    expect(row?.note).toBe('candidate_missing_page_owner');
   });
 
   it('normalize_nested_figure_containers clears nested figure alt debt before ownership cleanup', async () => {

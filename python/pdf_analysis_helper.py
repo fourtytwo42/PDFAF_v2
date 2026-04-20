@@ -55,6 +55,7 @@ PDFAF_ENGINE_OCR_TAGGED_MARKER = "/PDFAFEngineTaggedOcrText"
 PDFAF_BOOKMARK_STRATEGY_MARKER = "/PDFAFBookmarkStrategy"
 PDFAF_BOOKMARK_PAGE_COUNT_MARKER = "/PDFAFBookmarkPageCount"
 _LAST_MUTATION_NOTE = None
+_LAST_MUTATION_DEBUG = None
 
 MCID_OP_RE = re.compile(rb"/MCID\s+(\d+)", re.IGNORECASE)
 TJ_AFTER_MCID_RE = re.compile(rb"\(((?:\\.|[^\\\)])+)\)\s*Tj")
@@ -82,6 +83,18 @@ def _consume_last_mutation_note() -> str | None:
     note = _LAST_MUTATION_NOTE
     _LAST_MUTATION_NOTE = None
     return note
+
+
+def _set_last_mutation_debug(payload: dict | None) -> None:
+    global _LAST_MUTATION_DEBUG
+    _LAST_MUTATION_DEBUG = payload
+
+
+def _consume_last_mutation_debug() -> dict | None:
+    global _LAST_MUTATION_DEBUG
+    payload = _LAST_MUTATION_DEBUG
+    _LAST_MUTATION_DEBUG = None
+    return payload
 
 
 def _mcid_max_pages() -> int:
@@ -3063,6 +3076,236 @@ def _ensure_document_struct_elem(pdf: pikepdf.Pdf, struct_root: pikepdf.Dictiona
     return document
 
 
+def _page_obj_for_struct_elem(elem):
+    cur = elem
+    depth = 0
+    while isinstance(cur, pikepdf.Dictionary) and depth < 250:
+        depth += 1
+        try:
+            pg = cur.get("/Pg")
+            if isinstance(pg, pikepdf.Dictionary):
+                return pg
+        except Exception:
+            pass
+        try:
+            cur = cur.get("/P")
+        except Exception:
+            break
+    return None
+
+
+def _ensure_page_container_for_elem(pdf: pikepdf.Pdf, struct_root: pikepdf.Dictionary, document, page_obj):
+    try:
+        dk = document.get("/K")
+    except Exception:
+        dk = None
+    if not isinstance(dk, pikepdf.Array):
+        dk = pikepdf.Array([])
+        document["/K"] = dk
+    for child in dk:
+        if not isinstance(child, pikepdf.Dictionary) or not _is_struct_elem_dict(child):
+            continue
+        try:
+            if child.get("/Pg") is page_obj:
+                return child, False
+        except Exception:
+            continue
+    sect = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name("/StructElem"),
+        S=pikepdf.Name("/Sect"),
+        P=document,
+        Pg=page_obj,
+        K=pikepdf.Array([]),
+    ))
+    dk.append(sect)
+    return sect, True
+
+
+def _collect_subtree_mcids(elem) -> list[int]:
+    out: list[int] = []
+    q: deque = deque([elem])
+    seen: set = set()
+    while q and len(out) < MAX_ITEMS:
+        cur = q.popleft()
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        vk = _struct_elem_visit_key(cur)
+        if vk in seen:
+            continue
+        seen.add(vk)
+        try:
+            k = cur.get("/K")
+        except Exception:
+            k = None
+        if isinstance(k, (int, pikepdf.Integer)):
+            out.append(int(k))
+        elif isinstance(k, pikepdf.Dictionary):
+            try:
+                if k.get("/Type") == pikepdf.Name("/MCR") and k.get("/MCID") is not None:
+                    out.append(int(k.get("/MCID")))
+            except Exception:
+                pass
+            if _is_struct_elem_dict(k):
+                q.append(k)
+        elif isinstance(k, pikepdf.Array):
+            for item in k:
+                if isinstance(item, (int, pikepdf.Integer)):
+                    out.append(int(item))
+                elif isinstance(item, pikepdf.Dictionary):
+                    try:
+                        if item.get("/Type") == pikepdf.Name("/MCR") and item.get("/MCID") is not None:
+                            out.append(int(item.get("/MCID")))
+                            continue
+                    except Exception:
+                        pass
+                    if _is_struct_elem_dict(item):
+                        q.append(item)
+    return sorted(set(out))
+
+
+def _find_heading_candidate_by_text(pdf: pikepdf.Pdf, target_text: str):
+    target = re.sub(r"\s+", " ", (target_text or "").strip()).lower()
+    if not target:
+        return None
+    page_map = build_page_map(pdf)
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    sr = pdf.Root.get("/StructTreeRoot")
+    q: deque = deque()
+    if isinstance(sr, pikepdf.Dictionary):
+        _enqueue_children(q, sr.get("/K"))
+    seen: set = set()
+    best = None
+    best_key = None
+    while q and len(seen) < MAX_ITEMS * 4:
+        elem = q.popleft()
+        if not _is_struct_elem_dict(elem):
+            continue
+        vk = _struct_elem_visit_key(elem)
+        if vk in seen:
+            continue
+        seen.add(vk)
+        tag = _struct_tag_upper(elem)
+        if tag in ("P", "SPAN", "DIV"):
+            page = get_page_number(elem, page_map)
+            text = (_extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup) or "").strip()
+            normalized = re.sub(r"\s+", " ", text).lower()
+            if normalized:
+                score = None
+                if normalized == target:
+                    score = (3, len(normalized))
+                elif target in normalized:
+                    score = (2, len(target))
+                elif normalized in target:
+                    score = (1, len(normalized))
+                if score is not None and (best_key is None or score > best_key):
+                    best = elem
+                    best_key = score
+        try:
+            _enqueue_children(q, elem.get("/K"))
+        except Exception:
+            pass
+    return best
+
+
+def _looks_like_body_heading_reject(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    if not normalized:
+        return True
+    if re.match(r"^[a-z]", normalized):
+        return True
+    if re.search(r"\b(for more information|to learn more|for additional information|please contact)\b", normalized, re.I):
+        return True
+    if re.search(r"[.!?]$", normalized) and len(normalized.split()) >= 4:
+        return True
+    return False
+
+
+def _heading_candidate_score(text: str, page: int, root_reachable: bool, prefer_text: str = "") -> int | None:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    if len(normalized) < 4:
+        return None
+    if _looks_like_body_heading_reject(normalized):
+        return None
+    if re.search(r"^(https?://|www\.)", normalized, re.I):
+        return None
+    if re.search(r"^(figure|fig\.|table|chart|graph|photo|image)\s+\d+[-.: ]", normalized, re.I):
+        return None
+    if re.search(r"\\b(governor|director|chair|secretary|commissioner|president|author|prepared by|submitted by|committee)\\b", normalized, re.I):
+        return None
+    if re.search(r"\\b(page\\s+\\d+|copyright|all rights reserved|state of illinois|department of|source:)\\b", normalized, re.I):
+        return None
+
+    score = 0
+    words = [w for w in normalized.split() if w]
+    if page == 0:
+        score += 35
+    elif page <= 2:
+        score += 18
+    if 2 <= len(words) <= 8:
+        score += 22
+    if page == 0 and len(words) >= 2:
+        score += 10
+    if 8 <= len(normalized) <= 80:
+        score += 18
+    if not re.search(r"[.!?]$", normalized):
+        score += 6
+    if re.search(r"at a glance|executive summary|introduction|overview|findings|conclusion|summary|bulletin", normalized, re.I):
+        score += 18
+    alpha_words = [w for w in words if re.search(r"[A-Za-z]", w)]
+    if alpha_words:
+        title_case_matches = sum(1 for w in alpha_words if re.match(r"^[A-Z][A-Za-z0-9'’/-]*$", w))
+        if title_case_matches >= max(1, math.ceil(len(alpha_words) * 0.6)):
+            score += 24
+        letters = re.sub(r"[^A-Za-z]", "", normalized)
+        if len(letters) >= 4:
+            caps = len(re.sub(r"[^A-Z]", "", letters))
+            if caps / max(1, len(letters)) >= 0.85:
+                score += 18
+    if root_reachable:
+        score += 8
+    target = re.sub(r"\s+", " ", (prefer_text or "").strip()).lower()
+    if target:
+        lowered = normalized.lower()
+        if lowered == target:
+            score += 30
+        elif target in lowered:
+            score += 20
+    return score
+
+
+def _select_best_live_heading_candidate(pdf: pikepdf.Pdf, prefer_text: str = ""):
+    page_map = build_page_map(pdf)
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    sr = pdf.Root.get("/StructTreeRoot")
+    best = None
+    best_score = None
+    for elem in _iter_struct_elems(pdf):
+        tag = _struct_tag_upper(elem)
+        if tag not in ("P", "SPAN", "DIV"):
+            continue
+        page = get_page_number(elem, page_map)
+        text = (_extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup) or "").strip()
+        score = _heading_candidate_score(
+            text,
+            page,
+            _is_root_reachable_elem(sr, elem) if isinstance(sr, pikepdf.Dictionary) else False,
+            prefer_text,
+        )
+        if score is None:
+            continue
+        key = (score, -page, -len(text))
+        if best_score is None or key > best_score:
+            best = elem
+            best_score = key
+    return best
+
+
 def _ensure_mark_info(catalog: pikepdf.Dictionary) -> None:
     mark_info = catalog.get("/MarkInfo")
     if not isinstance(mark_info, pikepdf.Dictionary):
@@ -3981,6 +4224,10 @@ def _struct_elem_visit_key(elem) -> object:
     return id(elem)
 
 
+def _same_struct_elem(a, b) -> bool:
+    return _struct_elem_visit_key(a) == _struct_elem_visit_key(b)
+
+
 def _direct_role_children(elem) -> list:
     """
     Direct /K children that are structure elements, including Type-less Word/InDesign nodes.
@@ -4019,6 +4266,61 @@ def _direct_role_children(elem) -> list:
             if _is_struct_elem_dict(ch):
                 out.append(ch)
     return out
+
+
+def _remove_struct_child(parent, child) -> bool:
+    if not isinstance(parent, pikepdf.Dictionary) or not isinstance(child, pikepdf.Dictionary):
+        return False
+    try:
+        k = parent.get("/K")
+    except Exception:
+        return False
+    if isinstance(k, pikepdf.Dictionary):
+        if _same_struct_elem(k, child):
+            try:
+                del parent["/K"]
+                return True
+            except Exception:
+                return False
+        return False
+    if not isinstance(k, pikepdf.Array):
+        return False
+    filtered = pikepdf.Array()
+    changed = False
+    for item in k:
+        if isinstance(item, pikepdf.Dictionary) and _same_struct_elem(item, child):
+            changed = True
+            continue
+        filtered.append(item)
+    if changed:
+        parent["/K"] = filtered
+    return changed
+
+
+def _append_struct_child(parent, child) -> bool:
+    if not isinstance(parent, pikepdf.Dictionary) or not isinstance(child, pikepdf.Dictionary):
+        return False
+    try:
+        child["/P"] = parent
+    except Exception:
+        pass
+    try:
+        k = parent.get("/K")
+    except Exception:
+        k = None
+    if isinstance(k, pikepdf.Dictionary):
+        if _same_struct_elem(k, child):
+            return False
+        parent["/K"] = pikepdf.Array([k, child])
+        return True
+    if isinstance(k, pikepdf.Array):
+        for item in k:
+            if isinstance(item, pikepdf.Dictionary) and _same_struct_elem(item, child):
+                return False
+        k.append(child)
+        return True
+    parent["/K"] = pikepdf.Array([child])
+    return True
 
 
 def _strip_subtree_alt_actual_text_recursive(elem) -> bool:
@@ -5106,8 +5408,6 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
 def _op_create_heading_from_candidate(pdf: pikepdf.Pdf, params: dict) -> bool:
     """Promote a safe structural paragraph-like target to a heading level."""
     target_ref = params.get("targetRef") or params.get("structRef")
-    if not target_ref:
-        return False
     try:
         level = int(params.get("level", 2))
     except (TypeError, ValueError):
@@ -5116,6 +5416,7 @@ def _op_create_heading_from_candidate(pdf: pikepdf.Pdf, params: dict) -> bool:
     return _op_retag_struct_as_heading(pdf, {
         "structRef": target_ref,
         "level": level,
+        "text": params.get("text"),
     })
 
 
@@ -5166,28 +5467,138 @@ def _op_orphan_v1_promote_p_to_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
 def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     """Promote /P, /Span, or /Div structure elements to /H1–/H6 (Office-tagged PDFs often use Span/Div)."""
     ref = params.get("structRef")
+    target_text = str(params.get("text") or "").strip()
     level = params.get("level")
-    if not ref:
-        return False
     try:
         level = int(level)
     except (TypeError, ValueError):
+        _set_last_mutation_note("invalid_heading_level")
         return False
     if level < 1 or level > 6:
+        _set_last_mutation_note("heading_level_out_of_range")
         return False
-    elem = _resolve_ref(pdf, ref)
+    elem = _resolve_ref(pdf, ref) if ref else None
+    if elem is None and target_text:
+        elem = _find_heading_candidate_by_text(pdf, target_text)
     if elem is None:
+        elem = _select_best_live_heading_candidate(pdf, target_text)
+    if elem is None:
+        _set_last_mutation_debug(_heading_promotion_debug(pdf, None, "before"))
+        _set_last_mutation_note("target_ref_not_found")
         return False
+    before_debug = _heading_promotion_debug(pdf, elem, "before")
     try:
         s = elem.get("/S")
         tnorm = str(s).lstrip("/").upper() if s is not None else ""
     except Exception:
-        return False
+        tnorm = ""
+    if tnorm not in ("P", "SPAN", "DIV") and target_text:
+        fallback_elem = _find_heading_candidate_by_text(pdf, target_text)
+        if fallback_elem is not None:
+            elem = fallback_elem
+            before_debug = _heading_promotion_debug(pdf, elem, "before")
+            try:
+                s = elem.get("/S")
+                tnorm = str(s).lstrip("/").upper() if s is not None else ""
+            except Exception:
+                tnorm = ""
     if tnorm not in ("P", "SPAN", "DIV"):
+        fallback_elem = _select_best_live_heading_candidate(pdf, target_text)
+        if fallback_elem is not None and not _same_struct_elem(fallback_elem, elem):
+            elem = fallback_elem
+            before_debug = _heading_promotion_debug(pdf, elem, "before")
+            try:
+                s = elem.get("/S")
+                tnorm = str(s).lstrip("/").upper() if s is not None else ""
+            except Exception:
+                tnorm = ""
+    if tnorm not in ("P", "SPAN", "DIV"):
+        _set_last_mutation_debug(before_debug)
+        _set_last_mutation_note("target_not_paragraph_like")
         return False
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_debug(before_debug)
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+
+    page_obj = _page_obj_for_struct_elem(elem)
+    if not isinstance(page_obj, pikepdf.Dictionary):
+        _set_last_mutation_debug(before_debug)
+        _set_last_mutation_note("candidate_missing_page_owner")
+        return False
+
+    changed = False
+    was_reachable = _is_root_reachable_elem(sr, elem)
+    if not was_reachable:
+        try:
+            prev_parent = elem.get("/P")
+        except Exception:
+            prev_parent = None
+        page_container, created_container = _ensure_page_container_for_elem(pdf, sr, doc_elem, page_obj)
+        if created_container:
+            changed = True
+        if isinstance(prev_parent, pikepdf.Dictionary):
+            if _remove_struct_child(prev_parent, elem):
+                changed = True
+        if _append_struct_child(page_container, elem):
+            changed = True
+        try:
+            elem["/Pg"] = page_obj
+        except Exception:
+            pass
+        arr, _page_key, page_tree_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+        if page_tree_changed:
+            changed = True
+        if isinstance(arr, pikepdf.Array):
+            for mcid in _collect_subtree_mcids(elem):
+                if _set_page_parent_tree_mcid(arr, mcid, elem):
+                    changed = True
+
     tag = "/H1" if level == 1 else f"/H{level}"
-    elem["/S"] = pikepdf.Name(tag)
-    return True
+    try:
+        if elem.get("/S") != pikepdf.Name(tag):
+            elem["/S"] = pikepdf.Name(tag)
+            changed = True
+    except Exception:
+        _set_last_mutation_debug(before_debug)
+        _set_last_mutation_note("failed_to_set_heading_tag")
+        return False
+
+    if level == 1:
+        try:
+            if elem.get("/T") is None:
+                text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, get_page_number(elem, build_page_map(pdf)), _build_mcid_resolved_lookup(pdf))
+                if text:
+                    elem["/T"] = _pdf_text_string(text, 500)
+                    changed = True
+        except Exception:
+            pass
+
+    after_debug = _heading_promotion_debug(pdf, elem, "after")
+    _set_last_mutation_debug({
+        "before": before_debug,
+        "after": after_debug,
+    })
+    before_root_headings = before_debug.get("rootReachableHeadingCount", 0)
+    after_root_headings = after_debug.get("rootReachableHeadingCount", 0)
+    before_depth = before_debug.get("rootReachableDepth", 0)
+    after_depth = after_debug.get("rootReachableDepth", 0)
+    candidate_after = (after_debug.get("candidate") or {}) if isinstance(after_debug, dict) else {}
+    candidate_reachable = bool(candidate_after.get("rootReachable"))
+    page_parent_tree_hits = int(candidate_after.get("pageParentTreeHits", 0) or 0)
+    if candidate_reachable or after_root_headings > before_root_headings or after_depth > before_depth:
+        _set_last_mutation_note("exported_heading_converged")
+        return changed or not was_reachable
+    if page_parent_tree_hits == 0 and len(candidate_after.get("mcids") or []) > 0:
+        _set_last_mutation_note("parenttree_not_updated")
+    elif not candidate_reachable and was_reachable:
+        _set_last_mutation_note("unreachable_after_promotion")
+    elif not candidate_reachable:
+        _set_last_mutation_note("candidate_in_broken_subtree")
+    else:
+        _set_last_mutation_note("no_safe_parent_insertion_point")
+    return False
 
 
 def _op_set_heading_level(pdf: pikepdf.Pdf, params: dict) -> bool:
@@ -5784,6 +6195,82 @@ def _iter_root_reachable_struct_elems(struct_root) -> list:
         except Exception:
             pass
     return out
+
+
+def _is_root_reachable_elem(struct_root, elem) -> bool:
+    if not isinstance(struct_root, pikepdf.Dictionary) or not isinstance(elem, pikepdf.Dictionary):
+        return False
+    target = _struct_elem_visit_key(elem)
+    for candidate in _iter_root_reachable_struct_elems(struct_root):
+      if _struct_elem_visit_key(candidate) == target:
+          return True
+    return False
+
+
+def _struct_parent_chain(elem) -> list[str]:
+    out: list[str] = []
+    cur = elem
+    depth = 0
+    while isinstance(cur, pikepdf.Dictionary) and depth < 250:
+        depth += 1
+        try:
+            ref = object_ref_str(cur)
+            tag = str(cur.get("/S") or "").lstrip("/") or "?"
+            out.append(f"{tag}@{ref or 'inline'}")
+        except Exception:
+            out.append("?")
+        try:
+            if cur.get("/Type") == pikepdf.Name("/StructTreeRoot"):
+                break
+        except Exception:
+            pass
+        try:
+            cur = cur.get("/P")
+        except Exception:
+            break
+    return out
+
+
+def _heading_promotion_debug(pdf: pikepdf.Pdf, elem, reason: str | None = None) -> dict:
+    sr = pdf.Root.get("/StructTreeRoot")
+    snapshot = _mutation_debug_snapshot(pdf)
+    page_map = build_page_map(pdf)
+    page_obj = _page_obj_for_struct_elem(elem) if isinstance(elem, pikepdf.Dictionary) else None
+    elem_mcids = _collect_subtree_mcids(elem) if isinstance(elem, pikepdf.Dictionary) else []
+    page_parent_tree_key = None
+    page_parent_tree_hits = 0
+    if isinstance(sr, pikepdf.Dictionary) and isinstance(page_obj, pikepdf.Dictionary):
+        try:
+            pt = sr.get("/ParentTree")
+            nums = pt.get("/Nums") if isinstance(pt, pikepdf.Dictionary) else None
+            key_obj = page_obj.get("/StructParents")
+            page_parent_tree_key = int(key_obj) if isinstance(key_obj, (int, pikepdf.Integer)) else None
+            if isinstance(nums, pikepdf.Array) and page_parent_tree_key is not None:
+                arr = _get_parent_tree_entry(nums, page_parent_tree_key)
+                if isinstance(arr, pikepdf.Array):
+                    for mcid in elem_mcids:
+                        try:
+                            if mcid < len(arr) and arr[mcid] is not None:
+                                page_parent_tree_hits += 1
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+    candidate = {
+        "structRef": object_ref_str(elem) if isinstance(elem, pikepdf.Dictionary) else None,
+        "tag": (str(elem.get("/S") or "").lstrip("/") if isinstance(elem, pikepdf.Dictionary) else None),
+        "page": get_page_number(elem, page_map) if isinstance(elem, pikepdf.Dictionary) else 0,
+        "parentPath": _struct_parent_chain(elem) if isinstance(elem, pikepdf.Dictionary) else [],
+        "rootReachable": _is_root_reachable_elem(sr, elem) if isinstance(sr, pikepdf.Dictionary) and isinstance(elem, pikepdf.Dictionary) else False,
+        "mcids": elem_mcids,
+        "pageParentTreeKey": page_parent_tree_key,
+        "pageParentTreeHits": page_parent_tree_hits,
+    }
+    return {
+        **snapshot,
+        "candidate": candidate,
+        **({"reason": reason} if reason else {}),
+    }
 
 
 def _root_reachable_depth(struct_root) -> int:
@@ -6545,19 +7032,24 @@ def mutate_main(request_path: str) -> int:
             try:
                 ok = bool(fn(pdf, params))
                 note = _consume_last_mutation_note()
+                debug_payload = _consume_last_mutation_debug()
                 if ok:
                     applied.append(op)
                     row = {"op": op, "outcome": "applied"}
                     if note:
                         row["note"] = note
-                    if os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
+                    if debug_payload is not None:
+                        row["debug"] = debug_payload
+                    elif os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
                         row["debug"] = _mutation_debug_snapshot(pdf)
                     op_results.append(row)
                 else:
                     row = {"op": op, "outcome": "no_effect"}
                     if note:
                         row["note"] = note
-                    if os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
+                    if debug_payload is not None:
+                        row["debug"] = debug_payload
+                    elif os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
                         row["debug"] = _mutation_debug_snapshot(pdf)
                     op_results.append(row)
                 # no-op (False) is not a batch failure — caller treats empty `applied` as no_effect

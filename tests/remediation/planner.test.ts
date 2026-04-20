@@ -186,6 +186,7 @@ describe('planForRemediation', () => {
         { tag: 'P', text: 'Illinois', page: 0, structRef: '10_0', bbox: [40, 720, 160, 736] },
         { tag: 'P', text: 'RESEA', page: 0, structRef: '11_0', bbox: [40, 700, 140, 716] },
         { tag: 'P', text: 'Rod R. Blagojevich, Governor', page: 0, structRef: '12_0', bbox: [40, 680, 260, 698] },
+        { tag: 'P', text: 'for more information on this topic.', page: 0, structRef: '12a_0', bbox: [40, 660, 280, 676] },
         { tag: 'P', text: 'Research at a Glance', page: 0, structRef: '13_0', bbox: [40, 730, 250, 748] },
       ],
     };

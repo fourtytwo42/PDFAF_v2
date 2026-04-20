@@ -101,6 +101,17 @@ function looksLikeBodyParagraph(text: string): boolean {
   return false;
 }
 
+function looksLikeBodyLead(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  if (/^[a-z]/.test(normalized)) return true;
+  if (/^(for more information|to learn more|for additional information|please contact)\b/i.test(normalized)) {
+    return true;
+  }
+  if (/[.!?]$/.test(normalized) && wordCount(normalized) >= 4) return true;
+  return false;
+}
+
 function looksLikeTableLine(text: string): boolean {
   return /\t|\s{4,}|\|/.test(text);
 }
@@ -152,6 +163,7 @@ export function scoreHeadingBootstrapCandidate(
     looksLikeCaption(text)
     || looksLikeTableLine(text)
     || looksLikeBodyParagraph(text)
+    || looksLikeBodyLead(text)
     || looksLikeDateOrReportId(text)
     || looksLikeBylineOrOfficialLine(text)
     || looksLikeFurnitureOrBoilerplate(text)
