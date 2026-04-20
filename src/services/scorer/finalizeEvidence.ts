@@ -138,7 +138,7 @@ function policyForCategory(snap: DocumentSnapshot, category: ScoredCategory): Ca
       const heuristicSignals =
         snap.structureTree === null && snap.isTagged && snap.headings.length > 0 ||
         (snap.taggedContentAudit?.suspectedPathPaintOutsideMc ?? 0) > 0;
-      const manualReviewRequired = heuristicSignals && category.score >= HEURISTIC_SCORE_CAP;
+      const manualReviewRequired = heuristicSignals && (category.score ?? 0) >= HEURISTIC_SCORE_CAP;
       return {
         evidence: manualReviewRequired ? 'manual_review_required' : heuristicSignals ? 'heuristic' : 'verified',
         manualReviewRequired,
@@ -176,13 +176,13 @@ function finalizeCategory(snap: DocumentSnapshot, category: ScoredCategory): Sco
   const policy = policyForCategory(snap, category);
   const scoreCapsApplied: ScoreCapApplied[] = [];
   let finalScore = category.score;
-  if (category.applicable && policy.cap !== undefined && category.score > policy.cap) {
+  if (category.applicable && policy.cap !== undefined && typeof category.score === 'number' && category.score > policy.cap) {
     finalScore = policy.cap;
     scoreCapsApplied.push({
       category: category.key,
       cap: policy.cap,
       rawScore: category.score,
-      finalScore,
+      finalScore: finalScore ?? policy.cap,
       reason: policy.capReason ?? 'Stage 1 heuristic evidence cap applied.',
     });
   }

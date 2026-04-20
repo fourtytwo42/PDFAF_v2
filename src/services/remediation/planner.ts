@@ -406,12 +406,14 @@ export function planForRemediation(
   snapshot: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[],
   toolOutcomeStore?: ToolOutcomeStore,
+  includeOptionalRemediation = false,
 ): RemediationPlan {
   if (analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot)) {
     return {
       stages: [],
       planningSummary: buildPlanningSummary({
         routing: deriveRoutingDecision(analysis, snapshot),
+        includeOptionalRemediation,
         scheduledTools: [],
         skippedTools: [],
       }),
@@ -429,6 +431,11 @@ export function planForRemediation(
     if (!skippedTools.has(toolName)) skippedTools.set(toolName, reason);
   };
   const activeRouteSet = new Set(activeRoutes);
+  const optionalToolNames = new Set([
+    'replace_bookmarks_from_headings',
+    'add_page_outline_bookmarks',
+    'set_pdfua_identification',
+  ]);
   const minExtractableCharsForNativeOcr = Math.max(120, snapshot.pageCount * 40);
 
   const categoryFailing = (key: CategoryKey) => failCats.includes(key);
@@ -717,8 +724,17 @@ export function planForRemediation(
     return a.toolName.localeCompare(b.toolName);
   });
 
-  const planned = filterPlannedToolsByReliability(plannedRaw, analysis.pdfClass, toolOutcomeStore);
-  for (const tool of plannedRaw) {
+  const plannedMandatoryRaw = includeOptionalRemediation
+    ? plannedRaw
+    : plannedRaw.filter(tool => !optionalToolNames.has(tool.toolName));
+  if (!includeOptionalRemediation) {
+    for (const tool of plannedRaw) {
+      if (optionalToolNames.has(tool.toolName)) addSkipped(tool.toolName, 'route_not_active');
+    }
+  }
+
+  const planned = filterPlannedToolsByReliability(plannedMandatoryRaw, analysis.pdfClass, toolOutcomeStore);
+  for (const tool of plannedMandatoryRaw) {
     if (!planned.some(candidate => candidate.toolName === tool.toolName)) {
       addSkipped(tool.toolName, 'reliability_filtered');
     }
@@ -729,6 +745,7 @@ export function planForRemediation(
       stages: [],
       planningSummary: buildPlanningSummary({
         routing,
+        includeOptionalRemediation,
         scheduledTools: [],
         skippedTools: [...skippedTools.entries()].map(([toolName, reason]) => ({ toolName, reason })),
       }),
@@ -747,6 +764,7 @@ export function planForRemediation(
     stages,
     planningSummary: buildPlanningSummary({
       routing,
+      includeOptionalRemediation,
       scheduledTools: planned,
       skippedTools: [...skippedTools.entries()].map(([toolName, reason]) => ({ toolName, reason })),
     }),

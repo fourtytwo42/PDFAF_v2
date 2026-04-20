@@ -1,5 +1,6 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
+  CATEGORY_BASE_WEIGHTS,
   LINK_QUALITY_MISSING_STRUCT_PARENT_MAX_DEDUCTION,
   LINK_QUALITY_MISSING_STRUCT_PARENT_WEIGHT,
 } from '../../../config.js';
@@ -14,7 +15,7 @@ export function scoreLinkQuality(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'link_quality',
       score: 100,
-      weight: 0.045,
+      weight: CATEGORY_BASE_WEIGHTS.link_quality,
       applicable: false,
       severity: 'pass',
       findings: [],
@@ -82,7 +83,7 @@ export function scoreLinkQuality(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'link_quality',
     score,
-    weight: 0.045,
+    weight: CATEGORY_BASE_WEIGHTS.link_quality,
     applicable: true,
     severity: scoreSeverity(score),
     findings,

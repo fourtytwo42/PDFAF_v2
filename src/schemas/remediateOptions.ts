@@ -12,6 +12,7 @@ export const remediateOptionsSchema = z
     semanticUntaggedHeadingTimeoutMs: z.number().int().positive().max(600_000).optional(),
     targetScore: z.number().min(0).max(100).optional(),
     maxRounds: z.number().int().min(1).max(10).optional(),
+    includeOptionalRemediation: z.boolean().optional(),
     htmlReport: z.boolean().optional(),
     htmlReportIncludeBeforeAfter: z.boolean().optional(),
     htmlReportIncludeFindingsDetail: z.boolean().optional(),

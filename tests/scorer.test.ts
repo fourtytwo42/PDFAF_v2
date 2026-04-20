@@ -92,9 +92,67 @@ describe('N/A weight redistribution', () => {
 describe('grade derivation', () => {
   it('grades a well-formed tagged document as A', () => {
     const snap = makeSnap({
+      headings: [
+        { level: 1, text: 'Annual Report', page: 0 },
+        { level: 2, text: 'Introduction', page: 1 },
+        { level: 2, text: 'Results', page: 8 },
+        { level: 2, text: 'Conclusion', page: 16 },
+      ],
       figures: [{ hasAlt: true, altText: 'Chart showing data', isArtifact: false, page: 1 }],
-      tables: [{ hasHeaders: true, headerCount: 3, totalCells: 12, page: 2 }],
+      tables: [{ hasHeaders: true, headerCount: 3, totalCells: 12, page: 2, rowCount: 4, irregularRows: 0, cellsMisplacedCount: 0 }],
       links: [{ text: 'Read the full report', url: 'https://example.com', page: 1 }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 4,
+          treeHeadingCount: 4,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 1,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 0,
+          suspectedPathPaintOutsideMc: 0,
+          taggedAnnotationRiskCount: 0,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [],
+        confidence: 'high',
+      },
     });
     const result = score(snap, META);
     expect(result.grade).toBe('A');

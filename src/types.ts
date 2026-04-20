@@ -1,13 +1,24 @@
-import type { SCORING_WEIGHTS } from './config.js';
-
 // ─── Core domain types ────────────────────────────────────────────────────────
 
 export type PdfClass  = 'native_tagged' | 'native_untagged' | 'scanned' | 'mixed';
-export type CategoryKey = keyof typeof SCORING_WEIGHTS;
+export type CategoryKey =
+  | 'text_extractability'
+  | 'title_language'
+  | 'heading_structure'
+  | 'alt_text'
+  | 'pdf_ua_compliance'
+  | 'bookmarks'
+  | 'table_markup'
+  | 'color_contrast'
+  | 'link_quality'
+  | 'reading_order'
+  | 'form_accessibility';
 export type Severity  = 'critical' | 'moderate' | 'minor' | 'pass';
 export type Grade     = 'A' | 'B' | 'C' | 'D' | 'F';
 export type EvidenceLevel = 'verified' | 'heuristic' | 'inferred_after_fix' | 'manual_review_required';
 export type VerificationLevel = 'verified' | 'mixed' | 'heuristic' | 'manual_review_required';
+export type MeasurementStatus = 'measured' | 'heuristic' | 'not_measured';
+export type ScoreProfileId = 'legal_pdf_strict';
 export type StructureClass = 'scanned' | 'untagged_digital' | 'partially_tagged' | 'native_tagged' | 'well_tagged';
 export type ClassificationConfidence = 'high' | 'medium' | 'low';
 export type FailureFamily =
@@ -366,6 +377,27 @@ export interface ScoreCapApplied {
   reason: string;
 }
 
+export interface ScopeChecklist {
+  isNonWebDocument: boolean;
+  isWebPostedDocument: boolean | null;
+  isPublicFacing: boolean | null;
+  isCurrentUseDocument: boolean | null;
+  isArchivedContentCandidate: boolean | null;
+  isPreexistingDocumentCandidate: boolean | null;
+  legalExceptionReviewRequired: boolean;
+}
+
+export interface ScoreProfile {
+  id: ScoreProfileId;
+  overallScore: number;
+  grade: Grade;
+  gradedCategories: CategoryKey[];
+  nonGradedCategories: CategoryKey[];
+  limitations: string[];
+  criticalBlockers: string[];
+  majorBlockers: string[];
+}
+
 // ─── Per-category scored result ───────────────────────────────────────────────
 
 export interface ScoredCategory {
@@ -375,6 +407,9 @@ export interface ScoredCategory {
   applicable: boolean;
   severity: Severity;
   findings: Finding[];
+  countsTowardGrade?: boolean;
+  diagnosticOnly?: boolean;
+  measurementStatus?: MeasurementStatus;
   evidence?: EvidenceLevel;
   verificationLevel?: VerificationLevel;
   manualReviewRequired?: boolean;
@@ -390,9 +425,11 @@ export interface AnalysisResult {
   filename: string;
   pageCount: number;
   pdfClass: PdfClass;
-  score: number;                    // 0–100 weighted
-  grade: Grade;
+  score: number;                    // internal legacy convenience
+  grade: Grade;                     // internal legacy convenience
+  scoreProfile: ScoreProfile;
   categories: ScoredCategory[];
+  scopeChecklist: ScopeChecklist;
   findings: Finding[];              // all findings sorted by severity desc
   analysisDurationMs: number;
   verificationLevel?: VerificationLevel;
@@ -577,6 +614,8 @@ export interface RemediateRequestOptions {
   /** Target weighted score (0–100); mirrors orchestrator targetScore. */
   targetScore?: number;
   maxRounds?: number;
+  /** When true, planner may include optional bookmark/PDF-UA remediation paths. */
+  includeOptionalRemediation?: boolean;
   /** When true, response includes `htmlReport` (self-contained HTML). */
   htmlReport?: boolean;
   htmlReportIncludeBeforeAfter?: boolean;
@@ -677,6 +716,7 @@ export interface PlanningSummary {
   secondaryRoutes: RemediationRoute[];
   triggeringSignals: string[];
   residualFamilies?: string[];
+  includeOptionalRemediation?: boolean;
   scheduledTools: string[];
   skippedTools: Array<{
     toolName: string;

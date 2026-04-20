@@ -1076,6 +1076,7 @@ export async function executePlaybook(
 export interface RemediatePdfOptions {
   targetScore?: number;
   maxRounds?: number;
+  includeOptionalRemediation?: boolean;
   signal?: AbortSignal;
   playbookStore?: PlaybookStore;
   toolOutcomeStore?: ToolOutcomeStore;
@@ -1139,7 +1140,13 @@ export async function remediatePdf(
     }
 
     const roundStartScore = currentAnalysis.score;
-    let rawPlan = planForRemediation(currentAnalysis, currentSnapshot, appliedTools, toolOutcomeStore);
+    let rawPlan = planForRemediation(
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      toolOutcomeStore,
+      options?.includeOptionalRemediation ?? false,
+    );
     planningSummary = mergePlanningSummaries(planningSummary, rawPlan.planningSummary);
     const plan = filterPlan(rawPlan);
     if (plan.stages.length === 0) {

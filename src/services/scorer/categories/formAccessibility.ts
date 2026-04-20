@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
+import { CATEGORY_BASE_WEIGHTS } from '../../../config.js';
 
 export function scoreFormAccessibility(snap: DocumentSnapshot): ScoredCategory {
   // Merge tagged form fields and pdfjs-detected widget annotations
@@ -8,7 +9,7 @@ export function scoreFormAccessibility(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'form_accessibility',
       score: 100,
-      weight: 0.040,
+      weight: CATEGORY_BASE_WEIGHTS.form_accessibility,
       applicable: false,
       severity: 'pass',
       findings: [],
@@ -34,7 +35,7 @@ export function scoreFormAccessibility(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'form_accessibility',
     score,
-    weight: 0.040,
+    weight: CATEGORY_BASE_WEIGHTS.form_accessibility,
     applicable: true,
     severity: scoreSeverity(score),
     findings,

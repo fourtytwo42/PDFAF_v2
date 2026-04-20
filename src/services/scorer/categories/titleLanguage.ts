@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
+import { CATEGORY_BASE_WEIGHTS } from '../../../config.js';
 import { isFilenameLikeTitle } from '../../compliance/icjiaParity.js';
 
 export function scoreTitleLanguage(snap: DocumentSnapshot): ScoredCategory {
@@ -44,7 +45,7 @@ export function scoreTitleLanguage(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'title_language',
     score,
-    weight: 0.130,
+    weight: CATEGORY_BASE_WEIGHTS.title_language,
     applicable: true,
     severity: findings.length > 0 ? findings[0]!.severity : 'pass',
     findings,

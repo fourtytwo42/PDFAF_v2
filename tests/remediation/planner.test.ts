@@ -71,7 +71,7 @@ describe('planForRemediation', () => {
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).toContain('set_document_title');
     expect(names).toContain('set_document_language');
-    expect(names).toContain('set_pdfua_identification');
+    expect(names).not.toContain('set_pdfua_identification');
   });
 
   it('prefers first-page text over filename for fallback document title', () => {
@@ -151,9 +151,17 @@ describe('planForRemediation', () => {
     expect(plan.planningSummary?.primaryRoute).toBe('metadata_foundation');
     expect(names).toContain('set_document_title');
     expect(names).toContain('set_document_language');
-    expect(names).toContain('set_pdfua_identification');
+    expect(names).not.toContain('set_pdfua_identification');
     expect(names).not.toContain('set_figure_alt_text');
     expect(names).not.toContain('repair_native_reading_order');
+  });
+
+  it('re-enables pdf_ua and bookmark diagnostics when optional remediation is requested', () => {
+    const snap = bareSnapshot();
+    const analysis = score(snap, META);
+    const plan = planForRemediation(analysis, snap, [], undefined, true);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('set_pdfua_identification');
   });
 
   it('includes bootstrap_struct_tree for native_untagged when text_extractability fails', () => {

@@ -59,12 +59,12 @@ describe('POST /v1/analyze', () => {
     const body = res.body;
     // Shape assertions
     expect(body).toHaveProperty('id');
-    expect(body).toHaveProperty('grade');
-    expect(body).toHaveProperty('score');
+    expect(body).toHaveProperty('scoreProfile');
     expect(body).toHaveProperty('categories');
     expect(body).toHaveProperty('findings');
     expect(body).toHaveProperty('pdfClass');
     expect(body).toHaveProperty('analysisDurationMs');
+    expect(body).toHaveProperty('scopeChecklist');
     expect(body).toHaveProperty('verificationLevel');
     expect(body).toHaveProperty('manualReviewRequired');
     expect(body).toHaveProperty('manualReviewReasons');
@@ -73,20 +73,22 @@ describe('POST /v1/analyze', () => {
     expect(body).toHaveProperty('failureProfile');
     expect(body).toHaveProperty('detectionProfile');
 
-    expect(['A','B','C','D','F']).toContain(body.grade);
-    expect(body.score).toBeGreaterThanOrEqual(0);
-    expect(body.score).toBeLessThanOrEqual(100);
+    expect(['A','B','C','D','F']).toContain(body.scoreProfile.grade);
+    expect(body.scoreProfile.overallScore).toBeGreaterThanOrEqual(0);
+    expect(body.scoreProfile.overallScore).toBeLessThanOrEqual(100);
     expect(Array.isArray(body.categories)).toBe(true);
     expect(body.categories).toHaveLength(11);
 
-    // Each category must have key, score, weight, applicable, severity, findings
+    // Each category must have key, score, applicable, severity, findings
     for (const cat of body.categories) {
       expect(cat).toHaveProperty('key');
       expect(cat).toHaveProperty('score');
-      expect(cat).toHaveProperty('weight');
       expect(cat).toHaveProperty('applicable');
       expect(cat).toHaveProperty('severity');
       expect(cat).toHaveProperty('findings');
+      expect(cat).toHaveProperty('countsTowardGrade');
+      expect(cat).toHaveProperty('diagnosticOnly');
+      expect(cat).toHaveProperty('measurementStatus');
       expect(cat).toHaveProperty('evidence');
       expect(cat).toHaveProperty('verificationLevel');
       expect(cat).toHaveProperty('manualReviewRequired');

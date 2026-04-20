@@ -339,6 +339,7 @@ export interface PlannerToolDecision {
 
 export function buildPlanningSummary(input: {
   routing: RoutingDecision;
+  includeOptionalRemediation?: boolean;
   scheduledTools: PlannedRemediationTool[];
   skippedTools: Array<{ toolName: string; reason: PlanningSkipReason }>;
 }): PlanningSummary {
@@ -347,6 +348,7 @@ export function buildPlanningSummary(input: {
     secondaryRoutes: input.routing.secondaryRoutes,
     triggeringSignals: input.routing.triggeringSignals,
     residualFamilies: input.routing.residualFamilies,
+    includeOptionalRemediation: input.includeOptionalRemediation ?? false,
     scheduledTools: input.scheduledTools.map(tool => tool.toolName),
     skippedTools: input.skippedTools,
     semanticDeferred: input.routing.semanticDeferred,

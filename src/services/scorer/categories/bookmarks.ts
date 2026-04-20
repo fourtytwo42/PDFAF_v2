@@ -1,6 +1,7 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
   BOOKMARKS_PAGE_THRESHOLD,
+  CATEGORY_BASE_WEIGHTS,
   ENGINE_HEADING_BOOKMARK_FALLBACK_SCORE,
   ENGINE_PAGE_OUTLINE_BOOKMARK_SCORE,
   SCORE_TAGGED_MARKED_NO_OUTLINES_BOOKMARKS,
@@ -15,7 +16,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'bookmarks',
       score: 100,
-      weight: 0.085,
+      weight: CATEGORY_BASE_WEIGHTS.bookmarks,
       applicable: false,
       severity: 'pass',
       findings: [],
@@ -41,7 +42,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
       return {
         key: 'bookmarks',
         score: 92,
-        weight: 0.085,
+        weight: CATEGORY_BASE_WEIGHTS.bookmarks,
         applicable: true,
         severity: 'minor',
         findings,
@@ -57,7 +58,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
       return {
         key: 'bookmarks',
         score: 90,
-        weight: 0.085,
+        weight: CATEGORY_BASE_WEIGHTS.bookmarks,
         applicable: true,
         severity: 'minor',
         findings,
@@ -73,7 +74,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
       return {
         key: 'bookmarks',
         score: 88,
-        weight: 0.085,
+        weight: CATEGORY_BASE_WEIGHTS.bookmarks,
         applicable: true,
         severity: 'minor',
         findings,
@@ -94,7 +95,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
       return {
         key: 'bookmarks',
         score: 90,
-        weight: 0.085,
+        weight: CATEGORY_BASE_WEIGHTS.bookmarks,
         applicable: true,
         severity: 'minor',
         findings,
@@ -110,7 +111,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
       return {
         key: 'bookmarks',
         score: SCORE_TAGGED_MARKED_NO_OUTLINES_BOOKMARKS,
-        weight: 0.085,
+        weight: CATEGORY_BASE_WEIGHTS.bookmarks,
         applicable: true,
         severity: 'minor',
         findings,
@@ -125,7 +126,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'bookmarks',
       score: 88,
-      weight: 0.085,
+      weight: CATEGORY_BASE_WEIGHTS.bookmarks,
       applicable: true,
       severity: 'moderate',
       findings,
@@ -188,7 +189,7 @@ export function scoreBookmarks(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'bookmarks',
     score: Math.min(100, score),
-    weight: 0.085,
+    weight: CATEGORY_BASE_WEIGHTS.bookmarks,
     applicable: true,
     severity: score >= 90 ? 'pass' : score >= 70 ? 'minor' : 'moderate',
     findings,

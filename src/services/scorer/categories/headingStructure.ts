@@ -1,5 +1,5 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
-import { HEADING_COVERAGE_PAGES_PER_HEADING } from '../../../config.js';
+import { CATEGORY_BASE_WEIGHTS, HEADING_COVERAGE_PAGES_PER_HEADING } from '../../../config.js';
 
 export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
@@ -17,7 +17,7 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'heading_structure',
       score: headings.length > 0 || taggedSinglePageBody ? 100 : 80,
-      weight: 0.130,
+      weight: CATEGORY_BASE_WEIGHTS.heading_structure,
       applicable: true,
       severity: 'pass',
       findings: headings.length > 0 || !taggedSinglePageBody
@@ -39,7 +39,7 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'heading_structure',
       score: 0,
-      weight: 0.130,
+      weight: CATEGORY_BASE_WEIGHTS.heading_structure,
       applicable: true,
       severity: 'critical',
       findings: [
@@ -67,10 +67,10 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
       message: 'No H1 (top-level heading) found. Documents should have at least one H1.',
     });
   } else if (h1Count > 1) {
-    score -= 10;
+    score -= Math.min(40, 8 + (h1Count - 1) * 6);
     findings.push({
       category: 'heading_structure',
-      severity: 'minor',
+      severity: h1Count >= 4 ? 'moderate' : 'minor',
       wcag: '1.3.1',
       message: `${h1Count} H1 headings found — only one H1 (document title) is allowed. Extras should be demoted to H2.`,
       count: h1Count,
@@ -133,7 +133,7 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'heading_structure',
     score,
-    weight: 0.130,
+    weight: CATEGORY_BASE_WEIGHTS.heading_structure,
     applicable: true,
     severity: scoreSeverity(score),
     findings,

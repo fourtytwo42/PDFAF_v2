@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, ScoredCategory } from '../../../types.js';
+import { CATEGORY_BASE_WEIGHTS } from '../../../config.js';
 
 // Phase 1: heuristic only — no pixel sampling (too slow).
 // Assumes moderate compliance for native documents. Phase 3 adds real sampling.
@@ -8,7 +9,7 @@ export function scoreColorContrast(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'color_contrast',
       score: 100,
-      weight: 0.045,
+      weight: CATEGORY_BASE_WEIGHTS.color_contrast,
       applicable: false,
       severity: 'pass',
       findings: [],
@@ -20,7 +21,7 @@ export function scoreColorContrast(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'color_contrast',
     score: 100,
-    weight: 0.045,
+    weight: CATEGORY_BASE_WEIGHTS.color_contrast,
     applicable: false,
     severity: 'pass',
     findings: [{

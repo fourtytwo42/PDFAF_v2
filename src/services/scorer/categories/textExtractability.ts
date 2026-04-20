@@ -1,5 +1,6 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
+  CATEGORY_BASE_WEIGHTS,
   ENGINE_OCR_TEXT_EXTRACTABILITY_SCORE,
   OCR_METADATA_TEXT_EXTRACTABILITY_CAP,
   SCORE_TAGGED_MARKED_NO_EXTRACTABLE_TEXT,
@@ -179,7 +180,7 @@ export function scoreTextExtractability(snap: DocumentSnapshot): ScoredCategory 
   return {
     key: 'text_extractability',
     score,
-    weight: 0.175, // will be adjusted by scorer for N/A redistribution
+    weight: CATEGORY_BASE_WEIGHTS.text_extractability,
     applicable: true,
     severity: findings.length > 0 ? findings[0]!.severity : 'pass',
     findings,

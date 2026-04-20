@@ -1,5 +1,6 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
+  CATEGORY_BASE_WEIGHTS,
   PDF_UA_LIST_VIOLATION_FAIL_THRESHOLD,
   PDF_UA_ORPHAN_MCID_FAIL_THRESHOLD,
   PDF_UA_PATH_PAINT_OUTSIDE_MC_FAIL_THRESHOLD,
@@ -128,7 +129,7 @@ export function scorePdfUaCompliance(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'pdf_ua_compliance',
     score,
-    weight: 0.095,
+    weight: CATEGORY_BASE_WEIGHTS.pdf_ua_compliance,
     applicable: true,
     severity: scoreSeverity(score),
     findings,

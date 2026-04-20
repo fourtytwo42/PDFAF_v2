@@ -3,6 +3,7 @@ import {
   ALT_TEXT_THRESHOLDS,
   ALT_TEXT_WEAK_ALT_MAX_DEDUCTION,
   ALT_TEXT_WEAK_ALT_PER_FIGURE,
+  CATEGORY_BASE_WEIGHTS,
 } from '../../../config.js';
 import { isWeakFigureAlt } from '../altTextHeuristics.js';
 
@@ -21,7 +22,7 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'alt_text',
       score: 100,
-      weight: 0.130,
+      weight: CATEGORY_BASE_WEIGHTS.alt_text,
       applicable: false,
       severity: 'pass',
       findings: [],
@@ -29,29 +30,14 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let figureScore = 100;
-  let appliedLargeFigureFloor = false;
   if (informativeFigures.length > 0) {
     const withAlt = informativeFigures.filter(f => f.hasAlt && (f.altText?.trim() ?? '').length > 0);
     const ratio = withAlt.length / informativeFigures.length;
     if (ratio >= ALT_TEXT_THRESHOLDS.FULL) figureScore = 100;
-    else if (ratio >= 0.75) figureScore = 100;
     else if (ratio >= ALT_TEXT_THRESHOLDS.HIGH) figureScore = 85;
     else if (ratio >= ALT_TEXT_THRESHOLDS.MODERATE) figureScore = 60;
     else if (ratio >= ALT_TEXT_THRESHOLDS.LOW) figureScore = 20;
     else figureScore = 0;
-    // Very large native reports often ship hundreds of decorative charts; cap worst-case drag.
-    if (figureScore < 88 && informativeFigures.length >= 10 && ratio < 0.02) {
-      figureScore = 88;
-      appliedLargeFigureFloor = true;
-    }
-    if (figureScore === 60 && informativeFigures.length >= 3 && ratio < 0.72) {
-      figureScore = 88;
-      appliedLargeFigureFloor = true;
-    }
-    if (figureScore === 20 && informativeFigures.length >= 4 && ratio < 0.12) {
-      figureScore = 88;
-      appliedLargeFigureFloor = true;
-    }
 
     const weakAltFigures = informativeFigures.filter(f =>
       isWeakFigureAlt(f.altText, f.hasAlt),
@@ -97,16 +83,6 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
         message: `${withoutAlt.length} of ${informativeFigures.length} image${informativeFigures.length !== 1 ? 's' : ''} lack alternative text.`,
         count: withoutAlt.length,
         page: withoutAlt[0]?.page,
-      });
-    }
-    if (appliedLargeFigureFloor) {
-      findings.push({
-        category: 'alt_text',
-        severity: 'minor',
-        wcag: '1.1.1',
-        message:
-          'Figure count is very high with almost no alt text; score uses a bounded floor for aggregate reporting — verify charts individually.',
-        count: informativeFigures.length,
       });
     }
     const emptyAlt = informativeFigures.filter(f => f.hasAlt && !(f.altText?.trim()));
@@ -194,7 +170,7 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'alt_text',
     score,
-    weight: 0.130,
+    weight: CATEGORY_BASE_WEIGHTS.alt_text,
     applicable: true,
     severity: scoreSeverity(score),
     findings,

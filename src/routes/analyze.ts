@@ -7,6 +7,7 @@ import { MAX_FILE_SIZE_MB } from '../config.js';
 import { sendApiError } from '../apiError.js';
 import { logError } from '../logging.js';
 import { analyzePdf } from '../services/pdfAnalyzer.js';
+import { toApiAnalysisResult } from '../services/api/serializeAnalysis.js';
 
 export const analyzeRouter: IRouter = Router();
 
@@ -38,7 +39,7 @@ analyzeRouter.post('/', upload.single('file'), async (req, res) => {
 
   try {
     const { result } = await analyzePdf(tempPath, filename);
-    res.json(result);
+    res.json(toApiAnalysisResult(result));
   } catch (err: unknown) {
     const e = err as Error & { statusCode?: number };
     if (e.statusCode === 429) {

@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
+import { CATEGORY_BASE_WEIGHTS } from '../../../config.js';
 import { normalizedTableSignals } from '../tableRegularityHeuristics.js';
 
 export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
@@ -8,7 +9,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'table_markup',
       score: 100,
-      weight: 0.085,
+      weight: CATEGORY_BASE_WEIGHTS.table_markup,
       applicable: false,
       severity: 'pass',
       findings: [],
@@ -19,7 +20,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   const effectiveSignals = normalizedTableSignals(snap, snap.detectionProfile?.tableSignals);
   const tablesWithHeaders = scoredTables.filter(t => t.hasHeaders);
   const ratio = tablesWithHeaders.length / scoredTables.length;
-  let score = Math.round(ratio * 100);
+  let score = tablesWithHeaders.length === scoredTables.length ? 100 : Math.round(ratio * 70);
 
   if (tablesWithHeaders.length < scoredTables.length) {
     const missing = scoredTables.length - tablesWithHeaders.length;
@@ -54,7 +55,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
       message: parts.join(' '),
       count: misplacedCells + irregularTables,
     });
-    const rolePenalty = Math.min(85, misplacedCells * 5 + irregularTables * 10);
+    const rolePenalty = Math.min(95, misplacedCells * 8 + irregularTables * 14);
     score = Math.min(score, Math.max(0, 100 - rolePenalty));
   }
 
@@ -67,7 +68,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
       message: `${stronglyIrregularTableCount} table(s) have strongly irregular row structure beyond advisory variance.`,
       count: stronglyIrregularTableCount,
     });
-    score = Math.min(score, Math.max(0, 100 - stronglyIrregularTableCount * 18));
+    score = Math.min(score, Math.max(0, 100 - stronglyIrregularTableCount * 28));
   }
   const advisoryCount = effectiveSignals.advisoryRegularityCount;
   if (advisoryCount > 0) {
@@ -78,7 +79,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
       message: `${advisoryCount} table(s) show mild row-length irregularity at boundaries (advisory regularity — verify in Acrobat).`,
       count: advisoryCount,
     });
-    score = Math.min(score, Math.max(0, 100 - advisoryCount * 4));
+    score = Math.min(score, Math.max(0, 100 - advisoryCount * 8));
   }
 
   const rowlessDenseTables = scoredTables.filter(
@@ -92,13 +93,13 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
       message: `${rowlessDenseTables} table(s) expose multiple cells but almost no row structure, which usually fails external table-structure checks.`,
       count: rowlessDenseTables,
     });
-    score = Math.min(score, 70);
+    score = Math.min(score, 35);
   }
 
   return {
     key: 'table_markup',
     score,
-    weight: 0.085,
+    weight: CATEGORY_BASE_WEIGHTS.table_markup,
     applicable: true,
     severity: scoreSeverity(score),
     findings,

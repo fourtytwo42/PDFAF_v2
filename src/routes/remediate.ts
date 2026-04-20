@@ -33,6 +33,7 @@ import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untagg
 import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../services/semantic/semanticPolicy.js';
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
+import { toApiRemediationResult } from '../services/api/serializeAnalysis.js';
 import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
@@ -266,6 +267,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       {
         targetScore: parsedOptions.targetScore,
         maxRounds: parsedOptions.maxRounds,
+        includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? false,
         onProgress: update => reportProgress(update.percent, update.stage, update.detail),
       },
     );
@@ -291,7 +293,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     if (semanticRequested) {
       await reportProgress(92, 'Describing figures');
-      const scoreRef = remediation.after.score;
+      const scoreRef = remediation.after.scoreProfile.overallScore;
       if (!getOpenAiCompatBaseUrl()) {
         semanticSummary = buildSemanticSummary({
           lane: 'figures',
@@ -342,7 +344,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     // Promote /P → headings before tuning existing heading levels (many PDFs have no H tags yet).
     if (semanticPromoteHeadingsRequested) {
       await reportProgress(94, 'Organizing headings');
-      const scoreRef = outAfter.score;
+      const scoreRef = outAfter.scoreProfile.overallScore;
       if (!getOpenAiCompatBaseUrl()) {
         semanticPromoteHeadingsSummary = buildSemanticSummary({
           lane: 'promote_headings',
@@ -389,7 +391,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     if (semanticHeadingsRequested) {
       await reportProgress(95.5, 'Refining heading levels');
-      const scoreRef = outAfter.score;
+      const scoreRef = outAfter.scoreProfile.overallScore;
       if (!getOpenAiCompatBaseUrl()) {
         semanticHeadingsSummary = buildSemanticSummary({
           lane: 'headings',
@@ -425,7 +427,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     if (semanticUntaggedHeadingsRequested) {
       await reportProgress(96.5, 'Adding missing headings');
-      const scoreRef = outAfter.score;
+      const scoreRef = outAfter.scoreProfile.overallScore;
       if (!getOpenAiCompatBaseUrl()) {
         semanticUntaggedHeadingsSummary = buildSemanticSummary({
           lane: 'untagged_headings',
@@ -461,7 +463,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     let appliedToolsOut = remediation.appliedTools;
     if (outSnapshot.isTagged) {
-      const scoreBeforeAltFix = outAfter.score;
+      const scoreBeforeAltFix = outAfter.scoreProfile.overallScore;
       const ar = await applyPostRemediationAltRepair(outBuffer, filename, outAfter, outSnapshot, {
         signal: semanticAbort.signal,
       });
@@ -476,8 +478,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
             stage: 9,
             round: remediation.rounds[remediation.rounds.length - 1]?.round ?? 1,
             scoreBefore: scoreBeforeAltFix,
-            scoreAfter: outAfter.score,
-            delta: outAfter.score - scoreBeforeAltFix,
+            scoreAfter: outAfter.scoreProfile.overallScore,
+            delta: outAfter.scoreProfile.overallScore - scoreBeforeAltFix,
             outcome: 'applied' as const,
             details: 'nested_alt_cleanup_post_semantic',
           },
@@ -530,7 +532,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       remediatedPdfBase64: enc.remediatedPdfBase64,
       remediatedPdfTooLarge: enc.remediatedPdfTooLarge,
       remediationDurationMs: totalDuration,
-      improved: outAfter.score > remediation.before.score,
+      improved: outAfter.scoreProfile.overallScore > remediation.before.scoreProfile.overallScore,
       ...(runtimeSummary ? { runtimeSummary } : {}),
       ...(buildRemediationOutcomeSummary({
         before: remediation.before,
@@ -563,12 +565,12 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       message: 'remediate_path_summary',
       requestId: res.locals.requestId,
       filename,
-      score: outAfter.score,
-      grade: outAfter.grade,
+      score: outAfter.scoreProfile.overallScore,
+      grade: outAfter.scoreProfile.grade,
       details: {
-        beforeScore: remediation.before.score,
-        deterministicScoreAfter: remediation.after.score,
-        finalScoreAfter: outAfter.score,
+        beforeScore: remediation.before.scoreProfile.overallScore,
+        deterministicScoreAfter: remediation.after.scoreProfile.overallScore,
+        finalScoreAfter: outAfter.scoreProfile.overallScore,
         semantic: semanticSummary
           ? {
               skippedReason: semanticSummary.skippedReason,
@@ -641,7 +643,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     if (progressJobId) {
       completeRemediationProgress(progressJobId, 'Your fixed PDF is ready.');
     }
-    res.json(body);
+    res.json(toApiRemediationResult(body));
   } catch (err: unknown) {
     const e = err as Error & { statusCode?: number };
     if (progressJobId) {

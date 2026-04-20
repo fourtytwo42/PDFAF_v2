@@ -34,6 +34,14 @@ function findingsBlocking(findings: Finding[]): Finding[] {
   return findings.filter(f => f.severity === 'critical' || f.severity === 'moderate');
 }
 
+function overallScoreValue(analysis: AnalysisResult): number {
+  return analysis.scoreProfile?.overallScore ?? analysis.score;
+}
+
+function gradeValue(analysis: AnalysisResult): string {
+  return analysis.scoreProfile?.grade ?? analysis.grade;
+}
+
 function verificationBullets(after: AnalysisResult): string {
   const lines: string[] = [];
   lines.push(`<li><strong>Verification level:</strong> ${esc(after.verificationLevel ?? 'verified')}</li>`);
@@ -218,7 +226,7 @@ export function generateHtmlReport(
 
   const keyFindings = findingsBlocking(afterRef.findings).slice(0, 50);
   const remainingCats = afterRef.categories.filter(
-    c => c.applicable && c.score < REMEDIATION_CATEGORY_THRESHOLD,
+    c => c.applicable && c.countsTowardGrade && (c.score ?? 100) < REMEDIATION_CATEGORY_THRESHOLD,
   );
 
   const applied = appliedTools.filter(t => t.outcome === 'applied');
@@ -231,8 +239,8 @@ export function generateHtmlReport(
     compareSection = `
 <section>
   <h2>Score comparison</h2>
-  <p><strong>Before:</strong> ${before.score} (${esc(before.grade)}) ${scoreBar(before.score)}</p>
-  <p><strong>After:</strong> ${after.score} (${esc(after.grade)}) ${scoreBar(after.score)}</p>
+  <p><strong>Before:</strong> ${overallScoreValue(before)} (${esc(gradeValue(before))}) ${scoreBar(overallScoreValue(before))}</p>
+  <p><strong>After:</strong> ${overallScoreValue(after)} (${esc(gradeValue(after))}) ${scoreBar(overallScoreValue(after))}</p>
 </section>`;
   }
 
@@ -270,14 +278,14 @@ export function generateHtmlReport(
   const catRows = afterRef.categories
     .map(
       c =>
-        `<tr><td>${esc(c.key)}</td><td>${c.score}</td><td>${esc(c.severity)}</td><td>${c.findings.length}</td></tr>`,
+        `<tr><td>${esc(c.key)}</td><td>${c.score ?? 'n/a'}</td><td>${esc(c.severity)}</td><td>${c.countsTowardGrade ? 'graded' : c.diagnosticOnly ? 'optional' : 'unmeasured'}</td><td>${c.findings.length}</td></tr>`,
     )
     .join('');
 
   const remainingList =
     remainingCats.length === 0
       ? '<p>No categories remain below the remediation planning threshold.</p>'
-      : `<ul>${remainingCats.map(c => `<li><strong>${esc(c.key)}</strong> at score ${c.score}</li>`).join('')}</ul>`;
+      : `<ul>${remainingCats.map(c => `<li><strong>${esc(c.key)}</strong> at score ${c.score ?? 'n/a'}</li>`).join('')}</ul>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -306,8 +314,9 @@ export function generateHtmlReport(
   <header>
     <h1>Accessibility report</h1>
     <p class="muted">${title} · Generated ${date}</p>
-    <p class="grade" aria-label="Final grade">${esc(afterRef.grade)}</p>
-    <p>Overall score: <strong>${afterRef.score}</strong> / 100</p>
+    <p class="grade" aria-label="Final grade">${esc(gradeValue(afterRef))}</p>
+    <p>Legal score: <strong>${overallScoreValue(afterRef)}</strong> / 100</p>
+    <p>Optional diagnostics: <strong>${esc(afterRef.scoreProfile?.nonGradedCategories.join(', ') ?? 'bookmarks, pdf_ua_compliance, color_contrast')}</strong></p>
   </header>
   ${compareSection}
   ${ocrNotice}
@@ -341,7 +350,7 @@ export function generateHtmlReport(
   <section>
     <h2>Category scores</h2>
     <table>
-      <thead><tr><th>Category</th><th>Score</th><th>Severity</th><th>Findings</th></tr></thead>
+      <thead><tr><th>Category</th><th>Score</th><th>Severity</th><th>Mode</th><th>Findings</th></tr></thead>
       <tbody>${catRows}</tbody>
     </table>
   </section>

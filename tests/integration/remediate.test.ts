@@ -52,8 +52,8 @@ describe('POST /v1/remediate', () => {
       ).toBe(true);
       expect(Array.isArray(body.planningSummary?.scheduledTools)).toBe(true);
     }
-    expect(body.after.score).toBeGreaterThanOrEqual(0);
-    expect(body.after.score).toBeLessThanOrEqual(100);
+    expect(body.after.scoreProfile.overallScore).toBeGreaterThanOrEqual(0);
+    expect(body.after.scoreProfile.overallScore).toBeLessThanOrEqual(100);
 
     const titleCatBefore = body.before.categories.find((c: { key: string }) => c.key === 'title_language');
     const titleCatAfter = body.after.categories.find((c: { key: string }) => c.key === 'title_language');

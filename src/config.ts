@@ -6,22 +6,39 @@ import 'dotenv/config';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const SCORING_WEIGHTS = {
-  text_extractability: 0.175,
-  title_language:      0.130,
-  heading_structure:   0.130,
-  alt_text:            0.130,
-  pdf_ua_compliance:   0.095,
-  bookmarks:           0.085,
-  table_markup:        0.085,
-  color_contrast:      0.045,
-  link_quality:        0.045,
-  reading_order:       0.040,
-  form_accessibility:  0.040,
+export const CATEGORY_BASE_WEIGHTS = {
+  text_extractability: 0.22,
+  title_language:      0.10,
+  heading_structure:   0.18,
+  alt_text:            0.18,
+  pdf_ua_compliance:   0,
+  bookmarks:           0,
+  table_markup:        0.12,
+  color_contrast:      0,
+  link_quality:        0.06,
+  reading_order:       0.09,
+  form_accessibility:  0.05,
 } as const;
 
-// Enforced by test: must sum to exactly 1.0
-export const WEIGHT_SUM_CHECK = Object.values(SCORING_WEIGHTS).reduce((a, b) => a + b, 0);
+export const LEGAL_PDF_STRICT_GRADED_CATEGORIES = [
+  'text_extractability',
+  'title_language',
+  'heading_structure',
+  'alt_text',
+  'table_markup',
+  'link_quality',
+  'reading_order',
+  'form_accessibility',
+] as const;
+
+export const LEGAL_PDF_STRICT_NON_GRADED_CATEGORIES = [
+  'bookmarks',
+  'pdf_ua_compliance',
+  'color_contrast',
+] as const;
+
+// Enforced by test: graded category weights must sum to exactly 1.0
+export const WEIGHT_SUM_CHECK = (Object.values(CATEGORY_BASE_WEIGHTS) as number[]).reduce((a, b) => a + b, 0);
 
 export const GRADE_THRESHOLDS = {
   A: 90,
@@ -423,7 +440,7 @@ export const REMEDIATION_CRITERION_TOOL_MAP: Record<string, readonly string[]> =
   reading_order:        ['synthesize_basic_structure_from_layout', 'artifact_repeating_page_furniture', 'normalize_annotation_tab_order', 'repair_native_reading_order', 'repair_annotation_alt_text'],
   form_accessibility:   ['fill_form_field_tooltips'],
   color_contrast:       [],
-} as const satisfies Record<keyof typeof SCORING_WEIGHTS, readonly string[]>;
+} as const satisfies Record<keyof typeof CATEGORY_BASE_WEIGHTS, readonly string[]>;
 
 /** Tools with working implementations in Phase 2 MVP (expand over time). */
 export const REMEDIATION_IMPLEMENTED_TOOLS: readonly string[] = [

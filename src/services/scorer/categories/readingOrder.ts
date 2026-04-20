@@ -1,5 +1,6 @@
 import type { DocumentSnapshot, ScoredCategory, Finding } from '../../../types.js';
 import {
+  CATEGORY_BASE_WEIGHTS,
   ENGINE_OCR_READING_ORDER_FLOOR,
   READING_ORDER_UNOWNED_LINK_WEIGHT,
   READING_ORDER_UNOWNED_MAX_DEDUCTION,
@@ -73,7 +74,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
         });
       }
       if ((stage3?.multiColumnOrderRiskPages ?? 0) > 0) {
-        score = Math.min(score, 78);
+        score = Math.min(score, 68);
         findings.push({
           category: 'reading_order',
           severity: 'moderate',
@@ -99,7 +100,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     return {
       key: 'reading_order',
       score: scoreOut,
-      weight: 0.040,
+      weight: CATEGORY_BASE_WEIGHTS.reading_order,
       applicable: snap.pdfClass !== 'scanned',
       severity: snap.pdfClass === 'scanned' ? 'critical' : 'moderate',
       findings,
@@ -199,7 +200,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     score = Math.max(score, Math.min(ENGINE_OCR_READING_ORDER_FLOOR, unowned.score));
   }
   if ((stage3?.sampledStructurePageOrderDriftCount ?? 0) > 0) {
-    score = Math.min(score, Math.max(0, 96 - stage3!.sampledStructurePageOrderDriftCount * 12));
+    score = Math.min(score, Math.max(0, 88 - stage3!.sampledStructurePageOrderDriftCount * 12));
     findings.push({
       category: 'reading_order',
       severity: stage3!.sampledStructurePageOrderDriftCount > 2 ? 'moderate' : 'minor',
@@ -209,7 +210,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     });
   }
   if (stage3?.headerFooterPollutionRisk) {
-    score = Math.min(score, 92);
+    score = Math.min(score, 82);
     findings.push({
       category: 'reading_order',
       severity: 'minor',
@@ -218,7 +219,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     });
   }
   if ((stage3?.multiColumnOrderRiskPages ?? 0) > 0) {
-    score = Math.min(score, Math.max(0, 94 - stage3!.multiColumnOrderRiskPages * 10));
+    score = Math.min(score, Math.max(0, 78 - stage3!.multiColumnOrderRiskPages * 12));
     findings.push({
       category: 'reading_order',
       severity: stage3!.multiColumnOrderRiskPages > 1 ? 'moderate' : 'minor',
@@ -243,7 +244,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
   return {
     key: 'reading_order',
     score,
-    weight: 0.040,
+    weight: CATEGORY_BASE_WEIGHTS.reading_order,
     applicable: true,
     severity: scoreSeverity(score),
     findings,
