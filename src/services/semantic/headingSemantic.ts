@@ -137,7 +137,7 @@ Domain: ${domain}
 Domain guidance (for tone, not for images): ${DOMAIN_ALT_TEXT_GUIDANCE[domain]}
 
 Rules:
-- H1 is the document title (usually one).
+- Exactly one H1 is allowed — the document title only. Demote any other top-level content to H2.
 - H2 are major sections; H3–H6 are subsections.
 - Do not skip levels in the outline (avoid H1 then H4 with no H2/H3).
 - Only propose changes where the current level is clearly wrong for the text role.
@@ -387,6 +387,13 @@ export async function applySemanticHeadingRepairs(
     }
   }
 
+  // Track H1 ownership across all proposals to enforce single-H1
+  const proposalIds = new Set(merged.keys());
+  const existingH1NotReplaced = snapshot.headings.some(
+    h => h.level === 1 && !proposalIds.has(h.structRef ?? ''),
+  );
+  let h1Assigned = existingH1NotReplaced;
+
   let rejected = 0;
   const mutations: PythonMutation[] = [];
   for (const p of merged.values()) {
@@ -396,10 +403,18 @@ export async function applySemanticHeadingRepairs(
     }
     const row = candidates.find(c => c.structRef === p.id);
     if (!row) continue;
-    if (p.proposedLevel === row.level) continue;
+    let targetLevel = p.proposedLevel;
+    if (targetLevel === 1) {
+      if (h1Assigned) {
+        targetLevel = 2;
+      } else {
+        h1Assigned = true;
+      }
+    }
+    if (targetLevel === row.level) continue;
     mutations.push({
       op: 'set_heading_level',
-      params: { structRef: row.structRef, level: p.proposedLevel },
+      params: { structRef: row.structRef, level: targetLevel },
     });
   }
 

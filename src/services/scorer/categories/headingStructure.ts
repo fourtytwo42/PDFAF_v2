@@ -55,8 +55,9 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
 
   let score = 100;
 
-  // 1. H1 presence
-  const hasH1 = headings.some(h => h.level === 1);
+  // 1. H1 presence and uniqueness
+  const h1Count = headings.filter(h => h.level === 1).length;
+  const hasH1 = h1Count >= 1;
   if (!hasH1) {
     score -= 20;
     findings.push({
@@ -64,6 +65,15 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
       severity: 'moderate',
       wcag: '1.3.1',
       message: 'No H1 (top-level heading) found. Documents should have at least one H1.',
+    });
+  } else if (h1Count > 1) {
+    score -= 10;
+    findings.push({
+      category: 'heading_structure',
+      severity: 'minor',
+      wcag: '1.3.1',
+      message: `${h1Count} H1 headings found — only one H1 (document title) is allowed. Extras should be demoted to H2.`,
+      count: h1Count,
     });
   }
 

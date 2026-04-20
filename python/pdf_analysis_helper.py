@@ -4946,7 +4946,21 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
     changed = False
     prev_level = 0
+    h1_seen = False
     for elem, level in heading_elems:
+        # Phase 1 + single-H1 enforcement combined: if this is a second H1,
+        # treat it as H2 before gap-normalization so the rest of the tree
+        # stays consistent.
+        if level == 1 and h1_seen:
+            level = 2
+            try:
+                elem["/S"] = pikepdf.Name("/H2")
+                changed = True
+            except Exception:
+                pass
+        elif level == 1:
+            h1_seen = True
+
         if level > prev_level + 1:
             # Skipped levels — normalise down to prev+1
             new_level = prev_level + 1

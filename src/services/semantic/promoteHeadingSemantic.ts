@@ -203,7 +203,7 @@ Domain guidance (for tone): ${DOMAIN_ALT_TEXT_GUIDANCE[domain]}
 Rules:
 - Only propose promotion when the text clearly acts as a heading or section title (short phrase, title case or ALL CAPS section labels, chapter-style lines).
 - Do not promote body paragraphs, legal boilerplate, or long narrative blocks.
-- Assign level H1 for document title on page 1; H2 for major sections; H3–H6 for nested headings. Prefer not to skip levels.
+- Exactly one H1 for the document title only (page 1); all section headings must be H2 or lower. Prefer not to skip levels.
 - If uncertain, set confidence below 0.60 (caller will reject).
 - id must match the structRef from the input JSON exactly.`;
 
@@ -468,6 +468,9 @@ export async function applySemanticPromoteHeadingRepairs(
     }
   }
 
+  // Enforce single-H1: existing headings in snapshot are the baseline
+  let h1Assigned = snapshot.headings.some(h => h.level === 1);
+
   let rejected = 0;
   const mutations: PythonMutation[] = [];
   for (const p of merged.values()) {
@@ -477,9 +480,17 @@ export async function applySemanticPromoteHeadingRepairs(
     }
     const row = candidates.find(c => c.structRef === p.id);
     if (!row) continue;
+    let targetLevel = p.level;
+    if (targetLevel === 1) {
+      if (h1Assigned) {
+        targetLevel = 2;
+      } else {
+        h1Assigned = true;
+      }
+    }
     mutations.push({
       op: 'retag_struct_as_heading',
-      params: { structRef: row.structRef, level: p.level },
+      params: { structRef: row.structRef, level: targetLevel },
     });
   }
 

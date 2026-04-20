@@ -8,7 +8,6 @@ export function hasExternalReadinessDebt(
   const heading = snapshot.detectionProfile?.headingSignals;
   const figure = snapshot.detectionProfile?.figureSignals;
   const table = snapshot.detectionProfile?.tableSignals;
-
   return (
     heading?.extractedHeadingsMissingFromTree === true ||
     reading?.degenerateStructureTree === true ||
