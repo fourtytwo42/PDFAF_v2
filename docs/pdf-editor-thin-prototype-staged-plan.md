@@ -306,7 +306,7 @@ Decide whether the shared-editor architecture is strong enough for the full Crea
 
 ### Deliverables
 
-- Prototype review note under `docs/`
+- Prototype review note under [`docs/pdf-editor-prototype-review-stage7.md`](./pdf-editor-prototype-review-stage7.md)
 - Updated implementation plan if architecture changes are needed
 - Follow-up stage list for the next tranche
 
@@ -315,6 +315,16 @@ Decide whether the shared-editor architecture is strong enough for the full Crea
 - We know whether the export strategy can support the 100/100 Create goal.
 - We know how much analyzer coordinate evidence exists for useful Edit highlights.
 - We have a clear next stage with known risks instead of a vague full-editor build.
+
+### Stage 7 Outcome
+
+Stage 7 closes the thin prototype and recommends the next tranche:
+
+1. Stage 8 - Create export hardening toward real 100/100 output.
+2. Stage 9 - Create authoring UX polish for tables, images, and layout.
+3. Stage 10 - Edit evidence enrichment for coordinates and object references.
+4. Stage 11 - Edit reading order, headings, and bookmarks.
+5. Stage 12 - Edit table, link, and form fixes.
 
 ---
 
@@ -344,4 +354,3 @@ The thin prototype is complete when all of these are true:
 - Form repair UI
 - Batch-to-edit multi-file workflows
 - Final production-grade tagged PDF export hardening beyond the narrow export spike
-
