@@ -17,8 +17,12 @@ interface EditorShellProps {
   readiness: EditorReadinessSummary;
   selectedIssueId?: string | null;
   onSelectIssue?: (issueId: string) => void;
+  beforeToolbar?: ReactNode;
   slots?: EditorShellSlots;
   toolbarActions?: ReactNode;
+  pageLabel?: string;
+  saveStateLabel?: string;
+  children?: ReactNode;
 }
 
 export function EditorShell({
@@ -27,17 +31,24 @@ export function EditorShell({
   readiness,
   selectedIssueId = null,
   onSelectIssue,
+  beforeToolbar,
   slots = {},
   toolbarActions,
+  pageLabel,
+  saveStateLabel,
+  children,
 }: EditorShellProps) {
   return (
     <main className="app-shell">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-3 px-3 py-4 md:px-4 md:py-6">
+        {beforeToolbar}
         {slots.toolbar ?? (
           <EditorToolbar config={config} actions={toolbarActions}>
-            <div className="hidden rounded-full border border-[color:var(--surface-border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] md:block">
-              Shared editor prototype
-            </div>
+            {children ?? (
+              <div className="hidden rounded-full border border-[color:var(--surface-border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] md:block">
+                Shared editor prototype
+              </div>
+            )}
           </EditorToolbar>
         )}
         <div className="grid min-h-[min(760px,calc(100vh-9rem))] grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)_320px]">
@@ -76,7 +87,13 @@ export function EditorShell({
             </EditorInspector>
           )}
         </div>
-        {slots.statusStrip ?? <EditorStatusStrip readiness={readiness} />}
+        {slots.statusStrip ?? (
+          <EditorStatusStrip
+            readiness={readiness}
+            pageLabel={pageLabel}
+            saveStateLabel={saveStateLabel}
+          />
+        )}
       </div>
     </main>
   );
