@@ -7856,6 +7856,8 @@ def mutate_main(request_path: str) -> int:
     input_path = req.get("input_path")
     output_path = req.get("output_path")
     mutations = req.get("mutations") or []
+    abort_on_failed_op = bool(req.get("abort_on_failed_op"))
+    reopen_between_ops = bool(req.get("reopen_between_ops"))
     if not input_path or not output_path:
         print(
             json.dumps(
@@ -7877,7 +7879,7 @@ def mutate_main(request_path: str) -> int:
 
     ocr_temp_paths: list[str] = []
     try:
-        for m in mutations:
+        for mutation_index, m in enumerate(mutations):
             op = m.get("op")
             params = m.get("params") or {}
             _set_last_mutation_note(None)
@@ -7924,6 +7926,8 @@ def mutate_main(request_path: str) -> int:
             if not fn:
                 failed.append({"op": op or "", "error": "unknown_op"})
                 op_results.append({"op": op or "", "outcome": "failed", "error": "unknown_op"})
+                if abort_on_failed_op:
+                    break
                 continue
             if pdf is None:
                 failed.append({"op": op or "", "error": "no_pdf_handle"})
@@ -7970,9 +7974,27 @@ def mutate_main(request_path: str) -> int:
                         row["debug"] = _mutation_debug_snapshot(pdf)
                     op_results.append(row)
                 # no-op (False) is not a batch failure — caller treats empty `applied` as no_effect
+                if reopen_between_ops and pdf is not None and mutation_index < len(mutations) - 1:
+                    tok = secrets.token_hex(8)
+                    tmp_reopen = os.path.join(tempfile.gettempdir(), f"pdfaf-mut-reopen-{tok}.pdf")
+                    try:
+                        pdf.save(tmp_reopen)
+                        pdf.close()
+                        pdf = pikepdf.open(tmp_reopen, allow_overwriting_input=False)
+                        try:
+                            os.unlink(tmp_reopen)
+                        except Exception:
+                            pass
+                    except Exception as ex:
+                        failed.append({"op": op, "error": f"reopen_between_ops: {ex}"})
+                        op_results.append({"op": op, "outcome": "failed", "error": f"reopen_between_ops: {ex}"})
+                        if abort_on_failed_op:
+                            break
             except Exception as ex:
                 failed.append({"op": op, "error": str(ex)})
                 op_results.append({"op": op, "outcome": "failed", "error": str(ex)})
+                if abort_on_failed_op:
+                    break
         if pdf is not None:
             pdf.save(output_path)
     finally:

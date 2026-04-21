@@ -159,7 +159,7 @@ export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysis
 export async function runPythonMutationBatch(
   buffer: Buffer,
   mutations: PythonMutation[],
-  options?: { signal?: AbortSignal; timeoutMs?: number },
+  options?: { signal?: AbortSignal; timeoutMs?: number; abortOnFailedOp?: boolean; reopenBetweenOps?: boolean },
 ): Promise<{ buffer: Buffer; result: BatchMutationResult }> {
   const empty: BatchMutationResult = { success: true, applied: [], failed: [] };
   if (mutations.length === 0) {
@@ -183,6 +183,8 @@ export async function runPythonMutationBatch(
       input_path: inputPath,
       output_path: outputPath,
       mutations,
+      abort_on_failed_op: options?.abortOnFailedOp === true,
+      reopen_between_ops: options?.reopenBetweenOps === true,
     }),
   );
 

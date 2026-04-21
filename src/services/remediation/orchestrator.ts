@@ -549,6 +549,12 @@ function pythonMutationDetails(
 ): string | undefined {
   const op = result.opResults?.find(row => row.op === toolName);
   if (!op) return undefined;
+  return pythonMutationDetailsFromOpResult(op);
+}
+
+type PythonMutationOpResult = NonNullable<Awaited<ReturnType<typeof runPythonMutationBatch>>['result']['opResults']>[number];
+
+function pythonMutationDetailsFromOpResult(op: PythonMutationOpResult): string {
   const payload: PythonMutationDetailPayload = { outcome: op.outcome };
   if (op.note) payload['note'] = op.note;
   if (op.error) payload['error'] = op.error;
@@ -556,6 +562,202 @@ function pythonMutationDetails(
   if (op.structuralBenefits) payload['structuralBenefits'] = op.structuralBenefits;
   if (op.debug) payload['debug'] = op.debug;
   return JSON.stringify(payload);
+}
+
+export function withBatchMetadata(
+  details: string | undefined,
+  meta: { batchId: string; batchRole: string; batchIndex: number; batchSize: number },
+): string {
+  const parsed = parseMutationDetails(details);
+  const payload: Record<string, unknown> = parsed
+    ? { ...parsed }
+    : { outcome: 'no_effect', note: details ?? 'batch_mutation_detail' };
+  payload['batchId'] = meta.batchId;
+  payload['batchRole'] = meta.batchRole;
+  payload['batchIndex'] = meta.batchIndex;
+  payload['batchSize'] = meta.batchSize;
+  return JSON.stringify(payload);
+}
+
+const STAGE39_BATCH_DEFINITIONS = [
+  {
+    role: 'figure_ownership_alt',
+    tools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
+  },
+  {
+    role: 'figure_ownership_alt',
+    tools: ['canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
+  },
+  {
+    role: 'table_headers',
+    tools: ['repair_native_table_headers', 'set_table_header_cells'],
+  },
+  {
+    role: 'annotation_link_ownership',
+    tools: ['repair_native_link_structure', 'tag_unowned_annotations', 'set_link_annotation_contents', 'normalize_annotation_tab_order'],
+  },
+  {
+    role: 'annotation_link_ownership',
+    tools: ['repair_native_link_structure', 'set_link_annotation_contents', 'tag_unowned_annotations'],
+  },
+] as const;
+
+type Stage39BatchRole = typeof STAGE39_BATCH_DEFINITIONS[number]['role'];
+
+interface Stage39BatchCandidate {
+  role: Stage39BatchRole;
+  tools: PlannedRemediationTool[];
+}
+
+function sameRouteForBatch(tools: PlannedRemediationTool[]): boolean {
+  const firstRoute = tools[0]?.route;
+  return firstRoute != null && tools.every(tool => tool.route === firstRoute);
+}
+
+export function selectStage39Batch(
+  tools: PlannedRemediationTool[],
+  startIndex: number,
+  options?: { enabled?: boolean },
+): Stage39BatchCandidate | null {
+  const enabled = options?.enabled ?? process.env['PDFAF_STAGE39_BATCHING'] === '1';
+  if (!enabled) return null;
+  for (const def of STAGE39_BATCH_DEFINITIONS) {
+    const slice = tools.slice(startIndex, startIndex + def.tools.length);
+    if (slice.length !== def.tools.length) continue;
+    if (!def.tools.every((name, index) => slice[index]?.toolName === name)) continue;
+    if (!sameRouteForBatch(slice)) continue;
+    if (!slice.every(tool => isToolAllowedByRouteContract(tool.route, tool.toolName))) continue;
+    return { role: def.role, tools: slice };
+  }
+  return null;
+}
+
+function hasRequiredBatchParams(tool: PlannedRemediationTool): boolean {
+  if (
+    tool.toolName === 'normalize_nested_figure_containers' ||
+    tool.toolName === 'canonicalize_figure_alt_ownership' ||
+    tool.toolName === 'set_figure_alt_text' ||
+    tool.toolName === 'repair_native_table_headers' ||
+    tool.toolName === 'set_table_header_cells'
+  ) {
+    const ref = tool.params['structRef'] ?? tool.params['targetRef'];
+    return typeof ref === 'string' && ref.length > 0;
+  }
+  return true;
+}
+
+function invalidatingBatchInvariant(details: PythonMutationDetailPayload | null): boolean {
+  const inv = details?.invariants;
+  return inv?.targetResolved === false ||
+    inv?.targetReachable === false ||
+    inv?.ownershipPreserved === false ||
+    inv?.tableTreeValidAfter === false;
+}
+
+export function batchHasValidStructuralBenefit(rows: Array<{ outcome: AppliedRemediationTool['outcome']; details?: string }>): boolean {
+  return rows.some(row => {
+    if (row.outcome !== 'applied') return false;
+    const details = parseMutationDetails(row.details);
+    return Boolean(
+      details?.structuralBenefits &&
+      Object.values(details.structuralBenefits).some(Boolean) &&
+      mutationInvariantsPassForStructuralBenefit(details) &&
+      !invalidatingBatchInvariant(details),
+    );
+  });
+}
+
+export async function runStage39Batch(
+  buffer: Buffer,
+  batch: Stage39BatchCandidate,
+): Promise<{
+  buffer: Buffer;
+  rows: Array<{
+    tool: PlannedRemediationTool;
+    outcome: AppliedRemediationTool['outcome'];
+    details?: string;
+    durationMs: number;
+  }>;
+}> {
+  const started = performance.now();
+  const batchId = `stage39-${randomUUID()}`;
+  if (!batch.tools.every(hasRequiredBatchParams)) {
+    const durationMs = performance.now() - started;
+    return {
+      buffer,
+      rows: batch.tools.map((tool, index) => ({
+        tool,
+        outcome: 'rejected',
+        details: withBatchMetadata(JSON.stringify({
+          outcome: 'rejected',
+          note: 'batch_missing_required_params',
+        }), {
+          batchId,
+          batchRole: batch.role,
+          batchIndex: index,
+          batchSize: batch.tools.length,
+        }),
+        durationMs: index === 0 ? durationMs : 0,
+      })),
+    };
+  }
+
+  const { buffer: next, result } = await runPythonMutationBatch(
+    buffer,
+    batch.tools.map(tool => ({ op: tool.toolName, params: tool.params })),
+    { abortOnFailedOp: true, reopenBetweenOps: true },
+  );
+  const totalMs = performance.now() - started;
+  const perToolMs = totalMs / Math.max(1, batch.tools.length);
+  const opRows = result.opResults ?? [];
+  const firstFailureIndex = batch.tools.findIndex(tool =>
+    opRows.some(row => row.op === tool.toolName && row.outcome === 'failed')
+    || result.failed.some(row => row.op === tool.toolName)
+  );
+  const hardFailed = !result.success || firstFailureIndex >= 0;
+
+  const rows = batch.tools.map((tool, index) => {
+    const op = opRows.find(row => row.op === tool.toolName);
+    let outcome: AppliedRemediationTool['outcome'] = 'no_effect';
+    let details = op ? pythonMutationDetailsFromOpResult(op) : undefined;
+    if (hardFailed) {
+      if (index > firstFailureIndex && firstFailureIndex >= 0) {
+        outcome = 'rejected';
+        details = JSON.stringify({ outcome: 'rejected', note: 'batch_aborted_after_failure' });
+      } else if (op?.outcome === 'failed' || result.failed.some(row => row.op === tool.toolName)) {
+        outcome = 'failed';
+        details = details ?? JSON.stringify({ outcome: 'failed', note: 'batch_failed' });
+      } else {
+        outcome = 'rejected';
+        details = JSON.stringify({ outcome: 'rejected', note: 'batch_aborted_after_failure' });
+      }
+    } else if (op?.outcome === 'failed') {
+      outcome = 'failed';
+    } else if (op?.outcome === 'applied') {
+      outcome = 'applied';
+    } else if (op?.outcome === 'no_effect' || isStage35StructuralTool(tool.toolName)) {
+      outcome = 'no_effect';
+    } else if (result.applied.includes(tool.toolName)) {
+      outcome = 'applied';
+    }
+
+    return {
+      tool,
+      outcome,
+      details: withBatchMetadata(details, {
+        batchId,
+        batchRole: batch.role,
+        batchIndex: index,
+        batchSize: batch.tools.length,
+      }),
+      durationMs: perToolMs,
+    };
+  });
+
+  return {
+    buffer: hardFailed ? buffer : next,
+    rows,
+  };
 }
 
 const STAGE35_STRUCTURAL_TOOLS = new Set([
@@ -1500,11 +1702,65 @@ export async function remediatePdf(
       }
 
       let buf = currentBuffer;
-      for (const tool of stage.tools) {
+      for (let toolIndex = 0; toolIndex < stage.tools.length; toolIndex++) {
+        const tool = stage.tools[toolIndex]!;
         if (handledInProtectedBundle.has(tool.toolName)) continue;
         if (protectedZeroHeading && tool.toolName === 'artifact_repeating_page_furniture') {
           deferredProtectedTools.push(tool);
           continue;
+        }
+        const batchCandidate = selectStage39Batch(stage.tools, toolIndex);
+        if (batchCandidate) {
+          const liveBatch: Stage39BatchCandidate = {
+            role: batchCandidate.role,
+            tools: batchCandidate.tools.map(batchTool => {
+              if (
+                batchTool.toolName === 'set_table_header_cells' ||
+                batchTool.toolName === 'set_figure_alt_text' ||
+                batchTool.toolName === 'mark_figure_decorative'
+              ) {
+                const params = buildDefaultParams(
+                  batchTool.toolName,
+                  workingAnalysis,
+                  workingSnapshot,
+                  [...appliedTools, ...stageApplied],
+                );
+                return {
+                  ...batchTool,
+                  params: Object.keys(params).length > 0 ? { ...batchTool.params, ...params } : batchTool.params,
+                };
+              }
+              return batchTool;
+            }),
+          };
+          if (liveBatch.tools.every(hasRequiredBatchParams)) {
+            const batchResult = await runStage39Batch(buf, liveBatch);
+            buf = batchResult.buffer;
+            for (const row of batchResult.rows) {
+              stageApplied.push({
+                toolName: row.tool.toolName,
+                stage: stage.stageNumber,
+                round,
+                scoreBefore: stageStartScore,
+                scoreAfter: stageStartScore,
+                delta: 0,
+                outcome: row.outcome,
+                details: row.details,
+                durationMs: row.durationMs,
+                source: 'planner',
+              });
+              runtimeSummary.toolTimings.push({
+                toolName: row.tool.toolName,
+                stage: stage.stageNumber,
+                round,
+                source: 'planner',
+                durationMs: row.durationMs,
+                outcome: row.outcome,
+              });
+            }
+            toolIndex += batchCandidate.tools.length - 1;
+            continue;
+          }
         }
         if (tool.toolName === 'create_heading_from_candidate') {
           roundHeadingAttempted = true;

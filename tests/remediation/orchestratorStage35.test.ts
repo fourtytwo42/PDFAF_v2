@@ -14,8 +14,15 @@ vi.mock('../../src/services/remediation/tools/metadata.js', () => ({
   setDocumentLanguage: vi.fn(),
 }));
 
-import { isStage35StructuralTool, parseMutationDetails, runSingleTool } from '../../src/services/remediation/orchestrator.js';
-import type { DocumentSnapshot, PythonMutationDetailPayload } from '../../src/types.js';
+import {
+  batchHasValidStructuralBenefit,
+  isStage35StructuralTool,
+  parseMutationDetails,
+  runSingleTool,
+  runStage39Batch,
+  selectStage39Batch,
+} from '../../src/services/remediation/orchestrator.js';
+import type { DocumentSnapshot, PlannedRemediationTool, PythonMutationDetailPayload } from '../../src/types.js';
 
 function bareSnapshot(): DocumentSnapshot {
   return {
@@ -173,5 +180,156 @@ describe('Stage 35 orchestrator mutation contract', () => {
       note: 'rolemap_heading_rewrite',
       debug: { qpdfVerifiedDepth: 2 },
     });
+  });
+});
+
+describe('Stage 39 structural batching', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function planned(toolName: string, params: Record<string, unknown> = {}, route = 'figure_semantics'): PlannedRemediationTool {
+    return {
+      toolName,
+      params,
+      rationale: 'test',
+      route: route as PlannedRemediationTool['route'],
+    };
+  }
+
+  it('groups only same-route allowed bundle tools', () => {
+    const tools = [
+      planned('normalize_nested_figure_containers', { structRef: '10_0' }),
+      planned('canonicalize_figure_alt_ownership', { structRef: '10_0' }),
+      planned('set_figure_alt_text', { structRef: '10_0', altText: 'Image' }),
+    ];
+
+    expect(selectStage39Batch(tools, 0)).toBeNull();
+    expect(selectStage39Batch(tools, 0, { enabled: true })?.role).toBe('figure_ownership_alt');
+    expect(selectStage39Batch([
+      tools[0]!,
+      { ...tools[1]!, route: 'near_pass_figure_recovery' },
+      tools[2]!,
+    ], 0, { enabled: true })).toBeNull();
+    expect(selectStage39Batch([
+      tools[0]!,
+      tools[1]!,
+      { ...tools[2]!, route: 'near_pass_figure_recovery' },
+    ], 0, { enabled: true })).toBeNull();
+  });
+
+  it('preserves per-op outcomes and batch metadata for a figure batch', async () => {
+    mocks.runPythonMutationBatch.mockResolvedValue({
+      buffer: Buffer.from('after'),
+      result: {
+        success: true,
+        applied: ['canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
+        failed: [],
+        opResults: [
+          {
+            op: 'normalize_nested_figure_containers',
+            outcome: 'no_effect',
+            note: 'no_structural_change',
+          },
+          {
+            op: 'canonicalize_figure_alt_ownership',
+            outcome: 'applied',
+            invariants: {
+              targetReachable: true,
+              targetIsFigureAfter: true,
+              rootReachableFigureCountBefore: 1,
+              rootReachableFigureCountAfter: 1,
+            },
+            structuralBenefits: { figureOwnershipImproved: true },
+          },
+          {
+            op: 'set_figure_alt_text',
+            outcome: 'applied',
+            invariants: {
+              targetReachable: true,
+              targetIsFigureAfter: true,
+              targetHasAltAfter: true,
+            },
+            structuralBenefits: { figureAltAttachedToReachableFigure: true },
+          },
+        ],
+      },
+    });
+
+    const batch = selectStage39Batch([
+      planned('normalize_nested_figure_containers', { structRef: '10_0' }),
+      planned('canonicalize_figure_alt_ownership', { structRef: '10_0' }),
+      planned('set_figure_alt_text', { structRef: '10_0', altText: 'Image' }),
+    ], 0, { enabled: true })!;
+    const result = await runStage39Batch(Buffer.from('before'), batch);
+
+    expect(mocks.runPythonMutationBatch).toHaveBeenCalledWith(
+      Buffer.from('before'),
+      [
+        { op: 'normalize_nested_figure_containers', params: { structRef: '10_0' } },
+        { op: 'canonicalize_figure_alt_ownership', params: { structRef: '10_0' } },
+        { op: 'set_figure_alt_text', params: { structRef: '10_0', altText: 'Image' } },
+      ],
+      { abortOnFailedOp: true, reopenBetweenOps: true },
+    );
+    expect(result.buffer.equals(Buffer.from('after'))).toBe(true);
+    expect(result.rows.map(row => row.outcome)).toEqual(['no_effect', 'applied', 'applied']);
+    const details = result.rows.map(row => parseMutationDetails(row.details));
+    expect(details[0]?.['batchRole']).toBe('figure_ownership_alt');
+    expect(details[0]?.['batchIndex']).toBe(0);
+    expect(details[2]?.structuralBenefits?.figureAltAttachedToReachableFigure).toBe(true);
+  });
+
+  it('aborts later rows after a hard batch failure and discards partial output', async () => {
+    mocks.runPythonMutationBatch.mockResolvedValue({
+      buffer: Buffer.from('partial'),
+      result: {
+        success: false,
+        applied: [],
+        failed: [{ op: 'repair_native_link_structure', error: 'boom' }],
+        opResults: [{
+          op: 'repair_native_link_structure',
+          outcome: 'failed',
+          error: 'boom',
+        }],
+      },
+    });
+
+    const batch = selectStage39Batch([
+      planned('repair_native_link_structure', {}, 'annotation_link_normalization'),
+      planned('set_link_annotation_contents', {}, 'annotation_link_normalization'),
+      planned('tag_unowned_annotations', {}, 'annotation_link_normalization'),
+    ], 0, { enabled: true })!;
+    const result = await runStage39Batch(Buffer.from('before'), batch);
+
+    expect(result.buffer.equals(Buffer.from('before'))).toBe(true);
+    expect(result.rows.map(row => row.outcome)).toEqual(['failed', 'rejected', 'rejected']);
+    expect(parseMutationDetails(result.rows[1]?.details)?.note).toBe('batch_aborted_after_failure');
+  });
+
+  it('requires typed structural benefits with passing invariants for batch preservation evidence', () => {
+    expect(batchHasValidStructuralBenefit([{
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: { tableTreeValidAfter: true },
+        structuralBenefits: { tableValidityImproved: true },
+      }),
+    }])).toBe(true);
+    expect(batchHasValidStructuralBenefit([{
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: { tableTreeValidAfter: false },
+        structuralBenefits: { tableValidityImproved: true },
+      }),
+    }])).toBe(false);
+    expect(batchHasValidStructuralBenefit([{
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        note: 'legacy_table_repair',
+      }),
+    }])).toBe(false);
   });
 });
