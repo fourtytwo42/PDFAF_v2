@@ -73,6 +73,18 @@ function isPdfClass(value: unknown): boolean {
   );
 }
 
+function hasScoreAndGrade(record: Record<string, unknown>): boolean {
+  if (typeof record.score === 'number' && isGrade(record.grade)) return true;
+
+  const scoreProfile = record.scoreProfile;
+  return (
+    typeof scoreProfile === 'object' &&
+    scoreProfile !== null &&
+    typeof (scoreProfile as Record<string, unknown>).overallScore === 'number' &&
+    isGrade((scoreProfile as Record<string, unknown>).grade)
+  );
+}
+
 function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
   if (!payload || typeof payload !== 'object') return false;
 
@@ -84,15 +96,7 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
     typeof record.filename === 'string' &&
     typeof record.pageCount === 'number' &&
     isPdfClass(record.pdfClass) &&
-    (
-      (typeof record.score === 'number' && isGrade(record.grade)) ||
-      (
-        typeof record.scoreProfile === 'object' &&
-        record.scoreProfile !== null &&
-        typeof (record.scoreProfile as Record<string, unknown>).overallScore === 'number' &&
-        isGrade((record.scoreProfile as Record<string, unknown>).grade)
-      )
-    ) &&
+    hasScoreAndGrade(record) &&
     typeof record.analysisDurationMs === 'number' &&
     Array.isArray(record.categories) &&
     Array.isArray(record.findings) &&
@@ -102,7 +106,7 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
       return (
         typeof item.key === 'string' &&
         (typeof item.score === 'number' || item.score === null) &&
-        typeof item.weight === 'number' &&
+        (item.weight === undefined || typeof item.weight === 'number') &&
         typeof item.applicable === 'boolean' &&
         isSeverity(item.severity) &&
         Array.isArray(item.findings)

@@ -70,7 +70,7 @@ export interface RawAnalyzeFinding {
 export interface RawAnalyzeCategory {
   key: string;
   score: number | null;
-  weight: number;
+  weight?: number;
   applicable: boolean;
   severity: AnalyzeSeverity;
   findings: RawAnalyzeFinding[];

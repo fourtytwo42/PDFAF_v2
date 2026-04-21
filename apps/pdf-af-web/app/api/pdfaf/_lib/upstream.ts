@@ -15,6 +15,28 @@ function configuredApiBaseUrl(): string | null {
   );
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+function configuredNonLoopbackBaseUrl(): string | null {
+  const configured = configuredApiBaseUrl();
+  if (!configured) return null;
+
+  try {
+    const parsed = new URL(configured);
+    return isLoopbackHost(parsed.hostname) ? null : parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
 export function resolveUpstreamBaseUrl(request: NextRequest): string | NextResponse {
   const baseUrl = request.headers.get(BASE_URL_HEADER)?.trim() || configuredApiBaseUrl();
   if (!baseUrl) {
@@ -25,6 +47,11 @@ export function resolveUpstreamBaseUrl(request: NextRequest): string | NextRespo
     const parsed = new URL(baseUrl);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return badRequest('PDFAF API base URL must use http or https.');
+    }
+
+    const configuredNonLoopback = configuredNonLoopbackBaseUrl();
+    if (configuredNonLoopback && isLoopbackHost(parsed.hostname)) {
+      return configuredNonLoopback;
     }
 
     return parsed.toString().replace(/\/+$/, '');

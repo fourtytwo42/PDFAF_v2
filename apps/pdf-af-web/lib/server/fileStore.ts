@@ -143,6 +143,18 @@ function isPdfClass(value: unknown): boolean {
   );
 }
 
+function hasScoreAndGrade(record: Record<string, unknown>): boolean {
+  if (typeof record.score === 'number' && isGrade(record.grade)) return true;
+
+  const scoreProfile = record.scoreProfile;
+  return (
+    typeof scoreProfile === 'object' &&
+    scoreProfile !== null &&
+    typeof (scoreProfile as Record<string, unknown>).overallScore === 'number' &&
+    isGrade((scoreProfile as Record<string, unknown>).grade)
+  );
+}
+
 function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
   if (!payload || typeof payload !== 'object') return false;
 
@@ -154,8 +166,7 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
     typeof record.filename === 'string' &&
     typeof record.pageCount === 'number' &&
     isPdfClass(record.pdfClass) &&
-    typeof record.score === 'number' &&
-    isGrade(record.grade) &&
+    hasScoreAndGrade(record) &&
     typeof record.analysisDurationMs === 'number' &&
     Array.isArray(record.categories) &&
     Array.isArray(record.findings) &&
@@ -164,8 +175,8 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
       const item = category as Record<string, unknown>;
       return (
         typeof item.key === 'string' &&
-        typeof item.score === 'number' &&
-        typeof item.weight === 'number' &&
+        (typeof item.score === 'number' || item.score === null) &&
+        (item.weight === undefined || typeof item.weight === 'number') &&
         typeof item.applicable === 'boolean' &&
         isSeverity(item.severity) &&
         Array.isArray(item.findings)
@@ -178,7 +189,12 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
         typeof item.category === 'string' &&
         isSeverity(item.severity) &&
         typeof item.wcag === 'string' &&
-        typeof item.message === 'string'
+        typeof item.message === 'string' &&
+        (item.count === undefined || typeof item.count === 'number') &&
+        (item.page === undefined || typeof item.page === 'number') &&
+        (item.structRef === undefined || typeof item.structRef === 'string') &&
+        (item.targetRef === undefined || typeof item.targetRef === 'string') &&
+        (item.objectRef === undefined || typeof item.objectRef === 'string')
       );
     })
   );
