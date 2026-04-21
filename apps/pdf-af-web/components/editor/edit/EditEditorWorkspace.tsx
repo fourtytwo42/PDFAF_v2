@@ -603,8 +603,217 @@ function IssueInspector({
   );
 }
 
+function IssueFixPrompt({
+  issue,
+  pendingFixes,
+  disabled,
+  applyDisabled,
+  applyStatus,
+  onClose,
+  onUpsertFix,
+  onApplyFixes,
+}: {
+  issue: EditorIssue | null;
+  pendingFixes: EditFixInstruction[];
+  disabled: boolean;
+  applyDisabled: boolean;
+  applyStatus: ReturnType<typeof useEditEditorStore.getState>['applyStatus'];
+  onClose: () => void;
+  onUpsertFix: (fix: EditFixInstruction) => void;
+  onApplyFixes: () => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [language, setLanguage] = useState('en-US');
+  const [altText, setAltText] = useState('');
+
+  useEffect(() => {
+    if (!issue) return;
+    setTitle('');
+    setLanguage('en-US');
+    setAltText('');
+  }, [issue?.id]);
+
+  if (!issue) return null;
+
+  const normalizedCategory = normalizeIssueCategory(issue.category);
+  const isMetadataIssue = normalizedCategory === 'title_and_language';
+  const isAltIssue = normalizedCategory === 'alt_text';
+  const objectRef = issue.target?.objectRef;
+  const titleQueued = pendingFixes.some((fix) => fix.type === 'set_document_title');
+  const languageQueued = pendingFixes.some((fix) => fix.type === 'set_document_language');
+  const figureQueued = Boolean(
+    objectRef && pendingFixes.some((fix) => 'objectRef' in fix && fix.objectRef === objectRef),
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.42)] px-3 py-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-issue-fix-title"
+      onMouseDown={onClose}
+    >
+      <section
+        className="max-h-[min(720px,calc(100vh-3rem))] w-full max-w-lg overflow-auto rounded-2xl border border-[color:var(--surface-border)] bg-[var(--background)] p-4 shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+              {issue.category.replaceAll('_', ' ')}
+            </p>
+            <h2 id="edit-issue-fix-title" className="mt-1 text-lg font-semibold text-[var(--foreground)]">
+              {issue.message}
+            </h2>
+            <p className="mt-1 text-xs capitalize text-[var(--muted)]">
+              {issue.severity} · {issue.fixState.replace('-', ' ')}
+              {issue.page ? ` · Page ${issue.page}` : ''}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close fix prompt"
+            title="Close"
+            className="focus-ring inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--surface-border)] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            onClick={onClose}
+          >
+            <span className="text-lg leading-none">x</span>
+          </button>
+        </div>
+
+        {issue.whyItMatters ? (
+          <p className="mt-4 rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3 text-sm leading-6 text-[var(--muted)]">
+            {issue.whyItMatters}
+          </p>
+        ) : null}
+
+        {isMetadataIssue ? (
+          <div className="mt-4 grid gap-3 rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+            <p className="text-sm font-semibold text-[var(--foreground)]">Fix document metadata</p>
+            <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+              Title
+              <input
+                className="h-10 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+                value={title}
+                disabled={disabled}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Accessible document title"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={disabled || title.trim().length === 0}
+              className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-sm font-semibold text-[var(--background)] disabled:opacity-45"
+              onClick={() => onUpsertFix({ type: 'set_document_title', title })}
+            >
+              Queue title fix
+            </button>
+            <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+              Language
+              <input
+                className="h-10 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+                value={language}
+                disabled={disabled}
+                onChange={(event) => setLanguage(event.target.value)}
+                placeholder="en-US"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={disabled || language.trim().length === 0}
+              className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-sm font-semibold text-[var(--background)] disabled:opacity-45"
+              onClick={() => onUpsertFix({ type: 'set_document_language', language })}
+            >
+              Queue language fix
+            </button>
+            {titleQueued || languageQueued ? (
+              <p className="text-xs font-semibold text-[var(--accent)]">
+                {titleQueued && languageQueued
+                  ? 'Title and language fixes are queued.'
+                  : titleQueued
+                    ? 'Title fix is queued.'
+                    : 'Language fix is queued.'}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {isAltIssue ? (
+          <div className="mt-4 rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+            <p className="text-sm font-semibold text-[var(--foreground)]">Fix image description</p>
+            {objectRef ? (
+              <div className="mt-3 grid gap-3">
+                <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+                  Alt text
+                  <textarea
+                    className="min-h-24 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+                    value={altText}
+                    disabled={disabled}
+                    onChange={(event) => setAltText(event.target.value)}
+                    placeholder="Describe the meaningful image content."
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={disabled || altText.trim().length === 0}
+                    className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-xs font-semibold text-[var(--background)] disabled:opacity-45"
+                    onClick={() => onUpsertFix({ type: 'set_figure_alt_text', objectRef, altText })}
+                  >
+                    Queue alt text
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    className="focus-ring h-9 rounded-full border border-[color:var(--surface-border)] px-3 text-xs font-semibold text-[var(--foreground)] disabled:opacity-45"
+                    onClick={() => onUpsertFix({ type: 'mark_figure_decorative', objectRef })}
+                  >
+                    Mark decorative
+                  </button>
+                </div>
+                {figureQueued ? (
+                  <p className="text-xs font-semibold text-[var(--accent)]">A fix is queued for this figure.</p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                This finding does not include a stable target reference yet, so targeted alt repair is unavailable.
+              </p>
+            )}
+          </div>
+        ) : null}
+
+        {!isMetadataIssue && !isAltIssue ? (
+          <div className="mt-4 rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm leading-6 text-[var(--muted)]">
+            This issue type is visible for review, but guided repair for it is planned for a later stage.
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <button
+            type="button"
+            disabled={applyDisabled}
+            className="focus-ring h-10 rounded-full bg-[var(--foreground)] px-4 text-sm font-semibold text-[var(--background)] disabled:opacity-45"
+            onClick={onApplyFixes}
+          >
+            {applyStatus === 'applying' ? 'Applying...' : 'Apply queued fixes'}
+          </button>
+          <button
+            type="button"
+            className="focus-ring h-10 rounded-full border border-[color:var(--surface-border)] px-4 text-sm font-semibold text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            onClick={onClose}
+          >
+            Done
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspaceProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [promptIssueId, setPromptIssueId] = useState<string | null>(null);
   const sourceFile = useEditEditorStore((state) => state.sourceFile);
   const sourceBlob = useEditEditorStore((state) => state.sourceBlob);
   const analyzeStatus = useEditEditorStore((state) => state.analyzeStatus);
@@ -657,6 +866,10 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
     () => issuesWithPendingState.find((issue) => issue.id === selectedIssueId) ?? null,
     [issuesWithPendingState, selectedIssueId],
   );
+  const promptIssue = useMemo(
+    () => issuesWithPendingState.find((issue) => issue.id === promptIssueId) ?? null,
+    [issuesWithPendingState, promptIssueId],
+  );
   const isBusy = analyzeStatus === 'analyzing' || analyzeStatus === 'hydrating' || applyStatus === 'applying';
   const pageLabel = lastAnalyzeResult ? `${lastAnalyzeResult.pageCount} pages` : '0 pages';
   const saveStateLabel =
@@ -684,6 +897,15 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
     void openFile(file, defaultApiBaseUrl);
   };
 
+  const handleSelectIssue = (issueId: string) => {
+    selectIssue(issueId);
+    setPromptIssueId(issueId);
+  };
+
+  const handleApplyPromptFixes = () => {
+    void applyPendingFixes(defaultApiBaseUrl);
+  };
+
   return (
     <>
       <input
@@ -701,7 +923,7 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
         issues={filteredIssues}
         readiness={readiness}
         selectedIssueId={selectedIssueId}
-        onSelectIssue={selectIssue}
+        onSelectIssue={handleSelectIssue}
         beforeToolbar={<ProductNav />}
         pageLabel={pageLabel}
         saveStateLabel={saveStateLabel}
@@ -884,7 +1106,7 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
                   <EditorIssueList
                     issues={filteredIssues}
                     selectedIssueId={selectedIssueId}
-                    onSelectIssue={selectIssue}
+                    onSelectIssue={handleSelectIssue}
                   />
                 </div>
               </div>
@@ -898,7 +1120,7 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
               zoom={zoom}
               issues={filteredIssues}
               selectedIssueId={selectedIssueId}
-              onSelectIssue={selectIssue}
+              onSelectIssue={handleSelectIssue}
               onSelectPage={selectPage}
               onRenderStatusChange={setRenderStatus}
             />
@@ -914,6 +1136,16 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
             />
           ),
         }}
+      />
+      <IssueFixPrompt
+        issue={promptIssue}
+        pendingFixes={pendingFixes}
+        disabled={isBusy}
+        applyDisabled={isBusy || pendingFixes.length === 0}
+        applyStatus={applyStatus}
+        onClose={() => setPromptIssueId(null)}
+        onUpsertFix={upsertPendingFix}
+        onApplyFixes={handleApplyPromptFixes}
       />
     </>
   );
