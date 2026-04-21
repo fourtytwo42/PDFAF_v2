@@ -11,7 +11,7 @@ import { computeReadinessSummary, sortEditorIssues } from '../../../lib/editor/i
 import { validateCreateDocument } from '../../../lib/editor/createValidation';
 import { getSelectedCreateObject, useCreateEditorStore } from '../../../stores/createEditor';
 import type { CreatePage, CreatePageObject } from '../../../types/createEditor';
-import type { EditorIssue, EditorShellModeConfig } from '../../../types/editor';
+import type { EditorShellModeConfig } from '../../../types/editor';
 
 const config: EditorShellModeConfig = {
   mode: 'create',
@@ -20,6 +20,10 @@ const config: EditorShellModeConfig = {
   emptyTitle: 'Create PDF workspace',
   emptyDescription: 'Stage 2 structured authoring prototype.',
 };
+
+interface CreateEditorWorkspaceProps {
+  defaultApiBaseUrl: string;
+}
 
 function ToolbarButton({
   label,
@@ -353,9 +357,14 @@ function InspectorContent({
   );
 }
 
-export function CreateEditorWorkspace() {
+export function CreateEditorWorkspace({ defaultApiBaseUrl }: CreateEditorWorkspaceProps) {
   const document = useCreateEditorStore((state) => state.document);
   const selection = useCreateEditorStore((state) => state.selection);
+  const exportStatus = useCreateEditorStore((state) => state.exportStatus);
+  const exportError = useCreateEditorStore((state) => state.exportError);
+  const lastAnalyzeResult = useCreateEditorStore((state) => state.lastAnalyzeResult);
+  const lastExportFileName = useCreateEditorStore((state) => state.lastExportFileName);
+  const exportIssues = useCreateEditorStore((state) => state.exportIssues);
   const selectPage = useCreateEditorStore((state) => state.selectPage);
   const selectObject = useCreateEditorStore((state) => state.selectObject);
   const clearObjectSelection = useCreateEditorStore((state) => state.clearObjectSelection);
@@ -365,10 +374,18 @@ export function CreateEditorWorkspace() {
   const addImage = useCreateEditorStore((state) => state.addImage);
   const addTable = useCreateEditorStore((state) => state.addTable);
   const updateSelectedObject = useCreateEditorStore((state) => state.updateSelectedObject);
+  const exportAndAnalyze = useCreateEditorStore((state) => state.exportAndAnalyze);
 
-  const issues = useMemo(() => sortEditorIssues(validateCreateDocument(document)), [document]);
+  const localIssues = useMemo(() => sortEditorIssues(validateCreateDocument(document)), [document]);
+  const issues = useMemo(
+    () => sortEditorIssues([...localIssues, ...exportIssues]),
+    [exportIssues, localIssues],
+  );
   const readiness = useMemo(() => computeReadinessSummary(issues), [issues]);
   const selectedObject = getSelectedCreateObject(document, selection);
+  const localReadiness = useMemo(() => computeReadinessSummary(localIssues), [localIssues]);
+  const exportBusy = exportStatus === 'exporting' || exportStatus === 'analyzing';
+  const exportDisabled = localReadiness.status === 'blocked' || exportBusy;
 
   function selectIssue(issueId: string) {
     const issue = issues.find((candidate) => candidate.id === issueId);
@@ -378,6 +395,14 @@ export function CreateEditorWorkspace() {
     } else {
       selectPage(issue.target.pageId);
     }
+  }
+
+  function statusLabel(): string {
+    if (exportStatus === 'exporting') return 'Exporting';
+    if (exportStatus === 'analyzing') return 'Analyzing';
+    if (exportStatus === 'complete') return 'Analyzed';
+    if (exportStatus === 'failed') return 'Export failed';
+    return 'In memory';
   }
 
   return (
@@ -392,7 +417,7 @@ export function CreateEditorWorkspace() {
       onSelectIssue={selectIssue}
       beforeToolbar={<ProductNav />}
       pageLabel={`${document.pages.length} pages`}
-      saveStateLabel="In memory"
+      saveStateLabel={statusLabel()}
       slots={{
         leftRail: (
           <CreateRail
@@ -429,6 +454,24 @@ export function CreateEditorWorkspace() {
                 updateSelectedObject={updateSelectedObject}
               />
               <div className="border-t border-[color:var(--surface-border)] pt-4">
+                {lastAnalyzeResult ? (
+                  <div className="mb-4 rounded-2xl border border-[color:var(--surface-border)] bg-[#f8fafc] p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                      Last export
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">
+                      {lastAnalyzeResult.score}/100 · Grade {lastAnalyzeResult.grade}
+                    </p>
+                    {lastExportFileName ? (
+                      <p className="mt-1 text-xs text-[var(--muted)]">{lastExportFileName}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {exportError ? (
+                  <div className="mb-4 rounded-2xl border border-[color:rgba(220,38,38,0.18)] bg-[color:rgba(220,38,38,0.08)] p-3 text-sm font-medium text-[var(--danger)]">
+                    {exportError}
+                  </div>
+                ) : null}
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
                   Issues
                 </h3>
@@ -451,7 +494,11 @@ export function CreateEditorWorkspace() {
       <ToolbarButton label="Add table" onClick={addTable}>
         <FileIcon className="size-4" />
       </ToolbarButton>
-      <ToolbarButton label="Export PDF starts in Stage 3" disabled>
+      <ToolbarButton
+        label={exportDisabled ? 'Resolve blockers before export' : 'Export and analyze PDF'}
+        disabled={exportDisabled}
+        onClick={() => exportAndAnalyze(defaultApiBaseUrl)}
+      >
         <DownloadIcon className="size-4" />
       </ToolbarButton>
     </EditorShell>

@@ -1,6 +1,10 @@
 'use client';
 
 import { create } from 'zustand';
+import { analyzePdf } from '../lib/api/pdfafClient';
+import { exportCreateDocumentToPdf, mapAnalyzeFindingsToEditorIssues } from '../lib/editor/createExport';
+import { validateCreateDocument } from '../lib/editor/createValidation';
+import type { AnalyzeSummary } from '../types/analyze';
 import type {
   CreateDocument,
   CreateEditorSelection,
@@ -13,10 +17,18 @@ import type {
   CreateTableObject,
   CreateTableRow,
 } from '../types/createEditor';
+import type { EditorIssue } from '../types/editor';
+
+export type CreateExportStatus = 'idle' | 'exporting' | 'analyzing' | 'complete' | 'failed';
 
 interface CreateEditorStoreState {
   document: CreateDocument;
   selection: CreateEditorSelection;
+  exportStatus: CreateExportStatus;
+  exportError: string | null;
+  lastExportFileName: string | null;
+  lastAnalyzeResult: AnalyzeSummary | null;
+  exportIssues: EditorIssue[];
   selectPage: (pageId: string) => void;
   selectObject: (pageId: string, objectId: string) => void;
   clearObjectSelection: () => void;
@@ -26,6 +38,8 @@ interface CreateEditorStoreState {
   addImage: () => void;
   addTable: () => void;
   updateSelectedObject: (updates: Partial<CreatePageObject>) => void;
+  exportAndAnalyze: (apiBaseUrl: string) => Promise<void>;
+  clearExportResult: () => void;
 }
 
 function createId(prefix: string): string {
@@ -170,12 +184,33 @@ function updateObject(document: CreateDocument, selection: CreateEditorSelection
 
 const defaultDocument = createDefaultDocument();
 
+const clearedExportState = {
+  exportStatus: 'idle' as const,
+  exportError: null,
+  lastAnalyzeResult: null,
+  exportIssues: [],
+};
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return 'Export or analysis failed.';
+}
+
 export const useCreateEditorStore = create<CreateEditorStoreState>((set, get) => ({
   document: defaultDocument,
   selection: {
     pageId: defaultDocument.pages[0]?.id ?? null,
     objectId: null,
   },
+  exportStatus: 'idle',
+  exportError: null,
+  lastExportFileName: null,
+  lastAnalyzeResult: null,
+  exportIssues: [],
   selectPage: (pageId) => set({ selection: { pageId, objectId: null } }),
   selectObject: (pageId, objectId) => set({ selection: { pageId, objectId } }),
   clearObjectSelection: () =>
@@ -194,48 +229,107 @@ export const useCreateEditorStore = create<CreateEditorStoreState>((set, get) =>
           ...metadata,
         },
       },
+      ...clearedExportState,
     })),
   addHeading: () =>
-    set((state) =>
-      appendObject(state.document, state.selection, {
+    set((state) => ({
+      ...appendObject(state.document, state.selection, {
         id: createId('heading'),
         type: 'heading',
         text: 'New heading',
         level: 2,
       }),
-    ),
+      ...clearedExportState,
+    })),
   addParagraph: () =>
-    set((state) =>
-      appendObject(state.document, state.selection, {
+    set((state) => ({
+      ...appendObject(state.document, state.selection, {
         id: createId('paragraph'),
         type: 'paragraph',
         text: 'New paragraph text.',
       }),
-    ),
+      ...clearedExportState,
+    })),
   addImage: () =>
-    set((state) =>
-      appendObject(state.document, state.selection, {
+    set((state) => ({
+      ...appendObject(state.document, state.selection, {
         id: createId('image'),
         type: 'image',
         label: 'Image placeholder',
         altText: '',
         decorative: false,
       }),
-    ),
+      ...clearedExportState,
+    })),
   addTable: () =>
-    set((state) =>
-      appendObject(state.document, state.selection, {
+    set((state) => ({
+      ...appendObject(state.document, state.selection, {
         id: createId('table'),
         type: 'table',
         caption: 'New table',
         hasHeaderRow: true,
         rows: [row(['Header 1', 'Header 2']), row(['Value 1', 'Value 2'])],
       }),
-    ),
+      ...clearedExportState,
+    })),
   updateSelectedObject: (updates) =>
     set((state) => ({
       document: updateObject(state.document, state.selection, updates),
+      ...clearedExportState,
     })),
+  exportAndAnalyze: async (apiBaseUrl) => {
+    const document = get().document;
+    const blockers = validateCreateDocument(document).filter(
+      (issue) => issue.severity === 'blocker' && issue.fixState !== 'fixed',
+    );
+    if (blockers.length > 0) {
+      set({
+        exportStatus: 'failed',
+        exportError: 'Resolve local blockers before exporting.',
+        exportIssues: [],
+        lastAnalyzeResult: null,
+      });
+      return;
+    }
+
+    set({
+      exportStatus: 'exporting',
+      exportError: null,
+      lastAnalyzeResult: null,
+      exportIssues: [],
+      lastExportFileName: null,
+    });
+
+    try {
+      const exported = await exportCreateDocumentToPdf(document);
+      set({
+        exportStatus: 'analyzing',
+        lastExportFileName: exported.fileName,
+      });
+
+      const analysis = await analyzePdf(apiBaseUrl, exported.blob, exported.fileName);
+      set({
+        exportStatus: 'complete',
+        lastAnalyzeResult: analysis,
+        exportIssues: mapAnalyzeFindingsToEditorIssues(analysis.findings),
+        exportError: null,
+      });
+    } catch (error) {
+      set({
+        exportStatus: 'failed',
+        exportError: toErrorMessage(error),
+        lastAnalyzeResult: null,
+      });
+    }
+  },
+  clearExportResult: () =>
+    set({
+      exportStatus: 'idle',
+      exportError: null,
+      lastExportFileName: null,
+      lastAnalyzeResult: null,
+      exportIssues: [],
+    }),
 }));
 
 export function getSelectedCreateObject(

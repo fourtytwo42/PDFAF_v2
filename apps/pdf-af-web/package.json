@@ -15,13 +15,14 @@
     "fflate": "^0.8.2",
     "idb": "^8.0.3",
     "next": "^15.3.1",
+    "pdf-lib": "^1.17.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@tailwindcss/postcss": "^4.1.4",
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.15.17",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
