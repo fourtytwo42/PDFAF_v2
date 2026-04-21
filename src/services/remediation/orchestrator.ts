@@ -234,13 +234,7 @@ function stageHasCheckerFacingStructuralBenefit(input: {
       afterParity.categories.heading_structure.score > beforeParity.categories.heading_structure.score ||
       afterTreeHeadings > beforeTreeHeadings ||
       afterSnapshot.headings.length > beforeSnapshot.headings.length ||
-      afterDepth > beforeDepth ||
-      details.some(detail =>
-        detail?.note === 'exported_heading_converged' ||
-        detail?.note === 'existing_structure_promoted_to_headings' ||
-        detail?.note === 'synthesized_from_page0_mcid' ||
-        detail?.note === 'rolemap_heading_rewrite',
-      )
+      afterDepth > beforeDepth
     ) {
       return true;
     }

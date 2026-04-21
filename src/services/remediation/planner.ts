@@ -1,5 +1,13 @@
 import type { CategoryKey, PdfClass, PlanningSkipReason, RemediationRoute } from '../../types.js';
-import type { AnalysisResult, DocumentSnapshot, AppliedRemediationTool, RemediationPlan, RemediationStagePlan, PlannedRemediationTool } from '../../types.js';
+import type {
+  AnalysisResult,
+  DocumentSnapshot,
+  AppliedRemediationTool,
+  RemediationPlan,
+  RemediationStagePlan,
+  PlannedRemediationTool,
+  PythonMutationDetailPayload,
+} from '../../types.js';
 import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
@@ -167,34 +175,41 @@ interface RouteContract {
   allowedTools: readonly string[];
   prohibitedTools?: readonly string[];
   failureTools?: readonly string[];
+  requiredFailureTools?: readonly string[];
 }
 
 const ROUTE_CONTRACTS: Partial<Record<RemediationRoute, RouteContract>> = {
   structure_bootstrap_and_conformance: {
     allowedTools: ROUTE_TOOL_MAP.structure_bootstrap_and_conformance,
     failureTools: ['synthesize_basic_structure_from_layout', 'repair_structure_conformance'],
+    requiredFailureTools: ['synthesize_basic_structure_from_layout', 'repair_structure_conformance'],
   },
   post_bootstrap_heading_convergence: {
     allowedTools: ROUTE_TOOL_MAP.post_bootstrap_heading_convergence,
     prohibitedTools: ['set_figure_alt_text', 'mark_figure_decorative'],
     failureTools: ['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'],
+    requiredFailureTools: ['create_heading_from_candidate'],
   },
   figure_semantics: {
     allowedTools: ROUTE_TOOL_MAP.figure_semantics,
     failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
+    requiredFailureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
   },
   near_pass_figure_recovery: {
     allowedTools: ROUTE_TOOL_MAP.near_pass_figure_recovery,
     prohibitedTools: ['set_figure_alt_text', 'mark_figure_decorative', 'retag_as_figure'],
     failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership'],
+    requiredFailureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership'],
   },
   annotation_link_normalization: {
     allowedTools: ROUTE_TOOL_MAP.annotation_link_normalization,
     failureTools: ['repair_native_link_structure', 'tag_unowned_annotations', 'set_link_annotation_contents'],
+    requiredFailureTools: ['repair_native_link_structure', 'tag_unowned_annotations', 'set_link_annotation_contents'],
   },
   native_structure_repair: {
     allowedTools: ROUTE_TOOL_MAP.native_structure_repair,
     failureTools: ['repair_native_table_headers', 'set_table_header_cells'],
+    requiredFailureTools: ['repair_native_table_headers', 'set_table_header_cells'],
   },
 };
 
@@ -206,20 +221,114 @@ export function isToolAllowedByRouteContract(route: RemediationRoute | undefined
   return contract.allowedTools.includes(toolName);
 }
 
+function parseMutationDetails(details: string | undefined): PythonMutationDetailPayload | null {
+  if (!details?.startsWith('{')) return null;
+  try {
+    return JSON.parse(details) as PythonMutationDetailPayload;
+  } catch {
+    return null;
+  }
+}
+
+function isTerminalRouteOutcome(row: AppliedRemediationTool): boolean {
+  return row.outcome === 'no_effect' || row.outcome === 'failed' || row.outcome === 'rejected';
+}
+
+function hasTypedStructuralBenefit(row: AppliedRemediationTool): boolean {
+  const details = parseMutationDetails(row.details);
+  return Boolean(details?.structuralBenefits && Object.values(details.structuralBenefits).some(Boolean));
+}
+
+function noEffectSignature(row: AppliedRemediationTool): string | null {
+  if (row.outcome !== 'no_effect') return null;
+  const details = parseMutationDetails(row.details);
+  if (!details?.invariants && !details?.note) return null;
+  const inv = details.invariants;
+  const flags = [
+    inv?.targetReachable === false ? 'targetReachable=false' : null,
+    inv?.targetIsFigureAfter === false ? 'targetIsFigureAfter=false' : null,
+    inv?.tableTreeValidAfter === false ? 'tableTreeValidAfter=false' : null,
+    inv?.ownershipPreserved === false ? 'ownershipPreserved=false' : null,
+  ].filter((flag): flag is string => flag !== null);
+  return [
+    row.toolName,
+    details.note ?? 'no_note',
+    inv?.targetRef ?? 'no_target',
+    ...flags,
+  ].join('|');
+}
+
+function hasPriorNoEffectSignature(
+  applied: AppliedRemediationTool[],
+  toolName: string,
+  params: Record<string, unknown>,
+): boolean {
+  const targetRef = typeof params['targetRef'] === 'string'
+    ? params['targetRef']
+    : typeof params['structRef'] === 'string'
+      ? params['structRef']
+      : undefined;
+  return applied.some(row => {
+    if (row.toolName !== toolName || row.outcome !== 'no_effect') return false;
+    const details = parseMutationDetails(row.details);
+    if (!details?.invariants && !details?.note) return false;
+    if (targetRef && details?.invariants?.targetRef && details.invariants.targetRef !== targetRef) return false;
+    if (toolName === 'create_heading_from_candidate' && targetRef) {
+      return details?.invariants?.targetRef === targetRef;
+    }
+    const inv = details?.invariants;
+    return (
+      inv?.targetReachable === false ||
+      inv?.targetIsFigureAfter === false ||
+      inv?.tableTreeValidAfter === false ||
+      inv?.ownershipPreserved === false ||
+      details?.note === 'table_tree_still_invalid' ||
+      details?.note === 'headers_not_created' ||
+      details?.note === 'annotation_ownership_not_preserved' ||
+      details?.note === 'no_structural_change'
+    );
+  });
+}
+
 function routeFailureProof(
   route: RemediationRoute,
   alreadyApplied: AppliedRemediationTool[],
 ): string | null {
   const contract = ROUTE_CONTRACTS[route];
   if (!contract?.failureTools?.length) return null;
-  const exhausted = contract.failureTools.filter(toolName => {
+
+  const routeRows = alreadyApplied.filter(row => contract.failureTools!.includes(row.toolName));
+  const signatures = new Map<string, number>();
+  for (const row of routeRows) {
+    const signature = noEffectSignature(row);
+    if (signature) signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
+  }
+  for (const [signature, count] of signatures) {
+    if (count >= 2) {
+      return `route_failure_repeated_signature(${route}:${signature})`;
+    }
+  }
+
+  const required = contract.requiredFailureTools ?? contract.failureTools;
+  const exhausted = required.filter(toolName => {
     const attempts = alreadyApplied.filter(row => row.toolName === toolName);
     if (attempts.length === 0) return false;
-    return attempts.every(row => row.outcome === 'no_effect' || row.outcome === 'failed' || row.outcome === 'rejected');
+    return attempts.every(isTerminalRouteOutcome);
   });
-  if (exhausted.length >= contract.failureTools.length) {
+  if (exhausted.length >= required.length) {
     return `route_failure_proof(${route}:${exhausted.join(',')})`;
   }
+
+  const maxRound = Math.max(0, ...routeRows.map(row => row.round ?? 0));
+  if (maxRound > 0) {
+    const priorRoundRows = routeRows.filter(row => row.round === maxRound);
+    const hadTerminal = priorRoundRows.some(isTerminalRouteOutcome);
+    const hadBenefit = priorRoundRows.some(row => row.outcome === 'applied' && hasTypedStructuralBenefit(row));
+    if (hadTerminal && !hadBenefit) {
+      return `route_failure_no_benefit_prior_round(${route}:round${maxRound})`;
+    }
+  }
+
   return null;
 }
 
@@ -858,6 +967,10 @@ export function planForRemediation(
       }
       if (toolSet.has(toolName)) continue;
       const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
+        addSkipped(toolName, 'missing_precondition');
+        continue;
+      }
       toolSet.set(toolName, {
         toolName,
         params,
@@ -881,6 +994,7 @@ export function planForRemediation(
     if (
       typeof fallbackParams['targetRef'] === 'string'
       && fallbackParams['targetRef'].length > 0
+      && !hasPriorNoEffectSignature(alreadyApplied, 'create_heading_from_candidate', fallbackParams)
       && toolApplicableToPdfClass('create_heading_from_candidate', analysis.pdfClass, snapshot)
     ) {
       toolSet.set('create_heading_from_candidate', {
@@ -908,12 +1022,17 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
+      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied);
+      if (hasPriorNoEffectSignature(alreadyApplied, synToolName, params)) {
+        addSkipped(synToolName, 'missing_precondition');
+      } else {
       toolSet.set(synToolName, {
         toolName: synToolName,
-        params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
+        params,
         rationale: 'shallow-native-tagged structure depth forces synthesis to rebuild root-reachable tree',
         route: 'structure_bootstrap_and_conformance',
       });
+      }
     }
     if (
       nativeTaggedNoHeadingSynthesisCandidate &&
@@ -921,12 +1040,17 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
+      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied);
+      if (hasPriorNoEffectSignature(alreadyApplied, synToolName, params)) {
+        addSkipped(synToolName, 'missing_precondition');
+      } else {
       toolSet.set(synToolName, {
         toolName: synToolName,
-        params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
+        params,
         rationale: 'native-tagged P-only tree with zero headings triggers bounded heading synthesis',
         route: 'structure_bootstrap_and_conformance',
       });
+      }
     }
   }
 
@@ -956,6 +1080,10 @@ export function planForRemediation(
         continue;
       }
       const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
+        addSkipped(toolName, 'missing_precondition');
+        continue;
+      }
       toolSet.set(toolName, {
         toolName,
         params,

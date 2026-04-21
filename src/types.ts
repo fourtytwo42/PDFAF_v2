@@ -570,6 +570,7 @@ export interface AppliedRemediationTool {
 }
 
 export interface PythonMutationInvariantPayload {
+  targetRef?: string | null;
   targetResolved?: boolean;
   targetReachable?: boolean;
   resolvedRole?: string | null;

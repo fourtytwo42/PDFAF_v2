@@ -1941,4 +1941,170 @@ describe('planForRemediation', () => {
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).not.toContain('create_heading_from_candidate');
   });
+
+  it('does not reschedule a heading candidate after invariant-backed no_effect for the same target', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 3,
+      textByPage: ['EXECUTIVE SUMMARY', 'Body', 'Body'],
+      textCharCount: 600,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'EXECUTIVE SUMMARY', page: 0, structRef: '40_0', bbox: [40, 710, 220, 734] },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 35,
+    });
+    const plan = planForRemediation(analysis, snap, [{
+      toolName: 'create_heading_from_candidate',
+      stage: 4,
+      round: 1,
+      scoreBefore: 58,
+      scoreAfter: 58,
+      delta: 0,
+      outcome: 'no_effect',
+      details: JSON.stringify({
+        outcome: 'no_effect',
+        note: 'role_invalid_after_mutation',
+        invariants: {
+          targetRef: '40_0',
+          targetResolved: true,
+          targetReachable: false,
+          resolvedRole: 'P',
+        },
+      }),
+    }]);
+    expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).not.toContain('create_heading_from_candidate');
+    expect(plan.planningSummary?.routeSummaries).toContainEqual(
+      expect.objectContaining({
+        route: 'post_bootstrap_heading_convergence',
+        status: 'stopped',
+      }),
+    );
+  });
+
+  it('stops one failed route without stopping unrelated active routes', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 4,
+      textByPage: ['Title', 'Body', 'Body', 'Body'],
+      textCharCount: 900,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 1, role: 'Figure', structRef: '70_0' }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 1,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 1,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 1,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 1,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), {
+      alt_text: 40,
+      link_quality: 45,
+    }), {
+      detectionProfile: snap.detectionProfile,
+      failureProfile: {
+        deterministicIssues: ['link_quality'],
+        semanticIssues: ['alt_text'],
+        manualOnlyIssues: [],
+        primaryFailureFamily: 'structure_reading_order_heavy',
+        secondaryFailureFamilies: ['figure_alt_ownership_heavy'],
+        routingHints: ['prefer_annotation_normalization'],
+      },
+    });
+    const plan = planForRemediation(analysis, snap, [
+      {
+        toolName: 'normalize_nested_figure_containers',
+        stage: 5,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 80,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({ outcome: 'no_effect', note: 'no_structural_change', invariants: { targetRef: '70_0' } }),
+      },
+      {
+        toolName: 'canonicalize_figure_alt_ownership',
+        stage: 6,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 80,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({ outcome: 'no_effect', note: 'no_structural_change', invariants: { targetRef: '70_0' } }),
+      },
+      {
+        toolName: 'set_figure_alt_text',
+        stage: 6,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 80,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'target_not_checker_visible_figure',
+          invariants: { targetRef: '70_0', targetReachable: false, targetIsFigureAfter: false },
+        }),
+      },
+    ]);
+    expect(plan.planningSummary?.routeSummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ route: 'figure_semantics', status: 'stopped' }),
+        expect.objectContaining({ route: 'annotation_link_normalization', status: 'active' }),
+      ]),
+    );
+    expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).toEqual(
+      expect.arrayContaining(['repair_native_link_structure', 'tag_unowned_annotations']),
+    );
+    expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).not.toContain('set_figure_alt_text');
+  });
 });

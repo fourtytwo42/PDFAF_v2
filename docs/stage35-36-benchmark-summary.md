@@ -94,3 +94,45 @@ Next corrective work:
 - tighten route failure proofs so repeated `no_effect` structural tools stop earlier across rounds
 - review whether local scoring should distinguish "honest unresolved structural debt" from remediation regression
 - keep Stage 36 structural benefits, but only preserve score-regressing stages when benefits are both typed and invariant-backed
+
+## Stage 36.5 Corrective Run
+
+Implementation changes:
+
+- added invariant `targetRef` to mutation details
+- suppress repeated invariant-backed `no_effect` signatures across rounds
+- tightened route failure proofs for structural routes
+- stopped relying on legacy note-only structural-benefit preservation
+
+Targeted run:
+
+- `Output/experiment-corpus-baseline/run-stage36.5-target4-2026-04-21-r1`
+
+Targeted runtime:
+
+- mean wall remediation: `15628ms`
+- median wall remediation: `8610ms`
+- p95 wall remediation: `24170ms`
+
+Full run:
+
+- `Output/experiment-corpus-baseline/run-stage36.5-full-2026-04-21-r1`
+
+Full-run score:
+
+- mean: `76.80`
+- median: `81`
+- grades: `17 A / 9 B / 4 D / 20 F`
+
+Full-run runtime:
+
+- mean wall remediation: `26018ms`
+- median wall remediation: `10220ms`
+- p95 wall remediation: `87568ms`
+
+Acceptance read:
+
+- p95 improved from failed Stage 36 `122995ms` to `87568ms`, better than the Stage 32.5 baseline `94875ms`
+- median improved from failed Stage 36 `12191ms` to `10220ms`
+- local mean recovered from failed Stage 36 `74.82` to `76.80`
+- mean runtime is still above the Stage 32.5 baseline, but the retry suppression achieved the primary p95/no-hang goal without weakening invariant truthfulness

@@ -6864,6 +6864,7 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
 def _common_target_invariants(pdf: pikepdf.Pdf, ref: str | None) -> dict:
     if not ref:
         return {
+            "targetRef": None,
             "targetResolved": None,
             "targetReachable": None,
             "resolvedRole": None,
@@ -6877,6 +6878,7 @@ def _common_target_invariants(pdf: pikepdf.Pdf, ref: str | None) -> dict:
     reachable = _is_root_reachable_elem(sr, target) if resolved and isinstance(sr, pikepdf.Dictionary) else False
     resolved_role = _resolved_struct_role(sr, target) if resolved and isinstance(sr, pikepdf.Dictionary) else None
     return {
+        "targetRef": ref,
         "targetResolved": resolved,
         "targetReachable": reachable,
         "resolvedRole": resolved_role,
