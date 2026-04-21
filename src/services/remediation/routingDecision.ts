@@ -20,6 +20,11 @@ export interface RoutingDecision {
   semanticDeferred: boolean;
 }
 
+export interface RoutingFailureDisposition {
+  triggeringSignals?: readonly string[];
+  residualFamilies?: readonly string[];
+}
+
 function categoryScore(
   analysis: AnalysisResult,
   key: ScoredCategory['key'],
@@ -155,6 +160,7 @@ function deriveResidualFamilies(input: {
   postBootstrapHeadingConvergence: boolean;
   fontUnicodeTailRecovery: boolean;
   structureBootstrapAndConformance: boolean;
+  failureDisposition?: RoutingFailureDisposition;
 }): string[] {
   const families: string[] = [];
   if (
@@ -173,12 +179,16 @@ function deriveResidualFamilies(input: {
   if (input.fontUnicodeTailRecovery) {
     families.push('font_embedding_and_unicode');
   }
+  for (const family of input.failureDisposition?.residualFamilies ?? []) {
+    if (!families.includes(family)) families.push(family);
+  }
   return families;
 }
 
 export function deriveRoutingDecision(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
+  failureDisposition?: RoutingFailureDisposition,
 ): RoutingDecision {
   const routes: RemediationRoute[] = [];
   const deferredRoutes: RemediationRoute[] = [];
@@ -271,6 +281,9 @@ export function deriveRoutingDecision(
   pushSignal(signals, 'near_pass_figure_recovery', nearPassFigureRecovery);
   pushSignal(signals, 'zero_heading_figure_recovery', zeroHeadingFigureRecovery);
   pushSignal(signals, 'navigation_or_forms_debt', navigationDebt);
+  for (const signal of failureDisposition?.triggeringSignals ?? []) {
+    pushSignal(signals, signal, true);
+  }
 
   if (fontUnicodeTailRecovery) pushRoute(routes, 'font_unicode_tail_recovery');
   if (fontDominant && !fontUnicodeTailRecovery) pushRoute(routes, 'font_ocr_repair');
@@ -325,6 +338,7 @@ export function deriveRoutingDecision(
       postBootstrapHeadingConvergence,
       fontUnicodeTailRecovery,
       structureBootstrapAndConformance,
+      failureDisposition,
     }),
     deferredRoutes,
     semanticDeferred,

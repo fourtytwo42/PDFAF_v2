@@ -26,7 +26,7 @@ import {
   stage24ZeroHeadingBootstrapEnabled,
 } from '../../config.js';
 import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
-import { buildPlanningSummary, deriveRoutingDecision } from './routingDecision.js';
+import { buildPlanningSummary, deriveRoutingDecision, type RoutingFailureDisposition } from './routingDecision.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 import {
@@ -287,6 +287,143 @@ function isTerminalRouteOutcome(row: AppliedRemediationTool): boolean {
 function hasTypedStructuralBenefit(row: AppliedRemediationTool): boolean {
   const details = parseMutationDetails(row.details);
   return Boolean(details?.structuralBenefits && Object.values(details.structuralBenefits).some(Boolean));
+}
+
+export interface FailureDisposition extends RoutingFailureDisposition {
+  headingCandidateBlocked: boolean;
+  headingMalformedExistingTree: boolean;
+  figureOwnershipTargetBlocked: boolean;
+  checkerVisibleFigureMissingAlt: boolean;
+  tableHeaderOnlyBlocked: boolean;
+  annotationOwnershipBlocked: boolean;
+}
+
+function headingInvariantImproved(detail: PythonMutationDetailPayload): boolean {
+  const inv = detail.invariants;
+  if (!inv) return false;
+  const headingBefore = inv.rootReachableHeadingCountBefore ?? 0;
+  const headingAfter = inv.rootReachableHeadingCountAfter ?? headingBefore;
+  const depthBefore = inv.rootReachableDepthBefore ?? 0;
+  const depthAfter = inv.rootReachableDepthAfter ?? depthBefore;
+  return headingAfter > headingBefore || (depthBefore > 0 && depthAfter > depthBefore);
+}
+
+function isFigureRole(role: string | undefined): boolean {
+  return (role ?? '').replace(/^\//, '').toLowerCase() === 'figure';
+}
+
+function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
+  if (snapshot.checkerFigureTargets && snapshot.checkerFigureTargets.length > 0) {
+    return snapshot.checkerFigureTargets.some(target =>
+      target.reachable &&
+      !target.isArtifact &&
+      isFigureRole(target.resolvedRole ?? target.role) &&
+      !target.hasAlt
+    );
+  }
+  return snapshot.figures.some(figure => !figure.isArtifact && !figure.hasAlt);
+}
+
+function noEffectDetails(row: AppliedRemediationTool): PythonMutationDetailPayload | null {
+  if (row.outcome !== 'no_effect') return null;
+  return parseMutationDetails(row.details);
+}
+
+function noEffectRowsFor(applied: AppliedRemediationTool[], toolNames: ReadonlySet<string>): PythonMutationDetailPayload[] {
+  return applied
+    .filter(row => toolNames.has(row.toolName))
+    .map(noEffectDetails)
+    .filter((detail): detail is PythonMutationDetailPayload => detail !== null);
+}
+
+export function deriveFailureDisposition(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[],
+): FailureDisposition {
+  const signals: string[] = [];
+  const families: string[] = [];
+  const headingDetails = noEffectRowsFor(alreadyApplied, new Set(['create_heading_from_candidate']));
+  const figureOwnershipDetails = noEffectRowsFor(alreadyApplied, new Set([
+    'normalize_nested_figure_containers',
+    'canonicalize_figure_alt_ownership',
+  ]));
+  const tableDetails = noEffectRowsFor(alreadyApplied, new Set(['repair_native_table_headers', 'set_table_header_cells']));
+  const annotationDetails = noEffectRowsFor(alreadyApplied, new Set([
+    'repair_native_link_structure',
+    'tag_unowned_annotations',
+    'normalize_annotation_tab_order',
+  ]));
+
+  const headingCandidateBlocked = headingDetails.some(detail =>
+    !headingInvariantImproved(detail) &&
+    (
+      detail.note === 'role_invalid_after_mutation' ||
+      detail.note === 'heading_not_root_reachable' ||
+      detail.note === 'target_unreachable' ||
+      detail.invariants?.targetReachable === false ||
+      detail.invariants?.headingCandidateReachable === false
+    )
+  );
+  const headingMalformedExistingTree =
+    snapshot.headings.length >= 2 &&
+    analysis.categories.some(category => category.key === 'heading_structure' && category.applicable && category.score < REMEDIATION_CATEGORY_THRESHOLD);
+  const figureOwnershipTargetBlocked = figureOwnershipDetails.filter(detail =>
+    detail.invariants?.targetReachable === false ||
+    detail.invariants?.targetIsFigureAfter === false ||
+    detail.note === 'target_not_checker_visible_figure' ||
+    detail.note === 'figure_ownership_not_preserved'
+  ).length >= 2;
+  const hasCheckerVisibleFigureMissingAlt = checkerVisibleFigureMissingAlt(snapshot);
+  const tableHeaderOnlyBlocked = tableDetails.some(detail =>
+    detail.invariants?.tableTreeValidAfter === false ||
+    detail.note === 'table_tree_still_invalid' ||
+    detail.note === 'direct_cells_under_table_remain'
+  );
+  const annotationOwnershipBlocked = annotationDetails.some(detail => {
+    const inv = detail.invariants;
+    const structParentFlat =
+      typeof inv?.visibleAnnotationsMissingStructParentBefore === 'number' &&
+      inv.visibleAnnotationsMissingStructParentBefore === inv.visibleAnnotationsMissingStructParentAfter;
+    const structureFlat =
+      typeof inv?.visibleAnnotationsMissingStructureBefore === 'number' &&
+      inv.visibleAnnotationsMissingStructureBefore === inv.visibleAnnotationsMissingStructureAfter;
+    return detail.note === 'annotation_ownership_not_preserved' || (structParentFlat && structureFlat);
+  });
+
+  if (headingCandidateBlocked) {
+    signals.push('failure_disposition_heading_target_blocked');
+    families.push('heading_target_blocked');
+  } else if (headingMalformedExistingTree) {
+    signals.push('failure_disposition_heading_malformed_tree');
+    families.push('heading_malformed_existing_tree');
+  }
+  if (figureOwnershipTargetBlocked) {
+    signals.push('failure_disposition_figure_ownership_blocked');
+    families.push('figure_ownership_blocked');
+  } else if (hasCheckerVisibleFigureMissingAlt) {
+    signals.push('failure_disposition_figure_alt_assignable');
+    families.push('figure_alt_missing_on_reachable_figure');
+  }
+  if (tableHeaderOnlyBlocked) {
+    signals.push('failure_disposition_table_tree_invalid');
+    families.push('table_tree_invalid_before_headers');
+  }
+  if (annotationOwnershipBlocked) {
+    signals.push('failure_disposition_annotation_ownership_blocked');
+    families.push('annotation_ownership_blocked');
+  }
+
+  return {
+    headingCandidateBlocked,
+    headingMalformedExistingTree,
+    figureOwnershipTargetBlocked,
+    checkerVisibleFigureMissingAlt: hasCheckerVisibleFigureMissingAlt,
+    tableHeaderOnlyBlocked,
+    annotationOwnershipBlocked,
+    triggeringSignals: signals,
+    residualFamilies: families,
+  };
 }
 
 function noEffectSignature(row: AppliedRemediationTool): string | null {
@@ -707,7 +844,8 @@ export function planForRemediation(
   }
 
   const failCats = failingCategories(analysis);
-  const routing = deriveRoutingDecision(analysis, snapshot);
+  const failureDisposition = deriveFailureDisposition(analysis, snapshot, alreadyApplied);
+  const routing = deriveRoutingDecision(analysis, snapshot, failureDisposition);
   const routedRoutes = [routing.primaryRoute, ...routing.secondaryRoutes].filter(
     (route): route is RemediationRoute => route !== null,
   );
@@ -893,7 +1031,10 @@ export function planForRemediation(
         return { allowed: false, reason: 'missing_precondition' };
       }
     }
-    if (toolName === 'normalize_heading_hierarchy' && !headingNeedsRepair) {
+    if (
+      toolName === 'normalize_heading_hierarchy'
+      && !headingNeedsRepair
+    ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (

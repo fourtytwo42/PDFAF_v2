@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
-import { buildDefaultParams, isToolAllowedByRouteContract, planForRemediation, routeContractFor } from '../../src/services/remediation/planner.js';
+import { buildDefaultParams, deriveFailureDisposition, isToolAllowedByRouteContract, planForRemediation, routeContractFor } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { score } from '../../src/services/scorer/scorer.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, RemediationRoute } from '../../src/types.js';
@@ -102,6 +102,124 @@ describe('planForRemediation', () => {
         expect(isToolAllowedByRouteContract(route, toolName), `${route}:${toolName}`).toBe(false);
       }
     }
+  });
+
+  it('classifies invariant-backed structural failure dispositions', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, role: 'Span', structRef: '70_0' }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Span',
+        resolvedRole: 'Span',
+        structRef: '70_0',
+        reachable: false,
+        directContent: false,
+        parentPath: [],
+      }],
+      tables: [{ hasHeaders: false, headerCount: 0, totalCells: 4, page: 0, structRef: '80_0' }],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 40,
+      alt_text: 40,
+      table_markup: 40,
+      link_quality: 40,
+    });
+    const applied: AppliedRemediationTool[] = [
+      {
+        toolName: 'create_heading_from_candidate',
+        stage: 4,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'role_invalid_after_mutation',
+          invariants: { targetRef: '40_0', targetReachable: false },
+        }),
+      },
+      {
+        toolName: 'normalize_nested_figure_containers',
+        stage: 5,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'target_not_checker_visible_figure',
+          invariants: { targetRef: '70_0', targetReachable: false, targetIsFigureAfter: false },
+        }),
+      },
+      {
+        toolName: 'canonicalize_figure_alt_ownership',
+        stage: 5,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'target_not_checker_visible_figure',
+          invariants: { targetRef: '70_0', targetReachable: false, targetIsFigureAfter: false },
+        }),
+      },
+      {
+        toolName: 'set_table_header_cells',
+        stage: 4,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'table_tree_still_invalid',
+          invariants: { tableTreeValidAfter: false },
+        }),
+      },
+      {
+        toolName: 'tag_unowned_annotations',
+        stage: 8,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'annotation_ownership_not_preserved',
+          invariants: {
+            visibleAnnotationsMissingStructParentBefore: 2,
+            visibleAnnotationsMissingStructParentAfter: 2,
+            visibleAnnotationsMissingStructureBefore: 1,
+            visibleAnnotationsMissingStructureAfter: 1,
+          },
+        }),
+      },
+    ];
+
+    const disposition = deriveFailureDisposition(analysis, snap, applied);
+    expect(disposition.headingCandidateBlocked).toBe(true);
+    expect(disposition.figureOwnershipTargetBlocked).toBe(true);
+    expect(disposition.checkerVisibleFigureMissingAlt).toBe(false);
+    expect(disposition.tableHeaderOnlyBlocked).toBe(true);
+    expect(disposition.annotationOwnershipBlocked).toBe(true);
+    expect(disposition.triggeringSignals).toEqual(expect.arrayContaining([
+      'failure_disposition_heading_target_blocked',
+      'failure_disposition_figure_ownership_blocked',
+      'failure_disposition_table_tree_invalid',
+      'failure_disposition_annotation_ownership_blocked',
+    ]));
   });
 
   it('plans metadata tools when title_language fails', () => {
@@ -207,6 +325,40 @@ describe('planForRemediation', () => {
       targetRef: '41_0',
       level: 1,
       text: 'Program Overview',
+    });
+  });
+
+  it('keeps the final configured heading bootstrap candidate eligible after prior no-effect attempts', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 4,
+      textByPage: ['EXECUTIVE SUMMARY', 'Overview', 'Findings', 'Recommendations'],
+      textCharCount: 800,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'EXECUTIVE SUMMARY', page: 0, structRef: '40_0', bbox: [40, 710, 220, 734] },
+        { tag: 'P', text: 'Program Overview', page: 0, structRef: '41_0', bbox: [40, 670, 240, 692] },
+        { tag: 'P', text: 'Key Findings', page: 1, structRef: '42_0', bbox: [40, 670, 240, 692] },
+        { tag: 'P', text: 'Recommendations', page: 2, structRef: '43_0', bbox: [40, 670, 240, 692] },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 35,
+    });
+    const applied: AppliedRemediationTool[] = [
+      { toolName: 'create_heading_from_candidate', stage: 4, round: 1, scoreBefore: 58, scoreAfter: 58, delta: 0, outcome: 'no_effect' },
+      { toolName: 'create_heading_from_candidate', stage: 4, round: 1, scoreBefore: 58, scoreAfter: 58, delta: 0, outcome: 'no_effect' },
+    ];
+
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap, applied)).toEqual({
+      targetRef: '42_0',
+      level: 2,
+      text: 'Key Findings',
     });
   });
 
@@ -633,6 +785,134 @@ describe('planForRemediation', () => {
     expect(names).toContain('canonicalize_figure_alt_ownership');
     expect(names).not.toContain('set_figure_alt_text');
     expect(plan.stages.flatMap(s => s.tools).every(tool => tool.route === 'near_pass_figure_recovery')).toBe(true);
+  });
+
+  it('classifies broken checker-visible figure ownership without blocking the figure route', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 2,
+      textByPage: ['Title', 'Body'],
+      textCharCount: 500,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, role: 'Span', structRef: '70_0' }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Span',
+        resolvedRole: 'Span',
+        structRef: '70_0',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Span@70_0'],
+      }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 1,
+          treeFigureMissingForExtractedFigures: true,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), { alt_text: 40 }), {
+      detectionProfile: snap.detectionProfile,
+      failureProfile: {
+        deterministicIssues: [],
+        semanticIssues: ['alt_text'],
+        manualOnlyIssues: [],
+        primaryFailureFamily: 'figure_alt_ownership_heavy',
+        secondaryFailureFamilies: [],
+        routingHints: [],
+      },
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('normalize_nested_figure_containers');
+    expect(names).toContain('canonicalize_figure_alt_ownership');
+    expect(plan.planningSummary?.triggeringSignals).not.toContain('failure_disposition_figure_alt_assignable');
+  });
+
+  it('schedules alt assignment when a checker-visible figure is reachable and missing alt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 2,
+      textByPage: ['Title', 'Body'],
+      textCharCount: 500,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, role: 'Figure', structRef: '70_0' }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        structRef: '70_0',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Figure@70_0'],
+      }],
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), { alt_text: 40 }), {
+      failureProfile: {
+        deterministicIssues: [],
+        semanticIssues: ['alt_text'],
+        manualOnlyIssues: [],
+        primaryFailureFamily: 'figure_alt_ownership_heavy',
+        secondaryFailureFamilies: [],
+        routingHints: [],
+      },
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('set_figure_alt_text');
+    expect(plan.planningSummary?.triggeringSignals).toContain('failure_disposition_figure_alt_assignable');
   });
 
   it('stops a route when its failure proof is already satisfied', () => {
