@@ -4,7 +4,7 @@ import type { EditorIssue } from '../../types/editor';
 export type EditIssueFixPromptMode = 'metadata' | 'alt-text' | 'info';
 
 export function normalizeEditIssueCategory(category: string): string {
-  return category.toLowerCase().trim().replaceAll(/\s+/g, '_');
+  return category.toLowerCase().trim().replaceAll(/[\s/-]+/g, '_');
 }
 
 export function isMetadataIssueCategory(category: string): boolean {
@@ -21,8 +21,39 @@ export function isAltTextIssueCategory(category: string): boolean {
   return normalizeEditIssueCategory(category) === 'alt_text';
 }
 
+function issueDetailText(issue: EditorIssue): string {
+  return `${issue.message} ${issue.whyItMatters ?? ''}`.toLowerCase();
+}
+
+export function issueNeedsDocumentTitle(issue: EditorIssue): boolean {
+  return /\btitle\b|\/title/.test(issueDetailText(issue));
+}
+
+export function issueNeedsDocumentLanguage(issue: EditorIssue): boolean {
+  return /\blanguage\b|\blang\b|\/lang/.test(issueDetailText(issue));
+}
+
+export function issueNeedsPdfUaIdentification(issue: EditorIssue): boolean {
+  return /pdfuaid|pdf_ua|pdf-ua|pdf\/ua conformance|pdf\/ua identification|pdf\/ua metadata/.test(
+    issueDetailText(issue),
+  );
+}
+
+export function isMetadataRepairIssue(issue: EditorIssue): boolean {
+  if (isAltTextIssueCategory(issue.category)) return false;
+  if (isMetadataIssueCategory(issue.category)) return true;
+
+  if (normalizeEditIssueCategory(issue.category) !== 'pdf_ua_compliance') return false;
+
+  return (
+    issueNeedsDocumentTitle(issue) ||
+    issueNeedsDocumentLanguage(issue) ||
+    issueNeedsPdfUaIdentification(issue)
+  );
+}
+
 export function getEditIssueFixPromptMode(issue: EditorIssue): EditIssueFixPromptMode {
-  if (isMetadataIssueCategory(issue.category)) return 'metadata';
+  if (isMetadataRepairIssue(issue)) return 'metadata';
   if (isAltTextIssueCategory(issue.category) && issue.target?.objectRef) return 'alt-text';
   return 'info';
 }
@@ -34,6 +65,10 @@ export function validateEditFix(fix: EditFixInstruction): string | null {
 
   if (fix.type === 'set_document_language' && fix.language.trim().length === 0) {
     return 'Document language is required.';
+  }
+
+  if (fix.type === 'set_pdfua_identification' && fix.language.trim().length === 0) {
+    return 'PDF/UA identification needs a document language.';
   }
 
   if (fix.type === 'set_figure_alt_text') {
@@ -81,11 +116,18 @@ export function editFixKey(fix: EditFixInstruction): string {
   return fix.type;
 }
 
-function metadataFixesCoverIssue(issue: EditorIssue, hasTitleFix: boolean, hasLanguageFix: boolean): boolean {
-  const detailText = `${issue.message} ${issue.whyItMatters ?? ''}`.toLowerCase();
+function metadataFixesCoverIssue(
+  issue: EditorIssue,
+  hasTitleFix: boolean,
+  hasLanguageFix: boolean,
+  hasPdfUaFix: boolean,
+): boolean {
   const categoryText = issue.category.toLowerCase();
-  const needsTitle = /\btitle\b|\/title/.test(detailText);
-  const needsLanguage = /\blanguage\b|\blang\b|\/lang/.test(detailText);
+  const needsTitle = issueNeedsDocumentTitle(issue);
+  const needsLanguage = issueNeedsDocumentLanguage(issue);
+  const needsPdfUa = issueNeedsPdfUaIdentification(issue);
+
+  if (needsPdfUa) return hasPdfUaFix;
 
   if (needsTitle && needsLanguage) return hasTitleFix && hasLanguageFix;
   if (needsTitle) return hasTitleFix;
@@ -103,7 +145,8 @@ export function applyPendingFixStateToIssues(
   if (fixes.length === 0) return issues;
 
   const hasTitleFix = fixes.some((fix) => fix.type === 'set_document_title');
-  const hasLanguageFix = fixes.some((fix) => fix.type === 'set_document_language');
+  const hasPdfUaFix = fixes.some((fix) => fix.type === 'set_pdfua_identification');
+  const hasLanguageFix = fixes.some((fix) => fix.type === 'set_document_language') || hasPdfUaFix;
   const figureRefs = new Set(
     fixes
       .filter((fix): fix is Extract<EditFixInstruction, { objectRef: string }> => 'objectRef' in fix)
@@ -112,7 +155,8 @@ export function applyPendingFixStateToIssues(
 
   return issues.map((issue) => {
     const metadataReady =
-      isMetadataIssueCategory(issue.category) && metadataFixesCoverIssue(issue, hasTitleFix, hasLanguageFix);
+      isMetadataRepairIssue(issue) &&
+      metadataFixesCoverIssue(issue, hasTitleFix, hasLanguageFix, hasPdfUaFix);
     const figureReady =
       isAltTextIssueCategory(issue.category) && Boolean(issue.target?.objectRef && figureRefs.has(issue.target.objectRef));
 

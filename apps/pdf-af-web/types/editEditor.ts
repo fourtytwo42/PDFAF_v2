@@ -27,6 +27,10 @@ export type EditFixInstruction =
       language: string;
     }
   | {
+      type: 'set_pdfua_identification';
+      language: string;
+    }
+  | {
       type: 'set_figure_alt_text';
       objectRef: string;
       altText: string;

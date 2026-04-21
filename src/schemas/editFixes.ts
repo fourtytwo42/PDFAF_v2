@@ -12,6 +12,10 @@ export const editFixInstructionSchema = z.discriminatedUnion('type', [
     language: nonEmptyString,
   }),
   z.object({
+    type: z.literal('set_pdfua_identification'),
+    language: nonEmptyString,
+  }),
+  z.object({
     type: z.literal('set_figure_alt_text'),
     objectRef: nonEmptyString,
     altText: nonEmptyString,

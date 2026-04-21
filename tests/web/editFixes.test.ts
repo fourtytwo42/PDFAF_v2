@@ -27,6 +27,7 @@ describe('edit fix helpers', () => {
   it('validates required metadata and alt fields', () => {
     expect(validateEditFix({ type: 'set_document_title', title: '  ' })).toMatch(/title/i);
     expect(validateEditFix({ type: 'set_document_language', language: '' })).toMatch(/language/i);
+    expect(validateEditFix({ type: 'set_pdfua_identification', language: '' })).toMatch(/pdf\/ua/i);
     expect(
       validateEditFix({ type: 'set_figure_alt_text', objectRef: 'fig-1', altText: '' }),
     ).toMatch(/alt text/i);
@@ -36,6 +37,22 @@ describe('edit fix helpers', () => {
   it('classifies issue prompt modes by available guided fix support', () => {
     expect(getEditIssueFixPromptMode(issue({ category: 'Title and Language' }))).toBe('metadata');
     expect(getEditIssueFixPromptMode(issue({ category: 'title_language' }))).toBe('metadata');
+    expect(
+      getEditIssueFixPromptMode(
+        issue({
+          category: 'PDF/UA Compliance',
+          message: 'Document language (/Lang) is not specified.',
+        }),
+      ),
+    ).toBe('metadata');
+    expect(
+      getEditIssueFixPromptMode(
+        issue({
+          category: 'PDF/UA Compliance',
+          message: 'XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).',
+        }),
+      ),
+    ).toBe('metadata');
     expect(
       getEditIssueFixPromptMode(issue({ category: 'Alt Text', target: { objectRef: 'fig-1' } })),
     ).toBe('alt-text');
@@ -111,5 +128,31 @@ describe('edit fix helpers', () => {
       { type: 'set_document_language', language: 'en-US' },
     ]);
     expect(complete[0]?.fixState).toBe('ready');
+  });
+
+  it('marks PDF/UA language and identification findings ready with matching metadata fixes', () => {
+    const issues = [
+      issue({
+        id: 'language',
+        category: 'PDF/UA Compliance',
+        message: 'Document language (/Lang) is not specified.',
+      }),
+      issue({
+        id: 'pdfua',
+        category: 'PDF/UA Compliance',
+        message: 'XMP metadata does not declare PDF/UA conformance (pdfuaid:part missing).',
+      }),
+    ];
+
+    const languageOnly = applyPendingFixStateToIssues(issues, [
+      { type: 'set_document_language', language: 'en-US' },
+    ]);
+    expect(languageOnly.find((item) => item.id === 'language')?.fixState).toBe('ready');
+    expect(languageOnly.find((item) => item.id === 'pdfua')?.fixState).toBe('needs-input');
+
+    const pdfUa = applyPendingFixStateToIssues(issues, [
+      { type: 'set_pdfua_identification', language: 'en-US' },
+    ]);
+    expect(pdfUa.map((item) => item.fixState)).toEqual(['ready', 'ready']);
   });
 });

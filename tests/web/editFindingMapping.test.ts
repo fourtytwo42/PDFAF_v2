@@ -92,4 +92,21 @@ describe('edit finding mapping', () => {
 
     expect(issues[0]?.bounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
   });
+
+  it('does not surface unevaluated contrast as an open repair issue', () => {
+    const issues = mapForEdit([
+      finding({
+        id: 'contrast-not-measured',
+        category: 'color_contrast',
+        title: 'Color contrast was not evaluated',
+        summary: 'Color contrast was not evaluated (no pixel sampling in this build).',
+        severity: 'minor',
+      }),
+    ]);
+
+    expect(issues[0]).toMatchObject({
+      severity: 'info',
+      fixState: 'fixed',
+    });
+  });
 });

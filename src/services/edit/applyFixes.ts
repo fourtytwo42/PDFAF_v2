@@ -104,6 +104,14 @@ export async function applyEditFixes(
         continue;
       }
 
+      if (fix.type === 'set_pdfua_identification') {
+        const next = await metadataTools.setPdfUaIdentification(currentBuffer, fix.language);
+        const applied = !next.equals(currentBuffer);
+        currentBuffer = next;
+        appliedFixes.push({ type: fix.type, outcome: applied ? 'applied' : 'no_effect' });
+        continue;
+      }
+
       const next = await applyFigureMutation(currentBuffer, fix);
       if (next.applied) {
         currentBuffer = next.buffer;

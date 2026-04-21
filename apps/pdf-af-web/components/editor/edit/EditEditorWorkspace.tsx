@@ -15,7 +15,7 @@ import {
   applyPendingFixStateToIssues,
   getEditIssueFixPromptMode,
   isAltTextIssueCategory,
-  isMetadataIssueCategory,
+  isMetadataRepairIssue,
 } from '../../../lib/editor/editFixes';
 import { computeReadinessSummary, filterEditorIssues, sortEditorIssues } from '../../../lib/editor/issues';
 import { useEditEditorStore } from '../../../stores/editEditor';
@@ -278,6 +278,14 @@ function DocumentFixPanel({
         >
           Queue language
         </button>
+        <button
+          type="button"
+          disabled={disabled || language.trim().length === 0}
+          className="focus-ring h-8 rounded-full border border-[color:var(--surface-border)] px-3 text-xs font-semibold text-[var(--foreground)] disabled:opacity-45"
+          onClick={() => onUpsertFix({ type: 'set_pdfua_identification', language })}
+        >
+          Queue PDF/UA metadata
+        </button>
       </div>
     </div>
   );
@@ -419,9 +427,10 @@ function IssueInspector({
   const [altText, setAltText] = useState('');
   const objectRef = issue?.target?.objectRef;
   const isAltIssue = issue ? isAltTextIssueCategory(issue.category) : false;
-  const isMetadataIssue = issue ? isMetadataIssueCategory(issue.category) : false;
+  const isMetadataIssue = issue ? isMetadataRepairIssue(issue) : false;
   const titleQueued = pendingFixes.some((fix) => fix.type === 'set_document_title');
   const languageQueued = pendingFixes.some((fix) => fix.type === 'set_document_language');
+  const pdfUaQueued = pendingFixes.some((fix) => fix.type === 'set_pdfua_identification');
 
   return (
     <EditorInspector title="Review">
@@ -520,13 +529,23 @@ function IssueInspector({
                 >
                   Queue language fix
                 </button>
-                {titleQueued || languageQueued ? (
+                <button
+                  type="button"
+                  disabled={disabled || language.trim().length === 0}
+                  className="focus-ring h-9 rounded-full border border-[color:var(--surface-border)] px-3 text-xs font-semibold text-[var(--foreground)] disabled:opacity-45"
+                  onClick={() => onUpsertFix({ type: 'set_pdfua_identification', language })}
+                >
+                  Queue PDF/UA metadata
+                </button>
+                {titleQueued || languageQueued || pdfUaQueued ? (
                   <p className="text-xs font-semibold text-[var(--accent)]">
-                    {titleQueued && languageQueued
-                      ? 'Title and language fixes queued.'
-                      : titleQueued
-                        ? 'Title fix queued.'
-                        : 'Language fix queued.'}
+                    {pdfUaQueued
+                      ? 'PDF/UA metadata fix queued.'
+                      : titleQueued && languageQueued
+                        ? 'Title and language fixes queued.'
+                        : titleQueued
+                          ? 'Title fix queued.'
+                          : 'Language fix queued.'}
                   </p>
                 ) : null}
               </div>
@@ -642,6 +661,7 @@ function IssueFixPrompt({
   const objectRef = issue.target?.objectRef;
   const titleQueued = pendingFixes.some((fix) => fix.type === 'set_document_title');
   const languageQueued = pendingFixes.some((fix) => fix.type === 'set_document_language');
+  const pdfUaQueued = pendingFixes.some((fix) => fix.type === 'set_pdfua_identification');
   const figureQueued = Boolean(
     objectRef && pendingFixes.some((fix) => 'objectRef' in fix && fix.objectRef === objectRef),
   );
@@ -727,13 +747,23 @@ function IssueFixPrompt({
             >
               Queue language fix
             </button>
-            {titleQueued || languageQueued ? (
+            <button
+              type="button"
+              disabled={disabled || language.trim().length === 0}
+              className="focus-ring h-9 rounded-full border border-[color:var(--surface-border)] px-3 text-sm font-semibold text-[var(--foreground)] disabled:opacity-45"
+              onClick={() => onUpsertFix({ type: 'set_pdfua_identification', language })}
+            >
+              Queue PDF/UA metadata
+            </button>
+            {titleQueued || languageQueued || pdfUaQueued ? (
               <p className="text-xs font-semibold text-[var(--accent)]">
-                {titleQueued && languageQueued
-                  ? 'Title and language fixes are queued.'
-                  : titleQueued
-                    ? 'Title fix is queued.'
-                    : 'Language fix is queued.'}
+                {pdfUaQueued
+                  ? 'PDF/UA metadata fix is queued.'
+                  : titleQueued && languageQueued
+                    ? 'Title and language fixes are queued.'
+                    : titleQueued
+                      ? 'Title fix is queued.'
+                      : 'Language fix is queued.'}
               </p>
             ) : null}
           </div>
