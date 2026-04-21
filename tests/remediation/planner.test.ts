@@ -562,8 +562,84 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, []);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(plan.planningSummary?.primaryRoute).toBe('near_pass_figure_recovery');
+    expect(plan.planningSummary?.routeSummaries).toContainEqual({
+      route: 'near_pass_figure_recovery',
+      status: 'active',
+      scheduledTools: expect.arrayContaining(['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership']),
+    });
     expect(names).toContain('normalize_nested_figure_containers');
     expect(names).toContain('canonicalize_figure_alt_ownership');
+    expect(names).not.toContain('set_figure_alt_text');
+    expect(plan.stages.flatMap(s => s.tools).every(tool => tool.route === 'near_pass_figure_recovery')).toBe(true);
+  });
+
+  it('stops a route when its failure proof is already satisfied', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 3,
+      textByPage: ['Title', 'Body', 'Body'],
+      textCharCount: 900,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 1, structRef: '10_0' }],
+    };
+    const base = score(snap, META);
+    const analysis = withRoutingContext(
+      {
+        ...withCategoryScores(base, { alt_text: 50 }),
+        score: 88,
+        grade: 'B',
+      },
+      {
+        structuralClassification: {
+          structureClass: 'native_tagged',
+          contentProfile: {
+            pageBucket: '1-5',
+            dominantContent: 'mixed',
+            hasStructureTree: true,
+            hasBookmarks: false,
+            hasFigures: true,
+            hasTables: false,
+            hasForms: false,
+            annotationRisk: false,
+            taggedContentRisk: false,
+            listStructureRisk: false,
+          },
+          fontRiskProfile: {
+            riskLevel: 'low',
+            riskyFontCount: 0,
+            missingUnicodeFontCount: 0,
+            unembeddedFontCount: 0,
+            ocrTextLayerSuspected: false,
+          },
+          confidence: 'high',
+        },
+        failureProfile: {
+          deterministicIssues: [],
+          semanticIssues: ['alt_text'],
+          manualOnlyIssues: ['alt_text'],
+          primaryFailureFamily: 'near_pass_residual',
+          secondaryFailureFamilies: ['figure_alt_ownership_heavy'],
+          routingHints: [],
+        },
+      },
+    );
+    const plan = planForRemediation(analysis, snap, [
+      { toolName: 'normalize_nested_figure_containers', stage: 4, round: 1, scoreBefore: 88, scoreAfter: 88, delta: 0, outcome: 'no_effect' },
+      { toolName: 'canonicalize_figure_alt_ownership', stage: 4, round: 1, scoreBefore: 88, scoreAfter: 88, delta: 0, outcome: 'no_effect' },
+    ]);
+    expect(plan.planningSummary?.routeSummaries).toContainEqual({
+      route: 'near_pass_figure_recovery',
+      status: 'stopped',
+      reason: 'route_failure_proof(near_pass_figure_recovery:normalize_nested_figure_containers,canonicalize_figure_alt_ownership)',
+      scheduledTools: [],
+    });
+    expect(plan.stages.flatMap(s => s.tools.map(t => t.toolName))).not.toEqual(
+      expect.arrayContaining(['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership']),
+    );
   });
 
   it('routes tagged heading debt into post_bootstrap_heading_convergence', () => {

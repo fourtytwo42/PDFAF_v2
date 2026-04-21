@@ -242,6 +242,72 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('keeps score-regressing stages when typed structural benefits are present and invariants pass', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 77, confidence: 'medium' }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 77,
+        delta: -3,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('does not keep score-regressing stages when claimed structural benefits have failing invariants', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium' }),
+      after: makeAnalysis({ score: 77, confidence: 'medium' }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 77,
+        delta: -3,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: false,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_score(77)',
+    });
+  });
+
   it('keeps score-regressing stages when checker-facing link semantics improve', () => {
     const beforeSnapshot: DocumentSnapshot = {
       ...makeSnapshot({ depth: 2 }),

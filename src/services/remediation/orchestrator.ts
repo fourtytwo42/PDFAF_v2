@@ -45,6 +45,7 @@ import {
   buildDefaultParams,
   deriveFallbackDocumentTitle,
   isProtectedZeroHeadingConvergence,
+  isToolAllowedByRouteContract,
   planForRemediation,
 } from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
@@ -188,15 +189,39 @@ function hasAcrobatAltOwnershipRisk(snapshot: DocumentSnapshot): boolean {
     + (risks?.orphanedAltEmptyElementCount ?? 0)) > 0;
 }
 
+function mutationInvariantsPassForStructuralBenefit(detail: PythonMutationDetailPayload): boolean {
+  const inv = detail.invariants;
+  if (!inv) return true;
+  if (inv.targetResolved === false) return false;
+  if (inv.targetReachable === false) return false;
+  if (inv.ownershipPreserved === false) return false;
+  if (inv.tableTreeValidAfter === false) return false;
+  if (detail.structuralBenefits?.figureAltAttachedToReachableFigure && inv.targetHasAltAfter !== true) return false;
+  if (
+    (detail.structuralBenefits?.figureOwnershipImproved || detail.structuralBenefits?.figureAltAttachedToReachableFigure) &&
+    inv.targetIsFigureAfter === false
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function stageHasCheckerFacingStructuralBenefit(input: {
   beforeSnapshot?: DocumentSnapshot;
   afterSnapshot?: DocumentSnapshot;
   stageApplied: AppliedRemediationTool[];
 }): boolean {
   const { beforeSnapshot, afterSnapshot, stageApplied } = input;
-  if (!beforeSnapshot || !afterSnapshot) return false;
   const toolNames = new Set(stageApplied.map(tool => tool.toolName));
   const details = stageApplied.map(tool => parseMutationDetails(tool.details)).filter(Boolean);
+  if (details.some(detail =>
+    detail?.structuralBenefits &&
+    Object.values(detail.structuralBenefits).some(Boolean) &&
+    mutationInvariantsPassForStructuralBenefit(detail)
+  )) {
+    return true;
+  }
+  if (!beforeSnapshot || !afterSnapshot) return false;
 
   if ([...toolNames].some(name => HEADING_STRUCTURE_TOOLS.has(name))) {
     const beforeParity = buildIcjiaParity(beforeSnapshot);
@@ -487,6 +512,7 @@ function pythonMutationDetails(
   if (op.note) payload['note'] = op.note;
   if (op.error) payload['error'] = op.error;
   if (op.invariants) payload['invariants'] = op.invariants;
+  if (op.structuralBenefits) payload['structuralBenefits'] = op.structuralBenefits;
   if (op.debug) payload['debug'] = op.debug;
   return JSON.stringify(payload);
 }
@@ -635,6 +661,14 @@ export async function runSingleTool(
   const { toolName, params } = tool;
   const beforeHash = await bufferSha256(buffer);
   const started = performance.now();
+  if (!isToolAllowedByRouteContract(tool.route, toolName)) {
+    return {
+      buffer,
+      outcome: 'rejected',
+      details: `route_contract_prohibited(${tool.route}:${toolName})`,
+      durationMs: performance.now() - started,
+    };
+  }
 
   try {
     switch (toolName) {
@@ -1436,6 +1470,7 @@ export async function remediatePdf(
           if (protectedZeroHeading) {
             handledInProtectedBundle.add('normalize_heading_hierarchy');
             handledInProtectedBundle.add('repair_structure_conformance');
+            const protectedHeadingAttemptedRefs = new Set<string>();
             while (true) {
               const headingParams = buildDefaultParams(
                 tool.toolName,
@@ -1443,7 +1478,13 @@ export async function remediatePdf(
                 workingSnapshot,
                 [...appliedTools, ...stageApplied],
               );
-              if (typeof headingParams['targetRef'] !== 'string' || headingParams['targetRef'].length === 0) break;
+              const targetRef = headingParams['targetRef'];
+              if (typeof targetRef !== 'string' || targetRef.length === 0) break;
+              if (protectedHeadingAttemptedRefs.has(targetRef)) {
+                noteEarlyExit(runtimeSummary, 'protected_zero_heading_repeated_target');
+                break;
+              }
+              protectedHeadingAttemptedRefs.add(targetRef);
 
               runtimeSummary.boundedWork.headingConvergenceAttemptCount += 1;
               const headingTool: PlannedRemediationTool = { ...tool, params: headingParams };
@@ -1608,7 +1649,16 @@ export async function remediatePdf(
               ...tool,
               params: Object.keys(initialParams).length > 0 ? initialParams : tool.params,
             };
+            const attemptedRefs = new Set<string>();
             while (activeTool) {
+              const activeRef = activeTool.params['targetRef'];
+              if (typeof activeRef === 'string') {
+                if (attemptedRefs.has(activeRef)) {
+                  noteEarlyExit(runtimeSummary, 'heading_repeated_target');
+                  break;
+                }
+                attemptedRefs.add(activeRef);
+              }
               const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, workingSnapshot);
               buf = next;
               stageApplied.push({

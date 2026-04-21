@@ -542,6 +542,7 @@ export interface PlannedRemediationTool {
   toolName: string;
   params: Record<string, unknown>;
   rationale: string;
+  route?: RemediationRoute;
 }
 
 export interface RemediationStagePlan {
@@ -594,11 +595,22 @@ export interface PythonMutationInvariantPayload {
   visibleAnnotationsMissingStructureAfter?: number;
 }
 
+export interface PythonStructuralBenefitPayload {
+  headingReachabilityImproved?: boolean;
+  headingHierarchyImproved?: boolean;
+  figureOwnershipImproved?: boolean;
+  figureAltAttachedToReachableFigure?: boolean;
+  tableValidityImproved?: boolean;
+  annotationOwnershipImproved?: boolean;
+  readingOrderDepthImproved?: boolean;
+}
+
 export interface PythonMutationDetailPayload {
   outcome: RemediationToolOutcome;
   note?: string;
   error?: string;
   invariants?: PythonMutationInvariantPayload;
+  structuralBenefits?: PythonStructuralBenefitPayload;
   debug?: {
     hasStructTreeRoot?: boolean;
     parentTreeEntries?: number;
@@ -785,6 +797,12 @@ export interface PlanningSummary {
   residualFamilies?: string[];
   includeOptionalRemediation?: boolean;
   scheduledTools: string[];
+  routeSummaries?: Array<{
+    route: RemediationRoute;
+    status: 'active' | 'stopped';
+    reason?: string;
+    scheduledTools: string[];
+  }>;
   skippedTools: Array<{
     toolName: string;
     reason: PlanningSkipReason;

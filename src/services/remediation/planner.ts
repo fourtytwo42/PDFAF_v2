@@ -163,6 +163,66 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   ],
 };
 
+interface RouteContract {
+  allowedTools: readonly string[];
+  prohibitedTools?: readonly string[];
+  failureTools?: readonly string[];
+}
+
+const ROUTE_CONTRACTS: Partial<Record<RemediationRoute, RouteContract>> = {
+  structure_bootstrap_and_conformance: {
+    allowedTools: ROUTE_TOOL_MAP.structure_bootstrap_and_conformance,
+    failureTools: ['synthesize_basic_structure_from_layout', 'repair_structure_conformance'],
+  },
+  post_bootstrap_heading_convergence: {
+    allowedTools: ROUTE_TOOL_MAP.post_bootstrap_heading_convergence,
+    prohibitedTools: ['set_figure_alt_text', 'mark_figure_decorative'],
+    failureTools: ['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'],
+  },
+  figure_semantics: {
+    allowedTools: ROUTE_TOOL_MAP.figure_semantics,
+    failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
+  },
+  near_pass_figure_recovery: {
+    allowedTools: ROUTE_TOOL_MAP.near_pass_figure_recovery,
+    prohibitedTools: ['set_figure_alt_text', 'mark_figure_decorative', 'retag_as_figure'],
+    failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership'],
+  },
+  annotation_link_normalization: {
+    allowedTools: ROUTE_TOOL_MAP.annotation_link_normalization,
+    failureTools: ['repair_native_link_structure', 'tag_unowned_annotations', 'set_link_annotation_contents'],
+  },
+  native_structure_repair: {
+    allowedTools: ROUTE_TOOL_MAP.native_structure_repair,
+    failureTools: ['repair_native_table_headers', 'set_table_header_cells'],
+  },
+};
+
+export function isToolAllowedByRouteContract(route: RemediationRoute | undefined, toolName: string): boolean {
+  if (!route) return true;
+  const contract = ROUTE_CONTRACTS[route];
+  if (!contract) return true;
+  if (contract.prohibitedTools?.includes(toolName)) return false;
+  return contract.allowedTools.includes(toolName);
+}
+
+function routeFailureProof(
+  route: RemediationRoute,
+  alreadyApplied: AppliedRemediationTool[],
+): string | null {
+  const contract = ROUTE_CONTRACTS[route];
+  if (!contract?.failureTools?.length) return null;
+  const exhausted = contract.failureTools.filter(toolName => {
+    const attempts = alreadyApplied.filter(row => row.toolName === toolName);
+    if (attempts.length === 0) return false;
+    return attempts.every(row => row.outcome === 'no_effect' || row.outcome === 'failed' || row.outcome === 'rejected');
+  });
+  if (exhausted.length >= contract.failureTools.length) {
+    return `route_failure_proof(${route}:${exhausted.join(',')})`;
+  }
+  return null;
+}
+
 const DETERMINISTIC_FIGURE_TOOLS = new Set([
   'normalize_nested_figure_containers',
   'canonicalize_figure_alt_ownership',
@@ -489,9 +549,14 @@ export function planForRemediation(
 
   const failCats = failingCategories(analysis);
   const routing = deriveRoutingDecision(analysis, snapshot);
-  const activeRoutes = [routing.primaryRoute, ...routing.secondaryRoutes].filter(
+  const routedRoutes = [routing.primaryRoute, ...routing.secondaryRoutes].filter(
     (route): route is RemediationRoute => route !== null,
   );
+  const stoppedRoutes = routedRoutes
+    .map(route => ({ route, reason: routeFailureProof(route, alreadyApplied) }))
+    .filter((row): row is { route: RemediationRoute; reason: string } => row.reason !== null);
+  const stoppedRouteSet = new Set(stoppedRoutes.map(row => row.route));
+  const activeRoutes = routedRoutes.filter(route => !stoppedRouteSet.has(route));
   const toolSet = new Map<string, PlannedRemediationTool>();
   const skippedTools = new Map<string, PlanningSkipReason>();
   const addSkipped = (toolName: string, reason: PlanningSkipReason) => {
@@ -756,6 +821,10 @@ export function planForRemediation(
   for (const route of activeRoutes) {
     const tools = ROUTE_TOOL_MAP[route] ?? [];
     for (const toolName of tools) {
+      if (!isToolAllowedByRouteContract(route, toolName)) {
+        addSkipped(toolName, 'route_not_active');
+        continue;
+      }
       const routeOwning = Object.entries(ROUTE_TOOL_MAP)
         .filter(([, routeTools]) => routeTools.includes(toolName))
         .map(([routeName]) => routeName as RemediationRoute);
@@ -793,6 +862,7 @@ export function planForRemediation(
         toolName,
         params,
         rationale: `Run deterministic route "${route}" for ${routing.triggeringSignals.join(', ') || 'residual debt'}.`,
+        route,
       });
     }
   }
@@ -817,6 +887,7 @@ export function planForRemediation(
         toolName: 'create_heading_from_candidate',
         params: fallbackParams,
         rationale: 'Protected zero-heading convergence fallback when heading bootstrap candidate selection remains eligible.',
+        route: 'post_bootstrap_heading_convergence',
       });
     }
   }
@@ -841,6 +912,7 @@ export function planForRemediation(
         toolName: synToolName,
         params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
         rationale: 'shallow-native-tagged structure depth forces synthesis to rebuild root-reachable tree',
+        route: 'structure_bootstrap_and_conformance',
       });
     }
     if (
@@ -853,11 +925,17 @@ export function planForRemediation(
         toolName: synToolName,
         params: buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied),
         rationale: 'native-tagged P-only tree with zero headings triggers bounded heading synthesis',
+        route: 'structure_bootstrap_and_conformance',
       });
     }
   }
 
-  if (categoryFailing('alt_text') && structurePrimary && snapshot.figures.length > 0) {
+  if (
+    categoryFailing('alt_text')
+    && structurePrimary
+    && snapshot.figures.length > 0
+    && routeFailureProof('figure_semantics', alreadyApplied) === null
+  ) {
     for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text']) {
       if (toolSet.has(toolName)) continue;
       const routeGate = toolIsRouteRelevant(toolName);
@@ -882,6 +960,7 @@ export function planForRemediation(
         toolName,
         params,
         rationale: 'Run deterministic figure ownership/alt lane alongside structure-primary remediation.',
+        route: 'figure_semantics',
       });
     }
   }
@@ -933,6 +1012,7 @@ export function planForRemediation(
         routing,
         includeOptionalRemediation,
         scheduledTools: [],
+        stoppedRoutes,
         skippedTools: [...skippedTools.entries()].map(([toolName, reason]) => ({ toolName, reason })),
       }),
     };
@@ -952,6 +1032,7 @@ export function planForRemediation(
       routing,
       includeOptionalRemediation,
       scheduledTools: planned,
+      stoppedRoutes,
       skippedTools: [...skippedTools.entries()].map(([toolName, reason]) => ({ toolName, reason })),
     }),
   };

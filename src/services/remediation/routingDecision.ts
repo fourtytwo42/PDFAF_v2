@@ -341,8 +341,17 @@ export function buildPlanningSummary(input: {
   routing: RoutingDecision;
   includeOptionalRemediation?: boolean;
   scheduledTools: PlannedRemediationTool[];
+  stoppedRoutes?: Array<{ route: RemediationRoute; reason: string }>;
   skippedTools: Array<{ toolName: string; reason: PlanningSkipReason }>;
 }): PlanningSummary {
+  const activeRouteSet = new Set<RemediationRoute>([
+    input.routing.primaryRoute,
+    ...input.routing.secondaryRoutes,
+  ].filter((route): route is RemediationRoute => route !== null));
+  for (const tool of input.scheduledTools) {
+    if (tool.route) activeRouteSet.add(tool.route);
+  }
+  const stoppedRouteMap = new Map((input.stoppedRoutes ?? []).map(row => [row.route, row.reason]));
   return {
     primaryRoute: input.routing.primaryRoute,
     secondaryRoutes: input.routing.secondaryRoutes,
@@ -350,6 +359,17 @@ export function buildPlanningSummary(input: {
     residualFamilies: input.routing.residualFamilies,
     includeOptionalRemediation: input.includeOptionalRemediation ?? false,
     scheduledTools: input.scheduledTools.map(tool => tool.toolName),
+    routeSummaries: [...activeRouteSet].map(route => {
+      const reason = stoppedRouteMap.get(route);
+      return {
+        route,
+        status: reason ? 'stopped' : 'active',
+        ...(reason ? { reason } : {}),
+        scheduledTools: input.scheduledTools
+          .filter(tool => tool.route === route)
+          .map(tool => tool.toolName),
+      };
+    }),
     skippedTools: input.skippedTools,
     semanticDeferred: input.routing.semanticDeferred,
   };

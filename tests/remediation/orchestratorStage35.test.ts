@@ -111,6 +111,9 @@ describe('Stage 35 orchestrator mutation contract', () => {
             rootReachableFigureCountBefore: 1,
             rootReachableFigureCountAfter: 1,
           },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
           debug: {
             rootReachableFigureCount: 1,
           },
@@ -128,7 +131,24 @@ describe('Stage 35 orchestrator mutation contract', () => {
     const details = parseMutationDetails(result.details) as PythonMutationDetailPayload;
     expect(details.invariants?.targetResolved).toBe(true);
     expect(details.invariants?.targetHasAltAfter).toBe(true);
+    expect(details.structuralBenefits?.figureAltAttachedToReachableFigure).toBe(true);
     expect(details.debug?.rootReachableFigureCount).toBe(1);
+  });
+
+  it('rejects tools that violate their route contract before calling Python', async () => {
+    const result = await runSingleTool(
+      Buffer.from('before'),
+      {
+        toolName: 'set_figure_alt_text',
+        params: { structRef: '12_0' },
+        rationale: 'test',
+        route: 'near_pass_figure_recovery',
+      },
+      bareSnapshot(),
+    );
+    expect(result.outcome).toBe('rejected');
+    expect(result.details).toBe('route_contract_prohibited(near_pass_figure_recovery:set_figure_alt_text)');
+    expect(mocks.runPythonMutationBatch).not.toHaveBeenCalled();
   });
 
   it('keeps metadata-only tools unaffected by Stage 35 structural classification', async () => {

@@ -7111,6 +7111,64 @@ def _stage35_validate_mutation(pdf: pikepdf.Pdf, op: str, params: dict, mutated:
     return ("applied" if mutated else "no_effect"), note, None
 
 
+def _stage36_structural_benefits(op: str, outcome: str, before: dict | None, invariants: dict | None) -> dict | None:
+    if outcome != "applied" or not isinstance(before, dict) or not isinstance(invariants, dict):
+        return None
+
+    benefits: dict[str, bool] = {}
+    if op in _STAGE35_HEADING_OPS:
+        before_headings = int(before.get("rootReachableHeadingCountAfter") or 0)
+        after_headings = int(invariants.get("rootReachableHeadingCountAfter") or 0)
+        before_depth = int(before.get("rootReachableDepthAfter") or 0)
+        after_depth = int(invariants.get("rootReachableDepthAfter") or 0)
+        before_h1 = int(before.get("globalH1CountAfter") or 0)
+        after_h1 = int(invariants.get("globalH1CountAfter") or 0)
+        benefits["headingReachabilityImproved"] = after_headings > before_headings
+        benefits["readingOrderDepthImproved"] = after_depth > before_depth
+        benefits["headingHierarchyImproved"] = after_headings > 0 and after_h1 <= 1 and (before_h1 > after_h1 or after_headings > before_headings)
+
+    if op in _STAGE35_FIGURE_OPS:
+        before_figures = int(before.get("rootReachableFigureCountAfter") or 0)
+        after_figures = int(invariants.get("rootReachableFigureCountAfter") or 0)
+        benefits["figureOwnershipImproved"] = (
+            after_figures > before_figures
+            or (
+                bool(invariants.get("targetReachable"))
+                and bool(invariants.get("targetIsFigureAfter"))
+                and bool(invariants.get("ownershipPreserved", True))
+            )
+        )
+        benefits["figureAltAttachedToReachableFigure"] = (
+            bool(invariants.get("targetReachable"))
+            and bool(invariants.get("targetIsFigureAfter"))
+            and bool(invariants.get("targetHasAltAfter"))
+        )
+
+    if op in _STAGE35_TABLE_OPS:
+        before_direct = int(before.get("directCellsUnderTableAfter") or 0)
+        after_direct = int(invariants.get("directCellsUnderTableAfter") or 0)
+        before_headers = int(before.get("headerCellCountAfter") or 0)
+        after_headers = int(invariants.get("headerCellCountAfter") or 0)
+        benefits["tableValidityImproved"] = (
+            after_direct < before_direct
+            or after_headers > before_headers
+            or bool(invariants.get("tableTreeValidAfter"))
+        )
+
+    if op in _STAGE35_ANNOTATION_OPS:
+        before_struct_parent = int(before.get("visibleAnnotationsMissingStructParentAfter") or 0)
+        after_struct_parent = int(invariants.get("visibleAnnotationsMissingStructParentAfter") or 0)
+        before_structure = int(before.get("visibleAnnotationsMissingStructureAfter") or 0)
+        after_structure = int(invariants.get("visibleAnnotationsMissingStructureAfter") or 0)
+        benefits["annotationOwnershipImproved"] = (
+            after_struct_parent < before_struct_parent
+            or after_structure < before_structure
+        )
+
+    positive = {key: value for key, value in benefits.items() if value}
+    return positive or None
+
+
 def _root_reachable_depth(struct_root) -> int:
     if not isinstance(struct_root, pikepdf.Dictionary):
         return 0
@@ -7881,6 +7939,7 @@ def mutate_main(request_path: str) -> int:
                     note,
                     before_invariants,
                 )
+                structural_benefits = _stage36_structural_benefits(op, outcome, before_invariants, invariants)
                 if outcome == "applied":
                     applied.append(op)
                     row = {"op": op, "outcome": "applied"}
@@ -7888,6 +7947,8 @@ def mutate_main(request_path: str) -> int:
                         row["note"] = validated_note
                     if invariants is not None:
                         row["invariants"] = invariants
+                    if structural_benefits is not None:
+                        row["structuralBenefits"] = structural_benefits
                     if debug_payload is not None:
                         row["debug"] = debug_payload
                     elif os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
@@ -7899,6 +7960,8 @@ def mutate_main(request_path: str) -> int:
                         row["note"] = validated_note
                     if invariants is not None:
                         row["invariants"] = invariants
+                    if structural_benefits is not None:
+                        row["structuralBenefits"] = structural_benefits
                     if debug_payload is not None:
                         row["debug"] = debug_payload
                     elif os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":

@@ -10,7 +10,7 @@ import {
   OCR_MUTATION_TIMEOUT_MS,
   SEMANTIC_MCID_MAX_PAGES,
 } from '../config.js';
-import type { PythonAnalysisResult, PythonMutationInvariantPayload } from '../types.js';
+import type { PythonAnalysisResult, PythonMutationInvariantPayload, PythonStructuralBenefitPayload } from '../types.js';
 
 export interface PythonMutation {
   op: string;
@@ -27,6 +27,7 @@ export interface BatchMutationResult {
     note?: string;
     error?: string;
     invariants?: PythonMutationInvariantPayload;
+    structuralBenefits?: PythonStructuralBenefitPayload;
     debug?: {
       hasStructTreeRoot?: boolean;
       parentTreeEntries?: number;
