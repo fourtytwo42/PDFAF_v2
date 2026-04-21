@@ -15,6 +15,7 @@
     "lint": "tsc --noEmit",
     "benchmark:corpus": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/experiment-corpus-benchmark.ts",
     "benchmark:corpus:node22": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/experiment-corpus-benchmark.ts",
+    "benchmark:gate": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage41-benchmark-gate.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
