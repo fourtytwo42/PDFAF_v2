@@ -21,6 +21,7 @@ The target experience:
 - direct edit handles where the source PDF can support them
 - clear distinction between automatic fixes, user-confirmed fixes, and issues that require manual judgment
 - export gate that shows the current score and remaining blockers
+- an obvious handoff to Create PDF when rebuilding is more reliable than targeted repair
 
 ---
 
@@ -33,6 +34,30 @@ This page complements both existing and planned workflows:
 - **Edit PDF** at `/edit`: inspect and repair one existing PDF in a visual workspace.
 
 The batch page remains the fast path for many files. The edit page is the deep manual path for a single PDF that needs review, confirmation, or targeted corrections.
+
+---
+
+## Shared Editor Platform
+
+Edit PDF should use the same editor platform as Create PDF wherever possible. The imported-PDF viewer is different from the authored-page canvas, but the surrounding product behavior should remain consistent.
+
+Shared with `/create`:
+
+- shell layout: left rail, top toolbar, center workspace, right inspector, bottom status strip
+- icon-only commands with hover/focus tooltips
+- issue list, filters, next/previous issue navigation, and readiness status
+- inspector field components for title, language, alt text, headings, tables, links, and forms
+- undo/redo model for local fix state
+- IndexedDB storage helpers for originals, drafts, fix instructions, exports, and score snapshots
+- export/re-analysis status patterns
+
+Mode-specific behavior:
+
+- `/create` validates a structured authored document before PDF generation.
+- `/edit` normalizes analyzer findings from an existing PDF and maps them to page overlays and guided fixes.
+- `/edit` should not pretend every PDF object is freely editable. It should make the available repair level clear through modes and enabled controls.
+
+Building shared editor primitives early reduces duplicated UI and keeps Create, Edit, and future queue handoff flows coherent.
 
 ---
 
@@ -52,6 +77,7 @@ The batch page remains the fast path for many files. The edit page is the deep m
 - Before/after score display and category breakdown
 - Export of the fixed PDF and re-analysis before download
 - Browser-local storage for the original, working copy, fix state, and exported PDF
+- Rebuild handoff that can create a structured `/create` draft when an imported PDF is too broken for targeted repair
 
 ### Out Of Scope For First Release
 
@@ -73,6 +99,7 @@ The batch page remains the fast path for many files. The edit page is the deep m
 5. Export runs re-analysis and shows before/after score movement.
 6. No PDF payloads or base64 data are logged, documented, committed, or persisted on the web server.
 7. The page can handle long PDFs through virtualization or incremental rendering.
+8. The editor reuses the shared shell, issue model, inspector, and storage patterns from Create PDF.
 
 ---
 
@@ -100,6 +127,8 @@ The first screen should be the editor shell with a compact upload/open state, no
 
 Findings should be converted into visual annotations whenever possible.
 
+The highlight layer should be helpful even when evidence is incomplete. Precise bounds are ideal, but page-level markers, outline-panel badges, and inspector-only issues are still valuable when the analyzer cannot provide coordinates.
+
 ### Overlay Types
 
 - **Figure issue:** outline image or figure region; open alt text/decorative controls
@@ -122,6 +151,41 @@ When exact coordinates are not available, the issue should still appear in the i
 - Previous/next issue shortcuts move through visible findings.
 - Filters can show all issues, blockers, warnings, a category, or unresolved only.
 - Fixed overlays should disappear or become low-emphasis confirmation markers after re-validation.
+- Selecting an issue should expose the easiest available fix first, then secondary details and standards links.
+
+---
+
+## Normalized Editor Issue Model
+
+Analyzer and scorer findings should be converted into the same `EditorIssue` model used by the Create PDF readiness system.
+
+```ts
+type EditorIssue = {
+  id: string;
+  source: 'analyzer' | 'remediation' | 'export-check';
+  category: string;
+  severity: 'blocker' | 'warning' | 'info';
+  page?: number;
+  objectRef?: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  message: string;
+  whyItMatters?: string;
+  fixType: string;
+  fixState: 'open' | 'needs-input' | 'ready' | 'fixed';
+  standardsLinks?: Array<{ label: string; href: string }>;
+};
+```
+
+The model should support:
+
+- issue filters and sorting
+- next/previous issue navigation
+- page overlay rendering
+- inspector routing to the correct fix control
+- readiness/export blocking rules
+- before/after comparison after re-analysis
+
+The backend should incrementally improve evidence quality for `page`, `objectRef`, and `bounds`, but the UI must remain useful when only category-level evidence exists.
 
 ---
 
@@ -177,6 +241,15 @@ Imported PDFs should support multiple edit levels because not every PDF can be s
 - Converts detected text/images/tables into a Create PDF draft where feasible
 - Clearly communicate that visual fidelity may need review
 
+Recommended triggers for suggesting rebuild:
+
+- scanned or image-heavy PDF with weak text extraction
+- many untagged pages with unreliable structure inference
+- repeated failed remediation attempts
+- low score after automatic remediation
+- findings without enough coordinates or object evidence for efficient targeted repair
+- user wants broad visual/content redesign rather than accessibility metadata repair
+
 ---
 
 ## Technical Approach
@@ -224,6 +297,22 @@ Add a frontend normalization layer that maps analyzer/scorer findings into edito
 - `standardsLinks`
 
 The backend should provide better object/page/coordinate evidence over time. The editor should still work when some evidence is missing.
+
+### Shared Readiness And Score State
+
+The Edit page needs two related but separate status concepts:
+
+- **Current score:** the latest analyzer/scorer result for the original or exported working copy.
+- **Fix readiness:** whether pending local fix instructions are complete enough to apply/export.
+
+Examples:
+
+- missing alt text issue selected, field empty: `needs-input`
+- alt text entered locally but not applied: `ready`
+- fix applied and re-analysis confirms no finding: `fixed`
+- fix applied but finding remains: `open`
+
+The status strip should show both score movement and remaining unresolved blockers.
 
 ### Fix Application
 
@@ -293,6 +382,13 @@ Payloads should be multipart or structured JSON plus browser-held file blobs. Se
 
 ## Implementation Plan
 
+### Stage 0 - Shared Editor Core Alignment
+
+- Reuse the shared editor shell, inspector, issue model, status strip, and storage helpers from Phase 7
+- Define Edit-specific workspace slots for imported PDF rendering and overlay layers
+- Define queue-to-editor handoff contracts for opening a file from the batch page
+- Define when the UI should recommend "Rebuild in Create PDF"
+
 ### Stage 1 - Route And Review Shell
 
 - Add `/edit`
@@ -333,6 +429,7 @@ Payloads should be multipart or structured JSON plus browser-held file blobs. Se
 
 - Add limited safe visual edits
 - Add "Rebuild in Create PDF" handoff for heavily broken documents
+- Generate a structured Create PDF draft from detected text/images/tables where feasible
 - Add polish, keyboard support, responsive behavior, and performance tuning
 
 ---
@@ -359,7 +456,7 @@ Payloads should be multipart or structured JSON plus browser-held file blobs. Se
 
 ## Recommended First Slice
 
-Build `/edit` as a focused visual accessibility review and guided-fix page:
+Build `/edit` as a focused visual accessibility review and guided-fix page on top of the shared editor shell:
 
 1. Upload one PDF.
 2. Analyze it.
@@ -368,5 +465,6 @@ Build `/edit` as a focused visual accessibility review and guided-fix page:
 5. Support document title/language and image alt text fixes.
 6. Apply fixes through the remediation/export path.
 7. Re-run analysis and show before/after score.
+8. If the file is too broken for targeted repair, show a disabled or prototype "Rebuild in Create PDF" handoff with the intended conversion path.
 
 This proves the visual repair loop before adding heavier table, reading order, form, and visual content editing.

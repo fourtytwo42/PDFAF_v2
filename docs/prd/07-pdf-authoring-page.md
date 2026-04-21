@@ -20,10 +20,32 @@ The editor should feel powerful but not heavy:
 - dense, clean, icon-led controls with hover tooltips
 - direct manipulation for moving, resizing, aligning, grouping, deleting, and reordering objects
 - sensible defaults that produce accessible structure automatically
+- live readiness feedback that points to the exact page/object blocking export
 - clear validation feedback without exposing raw implementation details first
 - export blocked only when the document has issues that would prevent a 100/100 score
 
 ---
+
+## Shared Editor Platform
+
+Create PDF and Edit PDF should be implemented as two modes of one shared editor platform, not two unrelated applications. The shared platform should own the shell, selection model, inspector framework, keyboard shortcuts, issue list, validation model, undo/redo, zoom, page thumbnails, and export status patterns.
+
+Shared editor regions:
+
+- left rail: pages, assets, findings, outline
+- top toolbar: mode tools, undo/redo, zoom, validation, export
+- center workspace: authored page canvas or imported PDF viewer
+- right inspector: properties, accessibility, issue details, fix controls
+- bottom status strip: score/readiness, page count, save state, current mode
+
+Mode-specific behavior:
+
+- `/create` starts from a blank or template-backed structured document.
+- `/edit` starts from an imported PDF plus analyzer findings.
+- both modes use the same validation/readiness language and issue navigation where possible.
+- both modes preserve PDF payloads in browser-local storage and avoid server persistence.
+
+The first implementation should extract reusable editor primitives early, even if `/create` ships first, so the later `/edit` page does not duplicate layout, inspectors, and state conventions.
 
 ## Scope
 
@@ -41,6 +63,7 @@ The editor should feel powerful but not heavy:
 - Page templates with guaranteed semantic defaults
 - Reading order panel derived from object order and semantic roles
 - Document settings for title, language, page size, margins, author, subject, and keywords
+- Live accessibility readiness checklist backed by the same issue model used by the Edit PDF page
 - Client-side draft persistence in IndexedDB
 - Export to PDF with tags, metadata, embedded fonts, language, reading order, bookmarks, alt text, table headers, and link annotations
 - Automatic call into the existing analyzer/scorer after export
@@ -66,6 +89,7 @@ The editor should feel powerful but not heavy:
 5. Controls use compact icons with hover/focus tooltips where icons are not self-explanatory.
 6. The UI remains responsive with at least 30 pages and 500 canvas objects in a draft.
 7. Generated PDFs and base64 payloads are never logged, committed, or persisted on the web server.
+8. The editor shell, inspector, issue list, and export readiness components can be reused by the Edit PDF page.
 
 ---
 
@@ -100,6 +124,8 @@ Mobile and tablet behavior should preserve document review and light edits. Full
 - Avoid chunky panels. Use compact segmented controls, popovers, property groups, and inline validation.
 - Preserve direct manipulation: users should drag, resize, snap, align, and duplicate objects without modal workflows.
 - Use restrained visual design suited to a work tool: clear hierarchy, tight spacing, consistent iconography, and predictable panels.
+- Prefer semantic insert tools over raw drawing tools. Users add a heading, paragraph, figure, table, chart, or list; the editor can still render them visually, but the underlying object starts with a meaningful role.
+- Show accessibility blockers close to the object that caused them. A readiness panel is useful, but users should not have to hunt across the document to find the object that needs attention.
 
 ---
 
@@ -162,6 +188,39 @@ Use an internal structured document model rather than treating the canvas as a s
 - `headerFooter`: repeated content with semantic handling
 
 Decorative shapes and purely visual elements must be exported as artifacts. Informational objects must be represented in the structure tree.
+
+---
+
+## Shared Issue Model
+
+The Create PDF page should use the same normalized issue concept as the Edit PDF page, even though create-mode issues come from local validators before export rather than from imported-PDF analysis.
+
+```ts
+type EditorIssue = {
+  id: string;
+  source: 'authoring-validator' | 'analyzer' | 'export-check';
+  category: string;
+  severity: 'blocker' | 'warning' | 'info';
+  page?: number;
+  objectId?: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  message: string;
+  whyItMatters?: string;
+  fixType: string;
+  fixState: 'open' | 'needs-input' | 'ready' | 'fixed';
+};
+```
+
+Create-mode examples:
+
+- image object has neither alt text nor decorative marking
+- chart object has no accessible summary
+- table object has no header row or header column
+- heading levels skip from H1 to H3
+- text/background contrast falls below threshold
+- document title or language is missing
+
+This model lets the right inspector, readiness status, next/previous issue controls, and export gate work consistently across `/create` and `/edit`.
 
 ---
 
@@ -249,6 +308,18 @@ First release should include a small set of high-quality accessible templates:
 
 Templates must include semantic roles, reading order, heading hierarchy, and placeholder guidance in the inspector, not large instructional text on the page.
 
+### Live Readiness
+
+The editor should continuously compute readiness from the structured document model and surface it without interrupting the user.
+
+- status strip shows current readiness: ready, needs attention, or export blocked
+- readiness panel groups issues by page, object, and scorer category
+- clicking a readiness item selects the object and opens the relevant inspector field
+- insert flows prevent obvious invalid states where practical, such as image without alt/decorative decision
+- export still runs the real analyzer/scorer as the final authority
+
+Readiness should feel like a quiet quality meter, not a noisy checklist.
+
 ---
 
 ## Technical Approach
@@ -271,6 +342,18 @@ Add likely dependencies after evaluation:
 - a PDF generation path that can create tagged PDFs, embedded fonts, metadata, outlines, annotations, and structure trees
 
 Do not choose a PDF library only because it renders pages visually. The export library must support the accessibility structure needed for a 100/100 authored file, or we need a server-side export service using a toolchain that does.
+
+### Shared Editor Packages
+
+Create shared frontend modules before the editor grows large:
+
+- `editor-shell`: common rails, toolbar slots, workspace frame, inspector frame, status strip
+- `editor-state`: page/object selection, undo/redo, zoom, keyboard command routing
+- `editor-issues`: normalized issue model, filters, next/previous navigation, readiness aggregation
+- `editor-inspector`: property groups, accessibility fields, validation messages
+- `editor-storage`: IndexedDB draft, asset, export, and queue handoff helpers
+
+These modules should be UI-framework-local to `apps/pdf-af-web` at first. Avoid extracting a package until the boundaries are proven.
 
 ### Export Pipeline
 
@@ -341,6 +424,13 @@ Server routes must stream or hold payloads in memory only and must not write PDF
 ---
 
 ## Implementation Plan
+
+### Stage 0 - Shared Editor Core
+
+- Define shared editor shell regions and responsive behavior
+- Define `EditorIssue`, readiness aggregation, and issue navigation
+- Define shared inspector field patterns and icon tooltip behavior
+- Add IndexedDB draft/export abstractions that can support both Create and Edit
 
 ### Stage 1 - Product Shell And Route
 
@@ -413,7 +503,14 @@ Server routes must stream or hold payloads in memory only and must not write PDF
 
 ## Recommended First Slice
 
-Build the `/create` route with the complete editor shell, document model, validators, text/image/table primitives, and a spike export path for a simple multi-page tagged PDF. The first acceptance target should be:
+Build a thin shared-editor prototype before deep canvas polish:
+
+1. Shared editor shell, inspector, status strip, and `EditorIssue` list.
+2. `/create` with text, image, table, and live validation.
+3. A spike export path for a simple multi-page tagged PDF.
+4. Analyzer/scorer re-check after export.
+
+The first Create PDF acceptance target should be:
 
 1. Create a two-page document.
 2. Include title, language, H1/H2 headings, paragraphs, one image with alt text, one table with headers, and bookmarks.
