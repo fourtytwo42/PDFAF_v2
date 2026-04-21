@@ -11,7 +11,12 @@ import {
   TrashIcon,
 } from '../../common/AppIcons';
 import { ProductNav } from '../../common/ProductNav';
-import { applyPendingFixStateToIssues, getEditIssueFixPromptMode } from '../../../lib/editor/editFixes';
+import {
+  applyPendingFixStateToIssues,
+  getEditIssueFixPromptMode,
+  isAltTextIssueCategory,
+  isMetadataIssueCategory,
+} from '../../../lib/editor/editFixes';
 import { computeReadinessSummary, filterEditorIssues, sortEditorIssues } from '../../../lib/editor/issues';
 import { useEditEditorStore } from '../../../stores/editEditor';
 import type { AnalyzeCategorySummary } from '../../../types/analyze';
@@ -46,10 +51,6 @@ const fixStateOptions: Array<{ label: string; value: NonNullable<EditorIssueFilt
   { label: 'Open', value: 'needs-input' },
   { label: 'All', value: 'all' },
 ];
-
-function normalizeIssueCategory(category: string): string {
-  return category.toLowerCase().replaceAll(' ', '_');
-}
 
 function stopEvent(event: DragEvent<HTMLElement>) {
   event.preventDefault();
@@ -417,9 +418,8 @@ function IssueInspector({
   const [language, setLanguage] = useState('en-US');
   const [altText, setAltText] = useState('');
   const objectRef = issue?.target?.objectRef;
-  const normalizedCategory = issue ? normalizeIssueCategory(issue.category) : '';
-  const isAltIssue = normalizedCategory === 'alt_text';
-  const isMetadataIssue = normalizedCategory === 'title_and_language';
+  const isAltIssue = issue ? isAltTextIssueCategory(issue.category) : false;
+  const isMetadataIssue = issue ? isMetadataIssueCategory(issue.category) : false;
   const titleQueued = pendingFixes.some((fix) => fix.type === 'set_document_title');
   const languageQueued = pendingFixes.some((fix) => fix.type === 'set_document_language');
 
@@ -785,8 +785,27 @@ function IssueFixPrompt({
         ) : null}
 
         {!isMetadataIssue && !isAltIssue ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm leading-6 text-[var(--muted)]">
-            This issue type is visible for review, but guided repair for it is planned for a later stage.
+          <div className="mt-4 grid gap-3 rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm leading-6 text-[var(--muted)]">
+            <p>
+              Guided repair is not available for this finding yet. You can still review the evidence here or run
+              auto-fix from the editor toolbar for broad remediation.
+            </p>
+            {issue.standardsLinks?.length ? (
+              <div className="grid gap-2">
+                <p className="text-xs font-semibold text-[var(--foreground)]">Standards</p>
+                {issue.standardsLinks.map((link) => (
+                  <a
+                    key={`${link.label}-${link.href}`}
+                    href={link.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-medium text-[var(--accent)] underline-offset-4 hover:underline"
+                  >
+                    {link.label}
+                  </a>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

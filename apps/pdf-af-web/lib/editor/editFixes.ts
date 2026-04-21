@@ -3,10 +3,27 @@ import type { EditorIssue } from '../../types/editor';
 
 export type EditIssueFixPromptMode = 'metadata' | 'alt-text' | 'info';
 
+export function normalizeEditIssueCategory(category: string): string {
+  return category.toLowerCase().trim().replaceAll(/\s+/g, '_');
+}
+
+export function isMetadataIssueCategory(category: string): boolean {
+  const normalizedCategory = normalizeEditIssueCategory(category);
+  return (
+    normalizedCategory === 'title_language' ||
+    normalizedCategory === 'title_and_language' ||
+    normalizedCategory === 'document_metadata' ||
+    normalizedCategory === 'metadata'
+  );
+}
+
+export function isAltTextIssueCategory(category: string): boolean {
+  return normalizeEditIssueCategory(category) === 'alt_text';
+}
+
 export function getEditIssueFixPromptMode(issue: EditorIssue): EditIssueFixPromptMode {
-  const normalizedCategory = issue.category.toLowerCase().replaceAll(' ', '_');
-  if (normalizedCategory === 'title_and_language') return 'metadata';
-  if (normalizedCategory === 'alt_text' && issue.target?.objectRef) return 'alt-text';
+  if (isMetadataIssueCategory(issue.category)) return 'metadata';
+  if (isAltTextIssueCategory(issue.category) && issue.target?.objectRef) return 'alt-text';
   return 'info';
 }
 
@@ -94,13 +111,10 @@ export function applyPendingFixStateToIssues(
   );
 
   return issues.map((issue) => {
-    const normalizedCategory = issue.category.toLowerCase().replaceAll(' ', '_');
     const metadataReady =
-      normalizedCategory === 'title_and_language' &&
-      metadataFixesCoverIssue(issue, hasTitleFix, hasLanguageFix);
+      isMetadataIssueCategory(issue.category) && metadataFixesCoverIssue(issue, hasTitleFix, hasLanguageFix);
     const figureReady =
-      normalizedCategory === 'alt_text' &&
-      Boolean(issue.target?.objectRef && figureRefs.has(issue.target.objectRef));
+      isAltTextIssueCategory(issue.category) && Boolean(issue.target?.objectRef && figureRefs.has(issue.target.objectRef));
 
     return metadataReady || figureReady
       ? {

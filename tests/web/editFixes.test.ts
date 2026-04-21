@@ -35,6 +35,7 @@ describe('edit fix helpers', () => {
 
   it('classifies issue prompt modes by available guided fix support', () => {
     expect(getEditIssueFixPromptMode(issue({ category: 'Title and Language' }))).toBe('metadata');
+    expect(getEditIssueFixPromptMode(issue({ category: 'title_language' }))).toBe('metadata');
     expect(
       getEditIssueFixPromptMode(issue({ category: 'Alt Text', target: { objectRef: 'fig-1' } })),
     ).toBe('alt-text');
@@ -94,6 +95,7 @@ describe('edit fix helpers', () => {
     const issues = [
       issue({
         id: 'metadata',
+        category: 'title_language',
         message: 'Document is missing both /Title and /Lang.',
         whyItMatters: 'Title and language are required for assistive technology.',
       }),
