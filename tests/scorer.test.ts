@@ -58,6 +58,216 @@ describe('scoring weights', () => {
   });
 });
 
+describe('Stage 40 legal_pdf_strict_v2 policy', () => {
+  it('uses the v2 score profile and keeps PDF/UA, bookmarks, and color contrast diagnostic-only', () => {
+    const result = score(makeSnap(), META);
+    expect(result.scoreProfile.id).toBe('legal_pdf_strict_v2');
+    expect(result.scoreProfile.gradedCategories).toEqual([
+      'text_extractability',
+      'title_language',
+      'heading_structure',
+      'alt_text',
+      'table_markup',
+      'link_quality',
+      'reading_order',
+      'form_accessibility',
+    ]);
+    expect(result.scoreProfile.nonGradedCategories).toEqual([
+      'bookmarks',
+      'pdf_ua_compliance',
+      'color_contrast',
+    ]);
+    for (const key of result.scoreProfile.nonGradedCategories) {
+      const category = result.categories.find(c => c.key === key)!;
+      expect(category.countsTowardGrade).toBe(false);
+    }
+  });
+
+  it('matches the Stage 40 graded weight rebalance', () => {
+    expect(SCORING_WEIGHTS).toMatchObject({
+      text_extractability: 0.18,
+      title_language: 0.07,
+      heading_structure: 0.18,
+      alt_text: 0.18,
+      table_markup: 0.13,
+      link_quality: 0.07,
+      reading_order: 0.12,
+      form_accessibility: 0.07,
+      pdf_ua_compliance: 0,
+      bookmarks: 0,
+      color_contrast: 0,
+    });
+  });
+
+  it('does not let PDF/UA diagnostic findings change the weighted legal score', () => {
+    const base = makeSnap();
+    const withPdfUaDebt = makeSnap({
+      taggedContentAudit: {
+        orphanMcidCount: 4,
+        mcidTextSpanCount: 8,
+        suspectedPathPaintOutsideMc: 40,
+      },
+    });
+    const baseResult = score(base, META);
+    const debtResult = score(withPdfUaDebt, META);
+    const pdfUa = debtResult.categories.find(c => c.key === 'pdf_ua_compliance')!;
+    expect(pdfUa.score).toBeLessThan(100);
+    expect(pdfUa.countsTowardGrade).toBe(false);
+    expect(debtResult.score).toBe(baseResult.score);
+  });
+
+  it('caps multi-page documents with zero checker-visible headings at 59', () => {
+    const result = score(makeSnap({
+      headings: [],
+      paragraphStructElems: [],
+      pageCount: 12,
+      textByPage: Array(12).fill('Body '.repeat(100)),
+      textCharCount: 12 * 500,
+    }), META);
+    expect(result.score).toBeLessThanOrEqual(59);
+    expect(result.scoreProfile.criticalBlockers).toContain('no_real_headings');
+  });
+
+  it('does not fail single-page body text solely for missing headings', () => {
+    const result = score(makeSnap({
+      pageCount: 1,
+      textByPage: ['Single page memo body text'],
+      textCharCount: 900,
+      headings: [],
+      paragraphStructElems: [{ tag: 'P', text: 'Single page memo body text', page: 0, structRef: '1_0' }],
+    }), META);
+    const heading = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(heading.score).toBeGreaterThanOrEqual(70);
+    expect(result.scoreProfile.criticalBlockers).not.toContain('no_real_headings');
+  });
+
+  it('caps informative figures when checker-visible figure alt ownership is missing', () => {
+    const result = score(makeSnap({
+      headings: [
+        { level: 1, text: 'Report', page: 0 },
+        { level: 2, text: 'Findings', page: 4 },
+        { level: 2, text: 'Appendix', page: 10 },
+      ],
+      figures: [{ hasAlt: true, altText: 'Chart showing case counts', isArtifact: false, page: 1, role: 'Figure' }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 1,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        structRef: '10_0',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document'],
+      }],
+    }), META);
+    expect(result.score).toBeLessThanOrEqual(59);
+    expect(result.scoreProfile.criticalBlockers).toContain('no_checker_visible_alt_on_informative_figures');
+  });
+
+  it('caps dense rowless table structures at 69', () => {
+    const result = score(makeSnap({
+      tables: [{ hasHeaders: true, headerCount: 1, totalCells: 8, rowCount: 1, cellsMisplacedCount: 0, irregularRows: 0, page: 0 }],
+    }), META);
+    expect(result.score).toBeLessThanOrEqual(69);
+    expect(result.scoreProfile.majorBlockers).toContain('poor_table_markup');
+  });
+
+  it('does not cap mild advisory table regularity below 70', () => {
+    const result = score(makeSnap({
+      tables: [{
+        hasHeaders: true,
+        headerCount: 1,
+        totalCells: 18,
+        page: 1,
+        rowCount: 5,
+        cellsMisplacedCount: 0,
+        irregularRows: 4,
+        rowCellCounts: [2, 4, 4, 4, 4],
+        dominantColumnCount: 4,
+        maxRowSpan: 1,
+        maxColSpan: 1,
+      }],
+    }), META);
+    const table = result.categories.find(c => c.key === 'table_markup')!;
+    expect(table.score).toBeGreaterThanOrEqual(70);
+    expect(result.scoreProfile.majorBlockers).not.toContain('poor_table_markup');
+  });
+
+  it('caps multi-page tagged PDFs with externally shallow reading-order depth at 69', () => {
+    const result = score(makeSnap({
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 6,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'medium',
+      },
+    }), META);
+    expect(result.score).toBeLessThanOrEqual(69);
+    expect(result.scoreProfile.majorBlockers).toContain('weak_reading_order');
+  });
+
+  it('caps link annotation ownership debt but not weak link text alone', () => {
+    const ownershipDebt = score(makeSnap({
+      links: [{ text: 'Annual report', url: 'https://example.com/report', page: 0 }],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 3,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 2,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    }), META);
+    expect(ownershipDebt.score).toBeLessThanOrEqual(79);
+    expect(ownershipDebt.scoreProfile.majorBlockers).toContain('link_annotation_ownership_debt');
+
+    const weakText = score(makeSnap({
+      links: [{ text: 'click here', url: 'https://example.com/report', page: 0 }],
+    }), META);
+    expect(weakText.scoreProfile.majorBlockers).not.toContain('link_annotation_ownership_debt');
+  });
+});
+
 // ─── N/A redistribution ───────────────────────────────────────────────────────
 
 describe('N/A weight redistribution', () => {

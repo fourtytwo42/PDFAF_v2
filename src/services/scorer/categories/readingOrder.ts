@@ -200,7 +200,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     score = Math.max(score, Math.min(ENGINE_OCR_READING_ORDER_FLOOR, unowned.score));
   }
   if ((stage3?.sampledStructurePageOrderDriftCount ?? 0) > 0) {
-    score = Math.min(score, Math.max(0, 88 - stage3!.sampledStructurePageOrderDriftCount * 12));
+    score = Math.min(score, Math.max(70, 92 - stage3!.sampledStructurePageOrderDriftCount * 6));
     findings.push({
       category: 'reading_order',
       severity: stage3!.sampledStructurePageOrderDriftCount > 2 ? 'moderate' : 'minor',
@@ -210,7 +210,7 @@ export function scoreReadingOrder(snap: DocumentSnapshot): ScoredCategory {
     });
   }
   if (stage3?.headerFooterPollutionRisk) {
-    score = Math.min(score, 82);
+    score = Math.min(score, 88);
     findings.push({
       category: 'reading_order',
       severity: 'minor',

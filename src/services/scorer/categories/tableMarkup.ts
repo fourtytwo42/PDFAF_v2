@@ -55,7 +55,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
       message: parts.join(' '),
       count: misplacedCells + irregularTables,
     });
-    const rolePenalty = Math.min(95, misplacedCells * 8 + irregularTables * 14);
+    const rolePenalty = Math.min(95, misplacedCells * 8 + irregularTables * 8);
     score = Math.min(score, Math.max(0, 100 - rolePenalty));
   }
 
@@ -79,7 +79,7 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
       message: `${advisoryCount} table(s) show mild row-length irregularity at boundaries (advisory regularity — verify in Acrobat).`,
       count: advisoryCount,
     });
-    score = Math.min(score, Math.max(0, 100 - advisoryCount * 8));
+    score = Math.min(score, Math.max(70, 100 - advisoryCount * 4));
   }
 
   const rowlessDenseTables = scoredTables.filter(

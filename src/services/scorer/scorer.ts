@@ -167,22 +167,55 @@ function buildLegalPdfStrictProfile(
 
   const informativeFigureCount = snap.figures.filter(figure => !figure.isArtifact).length;
   const altText = byKey.get('alt_text');
-  if (informativeFigureCount > 0 && (altText?.applicable ?? false) && (altText?.score ?? 100) === 0) {
-    applyCap(59, 'critical', 'no_alt_on_informative_figures');
+  const checkerFigures = (snap.checkerFigureTargets ?? []).filter(figure =>
+    figure.reachable &&
+    !figure.isArtifact &&
+    ((figure.resolvedRole ?? figure.role ?? '').replace(/^\//, '').toLowerCase() === 'figure')
+  );
+  const checkerFigureAltOwned = checkerFigures.some(figure => figure.hasAlt && (figure.altText?.trim() ?? '').length > 0);
+  const hasCheckerFigureOwnershipDebt =
+    (snap.checkerFigureTargets && checkerFigures.length > 0 && !checkerFigureAltOwned) ||
+    snap.detectionProfile?.figureSignals?.treeFigureMissingForExtractedFigures === true;
+  if (
+    informativeFigureCount > 0 &&
+    (altText?.applicable ?? false) &&
+    ((altText?.score ?? 100) === 0 || hasCheckerFigureOwnershipDebt)
+  ) {
+    applyCap(59, 'critical', 'no_checker_visible_alt_on_informative_figures');
   }
 
   const tableMarkup = byKey.get('table_markup');
-  if (snap.tables.length > 0 && (tableMarkup?.applicable ?? false) && (tableMarkup?.score ?? 100) < 40) {
+  const tableSignals = snap.detectionProfile?.tableSignals;
+  const denseRowlessTables = snap.tables.filter(table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4).length;
+  const malformedTableCells = (tableSignals?.directCellUnderTableCount ?? 0) + (tableSignals?.misplacedCellCount ?? 0);
+  if (
+    snap.tables.length > 0 &&
+    (tableMarkup?.applicable ?? false) &&
+    ((tableMarkup?.score ?? 100) < 40 || denseRowlessTables > 0 || malformedTableCells > 0)
+  ) {
     applyCap(69, 'major', 'poor_table_markup');
   }
 
   const readingOrder = byKey.get('reading_order');
-  if ((readingOrder?.applicable ?? false) && (readingOrder?.score ?? 100) < 40) {
+  const readingOrderDepth = snap.detectionProfile?.readingOrderSignals.structureTreeDepth ?? (snap.structureTree ? 2 : 0);
+  if (
+    (readingOrder?.applicable ?? false) &&
+    ((readingOrder?.score ?? 100) < 40 || (snap.pageCount > 1 && snap.isTagged && readingOrderDepth <= 1))
+  ) {
     applyCap(69, 'major', 'weak_reading_order');
   }
 
+  const linkQuality = byKey.get('link_quality');
+  const annotationSignals = snap.detectionProfile?.annotationSignals ?? snap.annotationAccessibility;
+  const linkOwnershipDebt =
+    (annotationSignals?.linkAnnotationsMissingStructure ?? 0) +
+    (annotationSignals?.linkAnnotationsMissingStructParent ?? 0);
+  if ((linkQuality?.applicable ?? false) && linkOwnershipDebt >= 5) {
+    applyCap(79, 'major', 'link_annotation_ownership_debt');
+  }
+
   return {
-    id: 'legal_pdf_strict',
+    id: 'legal_pdf_strict_v2',
     overallScore: finalScore,
     grade: deriveGrade(finalScore),
     gradedCategories: [...LEGAL_PDF_STRICT_GRADED_CATEGORIES],

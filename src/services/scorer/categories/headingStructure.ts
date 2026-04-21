@@ -98,7 +98,7 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   // 3. Coverage: expect roughly 1 heading per N pages
   const expectedMinHeadings = Math.max(1, Math.floor(snap.pageCount / HEADING_COVERAGE_PAGES_PER_HEADING));
   if (headings.length < expectedMinHeadings) {
-    const deduction = Math.round((1 - headings.length / expectedMinHeadings) * 15);
+    const deduction = Math.round((1 - headings.length / expectedMinHeadings) * 6);
     score -= deduction;
     findings.push({
       category: 'heading_structure',

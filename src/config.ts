@@ -7,17 +7,17 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const CATEGORY_BASE_WEIGHTS = {
-  text_extractability: 0.22,
-  title_language:      0.10,
+  text_extractability: 0.18,
+  title_language:      0.07,
   heading_structure:   0.18,
   alt_text:            0.18,
   pdf_ua_compliance:   0,
   bookmarks:           0,
-  table_markup:        0.12,
+  table_markup:        0.13,
   color_contrast:      0,
-  link_quality:        0.06,
-  reading_order:       0.09,
-  form_accessibility:  0.05,
+  link_quality:        0.07,
+  reading_order:       0.12,
+  form_accessibility:  0.07,
 } as const;
 
 export const LEGAL_PDF_STRICT_GRADED_CATEGORIES = [
