@@ -14,8 +14,7 @@ import type {
   CreatePageObject,
   CreateTableObject,
 } from '../../types/createEditor';
-import type { NormalizedFinding } from '../../types/analyze';
-import type { EditorIssue, EditorIssueSeverity } from '../../types/editor';
+export { mapAnalyzeFindingsToEditorIssues } from './analyzeFindings';
 
 const LETTER_WIDTH = 612;
 const LETTER_HEIGHT = 792;
@@ -270,25 +269,4 @@ export async function exportCreateDocumentToPdf(document: CreateDocument): Promi
     blob: new Blob([arrayBuffer], { type: 'application/pdf' }),
     fileName: sanitizeFileName(document.metadata.title),
   };
-}
-
-function mapFindingSeverity(severity: NormalizedFinding['severity']): EditorIssueSeverity {
-  if (severity === 'critical' || severity === 'moderate') return 'blocker';
-  if (severity === 'minor') return 'warning';
-  return 'info';
-}
-
-export function mapAnalyzeFindingsToEditorIssues(findings: NormalizedFinding[]): EditorIssue[] {
-  return findings.map((finding, index) => ({
-    id: `export:${finding.id || index}`,
-    source: 'export-check',
-    category: finding.category,
-    severity: mapFindingSeverity(finding.severity),
-    page: finding.page,
-    message: finding.title || finding.summary,
-    whyItMatters: finding.summary,
-    fixType: `export_${finding.category}`,
-    fixState: 'needs-input',
-    standardsLinks: finding.references,
-  }));
 }

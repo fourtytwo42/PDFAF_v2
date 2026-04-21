@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapAnalyzeFindingsToEditorIssues } from '../../apps/pdf-af-web/lib/editor/createExport';
+import { mapAnalyzeFindingsToEditorIssues } from '../../apps/pdf-af-web/lib/editor/analyzeFindings';
 import type { NormalizedFinding } from '../../apps/pdf-af-web/types/analyze';
 
 function finding(overrides: Partial<NormalizedFinding>): NormalizedFinding {
@@ -16,17 +16,28 @@ function finding(overrides: Partial<NormalizedFinding>): NormalizedFinding {
 
 describe('export finding mapping', () => {
   it('maps critical and moderate analyzer findings to blocker editor issues', () => {
-    const issues = mapAnalyzeFindingsToEditorIssues([
-      finding({ id: 'critical', severity: 'critical' }),
-      finding({ id: 'moderate', severity: 'moderate' }),
-    ]);
+    const issues = mapAnalyzeFindingsToEditorIssues(
+      [
+        finding({ id: 'critical', severity: 'critical' }),
+        finding({ id: 'moderate', severity: 'moderate' }),
+      ],
+      {
+        source: 'export-check',
+        idPrefix: 'export',
+        fixTypePrefix: 'export',
+      },
+    );
 
     expect(issues.map((issue) => issue.severity)).toEqual(['blocker', 'blocker']);
     expect(issues.every((issue) => issue.source === 'export-check')).toBe(true);
   });
 
   it('maps minor findings to warning editor issues', () => {
-    const issues = mapAnalyzeFindingsToEditorIssues([finding({ severity: 'minor' })]);
+    const issues = mapAnalyzeFindingsToEditorIssues([finding({ severity: 'minor' })], {
+      source: 'export-check',
+      idPrefix: 'export',
+      fixTypePrefix: 'export',
+    });
 
     expect(issues[0]).toMatchObject({
       severity: 'warning',
@@ -35,16 +46,23 @@ describe('export finding mapping', () => {
   });
 
   it('preserves page, category, and message fields', () => {
-    const issues = mapAnalyzeFindingsToEditorIssues([
-      finding({
-        id: 'heading',
-        title: 'Heading structure issue',
-        summary: 'Heading levels are skipped.',
-        category: 'heading_structure',
-        page: 2,
-        severity: 'minor',
-      }),
-    ]);
+    const issues = mapAnalyzeFindingsToEditorIssues(
+      [
+        finding({
+          id: 'heading',
+          title: 'Heading structure issue',
+          summary: 'Heading levels are skipped.',
+          category: 'heading_structure',
+          page: 2,
+          severity: 'minor',
+        }),
+      ],
+      {
+        source: 'export-check',
+        idPrefix: 'export',
+        fixTypePrefix: 'export',
+      },
+    );
 
     expect(issues[0]).toMatchObject({
       id: 'export:heading',

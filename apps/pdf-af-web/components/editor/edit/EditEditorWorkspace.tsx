@@ -1,0 +1,566 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
+import {
+  DownloadIcon,
+  FileIcon,
+  InfoIcon,
+  RetryIcon,
+  SettingsIcon,
+  TrashIcon,
+} from '../../common/AppIcons';
+import { ProductNav } from '../../common/ProductNav';
+import { computeReadinessSummary, filterEditorIssues, sortEditorIssues } from '../../../lib/editor/issues';
+import { useEditEditorStore } from '../../../stores/editEditor';
+import type { AnalyzeCategorySummary } from '../../../types/analyze';
+import type { EditorIssue, EditorIssueFilter, EditorShellModeConfig } from '../../../types/editor';
+import { EditorInspector } from '../EditorInspector';
+import { EditorIssueList } from '../EditorIssueList';
+import { EditorRail } from '../EditorRail';
+import { EditorShell } from '../EditorShell';
+
+const config: EditorShellModeConfig = {
+  mode: 'edit',
+  title: 'Edit PDF',
+  subtitle: 'Review accessibility findings in one existing PDF.',
+  emptyTitle: 'Edit PDF workspace',
+  emptyDescription: 'Open one PDF to review analyzer findings.',
+};
+
+interface EditEditorWorkspaceProps {
+  defaultApiBaseUrl: string;
+}
+
+const severityOptions: Array<{ label: string; value: NonNullable<EditorIssueFilter['severity']> }> = [
+  { label: 'All', value: 'all' },
+  { label: 'Blockers', value: 'blocker' },
+  { label: 'Warnings', value: 'warning' },
+  { label: 'Info', value: 'info' },
+];
+
+const fixStateOptions: Array<{ label: string; value: NonNullable<EditorIssueFilter['fixState']> }> = [
+  { label: 'Open', value: 'unresolved' },
+  { label: 'All', value: 'all' },
+];
+
+function stopEvent(event: DragEvent<HTMLElement>) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function IconButton({
+  label,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="focus-ring inline-flex size-9 items-center justify-center rounded-full border border-[color:var(--surface-border)] bg-[var(--surface)] text-[var(--muted)] transition enabled:hover:border-[var(--accent)] enabled:hover:text-[var(--accent)] disabled:opacity-45"
+    >
+      {children}
+    </button>
+  );
+}
+
+function UploadPanel({
+  onOpen,
+  disabled,
+}: {
+  onOpen: (files: FileList | null) => void;
+  disabled: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    onOpen(event.target.files);
+    event.target.value = '';
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    stopEvent(event);
+    setIsDragging(false);
+    onOpen(event.dataTransfer.files);
+  };
+
+  return (
+    <div
+      className={`rounded-2xl border border-dashed p-4 transition ${
+        isDragging
+          ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+          : 'border-[color:var(--surface-border)] bg-[var(--surface)]'
+      }`}
+      onDragEnter={(event) => {
+        stopEvent(event);
+        setIsDragging(true);
+      }}
+      onDragOver={(event) => {
+        stopEvent(event);
+        setIsDragging(true);
+      }}
+      onDragLeave={(event) => {
+        stopEvent(event);
+        setIsDragging(false);
+      }}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={inputRef}
+        className="hidden"
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={handleInputChange}
+      />
+      <div className="flex items-start gap-3">
+        <div className="flex size-10 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)]">
+          <FileIcon className="size-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-[var(--foreground)]">Open one PDF</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+            The file stays browser-local except for transient analysis upload.
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        className="focus-ring mt-4 inline-flex h-9 w-full items-center justify-center rounded-full bg-[var(--foreground)] px-3 text-sm font-semibold text-[var(--background)] disabled:opacity-45"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+      >
+        {disabled ? 'Analyzing...' : 'Choose PDF'}
+      </button>
+    </div>
+  );
+}
+
+function FilterButtons({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: Array<{ label: string; value: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+        {label}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((option) => {
+          const selected = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              className={`focus-ring rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
+                selected
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                  : 'border-[color:var(--surface-border)] bg-[var(--surface)] text-[var(--muted)] hover:border-[var(--accent)]'
+              }`}
+              onClick={() => onChange(option.value)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CategorySummaryList({ categories }: { categories: AnalyzeCategorySummary[] }) {
+  if (categories.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm text-[var(--muted)]">
+        Category scores appear after analysis.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      {categories.map((category) => (
+        <article
+          key={category.key}
+          className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <p className="truncate text-sm font-semibold text-[var(--foreground)]">{category.label}</p>
+            <span className="text-sm font-semibold text-[var(--accent)]">{category.score}</span>
+          </div>
+          <p className="mt-1 text-xs capitalize text-[var(--muted)]">
+            {category.applicable ? category.severity : 'not applicable'} · {category.findingCount} findings
+          </p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function WorkspacePlaceholder({
+  status,
+  result,
+  selectedIssue,
+}: {
+  status: string;
+  result: ReturnType<typeof useEditEditorStore.getState>['lastAnalyzeResult'];
+  selectedIssue: EditorIssue | null;
+}) {
+  if (!result) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-dashed border-[color:var(--surface-border)] bg-[var(--surface)] p-6 text-center">
+        <div>
+          <FileIcon className="mx-auto size-10 text-[var(--muted)]" />
+          <h2 className="mt-4 text-lg font-semibold text-[var(--foreground)]">Open a PDF for review</h2>
+          <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
+            Stage 4 analyzes one PDF and shows findings. Page rendering and visual overlays begin in Stage 5.
+          </p>
+          {status === 'analyzing' || status === 'hydrating' ? (
+            <p className="mt-4 text-sm font-semibold text-[var(--accent)]">
+              {status === 'hydrating' ? 'Loading stored PDF...' : 'Analyzing PDF...'}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4">
+      <section className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+              Analysis
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold text-[var(--foreground)]">
+              {result.score}/100 · Grade {result.grade}
+            </h2>
+            <p className="mt-1 text-sm capitalize text-[var(--muted)]">
+              {result.pageCount} pages · {result.pdfClass.replaceAll('_', ' ')} ·{' '}
+              {Math.round(result.analysisDurationMs)} ms
+            </p>
+          </div>
+          <div className="rounded-2xl bg-[var(--accent-soft)] px-4 py-3 text-right">
+            <p className="text-xs font-semibold text-[var(--muted)]">Findings</p>
+            <p className="text-xl font-semibold text-[var(--accent)]">{result.findings.length}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-[var(--foreground)]">Category review</h3>
+          <span className="text-xs text-[var(--muted)]">Visual pages arrive in Stage 5</span>
+        </div>
+        <CategorySummaryList categories={result.categories} />
+      </section>
+
+      <section className="rounded-2xl border border-dashed border-[color:var(--surface-border)] bg-[#f8fafc] p-5">
+        <div className="flex items-start gap-3">
+          <InfoIcon className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--foreground)]">
+              Page preview placeholder
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+              {selectedIssue?.page
+                ? `Selected finding targets page ${selectedIssue.page}.`
+                : 'Select a finding to focus the future page preview.'}
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function IssueInspector({
+  issue,
+  result,
+  error,
+}: {
+  issue: EditorIssue | null;
+  result: ReturnType<typeof useEditEditorStore.getState>['lastAnalyzeResult'];
+  error: string | null;
+}) {
+  return (
+    <EditorInspector title="Review">
+      {error ? (
+        <div className="mb-3 rounded-2xl border border-[color:rgba(220,38,38,0.24)] bg-[color:rgba(220,38,38,0.06)] p-3 text-sm leading-6 text-[var(--danger)]">
+          {error}
+        </div>
+      ) : null}
+
+      {result ? (
+        <div className="mb-3 rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">Score</p>
+          <p className="mt-1 text-lg font-semibold text-[var(--foreground)]">
+            {result.score}/100 · {result.grade}
+          </p>
+        </div>
+      ) : null}
+
+      {!issue ? (
+        <div className="rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm leading-6 text-[var(--muted)]">
+          Select an issue to review details and available fixes.
+        </div>
+      ) : (
+        <article className="grid gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+              {issue.category.replaceAll('_', ' ')}
+            </p>
+            <h2 className="mt-1 text-base font-semibold text-[var(--foreground)]">{issue.message}</h2>
+            <p className="mt-1 text-xs capitalize text-[var(--muted)]">
+              {issue.severity} · {issue.fixState.replace('-', ' ')}
+              {issue.page ? ` · Page ${issue.page}` : ''}
+            </p>
+          </div>
+
+          {issue.whyItMatters ? (
+            <p className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3 text-sm leading-6 text-[var(--muted)]">
+              {issue.whyItMatters}
+            </p>
+          ) : null}
+
+          {issue.standardsLinks?.length ? (
+            <div className="grid gap-2">
+              <p className="text-xs font-semibold text-[var(--foreground)]">Standards</p>
+              {issue.standardsLinks.map((link) => (
+                <a
+                  key={`${link.label}-${link.href}`}
+                  href={link.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm font-medium text-[var(--accent)] underline-offset-4 hover:underline"
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            disabled
+            className="inline-flex h-9 items-center justify-center rounded-full border border-[color:var(--surface-border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted)] opacity-50"
+          >
+            Fix in later stage
+          </button>
+        </article>
+      )}
+    </EditorInspector>
+  );
+}
+
+export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspaceProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const sourceFile = useEditEditorStore((state) => state.sourceFile);
+  const analyzeStatus = useEditEditorStore((state) => state.analyzeStatus);
+  const analyzeError = useEditEditorStore((state) => state.analyzeError);
+  const selectedIssueId = useEditEditorStore((state) => state.selectedIssueId);
+  const issueFilter = useEditEditorStore((state) => state.issueFilter);
+  const lastAnalyzeResult = useEditEditorStore((state) => state.lastAnalyzeResult);
+  const issues = useEditEditorStore((state) => state.issues);
+  const validationMessage = useEditEditorStore((state) => state.validationMessage);
+  const hydrate = useEditEditorStore((state) => state.hydrate);
+  const openFile = useEditEditorStore((state) => state.openFile);
+  const reanalyze = useEditEditorStore((state) => state.reanalyze);
+  const clearDocument = useEditEditorStore((state) => state.clearDocument);
+  const setIssueFilter = useEditEditorStore((state) => state.setIssueFilter);
+  const selectIssue = useEditEditorStore((state) => state.selectIssue);
+  const selectAdjacentIssue = useEditEditorStore((state) => state.selectAdjacentIssue);
+
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
+
+  const filteredIssues = useMemo(
+    () => sortEditorIssues(filterEditorIssues(issues, issueFilter)),
+    [issues, issueFilter],
+  );
+  const readiness = useMemo(() => computeReadinessSummary(filteredIssues), [filteredIssues]);
+  const selectedIssue = useMemo(
+    () => issues.find((issue) => issue.id === selectedIssueId) ?? null,
+    [issues, selectedIssueId],
+  );
+  const isBusy = analyzeStatus === 'analyzing' || analyzeStatus === 'hydrating';
+  const pageLabel = lastAnalyzeResult ? `${lastAnalyzeResult.pageCount} pages` : '0 pages';
+  const saveStateLabel =
+    analyzeStatus === 'failed'
+      ? 'Analyze failed'
+      : analyzeStatus === 'complete'
+        ? 'Analyzed'
+        : analyzeStatus === 'analyzing'
+          ? 'Analyzing'
+          : sourceFile
+            ? 'Ready'
+            : 'No PDF';
+
+  const handleFiles = (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    void openFile(file, defaultApiBaseUrl);
+  };
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        className="hidden"
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={(event) => {
+          handleFiles(event.target.files);
+          event.target.value = '';
+        }}
+      />
+      <EditorShell
+        config={config}
+        issues={filteredIssues}
+        readiness={readiness}
+        selectedIssueId={selectedIssueId}
+        onSelectIssue={selectIssue}
+        beforeToolbar={<ProductNav />}
+        pageLabel={pageLabel}
+        saveStateLabel={saveStateLabel}
+        toolbarActions={
+          <>
+            <IconButton label="Open PDF" disabled={isBusy} onClick={() => inputRef.current?.click()}>
+              <FileIcon className="size-4" />
+            </IconButton>
+            <IconButton
+              label="Re-analyze PDF"
+              disabled={isBusy || !sourceFile}
+              onClick={() => void reanalyze(defaultApiBaseUrl)}
+            >
+              <RetryIcon className={`size-4 ${isBusy ? 'animate-spin' : ''}`} />
+            </IconButton>
+            <IconButton
+              label="Previous issue"
+              disabled={!filteredIssues.length}
+              onClick={() => selectAdjacentIssue('previous')}
+            >
+              <RetryIcon className="size-4 -scale-x-100" />
+            </IconButton>
+            <IconButton
+              label="Next issue"
+              disabled={!filteredIssues.length}
+              onClick={() => selectAdjacentIssue('next')}
+            >
+              <RetryIcon className="size-4" />
+            </IconButton>
+            <IconButton label="Export fixed PDF in later stage" disabled>
+              <DownloadIcon className="size-4" />
+            </IconButton>
+          </>
+        }
+        slots={{
+          leftRail: (
+            <EditorRail>
+              <div className="grid gap-3">
+                <UploadPanel onOpen={handleFiles} disabled={isBusy} />
+                {sourceFile ? (
+                  <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-[var(--foreground)]">
+                          {sourceFile.fileName}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {formatBytes(sourceFile.fileSize)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Clear PDF"
+                        title="Clear PDF"
+                        className="focus-ring inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--surface-border)] text-[var(--muted)] hover:border-[var(--danger)] hover:text-[var(--danger)]"
+                        onClick={() => void clearDocument()}
+                      >
+                        <TrashIcon className="size-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {validationMessage ? (
+                  <p className="rounded-2xl border border-[color:rgba(183,121,31,0.2)] bg-[color:rgba(183,121,31,0.08)] px-3 py-2 text-sm leading-6 text-[var(--warning)]">
+                    {validationMessage}
+                  </p>
+                ) : null}
+
+                <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+                  <div className="mb-3 flex items-center gap-2">
+                    <SettingsIcon className="size-4 text-[var(--muted)]" />
+                    <p className="text-sm font-semibold text-[var(--foreground)]">Filters</p>
+                  </div>
+                  <div className="grid gap-3">
+                    <FilterButtons
+                      label="Severity"
+                      options={severityOptions}
+                      value={issueFilter.severity ?? 'all'}
+                      onChange={(value) =>
+                        setIssueFilter({ severity: value as NonNullable<EditorIssueFilter['severity']> })
+                      }
+                    />
+                    <FilterButtons
+                      label="State"
+                      options={fixStateOptions}
+                      value={issueFilter.fixState ?? 'unresolved'}
+                      onChange={(value) =>
+                        setIssueFilter({ fixState: value as NonNullable<EditorIssueFilter['fixState']> })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-[var(--foreground)]">Issues</p>
+                  <EditorIssueList
+                    issues={filteredIssues}
+                    selectedIssueId={selectedIssueId}
+                    onSelectIssue={selectIssue}
+                  />
+                </div>
+              </div>
+            </EditorRail>
+          ),
+          workspace: (
+            <WorkspacePlaceholder
+              status={analyzeStatus}
+              result={lastAnalyzeResult}
+              selectedIssue={selectedIssue}
+            />
+          ),
+          inspector: (
+            <IssueInspector issue={selectedIssue} result={lastAnalyzeResult} error={analyzeError} />
+          ),
+        }}
+      />
+    </>
+  );
+}

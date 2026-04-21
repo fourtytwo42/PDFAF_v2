@@ -2,7 +2,8 @@
 
 import { create } from 'zustand';
 import { analyzePdf } from '../lib/api/pdfafClient';
-import { exportCreateDocumentToPdf, mapAnalyzeFindingsToEditorIssues } from '../lib/editor/createExport';
+import { mapAnalyzeFindingsToEditorIssues } from '../lib/editor/analyzeFindings';
+import { exportCreateDocumentToPdf } from '../lib/editor/createExport';
 import { validateCreateDocument } from '../lib/editor/createValidation';
 import type { AnalyzeSummary } from '../types/analyze';
 import type {
