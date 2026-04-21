@@ -4,6 +4,7 @@ import { create, type StateCreator } from 'zustand';
 import {
   deleteFile,
   downloadFile,
+  downloadSourceFile,
   getRemediationProgress,
   listFiles,
   remediateStoredFile,
@@ -12,6 +13,8 @@ import {
 } from '../lib/api/fileClient';
 import { LOCAL_STORAGE_KEYS } from '../lib/constants/config';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
+import { chooseEditorHandoffSource } from '../lib/editor/editHandoff';
+import { saveActiveEditSource } from '../lib/editor/editStorage';
 import { downloadSelectedRemediatedZip as downloadRemediatedZipArchive } from '../lib/zip/downloadZip';
 import type { StoredFileSummary } from '../types/files';
 import type { RemediationProgress } from '../types/progress';
@@ -50,6 +53,7 @@ interface QueueStoreState {
   clearSelection: () => void;
   downloadOriginal: (jobId: string) => Promise<void>;
   downloadRemediated: (jobId: string) => Promise<void>;
+  openInEditor: (jobId: string) => Promise<void>;
   enqueueAnalyze: (jobIds?: string[]) => Promise<void>;
   enqueueRemediate: (jobIds?: string[]) => Promise<void>;
   setAutoRemediateOnAdd: (enabled: boolean) => void;
@@ -585,6 +589,39 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
     try {
       const { blob, fileName } = await downloadFile(jobId);
       startBrowserDownload(blob, fileName);
+    } catch (error) {
+      set((state) => ({
+        validationMessages: [
+          buildValidationMessage(job.fileName, toErrorMessage(error)),
+          ...state.validationMessages,
+        ].slice(0, 8),
+      }));
+    }
+  },
+
+  openInEditor: async (jobId) => {
+    const job = get().jobs.find((candidate) => candidate.id === jobId);
+    if (!job) return;
+
+    try {
+      const handoffSource = chooseEditorHandoffSource(job);
+      if (handoffSource === 'unavailable') {
+        throw new Error('This PDF is no longer available. Add it again before editing it.');
+      }
+
+      const file = handoffSource === 'fixed'
+        ? await downloadFile(jobId)
+        : await downloadSourceFile(jobId);
+      await saveActiveEditSource({
+        metadata: {
+          fileName: file.fileName,
+          fileSize: file.blob.size || job.fileSize,
+          mimeType: file.blob.type || job.mimeType || 'application/pdf',
+          updatedAt: nowIso(),
+        },
+        blob: file.blob,
+      });
+      window.location.assign('/edit');
     } catch (error) {
       set((state) => ({
         validationMessages: [

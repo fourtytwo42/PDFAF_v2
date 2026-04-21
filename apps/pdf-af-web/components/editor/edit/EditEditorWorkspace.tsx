@@ -5,12 +5,13 @@ import {
   AddIcon,
   DownloadIcon,
   FileIcon,
+  MagicIcon,
   RetryIcon,
   SettingsIcon,
   TrashIcon,
 } from '../../common/AppIcons';
 import { ProductNav } from '../../common/ProductNav';
-import { applyPendingFixStateToIssues } from '../../../lib/editor/editFixes';
+import { applyPendingFixStateToIssues, getEditIssueFixPromptMode } from '../../../lib/editor/editFixes';
 import { computeReadinessSummary, filterEditorIssues, sortEditorIssues } from '../../../lib/editor/issues';
 import { useEditEditorStore } from '../../../stores/editEditor';
 import type { AnalyzeCategorySummary } from '../../../types/analyze';
@@ -635,9 +636,9 @@ function IssueFixPrompt({
 
   if (!issue) return null;
 
-  const normalizedCategory = normalizeIssueCategory(issue.category);
-  const isMetadataIssue = normalizedCategory === 'title_and_language';
-  const isAltIssue = normalizedCategory === 'alt_text';
+  const promptMode = getEditIssueFixPromptMode(issue);
+  const isMetadataIssue = promptMode === 'metadata';
+  const isAltIssue = promptMode === 'alt-text';
   const objectRef = issue.target?.objectRef;
   const titleQueued = pendingFixes.some((fix) => fix.type === 'set_document_title');
   const languageQueued = pendingFixes.some((fix) => fix.type === 'set_document_language');
@@ -847,6 +848,7 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
   const upsertPendingFix = useEditEditorStore((state) => state.upsertPendingFix);
   const clearPendingFixes = useEditEditorStore((state) => state.clearPendingFixes);
   const applyPendingFixes = useEditEditorStore((state) => state.applyPendingFixes);
+  const autoFixCurrentPdf = useEditEditorStore((state) => state.autoFixCurrentPdf);
   const revertToOriginal = useEditEditorStore((state) => state.revertToOriginal);
 
   useEffect(() => {
@@ -906,6 +908,10 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
     void applyPendingFixes(defaultApiBaseUrl);
   };
 
+  const handleAutoFix = () => {
+    void autoFixCurrentPdf(defaultApiBaseUrl);
+  };
+
   return (
     <>
       <input
@@ -961,6 +967,13 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
               onClick={() => void reanalyze(defaultApiBaseUrl)}
             >
               <RetryIcon className={`size-4 ${isBusy ? 'animate-spin' : ''}`} />
+            </IconButton>
+            <IconButton
+              label="Auto-fix current PDF"
+              disabled={isBusy || !sourceBlob}
+              onClick={handleAutoFix}
+            >
+              <MagicIcon className="size-4" />
             </IconButton>
             <IconButton
               label="Previous issue"
@@ -1033,7 +1046,7 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
                     <FilterButtons
                       label="State"
                       options={fixStateOptions}
-                      value={issueFilter.fixState ?? 'unresolved'}
+                      value={issueFilter.fixState ?? 'needs-input'}
                       onChange={(value) =>
                         setIssueFilter({ fixState: value as NonNullable<EditorIssueFilter['fixState']> })
                       }

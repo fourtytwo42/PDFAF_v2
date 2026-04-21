@@ -1,6 +1,15 @@
 import type { EditFixInstruction } from '../../types/editEditor';
 import type { EditorIssue } from '../../types/editor';
 
+export type EditIssueFixPromptMode = 'metadata' | 'alt-text' | 'info';
+
+export function getEditIssueFixPromptMode(issue: EditorIssue): EditIssueFixPromptMode {
+  const normalizedCategory = issue.category.toLowerCase().replaceAll(' ', '_');
+  if (normalizedCategory === 'title_and_language') return 'metadata';
+  if (normalizedCategory === 'alt_text' && issue.target?.objectRef) return 'alt-text';
+  return 'info';
+}
+
 export function validateEditFix(fix: EditFixInstruction): string | null {
   if (fix.type === 'set_document_title' && fix.title.trim().length === 0) {
     return 'Document title is required.';

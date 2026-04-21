@@ -131,3 +131,19 @@ export async function downloadFile(fileId: string): Promise<{ blob: Blob; fileNa
   const blob = await response.blob();
   return { blob, fileName };
 }
+
+export async function downloadSourceFile(fileId: string): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(`/api/files/${fileId}/source`, {
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  const disposition = response.headers.get('content-disposition') || '';
+  const match = disposition.match(/filename="([^"]+)"/i);
+  const fileName = match?.[1] || 'source.pdf';
+  const blob = await response.blob();
+  return { blob, fileName };
+}

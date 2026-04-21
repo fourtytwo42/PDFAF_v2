@@ -1029,6 +1029,52 @@ export async function readDownloadFile(
   }
 }
 
+export async function readSourceFile(
+  sessionId: string,
+  id: string,
+): Promise<{ fileName: string; mimeType: string; bytes: Buffer } | null> {
+  const record = await getStoredFile(sessionId, id);
+  if (!record || !record.hasServerSource || !record.sourceStoragePath) {
+    return null;
+  }
+
+  try {
+    const bytes = await fs.readFile(record.sourceStoragePath);
+    return {
+      fileName: record.sourceStoredFileName || record.fileName,
+      mimeType: record.mimeType || 'application/pdf',
+      bytes,
+    };
+  } catch {
+    putRecord({
+      ...record,
+      sessionId: record.sessionId,
+      fileName: record.fileName,
+      fileSize: record.fileSize,
+      mimeType: record.mimeType,
+      status: record.status,
+      mode: record.mode,
+      sourceStoredFileName: null,
+      sourceStoragePath: null,
+      sourceStoredSizeBytes: null,
+      updatedAt: nowIso(),
+      errorMessage: 'Saved source PDF is no longer available on the server.',
+      analyzeResult: record.analyzeResult,
+      remediationResult: record.remediationResult,
+      findingSummaries: record.findingSummaries,
+      storedFileName: record.storedFileName,
+      storagePath: record.storagePath,
+      storedSizeBytes: record.storedSizeBytes,
+      fileStatus: record.fileStatus,
+      expiresAt: record.expiresAt,
+      deletedAt: record.deletedAt,
+      deletionReason: record.deletionReason,
+    });
+
+    return null;
+  }
+}
+
 export function wrapFileMutationResponse(file: StoredFileSummary): FileMutationResponse {
   return { file };
 }

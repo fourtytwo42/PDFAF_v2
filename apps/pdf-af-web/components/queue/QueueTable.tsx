@@ -17,6 +17,7 @@ import {
   formatPdfClass,
   formatScoreGrade,
 } from '../../lib/format/formatters';
+import { chooseEditorHandoffSource } from '../../lib/editor/editHandoff';
 import { useQueueStore } from '../../stores/queue';
 import type { JobRecord } from '../../types/queue';
 import { BatchActionBar } from './BatchActionBar';
@@ -241,6 +242,7 @@ export function QueueTable() {
   const closeDetail = useQueueStore((state) => state.closeDetail);
   const downloadRemediated = useQueueStore((state) => state.downloadRemediated);
   const enqueueRemediate = useQueueStore((state) => state.enqueueRemediate);
+  const openInEditor = useQueueStore((state) => state.openInEditor);
   const openDetail = useQueueStore((state) => state.openDetail);
   const removeJob = useQueueStore((state) => state.removeJob);
   const toggleSelection = useQueueStore((state) => state.toggleSelection);
@@ -272,6 +274,7 @@ export function QueueTable() {
             const canRun = ['idle', 'failed', 'done'].includes(job.status);
             const fixLabel = job.remediationResult ? 'Fix Again' : 'Fix';
             const downloadAction = getPrimaryDownloadAction(job);
+            const canOpenInEditor = chooseEditorHandoffSource(job) !== 'unavailable';
             const retentionWarning = getRetentionWarning(job);
             const requiresReupload = needsReuploadToFix(job);
             const showProcessingState = isProcessing(job) && Boolean(job.processingStartedAt);
@@ -340,6 +343,20 @@ export function QueueTable() {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center justify-end gap-2 self-start">
+                        <Button
+                          variant="ghost"
+                          className="h-10 w-10 shrink-0 p-0"
+                          onClick={() => void openInEditor(job.id)}
+                          disabled={!canOpenInEditor}
+                          title={
+                            canOpenInEditor
+                              ? 'Open in editor'
+                              : 'Add this PDF again before editing it'
+                          }
+                          aria-label={`Open ${job.fileName} in editor`}
+                        >
+                          <FileIcon className="h-4 w-4" />
+                        </Button>
                         <Button
                           variant="ghost"
                           className="h-10 w-10 shrink-0 p-0"

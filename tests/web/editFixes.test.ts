@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyPendingFixStateToIssues,
+  getEditIssueFixPromptMode,
   removeEditFix,
   upsertEditFix,
   validateEditFix,
@@ -30,6 +31,15 @@ describe('edit fix helpers', () => {
       validateEditFix({ type: 'set_figure_alt_text', objectRef: 'fig-1', altText: '' }),
     ).toMatch(/alt text/i);
     expect(validateEditFix({ type: 'mark_figure_decorative', objectRef: '' })).toMatch(/target/i);
+  });
+
+  it('classifies issue prompt modes by available guided fix support', () => {
+    expect(getEditIssueFixPromptMode(issue({ category: 'Title and Language' }))).toBe('metadata');
+    expect(
+      getEditIssueFixPromptMode(issue({ category: 'Alt Text', target: { objectRef: 'fig-1' } })),
+    ).toBe('alt-text');
+    expect(getEditIssueFixPromptMode(issue({ category: 'Alt Text' }))).toBe('info');
+    expect(getEditIssueFixPromptMode(issue({ category: 'Reading Order' }))).toBe('info');
   });
 
   it('rejects an empty fix list', () => {

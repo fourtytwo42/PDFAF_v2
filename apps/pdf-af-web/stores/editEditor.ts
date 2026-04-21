@@ -1,7 +1,7 @@
 'use client';
 
 import { create, type StateCreator } from 'zustand';
-import { analyzePdf, applyEditFixes } from '../lib/api/pdfafClient';
+import { analyzePdf, applyEditFixes, remediatePdf } from '../lib/api/pdfafClient';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
 import { mapAnalyzeFindingsToEditorIssues } from '../lib/editor/analyzeFindings';
 import { clampEditZoom, stepEditZoom } from '../lib/editor/editOverlayGeometry';
@@ -65,6 +65,7 @@ interface EditEditorStoreState {
   removePendingFix: (type: EditFixInstruction['type'], objectRef?: string) => void;
   clearPendingFixes: () => void;
   applyPendingFixes: (apiBaseUrl: string) => Promise<void>;
+  autoFixCurrentPdf: (apiBaseUrl: string) => Promise<void>;
   revertToOriginal: () => void;
 }
 
@@ -112,6 +113,15 @@ function buildMetadata(file: File): EditSourceFileMetadata {
     mimeType: file.type || 'application/pdf',
     updatedAt: nowIso(),
   };
+}
+
+function base64ToPdfBlob(value: string): Blob {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: 'application/pdf' });
 }
 
 function mapAnalyzeResultToIssues(result: AnalyzeSummary): EditorIssue[] {
@@ -188,7 +198,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
   analyzeStatus: 'idle',
   analyzeError: null,
   selectedIssueId: null,
-  issueFilter: { severity: 'all', fixState: 'unresolved' },
+  issueFilter: { severity: 'all', fixState: 'needs-input' },
   lastAnalyzeResult: null,
   issues: [],
   validationMessage: null,
@@ -385,7 +395,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
 
   applyPendingFixes: async (apiBaseUrl: string) => {
     const state = get();
-    const sourceBlob = state.originalSourceBlob ?? state.sourceBlob;
+    const sourceBlob = state.sourceBlob;
     const sourceFile = state.sourceFile;
     const validationMessage = validateEditFixes(state.pendingFixes);
     if (validationMessage) {
@@ -408,6 +418,10 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
         state.pendingFixes,
       );
       const issues = mapAnalyzeResultToIssues(result.after);
+      await saveActiveEditSource({
+        metadata: sourceFile,
+        blob: result.fixedPdfBlob,
+      });
       set((current) => ({
         sourceBlob: result.fixedPdfBlob,
         fixedSourceBlob: result.fixedPdfBlob,
@@ -421,6 +435,56 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
           ? `${result.rejectedFixes.length} fix could not be applied.`
           : null,
         scoreDelta: result.after.score - result.before.score,
+        renderStatus: 'loading',
+        renderError: null,
+      }));
+    } catch (error) {
+      set({
+        applyStatus: 'failed',
+        applyError: toErrorMessage(error),
+      });
+    }
+  },
+
+  autoFixCurrentPdf: async (apiBaseUrl: string) => {
+    const state = get();
+    const sourceBlob = state.sourceBlob;
+    const sourceFile = state.sourceFile;
+
+    if (!sourceBlob || !sourceFile) {
+      set({ applyStatus: 'failed', applyError: 'Open a PDF before running auto-fix.' });
+      return;
+    }
+
+    set({ applyStatus: 'applying', applyError: null });
+
+    try {
+      const result = await remediatePdf(apiBaseUrl, sourceBlob, sourceFile.fileName);
+      if (!result.remediatedPdfBase64) {
+        set({
+          applyStatus: 'failed',
+          applyError: 'Auto-fix completed, but the fixed PDF was too large to load into the editor.',
+        });
+        return;
+      }
+
+      const fixedPdfBlob = base64ToPdfBlob(result.remediatedPdfBase64);
+      const issues = mapAnalyzeResultToIssues(result.summary.after);
+      await saveActiveEditSource({
+        metadata: sourceFile,
+        blob: fixedPdfBlob,
+      });
+      set((current) => ({
+        sourceBlob: fixedPdfBlob,
+        fixedSourceBlob: fixedPdfBlob,
+        lastAnalyzeResult: result.summary.after,
+        issues,
+        selectedIssueId: selectFirstFilteredIssue(issues, current.issueFilter, null),
+        selectedPage: 1,
+        pendingFixes: [],
+        applyStatus: 'complete',
+        applyError: null,
+        scoreDelta: result.summary.after.score - result.summary.before.score,
         renderStatus: 'loading',
         renderError: null,
       }));
