@@ -6753,6 +6753,364 @@ def _figure_ownership_debug(pdf: pikepdf.Pdf, elem, reason: str | None = None) -
     }
 
 
+def _build_role_map_resolved(struct_root) -> dict[str, str]:
+    role_map_resolved: dict[str, str] = {}
+    try:
+        rm = struct_root.get("/RoleMap")
+        if isinstance(rm, pikepdf.Dictionary):
+            for rk in list(rm.keys()):
+                try:
+                    rv = rm.get(rk)
+                    if rv is None:
+                        continue
+                    role_map_resolved[str(rk)] = str(rv)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return role_map_resolved
+
+
+def _resolved_struct_role(struct_root, elem) -> str | None:
+    raw = get_name(elem)
+    if not raw:
+        return None
+    lookup = raw if raw.startswith("/") else "/" + raw
+    cur = lookup
+    seen = set()
+    role_map_resolved = _build_role_map_resolved(struct_root) if isinstance(struct_root, pikepdf.Dictionary) else {}
+    while cur in role_map_resolved and cur not in seen:
+        seen.add(cur)
+        mapped = role_map_resolved[cur]
+        if not mapped:
+            break
+        cur = mapped if mapped.startswith("/") else "/" + mapped
+    return cur.lstrip("/")
+
+
+def _root_reachable_resolved_role_count(pdf: pikepdf.Pdf, *roles: str) -> int:
+    sr = pdf.Root.get("/StructTreeRoot")
+    if not isinstance(sr, pikepdf.Dictionary):
+        return 0
+    role_set = {r.lstrip("/").upper() for r in roles}
+    count = 0
+    for elem in _iter_root_reachable_struct_elems(sr):
+        resolved = (_resolved_struct_role(sr, elem) or "").lstrip("/").upper()
+        if resolved in role_set:
+            count += 1
+    return count
+
+
+def _global_h1_count_resolved(pdf: pikepdf.Pdf) -> int:
+    sr = pdf.Root.get("/StructTreeRoot")
+    if not isinstance(sr, pikepdf.Dictionary):
+        return 0
+    count = 0
+    for elem in _iter_root_reachable_struct_elems(sr):
+        resolved = (_resolved_struct_role(sr, elem) or "").lstrip("/").upper()
+        if resolved in {"H", "H1"}:
+            count += 1
+    return count
+
+
+def _annotation_invariant_stats(pdf: pikepdf.Pdf) -> dict:
+    stats = collect_annotation_accessibility_stats(pdf)
+    return {
+        "visibleAnnotationsMissingStructParent": (
+            stats.get("linkAnnotationsMissingStructParent", 0)
+            + stats.get("nonLinkAnnotationsMissingStructParent", 0)
+        ),
+        "visibleAnnotationsMissingStructure": (
+            stats.get("linkAnnotationsMissingStructure", 0)
+            + stats.get("nonLinkAnnotationsMissingStructure", 0)
+        ),
+        "pagesMissingTabsS": stats.get("pagesMissingTabsS", 0),
+        "pagesAnnotationOrderDiffers": stats.get("pagesAnnotationOrderDiffers", 0),
+        "nonLinkAnnotationsMissingContents": stats.get("nonLinkAnnotationsMissingContents", 0),
+    }
+
+
+def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> dict:
+    direct_cells = 0
+    header_cells = 0
+    table_tree_valid = False
+    target_resolved = False
+    target_role = None
+    try:
+        target_obj = _resolve_ref(pdf, target_ref) if target_ref else None
+    except Exception:
+        target_obj = None
+    if target_ref:
+        target_resolved = isinstance(target_obj, pikepdf.Dictionary)
+        target_role = (get_name(target_obj) or "").lstrip("/") if isinstance(target_obj, pikepdf.Dictionary) else None
+    tables = [target_obj] if isinstance(target_obj, pikepdf.Dictionary) else list(_iter_table_struct_elems(pdf))
+    for table in tables:
+        if not isinstance(table, pikepdf.Dictionary):
+            continue
+        th_count, _td_count = _count_table_cells(table)
+        audit = _audit_table_structure(table)
+        direct_cells += int(audit.get("directCellUnderTableCount") or 0)
+        header_cells += th_count
+    table_tree_valid = direct_cells == 0 and (target_resolved if target_ref else True)
+    return {
+        "targetResolved": target_resolved if target_ref else None,
+        "resolvedRole": target_role,
+        "directCellsUnderTable": direct_cells,
+        "headerCellCount": header_cells,
+        "tableTreeValid": table_tree_valid,
+    }
+
+
+def _common_target_invariants(pdf: pikepdf.Pdf, ref: str | None) -> dict:
+    if not ref:
+        return {
+            "targetResolved": None,
+            "targetReachable": None,
+            "resolvedRole": None,
+        }
+    try:
+        target = _resolve_ref(pdf, ref)
+    except Exception:
+        target = None
+    sr = pdf.Root.get("/StructTreeRoot")
+    resolved = isinstance(target, pikepdf.Dictionary)
+    reachable = _is_root_reachable_elem(sr, target) if resolved and isinstance(sr, pikepdf.Dictionary) else False
+    resolved_role = _resolved_struct_role(sr, target) if resolved and isinstance(sr, pikepdf.Dictionary) else None
+    return {
+        "targetResolved": resolved,
+        "targetReachable": reachable,
+        "resolvedRole": resolved_role,
+    }
+
+
+def _stage35_heading_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
+    target_ref = params.get("targetRef") or params.get("structRef")
+    common = _common_target_invariants(pdf, target_ref if isinstance(target_ref, str) else None)
+    sr = pdf.Root.get("/StructTreeRoot")
+    snapshot = {
+        **common,
+        "rootReachableHeadingCount": _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6"),
+        "rootReachableDepth": _root_reachable_depth(sr),
+        "globalH1Count": _global_h1_count_resolved(pdf),
+    }
+    snapshot["headingCandidateReachable"] = common.get("targetReachable")
+    return snapshot
+
+
+def _stage35_figure_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
+    target_ref = params.get("structRef") or params.get("targetRef")
+    common = _common_target_invariants(pdf, target_ref if isinstance(target_ref, str) else None)
+    try:
+        target = _resolve_ref(pdf, target_ref) if isinstance(target_ref, str) else None
+    except Exception:
+        target = None
+    return {
+        **common,
+        "rootReachableFigureCount": _root_reachable_resolved_role_count(pdf, "FIGURE"),
+        "targetHasAltAfter": bool(get_alt(target)) if isinstance(target, pikepdf.Dictionary) else False,
+        "targetIsFigureAfter": ((common.get("resolvedRole") or "").upper() == "FIGURE"),
+    }
+
+
+def _stage35_table_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
+    ref = params.get("structRef")
+    return _table_invariant_stats(pdf, ref if isinstance(ref, str) else None)
+
+
+def _stage35_annotation_snapshot(pdf: pikepdf.Pdf, _params: dict) -> dict:
+    return _annotation_invariant_stats(pdf)
+
+
+_STAGE35_HEADING_OPS = {
+    "create_heading_from_candidate",
+    "normalize_heading_hierarchy",
+    "repair_structure_conformance",
+    "synthesize_basic_structure_from_layout",
+}
+_STAGE35_FIGURE_OPS = {
+    "normalize_nested_figure_containers",
+    "canonicalize_figure_alt_ownership",
+    "set_figure_alt_text",
+    "mark_figure_decorative",
+    "repair_alt_text_structure",
+}
+_STAGE35_TABLE_OPS = {
+    "repair_native_table_headers",
+    "set_table_header_cells",
+}
+_STAGE35_ANNOTATION_OPS = {
+    "tag_unowned_annotations",
+    "repair_native_link_structure",
+    "set_link_annotation_contents",
+    "normalize_annotation_tab_order",
+    "repair_annotation_alt_text",
+}
+_STAGE35_STRUCTURAL_OPS = _STAGE35_HEADING_OPS | _STAGE35_FIGURE_OPS | _STAGE35_TABLE_OPS | _STAGE35_ANNOTATION_OPS
+
+
+def _collect_stage35_snapshot(pdf: pikepdf.Pdf, op: str, params: dict) -> dict | None:
+    if op in _STAGE35_HEADING_OPS:
+        return _stage35_heading_snapshot(pdf, params)
+    if op in _STAGE35_FIGURE_OPS:
+        return _stage35_figure_snapshot(pdf, params)
+    if op in _STAGE35_TABLE_OPS:
+        return _stage35_table_snapshot(pdf, params)
+    if op in _STAGE35_ANNOTATION_OPS:
+        return _stage35_annotation_snapshot(pdf, params)
+    return None
+
+
+def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
+    invariants = {
+        "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
+        "targetReachable": after.get("targetReachable"),
+        "resolvedRole": after.get("resolvedRole"),
+        "ownershipPreserved": True,
+        "rootReachableHeadingCountBefore": before.get("rootReachableHeadingCount", 0),
+        "rootReachableHeadingCountAfter": after.get("rootReachableHeadingCount", 0),
+        "rootReachableDepthBefore": before.get("rootReachableDepth", 0),
+        "rootReachableDepthAfter": after.get("rootReachableDepth", 0),
+        "globalH1CountAfter": after.get("globalH1Count", 0),
+        "headingCandidateReachable": after.get("headingCandidateReachable"),
+    }
+    if not mutated:
+        return "no_effect", note or "no_structural_change", invariants
+    if invariants["targetResolved"] is False:
+        return "no_effect", "target_not_found", invariants
+    resolved_role = (invariants.get("resolvedRole") or "").upper()
+    if invariants.get("targetResolved") and resolved_role and resolved_role not in {"H", "H1", "H2", "H3", "H4", "H5", "H6"}:
+        return "no_effect", "role_invalid_after_mutation", invariants
+    if (after.get("globalH1Count", 0) or 0) > 1 and (before.get("globalH1Count", 0) or 0) <= 1:
+        return "no_effect", "multiple_h1_after_mutation", invariants
+    improved = (
+        (after.get("rootReachableHeadingCount", 0) > before.get("rootReachableHeadingCount", 0))
+        or (after.get("rootReachableDepth", 0) > before.get("rootReachableDepth", 0) and after.get("rootReachableHeadingCount", 0) > 0)
+        or ((before.get("globalH1Count", 0) or 0) > 1 and (after.get("globalH1Count", 0) or 0) == 1)
+    )
+    if not improved:
+        if invariants.get("targetResolved") and not invariants.get("headingCandidateReachable"):
+            return "no_effect", "heading_not_root_reachable", invariants
+        if (after.get("rootReachableDepth", 0) or 0) <= (before.get("rootReachableDepth", 0) or 0):
+            return "no_effect", "structure_depth_not_improved", invariants
+        return "no_effect", note or "no_structural_change", invariants
+    return "applied", note, invariants
+
+
+def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
+    invariants = {
+        "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
+        "targetReachable": after.get("targetReachable"),
+        "resolvedRole": after.get("resolvedRole"),
+        "ownershipPreserved": (after.get("rootReachableFigureCount", 0) >= before.get("rootReachableFigureCount", 0)),
+        "rootReachableFigureCountBefore": before.get("rootReachableFigureCount", 0),
+        "rootReachableFigureCountAfter": after.get("rootReachableFigureCount", 0),
+        "targetHasAltAfter": after.get("targetHasAltAfter"),
+        "targetIsFigureAfter": after.get("targetIsFigureAfter"),
+    }
+    if not mutated:
+        return "no_effect", note or "no_structural_change", invariants
+    if invariants["targetResolved"] is False:
+        return "no_effect", "target_not_found", invariants
+    if op in {"normalize_nested_figure_containers", "canonicalize_figure_alt_ownership"} and not invariants["ownershipPreserved"]:
+        return "no_effect", "figure_ownership_not_preserved", invariants
+    if op == "set_figure_alt_text":
+        if not invariants.get("targetIsFigureAfter"):
+            return "no_effect", "target_not_checker_visible_figure", invariants
+        if not invariants.get("targetReachable"):
+            return "no_effect", "target_unreachable", invariants
+        if not invariants.get("targetHasAltAfter"):
+            return "no_effect", "alt_not_attached_to_reachable_figure", invariants
+    if op == "mark_figure_decorative":
+        resolved_role = (invariants.get("resolvedRole") or "").upper()
+        if resolved_role not in {"ARTIFACT", "FIGURE"}:
+            return "no_effect", "role_invalid_after_mutation", invariants
+    if op == "repair_alt_text_structure" and not invariants["ownershipPreserved"]:
+        return "no_effect", "figure_ownership_not_preserved", invariants
+    return "applied", note, invariants
+
+
+def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
+    invariants = {
+        "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
+        "resolvedRole": after.get("resolvedRole"),
+        "ownershipPreserved": True,
+        "directCellsUnderTableBefore": before.get("directCellsUnderTable", 0),
+        "directCellsUnderTableAfter": after.get("directCellsUnderTable", 0),
+        "headerCellCountBefore": before.get("headerCellCount", 0),
+        "headerCellCountAfter": after.get("headerCellCount", 0),
+        "tableTreeValidAfter": after.get("tableTreeValid", False),
+    }
+    if not mutated:
+        return "no_effect", note or "no_structural_change", invariants
+    if invariants["targetResolved"] is False:
+        return "no_effect", "target_not_found", invariants
+    if invariants.get("resolvedRole") and (str(invariants["resolvedRole"]).upper() != "TABLE"):
+        return "no_effect", "role_invalid_after_mutation", invariants
+    if (after.get("directCellsUnderTable", 0) or 0) > 0 and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
+        return "no_effect", "direct_cells_under_table_remain", invariants
+    if (after.get("headerCellCount", 0) or 0) <= (before.get("headerCellCount", 0) or 0) and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
+        return "no_effect", "headers_not_created", invariants
+    if not invariants.get("tableTreeValidAfter"):
+        return "no_effect", "table_tree_still_invalid", invariants
+    return "applied", note, invariants
+
+
+def _stage35_validate_annotation(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
+    invariants = {
+        "ownershipPreserved": (
+            (after.get("visibleAnnotationsMissingStructParent", 0) <= before.get("visibleAnnotationsMissingStructParent", 0))
+            and (after.get("visibleAnnotationsMissingStructure", 0) <= before.get("visibleAnnotationsMissingStructure", 0))
+        ),
+        "visibleAnnotationsMissingStructParentBefore": before.get("visibleAnnotationsMissingStructParent", 0),
+        "visibleAnnotationsMissingStructParentAfter": after.get("visibleAnnotationsMissingStructParent", 0),
+        "visibleAnnotationsMissingStructureBefore": before.get("visibleAnnotationsMissingStructure", 0),
+        "visibleAnnotationsMissingStructureAfter": after.get("visibleAnnotationsMissingStructure", 0),
+    }
+    if not mutated:
+        return "no_effect", note or "no_structural_change", invariants
+    if not invariants["ownershipPreserved"] and op in {"tag_unowned_annotations", "repair_native_link_structure", "normalize_annotation_tab_order"}:
+        if (after.get("visibleAnnotationsMissingStructParent", 0) or 0) > (before.get("visibleAnnotationsMissingStructParent", 0) or 0):
+            return "no_effect", "structparent_missing_after_mutation", invariants
+        return "no_effect", "annotation_ownership_not_preserved", invariants
+    if op in {"tag_unowned_annotations", "repair_native_link_structure"}:
+        if (
+            (after.get("visibleAnnotationsMissingStructParent", 0) or 0) >= (before.get("visibleAnnotationsMissingStructParent", 0) or 0)
+            and (after.get("visibleAnnotationsMissingStructure", 0) or 0) >= (before.get("visibleAnnotationsMissingStructure", 0) or 0)
+        ):
+            return "no_effect", "annotation_ownership_not_preserved", invariants
+    if op == "normalize_annotation_tab_order":
+        if (
+            (after.get("pagesMissingTabsS", 0) or 0) >= (before.get("pagesMissingTabsS", 0) or 0)
+            and (after.get("pagesAnnotationOrderDiffers", 0) or 0) >= (before.get("pagesAnnotationOrderDiffers", 0) or 0)
+        ):
+            return "no_effect", "no_structural_change", invariants
+    if op == "repair_annotation_alt_text":
+        if (after.get("nonLinkAnnotationsMissingContents", 0) or 0) >= (before.get("nonLinkAnnotationsMissingContents", 0) or 0):
+            return "no_effect", "no_structural_change", invariants
+    return "applied", note, invariants
+
+
+def _stage35_validate_mutation(pdf: pikepdf.Pdf, op: str, params: dict, mutated: bool, note: str | None, before: dict | None) -> tuple[str, str | None, dict | None]:
+    if op not in _STAGE35_STRUCTURAL_OPS:
+        if mutated:
+            return "applied", note, None
+        return "no_effect", note or "no_structural_change", None
+    if before is None:
+        if mutated:
+            return "no_effect", "no_structural_change", None
+        return "no_effect", note or "no_structural_change", None
+    after = _collect_stage35_snapshot(pdf, op, params) or {}
+    if op in _STAGE35_HEADING_OPS:
+        return _stage35_validate_heading(op, before, after, mutated, note)
+    if op in _STAGE35_FIGURE_OPS:
+        return _stage35_validate_figure(op, before, after, mutated, note)
+    if op in _STAGE35_TABLE_OPS:
+        return _stage35_validate_table(op, before, after, mutated, note)
+    if op in _STAGE35_ANNOTATION_OPS:
+        return _stage35_validate_annotation(op, before, after, mutated, note)
+    return ("applied" if mutated else "no_effect"), note, None
+
+
 def _root_reachable_depth(struct_root) -> int:
     if not isinstance(struct_root, pikepdf.Dictionary):
         return 0
@@ -7463,6 +7821,8 @@ def mutate_main(request_path: str) -> int:
             op = m.get("op")
             params = m.get("params") or {}
             _set_last_mutation_note(None)
+            _set_last_mutation_debug(None)
+            before_invariants = _collect_stage35_snapshot(pdf, op, params) if pdf is not None else None
             if op == "ocr_scanned_pdf":
                 tok = secrets.token_hex(8)
                 tmp_in = os.path.join(tempfile.gettempdir(), f"pdfaf-ocr-in-{tok}.pdf")
@@ -7513,20 +7873,32 @@ def mutate_main(request_path: str) -> int:
                 ok = bool(fn(pdf, params))
                 note = _consume_last_mutation_note()
                 debug_payload = _consume_last_mutation_debug()
-                if ok:
+                outcome, validated_note, invariants = _stage35_validate_mutation(
+                    pdf,
+                    op,
+                    params,
+                    ok,
+                    note,
+                    before_invariants,
+                )
+                if outcome == "applied":
                     applied.append(op)
                     row = {"op": op, "outcome": "applied"}
-                    if note:
-                        row["note"] = note
+                    if validated_note:
+                        row["note"] = validated_note
+                    if invariants is not None:
+                        row["invariants"] = invariants
                     if debug_payload is not None:
                         row["debug"] = debug_payload
                     elif os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":
                         row["debug"] = _mutation_debug_snapshot(pdf)
                     op_results.append(row)
                 else:
-                    row = {"op": op, "outcome": "no_effect"}
-                    if note:
-                        row["note"] = note
+                    row = {"op": op, "outcome": outcome}
+                    if validated_note:
+                        row["note"] = validated_note
+                    if invariants is not None:
+                        row["invariants"] = invariants
                     if debug_payload is not None:
                         row["debug"] = debug_payload
                     elif os.environ.get("PDFAF_DEBUG_DETERMINISTIC_REMEDIATION") == "1":

@@ -38,6 +38,7 @@ import type {
   RemediationToolRuntimeSummary,
   RemediatePdfOutcome,
   StructuralConfidenceGuardSummary,
+  PythonMutationDetailPayload,
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
 import {
@@ -133,16 +134,10 @@ export function compareStructuralConfidence(
   };
 }
 
-function parseMutationDetails(details: string | undefined): {
-  note?: string;
-  debug?: { rootReachableDepth?: number; qpdfVerifiedDepth?: number };
-} | null {
+export function parseMutationDetails(details: string | undefined): PythonMutationDetailPayload | null {
   if (!details?.startsWith('{')) return null;
   try {
-    return JSON.parse(details) as {
-      note?: string;
-      debug?: { rootReachableDepth?: number; qpdfVerifiedDepth?: number };
-    };
+    return JSON.parse(details) as PythonMutationDetailPayload;
   } catch {
     return null;
   }
@@ -488,11 +483,35 @@ function pythonMutationDetails(
 ): string | undefined {
   const op = result.opResults?.find(row => row.op === toolName);
   if (!op) return undefined;
-  const payload: Record<string, unknown> = { outcome: op.outcome };
+  const payload: PythonMutationDetailPayload = { outcome: op.outcome };
   if (op.note) payload['note'] = op.note;
   if (op.error) payload['error'] = op.error;
+  if (op.invariants) payload['invariants'] = op.invariants;
   if (op.debug) payload['debug'] = op.debug;
   return JSON.stringify(payload);
+}
+
+const STAGE35_STRUCTURAL_TOOLS = new Set([
+  'create_heading_from_candidate',
+  'normalize_heading_hierarchy',
+  'repair_structure_conformance',
+  'synthesize_basic_structure_from_layout',
+  'normalize_nested_figure_containers',
+  'canonicalize_figure_alt_ownership',
+  'set_figure_alt_text',
+  'mark_figure_decorative',
+  'repair_alt_text_structure',
+  'repair_native_table_headers',
+  'set_table_header_cells',
+  'tag_unowned_annotations',
+  'repair_native_link_structure',
+  'set_link_annotation_contents',
+  'normalize_annotation_tab_order',
+  'repair_annotation_alt_text',
+]);
+
+export function isStage35StructuralTool(toolName: string): boolean {
+  return STAGE35_STRUCTURAL_TOOLS.has(toolName);
 }
 
 async function reanalyzeBufferForMutation(
@@ -714,21 +733,39 @@ export async function runSingleTool(
       case 'repair_native_table_headers': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
         const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
+        const details = pythonMutationDetails(result, toolName);
+        const parsed = parseMutationDetails(details);
         if (!result.success) {
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
+        }
+        if (parsed?.outcome === 'failed') {
+          return {
+            buffer,
+            outcome: 'failed',
+            details,
+            durationMs: performance.now() - started,
+          };
+        }
+        if (parsed?.outcome === 'no_effect' || (isStage35StructuralTool(toolName) && parsed?.outcome !== 'applied')) {
+          return {
+            buffer,
+            outcome: 'no_effect',
+            details,
+            durationMs: performance.now() - started,
+          };
         }
         if (result.applied.length === 0) {
           return {
             buffer,
             outcome: 'no_effect',
-            details: pythonMutationDetails(result, toolName),
+            details,
             durationMs: performance.now() - started,
           };
         }
         return {
           buffer: next,
           outcome: 'applied',
-          details: pythonMutationDetails(result, toolName),
+          details,
           durationMs: performance.now() - started,
         };
       }

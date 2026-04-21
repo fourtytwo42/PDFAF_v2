@@ -568,6 +568,60 @@ export interface AppliedRemediationTool {
   source?: 'planner' | 'playbook' | 'post_pass';
 }
 
+export interface PythonMutationInvariantPayload {
+  targetResolved?: boolean;
+  targetReachable?: boolean;
+  resolvedRole?: string | null;
+  ownershipPreserved?: boolean;
+  rootReachableHeadingCountBefore?: number;
+  rootReachableHeadingCountAfter?: number;
+  rootReachableDepthBefore?: number;
+  rootReachableDepthAfter?: number;
+  globalH1CountAfter?: number;
+  headingCandidateReachable?: boolean;
+  rootReachableFigureCountBefore?: number;
+  rootReachableFigureCountAfter?: number;
+  targetHasAltAfter?: boolean;
+  targetIsFigureAfter?: boolean;
+  directCellsUnderTableBefore?: number;
+  directCellsUnderTableAfter?: number;
+  headerCellCountBefore?: number;
+  headerCellCountAfter?: number;
+  tableTreeValidAfter?: boolean;
+  visibleAnnotationsMissingStructParentBefore?: number;
+  visibleAnnotationsMissingStructParentAfter?: number;
+  visibleAnnotationsMissingStructureBefore?: number;
+  visibleAnnotationsMissingStructureAfter?: number;
+}
+
+export interface PythonMutationDetailPayload {
+  outcome: RemediationToolOutcome;
+  note?: string;
+  error?: string;
+  invariants?: PythonMutationInvariantPayload;
+  debug?: {
+    hasStructTreeRoot?: boolean;
+    parentTreeEntries?: number;
+    parentTreeNextKey?: number;
+    headingCount?: number;
+    structureDepth?: number;
+    rootReachableDepth?: number;
+    rootReachableHeadingCount?: number;
+    rootReachableFigureCount?: number;
+    globalHeadingCount?: number;
+    globalH1Count?: number;
+    rootChildrenCount?: number;
+    pageStructParentsCount?: number;
+    pageParentTreeArrayCount?: number;
+    pageParentTreeNonEmptyCount?: number;
+    topLevelNonEmptyCount?: number;
+    usesMcrKidsCount?: number;
+    usesIntegerKidsCount?: number;
+    qpdfVerifiedDepth?: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface RemediationRoundSummary {
   round: number;
   scoreAfter: number;

@@ -83,6 +83,10 @@ describe('Stage 14 deterministic tools', () => {
     }
     expect(result.success).toBe(true);
     expect(result.applied).toContain('synthesize_basic_structure_from_layout');
+    const invariants = result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.invariants;
+    expect(invariants?.rootReachableHeadingCountBefore ?? 0).toBe(0);
+    expect(invariants?.rootReachableHeadingCountAfter ?? 0).toBeGreaterThan(0);
+    expect(invariants?.rootReachableDepthAfter ?? 0).toBeGreaterThan(invariants?.rootReachableDepthBefore ?? 0);
     const debug = result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.debug;
     expect(debug?.rootReachableDepth ?? 0).toBeGreaterThanOrEqual(2);
     expect(debug?.rootChildrenCount ?? 0).toBeGreaterThan(0);
@@ -251,7 +255,7 @@ describe('Stage 14 deterministic tools', () => {
     expect(afterTexts.some(text => text.includes('Confidential Report'))).toBe(false);
   });
 
-  it('canonicalize_figure_alt_ownership preserves one outer figure alt and clears nested alt debt', async () => {
+  it('canonicalize_figure_alt_ownership reports no_effect when ownership is preserved but no checker-visible figure leaf can be canonicalized', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-alt-'));
     const pdfPath = join(dir, 'nested.pdf');
     const script = join(process.cwd(), 'tests/fixtures/scripts/write_nested_figure_alt_pdf.py');
@@ -259,21 +263,31 @@ describe('Stage 14 deterministic tools', () => {
 
     const before = await runPythonAnalysis(pdfPath);
     expect(before.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBeGreaterThan(0);
+    const beforeNonArtifactAltCount = before.figures.filter(
+      figure => !figure.isArtifact && figure.hasAlt && figure.altText?.trim(),
+    ).length;
 
     const buf = await readFile(pdfPath);
     const { buffer, result } = await runPythonMutationBatch(buf, [
       { op: 'canonicalize_figure_alt_ownership', params: {} },
     ]);
     expect(result.success).toBe(true);
-    expect(result.applied).toContain('canonicalize_figure_alt_ownership');
+    expect(result.applied).not.toContain('canonicalize_figure_alt_ownership');
+    const row = result.opResults?.find(item => item.op === 'canonicalize_figure_alt_ownership');
+    expect(row?.outcome).toBe('no_effect');
+    expect(row?.note).toBe('no_unambiguous_figure_leaf');
+    expect((row?.invariants as any)?.ownershipPreserved).toBe(true);
+    expect((row?.invariants as any)?.rootReachableFigureCountBefore).toBe(
+      (row?.invariants as any)?.rootReachableFigureCountAfter,
+    );
 
     const outPath = join(dir, 'out.pdf');
     await writeFile(outPath, buffer);
     const after = await runPythonAnalysis(outPath);
-    expect(after.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBe(0);
+    expect(after.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBe(before.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0);
     const nonArtifactFigures = after.figures.filter(figure => !figure.isArtifact);
     expect(nonArtifactFigures.length).toBeGreaterThan(0);
-    expect(nonArtifactFigures.filter(figure => figure.hasAlt && figure.altText?.trim()).length).toBe(1);
+    expect(nonArtifactFigures.filter(figure => figure.hasAlt && figure.altText?.trim()).length).toBe(beforeNonArtifactAltCount);
   });
 
   it('create_heading_from_candidate promotes a paragraph-like struct elem to a heading', async () => {
@@ -367,22 +381,31 @@ pdf.close()
     expect(row?.note).toBe('candidate_missing_page_owner');
   });
 
-  it('normalize_nested_figure_containers clears nested figure alt debt before ownership cleanup', async () => {
+  it('normalize_nested_figure_containers reports no_effect when nested figure ownership cannot be normalized without losing checker-visible coverage', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage141-nested-'));
     const pdfPath = join(dir, 'nested.pdf');
     const script = join(process.cwd(), 'tests/fixtures/scripts/write_nested_figure_alt_pdf.py');
     await execFileAsync('python3', [script, pdfPath]);
 
+    const before = await runPythonAnalysis(pdfPath);
+    expect(before.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBeGreaterThan(0);
     const buf = await readFile(pdfPath);
     const { buffer, result } = await runPythonMutationBatch(buf, [
       { op: 'normalize_nested_figure_containers', params: {} },
     ]);
     expect(result.success).toBe(true);
-    expect(result.applied).toContain('normalize_nested_figure_containers');
+    expect(result.applied).not.toContain('normalize_nested_figure_containers');
+    const row = result.opResults?.find(item => item.op === 'normalize_nested_figure_containers');
+    expect(row?.outcome).toBe('no_effect');
+    expect(row?.note).toBe('no_unambiguous_figure_leaf');
+    expect((row?.invariants as any)?.ownershipPreserved).toBe(true);
+    expect((row?.invariants as any)?.rootReachableFigureCountBefore).toBe(
+      (row?.invariants as any)?.rootReachableFigureCountAfter,
+    );
 
     const outPath = join(dir, 'out.pdf');
     await writeFile(outPath, buffer);
     const after = await runPythonAnalysis(outPath);
-    expect(after.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBe(0);
+    expect(after.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0).toBe(before.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0);
   });
 });
