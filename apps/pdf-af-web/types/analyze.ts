@@ -18,6 +18,12 @@ export interface NormalizedFinding {
   severity: AnalyzeSeverity;
   count?: number;
   page?: number;
+  bounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
   references: FindingReference[];
 }
 
@@ -48,6 +54,13 @@ export interface RawAnalyzeFinding {
   message: string;
   count?: number;
   page?: number;
+  bounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  bbox?: [number, number, number, number];
 }
 
 export interface RawAnalyzeCategory {

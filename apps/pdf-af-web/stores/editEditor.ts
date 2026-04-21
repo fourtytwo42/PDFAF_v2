@@ -4,6 +4,7 @@ import { create, type StateCreator } from 'zustand';
 import { analyzePdf } from '../lib/api/pdfafClient';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
 import { mapAnalyzeFindingsToEditorIssues } from '../lib/editor/analyzeFindings';
+import { clampEditZoom, stepEditZoom } from '../lib/editor/editOverlayGeometry';
 import {
   clearActiveEditSource,
   loadActiveEditSource,
@@ -13,6 +14,7 @@ import { findAdjacentIssueId, filterEditorIssues, sortEditorIssues } from '../li
 import type { AnalyzeSummary } from '../types/analyze';
 import type {
   EditAnalyzeStatus,
+  EditRenderStatus,
   EditSourceFileMetadata,
   EditStoredSourceFile,
 } from '../types/editEditor';
@@ -28,6 +30,10 @@ interface EditEditorStoreState {
   lastAnalyzeResult: AnalyzeSummary | null;
   issues: EditorIssue[];
   validationMessage: string | null;
+  selectedPage: number;
+  zoom: number;
+  renderStatus: EditRenderStatus;
+  renderError: string | null;
   hydrate: () => Promise<void>;
   openFile: (file: File, apiBaseUrl: string) => Promise<void>;
   reanalyze: (apiBaseUrl: string) => Promise<void>;
@@ -35,6 +41,12 @@ interface EditEditorStoreState {
   setIssueFilter: (filter: EditorIssueFilter) => void;
   selectIssue: (issueId: string | null) => void;
   selectAdjacentIssue: (direction: 'next' | 'previous') => void;
+  selectPage: (page: number) => void;
+  setZoom: (zoom: number) => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
+  setRenderStatus: (status: EditRenderStatus, error?: string | null) => void;
 }
 
 type EditSet = Parameters<StateCreator<EditEditorStoreState>>[0];
@@ -106,6 +118,18 @@ function selectFirstFilteredIssue(
   return filtered[0]?.id ?? null;
 }
 
+function pageFromIssue(issues: EditorIssue[], issueId: string | null): number | null {
+  if (!issueId) return null;
+  const issue = issues.find((candidate) => candidate.id === issueId);
+  return issue?.page ?? null;
+}
+
+function clampPage(page: number, pageCount: number | null | undefined): number {
+  const maxPage = Math.max(1, pageCount ?? 1);
+  if (!Number.isFinite(page)) return 1;
+  return Math.min(maxPage, Math.max(1, Math.round(page)));
+}
+
 async function analyzeStoredSource(
   set: EditSet,
   source: EditStoredSourceFile,
@@ -148,6 +172,10 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
   lastAnalyzeResult: null,
   issues: [],
   validationMessage: null,
+  selectedPage: 1,
+  zoom: 1,
+  renderStatus: 'idle',
+  renderError: null,
 
   hydrate: async () => {
     set({ analyzeStatus: 'hydrating', analyzeError: null });
@@ -162,6 +190,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
         sourceFile: source.metadata,
         sourceBlob: source.blob,
         analyzeStatus: 'idle',
+        selectedPage: 1,
       });
     } catch (error) {
       set({
@@ -187,11 +216,14 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       sourceFile: source.metadata,
       sourceBlob: source.blob,
       analyzeStatus: 'analyzing',
+      renderStatus: 'loading',
+      renderError: null,
       analyzeError: null,
       validationMessage: null,
       lastAnalyzeResult: null,
       issues: [],
       selectedIssueId: null,
+      selectedPage: 1,
     });
 
     try {
@@ -229,6 +261,10 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       lastAnalyzeResult: null,
       issues: [],
       validationMessage: null,
+      selectedPage: 1,
+      zoom: 1,
+      renderStatus: 'idle',
+      renderError: null,
     });
   },
 
@@ -246,15 +282,46 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
   },
 
   selectIssue: (issueId: string | null) => {
-    set({ selectedIssueId: issueId });
+    set((state) => ({
+      selectedIssueId: issueId,
+      selectedPage: clampPage(pageFromIssue(state.issues, issueId) ?? state.selectedPage, state.lastAnalyzeResult?.pageCount),
+    }));
   },
 
   selectAdjacentIssue: (direction: 'next' | 'previous') => {
     set((state) => {
       const filtered = filterEditorIssues(state.issues, state.issueFilter);
+      const selectedIssueId = findAdjacentIssueId(filtered, state.selectedIssueId, direction);
       return {
-        selectedIssueId: findAdjacentIssueId(filtered, state.selectedIssueId, direction),
+        selectedIssueId,
+        selectedPage: clampPage(pageFromIssue(state.issues, selectedIssueId) ?? state.selectedPage, state.lastAnalyzeResult?.pageCount),
       };
     });
+  },
+
+  selectPage: (page: number) => {
+    set((state) => ({
+      selectedPage: clampPage(page, state.lastAnalyzeResult?.pageCount),
+    }));
+  },
+
+  setZoom: (zoom: number) => {
+    set({ zoom: clampEditZoom(zoom) });
+  },
+
+  zoomIn: () => {
+    set((state) => ({ zoom: stepEditZoom(state.zoom, 'in') }));
+  },
+
+  zoomOut: () => {
+    set((state) => ({ zoom: stepEditZoom(state.zoom, 'out') }));
+  },
+
+  resetZoom: () => {
+    set({ zoom: 1 });
+  },
+
+  setRenderStatus: (status: EditRenderStatus, error: string | null = null) => {
+    set({ renderStatus: status, renderError: error });
   },
 }));

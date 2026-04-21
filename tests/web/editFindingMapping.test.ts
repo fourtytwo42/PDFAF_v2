@@ -80,4 +80,16 @@ describe('edit finding mapping', () => {
     });
     expect(issues[0]?.standardsLinks?.[0]?.label).toBe('WCAG 2.4.2');
   });
+
+  it('preserves optional bounds evidence for overlays', () => {
+    const issues = mapForEdit([
+      finding({
+        id: 'bounded',
+        page: 1,
+        bounds: { x: 10, y: 20, width: 30, height: 40 },
+      }),
+    ]);
+
+    expect(issues[0]?.bounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+  });
 });

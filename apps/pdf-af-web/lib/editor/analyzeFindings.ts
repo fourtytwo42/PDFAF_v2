@@ -27,6 +27,7 @@ export function mapAnalyzeFindingsToEditorIssues(
     category: finding.category,
     severity: mapFindingSeverity(finding.severity),
     page: finding.page,
+    bounds: finding.bounds,
     message: finding.title || finding.summary,
     whyItMatters: finding.summary,
     fixType: `${options.fixTypePrefix}_${finding.category}`,

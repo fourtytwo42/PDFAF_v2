@@ -182,6 +182,7 @@ function normalizeFinding(finding: RawAnalyzeFinding, index: number): Normalized
     ...buildAdobeReferences(finding),
     ...(finding.wcag ? [buildWcagReference(finding.wcag)].filter(Boolean) : []),
   ] as FindingReference[];
+  const bounds = normalizeFindingBounds(finding);
 
   return {
     id: `${finding.category}-${slugify(finding.message)}-${index}`,
@@ -191,8 +192,32 @@ function normalizeFinding(finding: RawAnalyzeFinding, index: number): Normalized
     severity: finding.severity,
     count: finding.count,
     page: finding.page,
+    ...(bounds ? { bounds } : {}),
     references,
   };
+}
+
+function normalizeFindingBounds(finding: RawAnalyzeFinding): NormalizedFinding['bounds'] | null {
+  if (finding.bounds) {
+    const { x, y, width, height } = finding.bounds;
+    if ([x, y, width, height].every((value) => Number.isFinite(value))) {
+      return { x, y, width, height };
+    }
+  }
+
+  if (Array.isArray(finding.bbox) && finding.bbox.length === 4) {
+    const [x1, y1, x2, y2] = finding.bbox;
+    if ([x1, y1, x2, y2].every((value) => Number.isFinite(value))) {
+      return {
+        x: Math.min(x1, x2),
+        y: Math.min(y1, y2),
+        width: Math.abs(x2 - x1),
+        height: Math.abs(y2 - y1),
+      };
+    }
+  }
+
+  return null;
 }
 
 function actionableFindings(findings: RawAnalyzeFinding[]): RawAnalyzeFinding[] {

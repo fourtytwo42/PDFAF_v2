@@ -84,6 +84,9 @@ importers:
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
+      pdfjs-dist:
+        specifier: ^4.3.136
+        version: 4.10.38
       react:
         specifier: ^19.1.0
         version: 19.2.5

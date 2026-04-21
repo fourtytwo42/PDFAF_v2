@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
 import {
+  AddIcon,
   DownloadIcon,
   FileIcon,
-  InfoIcon,
   RetryIcon,
   SettingsIcon,
   TrashIcon,
@@ -18,6 +18,7 @@ import { EditorInspector } from '../EditorInspector';
 import { EditorIssueList } from '../EditorIssueList';
 import { EditorRail } from '../EditorRail';
 import { EditorShell } from '../EditorShell';
+import { EditPdfViewer } from './EditPdfViewer';
 
 const config: EditorShellModeConfig = {
   mode: 'edit',
@@ -219,80 +220,118 @@ function CategorySummaryList({ categories }: { categories: AnalyzeCategorySummar
   );
 }
 
-function WorkspacePlaceholder({
-  status,
-  result,
-  selectedIssue,
+function PageList({
+  pageCount,
+  selectedPage,
+  issues,
+  onSelectPage,
 }: {
-  status: string;
-  result: ReturnType<typeof useEditEditorStore.getState>['lastAnalyzeResult'];
-  selectedIssue: EditorIssue | null;
+  pageCount: number;
+  selectedPage: number;
+  issues: EditorIssue[];
+  onSelectPage: (page: number) => void;
 }) {
-  if (!result) {
+  if (pageCount <= 0) {
     return (
-      <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-dashed border-[color:var(--surface-border)] bg-[var(--surface)] p-6 text-center">
-        <div>
-          <FileIcon className="mx-auto size-10 text-[var(--muted)]" />
-          <h2 className="mt-4 text-lg font-semibold text-[var(--foreground)]">Open a PDF for review</h2>
-          <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
-            Stage 4 analyzes one PDF and shows findings. Page rendering and visual overlays begin in Stage 5.
-          </p>
-          {status === 'analyzing' || status === 'hydrating' ? (
-            <p className="mt-4 text-sm font-semibold text-[var(--accent)]">
-              {status === 'hydrating' ? 'Loading stored PDF...' : 'Analyzing PDF...'}
-            </p>
-          ) : null}
-        </div>
+      <div className="rounded-2xl border border-dashed border-[color:var(--surface-border)] p-3 text-sm text-[var(--muted)]">
+        Pages appear after analysis or PDF loading.
       </div>
     );
   }
 
   return (
+    <div className="grid max-h-64 gap-1.5 overflow-auto pr-1">
+      {Array.from({ length: pageCount }, (_, index) => {
+        const page = index + 1;
+        const pageIssueCount = issues.filter((issue) => issue.page === page).length;
+        const selected = page === selectedPage;
+        return (
+          <button
+            key={page}
+            type="button"
+            className={`focus-ring flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
+              selected
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                : 'border-[color:var(--surface-border)] bg-[var(--surface)] text-[var(--muted)] hover:border-[var(--accent)]'
+            }`}
+            onClick={() => onSelectPage(page)}
+          >
+            <span className="font-semibold">Page {page}</span>
+            <span className="text-xs">{pageIssueCount}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RenderWorkspace({
+  sourceBlob,
+  result,
+  selectedPage,
+  zoom,
+  issues,
+  selectedIssueId,
+  onSelectIssue,
+  onSelectPage,
+  onRenderStatusChange,
+}: {
+  sourceBlob: Blob | null;
+  result: ReturnType<typeof useEditEditorStore.getState>['lastAnalyzeResult'];
+  selectedPage: number;
+  zoom: number;
+  issues: EditorIssue[];
+  selectedIssueId: string | null;
+  onSelectIssue: (issueId: string) => void;
+  onSelectPage: (page: number) => void;
+  onRenderStatusChange: ReturnType<typeof useEditEditorStore.getState>['setRenderStatus'];
+}) {
+  return (
     <div className="grid gap-4">
-      <section className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
-              Analysis
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[var(--foreground)]">
-              {result.score}/100 · Grade {result.grade}
-            </h2>
-            <p className="mt-1 text-sm capitalize text-[var(--muted)]">
-              {result.pageCount} pages · {result.pdfClass.replaceAll('_', ' ')} ·{' '}
-              {Math.round(result.analysisDurationMs)} ms
-            </p>
-          </div>
-          <div className="rounded-2xl bg-[var(--accent-soft)] px-4 py-3 text-right">
-            <p className="text-xs font-semibold text-[var(--muted)]">Findings</p>
-            <p className="text-xl font-semibold text-[var(--accent)]">{result.findings.length}</p>
-          </div>
-        </div>
-      </section>
+      {result ? (
+        <>
+          <section className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-4">
+            <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+                  Analysis
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold text-[var(--foreground)]">
+                  {result.score}/100 · Grade {result.grade}
+                </h2>
+                <p className="mt-1 text-sm capitalize text-[var(--muted)]">
+                  {result.pageCount} pages · {result.pdfClass.replaceAll('_', ' ')} ·{' '}
+                  {Math.round(result.analysisDurationMs)} ms
+                </p>
+              </div>
+              <div className="rounded-2xl bg-[var(--accent-soft)] px-4 py-3 text-right">
+                <p className="text-xs font-semibold text-[var(--muted)]">Findings</p>
+                <p className="text-xl font-semibold text-[var(--accent)]">{result.findings.length}</p>
+              </div>
+            </div>
+          </section>
 
-      <section className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-[var(--foreground)]">Category review</h3>
-          <span className="text-xs text-[var(--muted)]">Visual pages arrive in Stage 5</span>
-        </div>
-        <CategorySummaryList categories={result.categories} />
-      </section>
+          <section className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-[var(--foreground)]">Category review</h3>
+              <span className="text-xs text-[var(--muted)]">Overlay evidence appears on rendered pages</span>
+            </div>
+            <CategorySummaryList categories={result.categories} />
+          </section>
+        </>
+      ) : null}
 
-      <section className="rounded-2xl border border-dashed border-[color:var(--surface-border)] bg-[#f8fafc] p-5">
-        <div className="flex items-start gap-3">
-          <InfoIcon className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--foreground)]">
-              Page preview placeholder
-            </h3>
-            <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-              {selectedIssue?.page
-                ? `Selected finding targets page ${selectedIssue.page}.`
-                : 'Select a finding to focus the future page preview.'}
-            </p>
-          </div>
-        </div>
-      </section>
+      <EditPdfViewer
+        sourceBlob={sourceBlob}
+        pageCount={result?.pageCount ?? 0}
+        selectedPage={selectedPage}
+        zoom={zoom}
+        issues={issues}
+        selectedIssueId={selectedIssueId}
+        onSelectIssue={onSelectIssue}
+        onSelectPage={onSelectPage}
+        onRenderStatusChange={onRenderStatusChange}
+      />
     </div>
   );
 }
@@ -379,9 +418,14 @@ function IssueInspector({
 export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspaceProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const sourceFile = useEditEditorStore((state) => state.sourceFile);
+  const sourceBlob = useEditEditorStore((state) => state.sourceBlob);
   const analyzeStatus = useEditEditorStore((state) => state.analyzeStatus);
   const analyzeError = useEditEditorStore((state) => state.analyzeError);
+  const renderStatus = useEditEditorStore((state) => state.renderStatus);
+  const renderError = useEditEditorStore((state) => state.renderError);
   const selectedIssueId = useEditEditorStore((state) => state.selectedIssueId);
+  const selectedPage = useEditEditorStore((state) => state.selectedPage);
+  const zoom = useEditEditorStore((state) => state.zoom);
   const issueFilter = useEditEditorStore((state) => state.issueFilter);
   const lastAnalyzeResult = useEditEditorStore((state) => state.lastAnalyzeResult);
   const issues = useEditEditorStore((state) => state.issues);
@@ -393,6 +437,11 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
   const setIssueFilter = useEditEditorStore((state) => state.setIssueFilter);
   const selectIssue = useEditEditorStore((state) => state.selectIssue);
   const selectAdjacentIssue = useEditEditorStore((state) => state.selectAdjacentIssue);
+  const selectPage = useEditEditorStore((state) => state.selectPage);
+  const zoomIn = useEditEditorStore((state) => state.zoomIn);
+  const zoomOut = useEditEditorStore((state) => state.zoomOut);
+  const resetZoom = useEditEditorStore((state) => state.resetZoom);
+  const setRenderStatus = useEditEditorStore((state) => state.setRenderStatus);
 
   useEffect(() => {
     void hydrate();
@@ -410,10 +459,14 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
   const isBusy = analyzeStatus === 'analyzing' || analyzeStatus === 'hydrating';
   const pageLabel = lastAnalyzeResult ? `${lastAnalyzeResult.pageCount} pages` : '0 pages';
   const saveStateLabel =
-    analyzeStatus === 'failed'
+    renderStatus === 'failed'
+      ? 'Render failed'
+      : analyzeStatus === 'failed'
       ? 'Analyze failed'
       : analyzeStatus === 'complete'
-        ? 'Analyzed'
+        ? renderStatus === 'loading' || renderStatus === 'rendering'
+          ? 'Rendering'
+          : 'Analyzed'
         : analyzeStatus === 'analyzing'
           ? 'Analyzing'
           : sourceFile
@@ -451,6 +504,29 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
           <>
             <IconButton label="Open PDF" disabled={isBusy} onClick={() => inputRef.current?.click()}>
               <FileIcon className="size-4" />
+            </IconButton>
+            <IconButton
+              label="Previous page"
+              disabled={!sourceBlob || selectedPage <= 1}
+              onClick={() => selectPage(selectedPage - 1)}
+            >
+              <RetryIcon className="size-4 -scale-x-100" />
+            </IconButton>
+            <IconButton
+              label="Next page"
+              disabled={!sourceBlob || selectedPage >= (lastAnalyzeResult?.pageCount ?? 1)}
+              onClick={() => selectPage(selectedPage + 1)}
+            >
+              <RetryIcon className="size-4" />
+            </IconButton>
+            <IconButton label="Zoom out" disabled={!sourceBlob} onClick={zoomOut}>
+              <span className="text-lg leading-none">-</span>
+            </IconButton>
+            <IconButton label="Reset zoom" disabled={!sourceBlob} onClick={resetZoom}>
+              <span className="text-xs font-semibold">{Math.round(zoom * 100)}%</span>
+            </IconButton>
+            <IconButton label="Zoom in" disabled={!sourceBlob} onClick={zoomIn}>
+              <AddIcon className="size-4" />
             </IconButton>
             <IconButton
               label="Re-analyze PDF"
@@ -539,6 +615,16 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
                 </div>
 
                 <div>
+                  <p className="mb-2 text-xs font-semibold text-[var(--foreground)]">Pages</p>
+                  <PageList
+                    pageCount={lastAnalyzeResult?.pageCount ?? 0}
+                    selectedPage={selectedPage}
+                    issues={issues}
+                    onSelectPage={selectPage}
+                  />
+                </div>
+
+                <div>
                   <p className="mb-2 text-xs font-semibold text-[var(--foreground)]">Issues</p>
                   <EditorIssueList
                     issues={filteredIssues}
@@ -550,14 +636,24 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
             </EditorRail>
           ),
           workspace: (
-            <WorkspacePlaceholder
-              status={analyzeStatus}
+            <RenderWorkspace
+              sourceBlob={sourceBlob}
               result={lastAnalyzeResult}
-              selectedIssue={selectedIssue}
+              selectedPage={selectedPage}
+              zoom={zoom}
+              issues={filteredIssues}
+              selectedIssueId={selectedIssueId}
+              onSelectIssue={selectIssue}
+              onSelectPage={selectPage}
+              onRenderStatusChange={setRenderStatus}
             />
           ),
           inspector: (
-            <IssueInspector issue={selectedIssue} result={lastAnalyzeResult} error={analyzeError} />
+            <IssueInspector
+              issue={selectedIssue}
+              result={lastAnalyzeResult}
+              error={analyzeError ?? renderError}
+            />
           ),
         }}
       />

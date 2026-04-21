@@ -2,6 +2,7 @@ import type { AnalyzeSummary } from './analyze';
 import type { EditorIssue, EditorIssueFilter } from './editor';
 
 export type EditAnalyzeStatus = 'idle' | 'hydrating' | 'analyzing' | 'complete' | 'failed';
+export type EditRenderStatus = 'idle' | 'loading' | 'rendering' | 'ready' | 'failed';
 
 export interface EditSourceFileMetadata {
   fileName: string;
@@ -23,4 +24,8 @@ export interface EditEditorStateSnapshot {
   issueFilter: EditorIssueFilter;
   lastAnalyzeResult: AnalyzeSummary | null;
   issues: EditorIssue[];
+  selectedPage: number;
+  zoom: number;
+  renderStatus: EditRenderStatus;
+  renderError: string | null;
 }
