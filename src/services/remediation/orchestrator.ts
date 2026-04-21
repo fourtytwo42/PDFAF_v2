@@ -163,6 +163,34 @@ export function parseMutationDetails(details: string | undefined): PythonMutatio
   }
 }
 
+export function withHeadingTargetRef(
+  details: string | undefined,
+  targetRef: unknown,
+  outcome: AppliedRemediationTool['outcome'] = 'no_effect',
+): string | undefined {
+  if (typeof targetRef !== 'string' || targetRef.length === 0) return details;
+  const parsed = parseMutationDetails(details);
+  if (!parsed) {
+    return JSON.stringify({
+      outcome,
+      note: details || 'heading_mutation_detail',
+      invariants: { targetRef },
+      debug: { targetRef },
+    });
+  }
+  return JSON.stringify({
+    ...parsed,
+    invariants: {
+      ...(parsed.invariants ?? {}),
+      targetRef: parsed.invariants?.targetRef ?? targetRef,
+    },
+    debug: {
+      ...(parsed.debug ?? {}),
+      targetRef: parsed.debug?.['targetRef'] ?? targetRef,
+    },
+  });
+}
+
 const HEADING_STRUCTURE_TOOLS = new Set([
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
@@ -1511,7 +1539,7 @@ export async function remediatePdf(
                 scoreAfter: stageStartScore,
                 delta: 0,
                 outcome: headingResult.outcome,
-                details: headingResult.details,
+                details: withHeadingTargetRef(headingResult.details, targetRef, headingResult.outcome),
                 durationMs: headingResult.durationMs,
                 source: 'planner',
               };
@@ -1621,7 +1649,9 @@ export async function remediatePdf(
                   && row.outcome === 'applied'
                 ) {
                   row.outcome = 'no_effect';
-                  row.details = 'protected_zero_heading_no_convergence';
+                  row.details = row.toolName === 'create_heading_from_candidate'
+                    ? withHeadingTargetRef(JSON.stringify({ outcome: 'no_effect', note: 'protected_zero_heading_no_convergence' }), targetRef, 'no_effect')
+                    : 'protected_zero_heading_no_convergence';
                 }
                 if (row.toolName === 'create_heading_from_candidate') break;
               }
@@ -1673,6 +1703,9 @@ export async function remediatePdf(
                 attemptedRefs.add(activeRef);
               }
               const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, workingSnapshot);
+              const activeDetails = activeTool.toolName === 'create_heading_from_candidate'
+                ? withHeadingTargetRef(details, activeRef, outcome)
+                : details;
               buf = next;
               stageApplied.push({
                 toolName: activeTool.toolName,
@@ -1682,7 +1715,7 @@ export async function remediatePdf(
                 scoreAfter: stageStartScore,
                 delta: 0,
                 outcome,
-                details,
+                details: activeDetails,
                 durationMs,
                 source: 'planner',
               });

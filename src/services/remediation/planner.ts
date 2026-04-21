@@ -336,6 +336,26 @@ function noEffectRowsFor(applied: AppliedRemediationTool[], toolNames: ReadonlyS
     .filter((detail): detail is PythonMutationDetailPayload => detail !== null);
 }
 
+function mutationTargetRef(details: PythonMutationDetailPayload | null | undefined): string | null {
+  const invariantRef = details?.invariants?.targetRef;
+  if (typeof invariantRef === 'string' && invariantRef.length > 0) return invariantRef;
+  const debugRef = details?.debug?.['targetRef'];
+  if (typeof debugRef === 'string' && debugRef.length > 0) return debugRef;
+  return null;
+}
+
+function isBlockedHeadingNoEffect(details: PythonMutationDetailPayload | null | undefined): boolean {
+  if (!details) return false;
+  if (headingInvariantImproved(details)) return false;
+  return (
+    details.note === 'role_invalid_after_mutation' ||
+    details.note === 'heading_not_root_reachable' ||
+    details.note === 'target_unreachable' ||
+    details.invariants?.targetReachable === false ||
+    details.invariants?.headingCandidateReachable === false
+  );
+}
+
 export function deriveFailureDisposition(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
@@ -355,16 +375,7 @@ export function deriveFailureDisposition(
     'normalize_annotation_tab_order',
   ]));
 
-  const headingCandidateBlocked = headingDetails.some(detail =>
-    !headingInvariantImproved(detail) &&
-    (
-      detail.note === 'role_invalid_after_mutation' ||
-      detail.note === 'heading_not_root_reachable' ||
-      detail.note === 'target_unreachable' ||
-      detail.invariants?.targetReachable === false ||
-      detail.invariants?.headingCandidateReachable === false
-    )
-  );
+  const headingCandidateBlocked = headingDetails.some(isBlockedHeadingNoEffect);
   const headingMalformedExistingTree =
     snapshot.headings.length >= 2 &&
     analysis.categories.some(category => category.key === 'heading_structure' && category.applicable && category.score < REMEDIATION_CATEGORY_THRESHOLD);
@@ -440,7 +451,7 @@ function noEffectSignature(row: AppliedRemediationTool): string | null {
   return [
     row.toolName,
     details.note ?? 'no_note',
-    inv?.targetRef ?? 'no_target',
+    row.toolName === 'create_heading_from_candidate' ? 'no_target' : (mutationTargetRef(details) ?? 'no_target'),
     ...flags,
   ].join('|');
 }
@@ -459,10 +470,11 @@ function hasPriorNoEffectSignature(
     if (row.toolName !== toolName || row.outcome !== 'no_effect') return false;
     const details = parseMutationDetails(row.details);
     if (!details?.invariants && !details?.note) return false;
-    if (targetRef && details?.invariants?.targetRef && details.invariants.targetRef !== targetRef) return false;
-    if (toolName === 'create_heading_from_candidate' && targetRef) {
-      return details?.invariants?.targetRef === targetRef;
+    if (toolName === 'create_heading_from_candidate') {
+      return false;
     }
+    const detailsTargetRef = mutationTargetRef(details);
+    if (targetRef && detailsTargetRef && detailsTargetRef !== targetRef) return false;
     const inv = details?.invariants;
     return (
       inv?.targetReachable === false ||

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { compareStructuralConfidence, mergePlanningSummaries, shouldRejectStageResult } from '../../src/services/remediation/orchestrator.js';
+import {
+  compareStructuralConfidence,
+  mergePlanningSummaries,
+  parseMutationDetails,
+  shouldRejectStageResult,
+  withHeadingTargetRef,
+} from '../../src/services/remediation/orchestrator.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, PlanningSummary, RemediationStagePlan } from '../../src/types.js';
 
 function makeAnalysis(input: {
@@ -157,6 +163,31 @@ describe('compareStructuralConfidence', () => {
       regressed: false,
       reason: null,
     });
+  });
+});
+
+describe('withHeadingTargetRef', () => {
+  it('adds attempted heading targetRef to structured mutation details', () => {
+    const details = withHeadingTargetRef(JSON.stringify({
+      outcome: 'no_effect',
+      note: 'role_invalid_after_mutation',
+      invariants: { targetReachable: false },
+    }), '40_0', 'no_effect');
+    const parsed = parseMutationDetails(details);
+    expect(parsed?.invariants?.targetRef).toBe('40_0');
+    expect(parsed?.debug?.['targetRef']).toBe('40_0');
+  });
+
+  it('preserves existing targetRef in heading mutation details', () => {
+    const details = withHeadingTargetRef(JSON.stringify({
+      outcome: 'no_effect',
+      note: 'role_invalid_after_mutation',
+      invariants: { targetRef: 'existing_ref', targetReachable: false },
+      debug: { targetRef: 'existing_ref' },
+    }), '40_0', 'no_effect');
+    const parsed = parseMutationDetails(details);
+    expect(parsed?.invariants?.targetRef).toBe('existing_ref');
+    expect(parsed?.debug?.['targetRef']).toBe('existing_ref');
   });
 });
 

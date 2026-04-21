@@ -319,13 +319,82 @@ describe('planForRemediation', () => {
         'create_heading_from_candidate',
         analysis,
         snap,
-        [{ toolName: 'create_heading_from_candidate', stage: 4, round: 1, scoreBefore: 58, scoreAfter: 58, delta: 0, outcome: 'no_effect' }],
+        [{
+          toolName: 'create_heading_from_candidate',
+          stage: 4,
+          round: 1,
+          scoreBefore: 58,
+          scoreAfter: 58,
+          delta: 0,
+          outcome: 'no_effect',
+          details: JSON.stringify({
+            outcome: 'no_effect',
+            note: 'role_invalid_after_mutation',
+            invariants: { targetRef: '40_0', targetReachable: false },
+          }),
+        }],
       ),
     ).toEqual({
       targetRef: '41_0',
       level: 1,
       text: 'Program Overview',
     });
+  });
+
+  it('does not treat structure-depth or multiple-H1 heading no-effects as blocked targets', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 3,
+      textByPage: ['EXECUTIVE SUMMARY', 'Overview', 'Body'],
+      textCharCount: 400,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'EXECUTIVE SUMMARY', page: 0, structRef: '40_0', bbox: [40, 710, 220, 734] },
+        { tag: 'P', text: 'Program Overview', page: 0, structRef: '41_0', bbox: [40, 670, 240, 692] },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 35,
+    });
+    const applied: AppliedRemediationTool[] = [
+      {
+        toolName: 'create_heading_from_candidate',
+        stage: 4,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'structure_depth_not_improved',
+          invariants: { targetRef: '40_0', targetReachable: true, headingCandidateReachable: true },
+        }),
+      },
+      {
+        toolName: 'create_heading_from_candidate',
+        stage: 4,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 58,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'multiple_h1_after_mutation',
+          invariants: { targetRef: '41_0', targetReachable: true, headingCandidateReachable: true },
+        }),
+      },
+    ];
+
+    const disposition = deriveFailureDisposition(analysis, snap, applied);
+    expect(disposition.headingCandidateBlocked).toBe(false);
+    expect(disposition.triggeringSignals).not.toContain('failure_disposition_heading_target_blocked');
   });
 
   it('keeps the final configured heading bootstrap candidate eligible after prior no-effect attempts', () => {
@@ -2284,11 +2353,11 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('create_heading_from_candidate');
   });
 
-  it('does not reschedule a heading candidate after invariant-backed no_effect for the same target', () => {
+  it('reports an invariant-backed blocked heading target without suppressing candidate progression', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 3,
-      textByPage: ['EXECUTIVE SUMMARY', 'Body', 'Body'],
+      textByPage: ['EXECUTIVE SUMMARY', 'Overview', 'Body'],
       textCharCount: 600,
       isTagged: true,
       markInfo: { Marked: true },
@@ -2297,13 +2366,14 @@ describe('planForRemediation', () => {
       structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
       paragraphStructElems: [
         { tag: 'P', text: 'EXECUTIVE SUMMARY', page: 0, structRef: '40_0', bbox: [40, 710, 220, 734] },
+        { tag: 'P', text: 'Program Overview', page: 0, structRef: '41_0', bbox: [40, 670, 240, 692] },
       ],
     };
     const analysis = withCategoryScores(score(snap, META), {
       heading_structure: 0,
       reading_order: 35,
     });
-    const plan = planForRemediation(analysis, snap, [{
+    const applied: AppliedRemediationTool[] = [{
       toolName: 'create_heading_from_candidate',
       stage: 4,
       round: 1,
@@ -2321,14 +2391,16 @@ describe('planForRemediation', () => {
           resolvedRole: 'P',
         },
       }),
-    }]);
-    expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).not.toContain('create_heading_from_candidate');
-    expect(plan.planningSummary?.routeSummaries).toContainEqual(
-      expect.objectContaining({
-        route: 'post_bootstrap_heading_convergence',
-        status: 'stopped',
-      }),
-    );
+    }];
+    const disposition = deriveFailureDisposition(analysis, snap, applied);
+    const plan = planForRemediation(analysis, snap, applied);
+    expect(disposition.headingCandidateBlocked).toBe(true);
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap, applied)).toEqual({
+      targetRef: '41_0',
+      level: 1,
+      text: 'Program Overview',
+    });
+    expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).toContain('create_heading_from_candidate');
   });
 
   it('stops one failed route without stopping unrelated active routes', () => {
