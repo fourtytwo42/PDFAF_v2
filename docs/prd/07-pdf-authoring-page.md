@@ -75,6 +75,7 @@ Add a top-level product switcher:
 
 - **Fix PDFs**: existing upload, queue, analyze, remediate workflow at `/`
 - **Create PDF**: new authoring workflow at `/create`
+- **Edit PDF**: visual repair workflow for existing PDFs at `/edit` (planned separately in [Phase 8](./08-pdf-editing-page.md))
 
 The `/create` page should be the actual editor, not a marketing or onboarding page.
 
