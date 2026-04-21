@@ -298,6 +298,99 @@ This stage institutionalizes the new engine direction after the core truth/route
 - regressions become obvious quickly
 - future engine changes are easier to evaluate
 
+## Stage 42: Heading Recovery v2
+
+### Goal
+
+Lift the remaining D/F tail by solving the dominant blocker: multi-page PDFs with zero checker-visible headings after remediation.
+
+### Current evidence
+
+Accepted Stage 40 baseline:
+
+- remediated corpus: `16 A / 9 B / 2 C / 4 D / 19 F`
+- D/F tail: `23` files
+- heading failures in D/F tail: `18`
+- common failure shape: score capped near `59/F` because `heading_structure` remains `0`
+
+### Scope
+
+Add a bounded, deterministic heading-recovery lane for true zero-heading files:
+
+- trigger only on multi-page PDFs with no checker-visible `H1-H6`
+- use reachable paragraph structure, font/style clustering, page position, and repeated-title filtering
+- promote only a small set of high-confidence heading candidates
+- validate that root-reachable heading count increases after mutation
+- preserve hierarchy sanity and avoid repeated-title spam
+
+Do not add corpus-name rules, broad semantic/LLM routing, or global candidate retry budgets.
+
+### Success criteria
+
+- reduce Stage 40 D/F zero-heading files materially
+- no increase in false-positive `applied`
+- pass Stage 41 benchmark gate against the Stage 40 baseline
+- keep p95 runtime within the Stage 41 gate envelope
+
+## Stage 43: Table Normalization v2
+
+### Goal
+
+Move table-driven D files and table-capped F files upward after heading caps are reduced.
+
+### Current evidence
+
+Accepted Stage 40 D/F tail includes:
+
+- `7` files with `table_markup < 70`
+- repeated pattern: `table_markup = 35`
+- current likely blocker: dense rowless or malformed table structures
+
+### Scope
+
+Improve deterministic table-local repair only:
+
+- normalize malformed `Table -> TR -> TH/TD` structure
+- repair rowless dense tables when row grouping is inferable
+- keep pseudo-layout tables declassified rather than preserving broken semantics
+- preserve Stage 35 invariant truth and Stage 41 gate discipline
+
+Do not add whole-document table inference or expensive semantic table understanding.
+
+### Success criteria
+
+- current `69/D` table-capped files move to `C` or better when heading debt is not the blocker
+- table validity improvements are invariant-backed
+- no p95 runtime regression beyond Stage 41 gate tolerance
+
+## Stage 44: Figure Ownership and Alt Recovery v2
+
+### Goal
+
+Address the remaining alt-driven D/F files after heading and table blockers are reduced.
+
+### Current evidence
+
+Accepted Stage 40 D/F tail includes:
+
+- `8` files with `alt_text < 70`
+- some files are still primarily heading-capped, so alt work should follow heading recovery
+
+### Scope
+
+Improve checker-visible figure ownership before alt assignment:
+
+- preserve or increase reachable `/Figure` coverage
+- move `/Alt` only onto reachable `/Figure` nodes
+- keep `set_figure_alt_text` honest when ownership is still invalid
+- keep semantic alt generation out of the mandatory path
+
+### Success criteria
+
+- alt-driven F files move up without fake `/Alt` wins
+- no loss of checker-visible figure ownership
+- Stage 41 gate passes after full-corpus benchmark
+
 ## Recommended Order
 
 1. Stage 35: Structural Invariants
@@ -307,6 +400,9 @@ This stage institutionalizes the new engine direction after the core truth/route
 5. Stage 39: Mutation Batching Expansion
 6. Stage 40: Grader Rebalance
 7. Stage 41: Benchmark and Review Gates
+8. Stage 42: Heading Recovery v2
+9. Stage 43: Table Normalization v2
+10. Stage 44: Figure Ownership and Alt Recovery v2
 
 ## Why This Order
 
@@ -317,6 +413,9 @@ This stage institutionalizes the new engine direction after the core truth/route
 - then optimize performance with batching
 - then tune the grader around a more trustworthy fixer
 - then lock in measurement and review discipline
+- then attack the biggest accepted D/F blocker first: zero checker-visible headings
+- then repair table structure once heading caps stop masking table wins
+- then recover figure ownership and alt after structural navigation blockers are reduced
 
 ## Fast-Path Guardrails
 
