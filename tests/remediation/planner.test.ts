@@ -2,12 +2,28 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
-import { buildDefaultParams, planForRemediation } from '../../src/services/remediation/planner.js';
+import { buildDefaultParams, isToolAllowedByRouteContract, planForRemediation, routeContractFor } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { score } from '../../src/services/scorer/scorer.js';
-import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot } from '../../src/types.js';
+import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, RemediationRoute } from '../../src/types.js';
 
 const META = { id: 'p', filename: 'bare.pdf', timestamp: new Date().toISOString(), analysisDurationMs: 1 };
+const ALL_REMEDIATION_ROUTES: RemediationRoute[] = [
+  'metadata_first_commit',
+  'metadata_foundation',
+  'untagged_structure_recovery',
+  'structure_bootstrap_and_conformance',
+  'post_bootstrap_heading_convergence',
+  'structure_bootstrap',
+  'annotation_link_normalization',
+  'native_structure_repair',
+  'font_ocr_repair',
+  'font_unicode_tail_recovery',
+  'figure_semantics',
+  'near_pass_figure_recovery',
+  'document_navigation_forms',
+  'safe_cleanup',
+];
 
 function bareSnapshot(): DocumentSnapshot {
   return {
@@ -65,6 +81,29 @@ function withRoutingContext(
 }
 
 describe('planForRemediation', () => {
+  it('defines a complete auditable route contract for every remediation route', () => {
+    for (const route of ALL_REMEDIATION_ROUTES) {
+      const contract = routeContractFor(route);
+      expect(contract.allowedTools.length, `${route} allowedTools`).toBeGreaterThan(0);
+      expect(contract.failureTools?.length ?? 0, `${route} failureTools`).toBeGreaterThan(0);
+      expect(contract.requiredFailureTools?.length ?? 0, `${route} requiredFailureTools`).toBeGreaterThan(0);
+
+      for (const toolName of contract.allowedTools) {
+        expect(isToolAllowedByRouteContract(route, toolName), `${route}:${toolName}`).toBe(true);
+      }
+      for (const toolName of contract.failureTools ?? []) {
+        expect(contract.allowedTools, `${route}:${toolName} failure tool must be allowed`).toContain(toolName);
+      }
+      for (const toolName of contract.requiredFailureTools ?? []) {
+        expect(contract.failureTools, `${route}:${toolName} required failure tool must be tracked`).toContain(toolName);
+      }
+      for (const toolName of contract.prohibitedTools ?? []) {
+        expect(contract.allowedTools, `${route}:${toolName} cannot be both allowed and prohibited`).not.toContain(toolName);
+        expect(isToolAllowedByRouteContract(route, toolName), `${route}:${toolName}`).toBe(false);
+      }
+    }
+  });
+
   it('plans metadata tools when title_language fails', () => {
     const snap = bareSnapshot();
     const analysis = score(snap, META);
@@ -219,6 +258,29 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('set_pdfua_identification');
     expect(names).not.toContain('set_figure_alt_text');
     expect(names).not.toContain('repair_native_reading_order');
+  });
+
+  it('stops metadata routes with a deterministic reason after required tools terminally fail', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      metadata: { title: '', language: '', author: '', subject: '' },
+      pdfUaVersion: null,
+      structureTree: { type: 'Document', children: [] },
+      isTagged: true,
+      pdfClass: 'native_tagged',
+    };
+    const analysis = withCategoryScores(score(snap, META), { title_language: 40 });
+    const plan = planForRemediation(analysis, snap, [
+      { toolName: 'set_document_title', stage: 1, round: 1, scoreBefore: 80, scoreAfter: 80, delta: 0, outcome: 'no_effect' },
+      { toolName: 'set_document_language', stage: 1, round: 1, scoreBefore: 80, scoreAfter: 80, delta: 0, outcome: 'no_effect' },
+    ]);
+    expect(plan.planningSummary?.routeSummaries).toContainEqual({
+      route: 'metadata_foundation',
+      status: 'stopped',
+      reason: 'route_failure_proof(metadata_foundation:set_document_title,set_document_language)',
+      scheduledTools: [],
+    });
+    expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).toEqual([]);
   });
 
   it('re-enables pdf_ua and bookmark diagnostics when optional remediation is requested', () => {

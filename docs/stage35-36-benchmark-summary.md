@@ -136,3 +136,64 @@ Acceptance read:
 - median improved from failed Stage 36 `12191ms` to `10220ms`
 - local mean recovered from failed Stage 36 `74.82` to `76.80`
 - mean runtime is still above the Stage 32.5 baseline, but the retry suppression achieved the primary p95/no-hang goal without weakening invariant truthfulness
+
+## Stage 37.5 Route Contract Closeout
+
+Implementation changes:
+
+- made route contracts exhaustive for every `RemediationRoute`
+- kept route enforcement internal and public API-compatible
+- preserved route summaries across multi-round planning merges
+- added tests for contract completeness, deterministic stopped-route reporting, route contract rejection before Python mutation, and legacy note-only regression rejection
+
+Verification:
+
+- `python3 -m py_compile python/pdf_analysis_helper.py`
+- `npx -y node@22 /usr/bin/pnpm exec tsc --noEmit`
+- `npx -y node@22 /usr/bin/pnpm exec vitest run tests/remediation/orchestrator.test.ts tests/remediation/orchestratorStage35.test.ts tests/remediation/planner.test.ts tests/scorer.test.ts tests/integration/stage14DeterministicTools.integration.test.ts`
+
+Targeted run:
+
+- `Output/experiment-corpus-baseline/run-stage37.5-target4-2026-04-21-r2`
+
+Targeted runtime:
+
+- mean wall remediation: `13553ms`
+- median wall remediation: `8654ms`
+- p95 wall remediation: `21152ms`
+
+Targeted route reporting:
+
+- all 4 rows include `planningSummary.routeSummaries`
+- stopped routes include deterministic reasons such as `route_failure_repeated_signature(...)` and `route_failure_no_benefit_prior_round(...)`
+
+Full run:
+
+- `Output/experiment-corpus-baseline/run-stage37.5-full-2026-04-21-r1`
+
+Full-run score:
+
+- mean: `77.80`
+- median: `84`
+- grades: `17 A / 10 B / 5 D / 18 F`
+
+Full-run runtime:
+
+- mean wall remediation: `24884ms`
+- median wall remediation: `10479ms`
+- p95 wall remediation: `81658ms`
+- max wall remediation: `230244ms`
+
+Comparison to Stage 36.5:
+
+- mean score improved `76.80 -> 77.80`
+- median score improved `81 -> 84`
+- p95 runtime improved `87568ms -> 81658ms`
+- total tool attempts dropped `976 -> 934`
+- route summaries are now present on all 50 benchmark rows
+
+Residual caveat:
+
+- `create_heading_from_candidate/no_effect` rose `39 -> 49`, even though total tool attempts and p95 improved.
+- `repair_structure_conformance/no_effect` dropped `68 -> 49`.
+- This should feed Stage 38 failure-profile deepening rather than weakening Stage 35/36 structural truthfulness.

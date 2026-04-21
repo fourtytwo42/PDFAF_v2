@@ -62,7 +62,7 @@ export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
 const implemented = new Set<string>(REMEDIATION_IMPLEMENTED_TOOLS);
 
-function mergePlanningSummaries(
+export function mergePlanningSummaries(
   prior: PlanningSummary | undefined,
   next: PlanningSummary | undefined,
 ): PlanningSummary | undefined {
@@ -72,11 +72,30 @@ function mergePlanningSummaries(
   for (const row of [...prior.skippedTools, ...next.skippedTools]) {
     skipped.set(`${row.toolName}:${row.reason}`, row);
   }
+  const routeSummaries = new Map<string, NonNullable<PlanningSummary['routeSummaries']>[number]>();
+  for (const row of [...(prior.routeSummaries ?? []), ...(next.routeSummaries ?? [])]) {
+    const existing = routeSummaries.get(row.route);
+    if (!existing) {
+      routeSummaries.set(row.route, {
+        ...row,
+        scheduledTools: [...new Set(row.scheduledTools)],
+      });
+      continue;
+    }
+    const stopped = existing.status === 'stopped' || row.status === 'stopped';
+    routeSummaries.set(row.route, {
+      route: row.route,
+      status: stopped ? 'stopped' : 'active',
+      ...(row.reason || existing.reason ? { reason: row.reason ?? existing.reason } : {}),
+      scheduledTools: [...new Set([...existing.scheduledTools, ...row.scheduledTools])],
+    });
+  }
   return {
     primaryRoute: prior.primaryRoute ?? next.primaryRoute,
     secondaryRoutes: [...new Set([...prior.secondaryRoutes, ...next.secondaryRoutes])],
     triggeringSignals: [...new Set([...prior.triggeringSignals, ...next.triggeringSignals])],
     scheduledTools: [...new Set([...prior.scheduledTools, ...next.scheduledTools])],
+    routeSummaries: [...routeSummaries.values()],
     skippedTools: [...skipped.values()],
     semanticDeferred: prior.semanticDeferred || next.semanticDeferred,
   };

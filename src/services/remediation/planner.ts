@@ -171,14 +171,24 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   ],
 };
 
-interface RouteContract {
+export interface RouteContract {
   allowedTools: readonly string[];
   prohibitedTools?: readonly string[];
   failureTools?: readonly string[];
   requiredFailureTools?: readonly string[];
 }
 
-const ROUTE_CONTRACTS: Partial<Record<RemediationRoute, RouteContract>> = {
+const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
+  metadata_first_commit: {
+    allowedTools: ROUTE_TOOL_MAP.metadata_first_commit,
+    failureTools: ['set_document_title', 'set_document_language'],
+    requiredFailureTools: ['set_document_title', 'set_document_language'],
+  },
+  metadata_foundation: {
+    allowedTools: ROUTE_TOOL_MAP.metadata_foundation,
+    failureTools: ['set_document_title', 'set_document_language'],
+    requiredFailureTools: ['set_document_title', 'set_document_language'],
+  },
   structure_bootstrap_and_conformance: {
     allowedTools: ROUTE_TOOL_MAP.structure_bootstrap_and_conformance,
     failureTools: ['synthesize_basic_structure_from_layout', 'repair_structure_conformance'],
@@ -201,6 +211,23 @@ const ROUTE_CONTRACTS: Partial<Record<RemediationRoute, RouteContract>> = {
     failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership'],
     requiredFailureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership'],
   },
+  untagged_structure_recovery: {
+    allowedTools: ROUTE_TOOL_MAP.untagged_structure_recovery,
+    failureTools: ['synthesize_basic_structure_from_layout', 'repair_structure_conformance'],
+    requiredFailureTools: ['synthesize_basic_structure_from_layout', 'repair_structure_conformance'],
+  },
+  structure_bootstrap: {
+    allowedTools: ROUTE_TOOL_MAP.structure_bootstrap,
+    failureTools: [
+      'bootstrap_struct_tree',
+      'repair_structure_conformance',
+      'wrap_singleton_orphan_mcid',
+      'remap_orphan_mcids_as_artifacts',
+      'tag_native_text_blocks',
+      'tag_ocr_text_blocks',
+    ],
+    requiredFailureTools: ['bootstrap_struct_tree', 'repair_structure_conformance'],
+  },
   annotation_link_normalization: {
     allowedTools: ROUTE_TOOL_MAP.annotation_link_normalization,
     failureTools: ['repair_native_link_structure', 'tag_unowned_annotations', 'set_link_annotation_contents'],
@@ -211,12 +238,35 @@ const ROUTE_CONTRACTS: Partial<Record<RemediationRoute, RouteContract>> = {
     failureTools: ['repair_native_table_headers', 'set_table_header_cells'],
     requiredFailureTools: ['repair_native_table_headers', 'set_table_header_cells'],
   },
+  font_ocr_repair: {
+    allowedTools: ROUTE_TOOL_MAP.font_ocr_repair,
+    failureTools: ['ocr_scanned_pdf', 'tag_ocr_text_blocks', 'tag_native_text_blocks'],
+    requiredFailureTools: ['ocr_scanned_pdf'],
+  },
+  font_unicode_tail_recovery: {
+    allowedTools: ROUTE_TOOL_MAP.font_unicode_tail_recovery,
+    failureTools: ['substitute_legacy_fonts_in_place', 'finalize_substituted_font_conformance'],
+    requiredFailureTools: ['substitute_legacy_fonts_in_place', 'finalize_substituted_font_conformance'],
+  },
+  document_navigation_forms: {
+    allowedTools: ROUTE_TOOL_MAP.document_navigation_forms,
+    failureTools: ['replace_bookmarks_from_headings', 'add_page_outline_bookmarks', 'fill_form_field_tooltips'],
+    requiredFailureTools: ['replace_bookmarks_from_headings', 'add_page_outline_bookmarks', 'fill_form_field_tooltips'],
+  },
+  safe_cleanup: {
+    allowedTools: ROUTE_TOOL_MAP.safe_cleanup,
+    failureTools: ['mark_untagged_content_as_artifact', 'repair_annotation_alt_text'],
+    requiredFailureTools: ['mark_untagged_content_as_artifact', 'repair_annotation_alt_text'],
+  },
 };
+
+export function routeContractFor(route: RemediationRoute): RouteContract {
+  return ROUTE_CONTRACTS[route];
+}
 
 export function isToolAllowedByRouteContract(route: RemediationRoute | undefined, toolName: string): boolean {
   if (!route) return true;
   const contract = ROUTE_CONTRACTS[route];
-  if (!contract) return true;
   if (contract.prohibitedTools?.includes(toolName)) return false;
   return contract.allowedTools.includes(toolName);
 }
