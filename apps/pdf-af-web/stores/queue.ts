@@ -13,7 +13,7 @@ import {
 } from '../lib/api/fileClient';
 import { LOCAL_STORAGE_KEYS } from '../lib/constants/config';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
-import { chooseEditorHandoffSource } from '../lib/editor/editHandoff';
+import { chooseEditorHandoffAnalysis, chooseEditorHandoffSource } from '../lib/editor/editHandoff';
 import { saveActiveEditSource } from '../lib/editor/editStorage';
 import { downloadSelectedRemediatedZip as downloadRemediatedZipArchive } from '../lib/zip/downloadZip';
 import type { StoredFileSummary } from '../types/files';
@@ -620,6 +620,7 @@ export const useQueueStore = create<QueueStoreState>()((set, get) => ({
           updatedAt: nowIso(),
         },
         blob: file.blob,
+        analyzeResult: chooseEditorHandoffAnalysis(job),
       });
       window.location.assign('/edit');
     } catch (error) {

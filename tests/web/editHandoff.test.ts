@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { chooseEditorHandoffSource } from '../../apps/pdf-af-web/lib/editor/editHandoff';
+import {
+  chooseEditorHandoffAnalysis,
+  chooseEditorHandoffSource,
+} from '../../apps/pdf-af-web/lib/editor/editHandoff';
+import type { AnalyzeSummary } from '../../apps/pdf-af-web/types/analyze';
+
+function analysis(score: number): AnalyzeSummary {
+  return {
+    score,
+    grade: score >= 90 ? 'A' : 'F',
+    pageCount: 1,
+    pdfClass: 'native_tagged',
+    analysisDurationMs: 1,
+    categories: [],
+    findings: [],
+    topFindings: [],
+  };
+}
 
 describe('edit handoff source selection', () => {
   it('prefers fixed output when it is available', () => {
@@ -18,5 +35,27 @@ describe('edit handoff source selection', () => {
     expect(chooseEditorHandoffSource({ fileStatus: 'expired', hasServerSource: false })).toBe(
       'unavailable',
     );
+  });
+
+  it('uses fixed analysis for fixed-output handoff', () => {
+    expect(
+      chooseEditorHandoffAnalysis({
+        fileStatus: 'available',
+        hasServerSource: true,
+        analyzeResult: analysis(20),
+        remediationResult: { before: analysis(20), after: analysis(95) },
+      })?.score,
+    ).toBe(95);
+  });
+
+  it('uses original analysis for source handoff', () => {
+    expect(
+      chooseEditorHandoffAnalysis({
+        fileStatus: 'none',
+        hasServerSource: true,
+        analyzeResult: analysis(20),
+        remediationResult: { before: analysis(20), after: analysis(95) },
+      })?.score,
+    ).toBe(20);
   });
 });

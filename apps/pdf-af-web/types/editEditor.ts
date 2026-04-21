@@ -14,6 +14,7 @@ export interface EditSourceFileMetadata {
 export interface EditStoredSourceFile {
   metadata: EditSourceFileMetadata;
   blob: Blob;
+  analyzeResult?: AnalyzeSummary | null;
 }
 
 export type EditFixInstruction =

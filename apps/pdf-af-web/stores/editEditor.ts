@@ -173,6 +173,11 @@ async function analyzeStoredSource(
   try {
     const result = await analyzePdf(apiBaseUrl, source.blob, source.metadata.fileName);
     const issues = mapAnalyzeResultToIssues(result);
+    await saveActiveEditSource({
+      metadata: source.metadata,
+      blob: source.blob,
+      analyzeResult: result,
+    });
     set((state) => ({
       analyzeStatus: 'complete',
       analyzeError: null,
@@ -225,8 +230,16 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
         sourceFile: source.metadata,
         sourceBlob: source.blob,
         originalSourceBlob: source.blob,
-        analyzeStatus: 'idle',
+        analyzeStatus: source.analyzeResult ? 'complete' : 'idle',
+        analyzeError: null,
+        lastAnalyzeResult: source.analyzeResult ?? null,
+        issues: source.analyzeResult ? mapAnalyzeResultToIssues(source.analyzeResult) : [],
+        selectedIssueId: source.analyzeResult
+          ? selectFirstFilteredIssue(mapAnalyzeResultToIssues(source.analyzeResult), get().issueFilter, null)
+          : null,
         selectedPage: 1,
+        renderStatus: 'loading',
+        renderError: null,
       });
     } catch (error) {
       set({
@@ -421,6 +434,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       await saveActiveEditSource({
         metadata: sourceFile,
         blob: result.fixedPdfBlob,
+        analyzeResult: result.after,
       });
       set((current) => ({
         sourceBlob: result.fixedPdfBlob,
@@ -473,6 +487,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       await saveActiveEditSource({
         metadata: sourceFile,
         blob: fixedPdfBlob,
+        analyzeResult: result.summary.after,
       });
       set((current) => ({
         sourceBlob: fixedPdfBlob,
