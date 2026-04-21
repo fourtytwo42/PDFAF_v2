@@ -79,4 +79,25 @@ describe('edit fix helpers', () => {
     expect(next.find((item) => item.id === 'figure')?.fixState).toBe('ready');
     expect(next.find((item) => item.id === 'other-figure')?.fixState).toBe('needs-input');
   });
+
+  it('keeps combined metadata findings open until title and language are both queued', () => {
+    const issues = [
+      issue({
+        id: 'metadata',
+        message: 'Document is missing both /Title and /Lang.',
+        whyItMatters: 'Title and language are required for assistive technology.',
+      }),
+    ];
+
+    const titleOnly = applyPendingFixStateToIssues(issues, [
+      { type: 'set_document_title', title: 'Report' },
+    ]);
+    expect(titleOnly[0]?.fixState).toBe('needs-input');
+
+    const complete = applyPendingFixStateToIssues(issues, [
+      { type: 'set_document_title', title: 'Report' },
+      { type: 'set_document_language', language: 'en-US' },
+    ]);
+    expect(complete[0]?.fixState).toBe('ready');
+  });
 });

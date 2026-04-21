@@ -42,9 +42,13 @@ const severityOptions: Array<{ label: string; value: NonNullable<EditorIssueFilt
 ];
 
 const fixStateOptions: Array<{ label: string; value: NonNullable<EditorIssueFilter['fixState']> }> = [
-  { label: 'Open', value: 'unresolved' },
+  { label: 'Open', value: 'needs-input' },
   { label: 'All', value: 'all' },
 ];
+
+function normalizeIssueCategory(category: string): string {
+  return category.toLowerCase().replaceAll(' ', '_');
+}
 
 function stopEvent(event: DragEvent<HTMLElement>) {
   event.preventDefault();
@@ -408,9 +412,15 @@ function IssueInspector({
   disabled: boolean;
   onUpsertFix: (fix: EditFixInstruction) => void;
 }) {
+  const [title, setTitle] = useState('');
+  const [language, setLanguage] = useState('en-US');
   const [altText, setAltText] = useState('');
   const objectRef = issue?.target?.objectRef;
-  const isAltIssue = issue?.category.toLowerCase().replaceAll(' ', '_') === 'alt_text';
+  const normalizedCategory = issue ? normalizeIssueCategory(issue.category) : '';
+  const isAltIssue = normalizedCategory === 'alt_text';
+  const isMetadataIssue = normalizedCategory === 'title_and_language';
+  const titleQueued = pendingFixes.some((fix) => fix.type === 'set_document_title');
+  const languageQueued = pendingFixes.some((fix) => fix.type === 'set_document_language');
 
   return (
     <EditorInspector title="Review">
@@ -469,7 +479,60 @@ function IssueInspector({
             </div>
           ) : null}
 
-          {!isAltIssue ? (
+          {isMetadataIssue ? (
+            <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Metadata fixes</p>
+              <div className="mt-3 grid gap-2">
+                <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+                  Title
+                  <input
+                    className="h-9 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+                    value={title}
+                    disabled={disabled}
+                    onChange={(event) => setTitle(event.target.value)}
+                    placeholder="Accessible document title"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={disabled || title.trim().length === 0}
+                  className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-xs font-semibold text-[var(--background)] disabled:opacity-45"
+                  onClick={() => onUpsertFix({ type: 'set_document_title', title })}
+                >
+                  Queue title fix
+                </button>
+                <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+                  Language
+                  <input
+                    className="h-9 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+                    value={language}
+                    disabled={disabled}
+                    onChange={(event) => setLanguage(event.target.value)}
+                    placeholder="en-US"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={disabled || language.trim().length === 0}
+                  className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-xs font-semibold text-[var(--background)] disabled:opacity-45"
+                  onClick={() => onUpsertFix({ type: 'set_document_language', language })}
+                >
+                  Queue language fix
+                </button>
+                {titleQueued || languageQueued ? (
+                  <p className="text-xs font-semibold text-[var(--accent)]">
+                    {titleQueued && languageQueued
+                      ? 'Title and language fixes queued.'
+                      : titleQueued
+                        ? 'Title fix queued.'
+                        : 'Language fix queued.'}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {!isAltIssue && !isMetadataIssue ? (
             <button
               type="button"
               disabled

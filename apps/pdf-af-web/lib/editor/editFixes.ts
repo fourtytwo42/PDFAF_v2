@@ -55,6 +55,21 @@ export function editFixKey(fix: EditFixInstruction): string {
   return fix.type;
 }
 
+function metadataFixesCoverIssue(issue: EditorIssue, hasTitleFix: boolean, hasLanguageFix: boolean): boolean {
+  const detailText = `${issue.message} ${issue.whyItMatters ?? ''}`.toLowerCase();
+  const categoryText = issue.category.toLowerCase();
+  const needsTitle = /\btitle\b|\/title/.test(detailText);
+  const needsLanguage = /\blanguage\b|\blang\b|\/lang/.test(detailText);
+
+  if (needsTitle && needsLanguage) return hasTitleFix && hasLanguageFix;
+  if (needsTitle) return hasTitleFix;
+  if (needsLanguage) return hasLanguageFix;
+
+  return categoryText.includes('title') || categoryText.includes('language')
+    ? hasTitleFix || hasLanguageFix
+    : false;
+}
+
 export function applyPendingFixStateToIssues(
   issues: EditorIssue[],
   fixes: EditFixInstruction[],
@@ -72,7 +87,8 @@ export function applyPendingFixStateToIssues(
   return issues.map((issue) => {
     const normalizedCategory = issue.category.toLowerCase().replaceAll(' ', '_');
     const metadataReady =
-      normalizedCategory === 'title_and_language' && (hasTitleFix || hasLanguageFix);
+      normalizedCategory === 'title_and_language' &&
+      metadataFixesCoverIssue(issue, hasTitleFix, hasLanguageFix);
     const figureReady =
       normalizedCategory === 'alt_text' &&
       Boolean(issue.target?.objectRef && figureRefs.has(issue.target.objectRef));
