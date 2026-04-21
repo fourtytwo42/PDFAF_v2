@@ -14,6 +14,7 @@ import { sendApiError } from './apiError.js';
 import { logError, logInfo } from './logging.js';
 import { analyzeRouter } from './routes/analyze.js';
 import { remediateRouter } from './routes/remediate.js';
+import { editRouter } from './routes/edit.js';
 import { healthRouter } from './routes/health.js';
 import { playbooksRouter } from './routes/playbooks.js';
 import { requestTimeout } from './middleware/requestTimeout.js';
@@ -86,6 +87,10 @@ export function createApp(): Express {
     app.use('/v1/remediate', remediateLimiter);
   }
   app.use('/v1/remediate', requestTimeout(REQUEST_TIMEOUT_REMEDIATE_MS), remediateRouter);
+  if (RATE_LIMIT_ENABLED) {
+    app.use('/v1/edit', remediateLimiter);
+  }
+  app.use('/v1/edit', requestTimeout(REQUEST_TIMEOUT_REMEDIATE_MS), editRouter);
   app.use('/v1/playbooks', playbooksRouter);
   app.use('/v1/health', healthRouter);
 

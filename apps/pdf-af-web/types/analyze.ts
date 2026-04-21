@@ -18,6 +18,7 @@ export interface NormalizedFinding {
   severity: AnalyzeSeverity;
   count?: number;
   page?: number;
+  objectRef?: string;
   bounds?: {
     x: number;
     y: number;
@@ -54,6 +55,9 @@ export interface RawAnalyzeFinding {
   message: string;
   count?: number;
   page?: number;
+  structRef?: string;
+  targetRef?: string;
+  objectRef?: string;
   bounds?: {
     x: number;
     y: number;
@@ -65,7 +69,7 @@ export interface RawAnalyzeFinding {
 
 export interface RawAnalyzeCategory {
   key: string;
-  score: number;
+  score: number | null;
   weight: number;
   applicable: boolean;
   severity: AnalyzeSeverity;
@@ -78,8 +82,12 @@ export interface RawAnalyzeResponse {
   filename: string;
   pageCount: number;
   pdfClass: AnalyzePdfClass;
-  score: number;
-  grade: AnalyzeGrade;
+  score?: number;
+  grade?: AnalyzeGrade;
+  scoreProfile?: {
+    overallScore: number;
+    grade: AnalyzeGrade;
+  };
   categories: RawAnalyzeCategory[];
   findings: RawAnalyzeFinding[];
   analysisDurationMs: number;

@@ -10,9 +10,11 @@ import {
   TrashIcon,
 } from '../../common/AppIcons';
 import { ProductNav } from '../../common/ProductNav';
+import { applyPendingFixStateToIssues } from '../../../lib/editor/editFixes';
 import { computeReadinessSummary, filterEditorIssues, sortEditorIssues } from '../../../lib/editor/issues';
 import { useEditEditorStore } from '../../../stores/editEditor';
 import type { AnalyzeCategorySummary } from '../../../types/analyze';
+import type { EditFixInstruction } from '../../../types/editEditor';
 import type { EditorIssue, EditorIssueFilter, EditorShellModeConfig } from '../../../types/editor';
 import { EditorInspector } from '../EditorInspector';
 import { EditorIssueList } from '../EditorIssueList';
@@ -220,6 +222,61 @@ function CategorySummaryList({ categories }: { categories: AnalyzeCategorySummar
   );
 }
 
+function DocumentFixPanel({
+  disabled,
+  onUpsertFix,
+}: {
+  disabled: boolean;
+  onUpsertFix: (fix: EditFixInstruction) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [language, setLanguage] = useState('en-US');
+
+  return (
+    <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+      <p className="text-sm font-semibold text-[var(--foreground)]">Document fixes</p>
+      <div className="mt-3 grid gap-2">
+        <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+          Title
+          <input
+            className="h-9 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+            value={title}
+            disabled={disabled}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Accessible document title"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={disabled || title.trim().length === 0}
+          className="focus-ring h-8 rounded-full bg-[var(--foreground)] px-3 text-xs font-semibold text-[var(--background)] disabled:opacity-45"
+          onClick={() => onUpsertFix({ type: 'set_document_title', title })}
+        >
+          Queue title
+        </button>
+        <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+          Language
+          <input
+            className="h-9 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+            value={language}
+            disabled={disabled}
+            onChange={(event) => setLanguage(event.target.value)}
+            placeholder="en-US"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={disabled || language.trim().length === 0}
+          className="focus-ring h-8 rounded-full bg-[var(--foreground)] px-3 text-xs font-semibold text-[var(--background)] disabled:opacity-45"
+          onClick={() => onUpsertFix({ type: 'set_document_language', language })}
+        >
+          Queue language
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PageList({
   pageCount,
   selectedPage,
@@ -340,11 +397,21 @@ function IssueInspector({
   issue,
   result,
   error,
+  pendingFixes,
+  disabled,
+  onUpsertFix,
 }: {
   issue: EditorIssue | null;
   result: ReturnType<typeof useEditEditorStore.getState>['lastAnalyzeResult'];
   error: string | null;
+  pendingFixes: EditFixInstruction[];
+  disabled: boolean;
+  onUpsertFix: (fix: EditFixInstruction) => void;
 }) {
+  const [altText, setAltText] = useState('');
+  const objectRef = issue?.target?.objectRef;
+  const isAltIssue = issue?.category.toLowerCase().replaceAll(' ', '_') === 'alt_text';
+
   return (
     <EditorInspector title="Review">
       {error ? (
@@ -402,13 +469,71 @@ function IssueInspector({
             </div>
           ) : null}
 
-          <button
-            type="button"
-            disabled
-            className="inline-flex h-9 items-center justify-center rounded-full border border-[color:var(--surface-border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted)] opacity-50"
-          >
-            Fix in later stage
-          </button>
+          {!isAltIssue ? (
+            <button
+              type="button"
+              disabled
+              className="inline-flex h-9 items-center justify-center rounded-full border border-[color:var(--surface-border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted)] opacity-50"
+            >
+              Fix in later stage
+            </button>
+          ) : null}
+
+          {isAltIssue ? (
+            <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Alt text fix</p>
+              {objectRef ? (
+                <div className="mt-3 grid gap-2">
+                  <label className="grid gap-1 text-xs font-semibold text-[var(--muted)]">
+                    Alt text
+                    <textarea
+                      className="min-h-20 rounded-xl border border-[color:var(--surface-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--foreground)] outline-none focus:border-[var(--accent)]"
+                      value={altText}
+                      disabled={disabled}
+                      onChange={(event) => setAltText(event.target.value)}
+                      placeholder="Describe the meaningful image content."
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={disabled || altText.trim().length === 0}
+                      className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-xs font-semibold text-[var(--background)] disabled:opacity-45"
+                      onClick={() =>
+                        onUpsertFix({
+                          type: 'set_figure_alt_text',
+                          objectRef,
+                          altText,
+                        })
+                      }
+                    >
+                      Queue alt
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      className="focus-ring h-9 rounded-full border border-[color:var(--surface-border)] px-3 text-xs font-semibold text-[var(--foreground)] disabled:opacity-45"
+                      onClick={() =>
+                        onUpsertFix({
+                          type: 'mark_figure_decorative',
+                          objectRef,
+                        })
+                      }
+                    >
+                      Decorative
+                    </button>
+                  </div>
+                  {pendingFixes.some((fix) => 'objectRef' in fix && fix.objectRef === objectRef) ? (
+                    <p className="text-xs font-semibold text-[var(--accent)]">Fix queued for this figure.</p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  This finding does not include a stable target reference yet, so targeted alt repair is unavailable.
+                </p>
+              )}
+            </div>
+          ) : null}
         </article>
       )}
     </EditorInspector>
@@ -423,6 +548,11 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
   const analyzeError = useEditEditorStore((state) => state.analyzeError);
   const renderStatus = useEditEditorStore((state) => state.renderStatus);
   const renderError = useEditEditorStore((state) => state.renderError);
+  const pendingFixes = useEditEditorStore((state) => state.pendingFixes);
+  const applyStatus = useEditEditorStore((state) => state.applyStatus);
+  const applyError = useEditEditorStore((state) => state.applyError);
+  const fixedSourceBlob = useEditEditorStore((state) => state.fixedSourceBlob);
+  const scoreDelta = useEditEditorStore((state) => state.scoreDelta);
   const selectedIssueId = useEditEditorStore((state) => state.selectedIssueId);
   const selectedPage = useEditEditorStore((state) => state.selectedPage);
   const zoom = useEditEditorStore((state) => state.zoom);
@@ -442,25 +572,37 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
   const zoomOut = useEditEditorStore((state) => state.zoomOut);
   const resetZoom = useEditEditorStore((state) => state.resetZoom);
   const setRenderStatus = useEditEditorStore((state) => state.setRenderStatus);
+  const upsertPendingFix = useEditEditorStore((state) => state.upsertPendingFix);
+  const clearPendingFixes = useEditEditorStore((state) => state.clearPendingFixes);
+  const applyPendingFixes = useEditEditorStore((state) => state.applyPendingFixes);
+  const revertToOriginal = useEditEditorStore((state) => state.revertToOriginal);
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
+  const issuesWithPendingState = useMemo(
+    () => applyPendingFixStateToIssues(issues, pendingFixes),
+    [issues, pendingFixes],
+  );
   const filteredIssues = useMemo(
-    () => sortEditorIssues(filterEditorIssues(issues, issueFilter)),
-    [issues, issueFilter],
+    () => sortEditorIssues(filterEditorIssues(issuesWithPendingState, issueFilter)),
+    [issuesWithPendingState, issueFilter],
   );
   const readiness = useMemo(() => computeReadinessSummary(filteredIssues), [filteredIssues]);
   const selectedIssue = useMemo(
-    () => issues.find((issue) => issue.id === selectedIssueId) ?? null,
-    [issues, selectedIssueId],
+    () => issuesWithPendingState.find((issue) => issue.id === selectedIssueId) ?? null,
+    [issuesWithPendingState, selectedIssueId],
   );
-  const isBusy = analyzeStatus === 'analyzing' || analyzeStatus === 'hydrating';
+  const isBusy = analyzeStatus === 'analyzing' || analyzeStatus === 'hydrating' || applyStatus === 'applying';
   const pageLabel = lastAnalyzeResult ? `${lastAnalyzeResult.pageCount} pages` : '0 pages';
   const saveStateLabel =
     renderStatus === 'failed'
       ? 'Render failed'
+      : applyStatus === 'applying'
+      ? 'Applying fixes'
+      : applyStatus === 'complete'
+      ? 'Fixed'
       : analyzeStatus === 'failed'
       ? 'Analyze failed'
       : analyzeStatus === 'complete'
@@ -614,12 +756,62 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
                   </div>
                 </div>
 
+                <DocumentFixPanel disabled={isBusy || !sourceFile} onUpsertFix={upsertPendingFix} />
+
+                <div className="rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--foreground)]">Pending fixes</p>
+                      <p className="mt-1 text-xs text-[var(--muted)]">{pendingFixes.length} queued</p>
+                    </div>
+                    {scoreDelta !== null ? (
+                      <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">
+                        {scoreDelta >= 0 ? '+' : ''}
+                        {scoreDelta}
+                      </span>
+                    ) : null}
+                  </div>
+                  {applyError ? (
+                    <p className="mt-2 rounded-xl border border-[color:rgba(220,38,38,0.24)] bg-[color:rgba(220,38,38,0.06)] px-3 py-2 text-xs text-[var(--danger)]">
+                      {applyError}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 grid gap-2">
+                    <button
+                      type="button"
+                      disabled={isBusy || pendingFixes.length === 0}
+                      className="focus-ring h-9 rounded-full bg-[var(--foreground)] px-3 text-sm font-semibold text-[var(--background)] disabled:opacity-45"
+                      onClick={() => void applyPendingFixes(defaultApiBaseUrl)}
+                    >
+                      {applyStatus === 'applying' ? 'Applying...' : 'Apply fixes'}
+                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={isBusy || pendingFixes.length === 0}
+                        className="focus-ring h-8 rounded-full border border-[color:var(--surface-border)] px-3 text-xs font-semibold text-[var(--muted)] disabled:opacity-45"
+                        onClick={clearPendingFixes}
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isBusy || !fixedSourceBlob}
+                        className="focus-ring h-8 rounded-full border border-[color:var(--surface-border)] px-3 text-xs font-semibold text-[var(--muted)] disabled:opacity-45"
+                        onClick={revertToOriginal}
+                      >
+                        Revert
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <p className="mb-2 text-xs font-semibold text-[var(--foreground)]">Pages</p>
                   <PageList
                     pageCount={lastAnalyzeResult?.pageCount ?? 0}
                     selectedPage={selectedPage}
-                    issues={issues}
+                    issues={issuesWithPendingState}
                     onSelectPage={selectPage}
                   />
                 </div>
@@ -653,6 +845,9 @@ export function EditEditorWorkspace({ defaultApiBaseUrl }: EditEditorWorkspacePr
               issue={selectedIssue}
               result={lastAnalyzeResult}
               error={analyzeError ?? renderError}
+              pendingFixes={pendingFixes}
+              disabled={isBusy}
+              onUpsertFix={upsertPendingFix}
             />
           ),
         }}

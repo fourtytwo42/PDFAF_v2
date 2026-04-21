@@ -27,6 +27,7 @@ export function mapAnalyzeFindingsToEditorIssues(
     category: finding.category,
     severity: mapFindingSeverity(finding.severity),
     page: finding.page,
+    target: finding.objectRef ? { objectRef: finding.objectRef } : undefined,
     bounds: finding.bounds,
     message: finding.title || finding.summary,
     whyItMatters: finding.summary,

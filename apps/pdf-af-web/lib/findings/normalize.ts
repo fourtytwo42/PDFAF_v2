@@ -192,6 +192,7 @@ function normalizeFinding(finding: RawAnalyzeFinding, index: number): Normalized
     severity: finding.severity,
     count: finding.count,
     page: finding.page,
+    objectRef: finding.structRef ?? finding.targetRef ?? finding.objectRef,
     ...(bounds ? { bounds } : {}),
     references,
   };
@@ -232,7 +233,7 @@ export function normalizeAnalyzePayload(payload: RawAnalyzeResponse): AnalyzeSum
   const categories: AnalyzeCategorySummary[] = payload.categories.map((category) => ({
     key: category.key,
     label: formatCategoryLabel(category.key),
-    score: category.score,
+    score: category.score ?? 0,
     severity: category.severity,
     applicable: category.applicable,
     findingCount: category.findings.filter((finding) => finding.severity !== 'pass').length,
@@ -243,8 +244,8 @@ export function normalizeAnalyzePayload(payload: RawAnalyzeResponse): AnalyzeSum
     .map((finding, index) => normalizeFinding(finding, index));
 
   return {
-    score: payload.score,
-    grade: payload.grade,
+    score: payload.score ?? payload.scoreProfile?.overallScore ?? 0,
+    grade: payload.grade ?? payload.scoreProfile?.grade ?? 'F',
     pageCount: payload.pageCount,
     pdfClass: payload.pdfClass,
     analysisDurationMs: payload.analysisDurationMs,

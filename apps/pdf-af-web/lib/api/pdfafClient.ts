@@ -1,5 +1,6 @@
 import { normalizeAnalyzePayload, normalizeAnalyzeResponse } from '../findings/normalize';
 import type { AnalyzeSummary, RawAnalyzeResponse } from '../../types/analyze';
+import type { EditApplyFixesResult, EditFixInstruction } from '../../types/editEditor';
 import type { RawRemediationResponse, RemediationSummary } from '../../types/remediation';
 import type { ApiErrorShape, HealthSummary, RawHealthResponse } from '../../types/health';
 
@@ -83,8 +84,15 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
     typeof record.filename === 'string' &&
     typeof record.pageCount === 'number' &&
     isPdfClass(record.pdfClass) &&
-    typeof record.score === 'number' &&
-    isGrade(record.grade) &&
+    (
+      (typeof record.score === 'number' && isGrade(record.grade)) ||
+      (
+        typeof record.scoreProfile === 'object' &&
+        record.scoreProfile !== null &&
+        typeof (record.scoreProfile as Record<string, unknown>).overallScore === 'number' &&
+        isGrade((record.scoreProfile as Record<string, unknown>).grade)
+      )
+    ) &&
     typeof record.analysisDurationMs === 'number' &&
     Array.isArray(record.categories) &&
     Array.isArray(record.findings) &&
@@ -93,7 +101,7 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
       const item = category as Record<string, unknown>;
       return (
         typeof item.key === 'string' &&
-        typeof item.score === 'number' &&
+        (typeof item.score === 'number' || item.score === null) &&
         typeof item.weight === 'number' &&
         typeof item.applicable === 'boolean' &&
         isSeverity(item.severity) &&
@@ -109,7 +117,10 @@ function isRawAnalyzeResponse(payload: unknown): payload is RawAnalyzeResponse {
         typeof item.wcag === 'string' &&
         typeof item.message === 'string' &&
         (item.count === undefined || typeof item.count === 'number') &&
-        (item.page === undefined || typeof item.page === 'number')
+        (item.page === undefined || typeof item.page === 'number') &&
+        (item.structRef === undefined || typeof item.structRef === 'string') &&
+        (item.targetRef === undefined || typeof item.targetRef === 'string') &&
+        (item.objectRef === undefined || typeof item.objectRef === 'string')
       );
     })
   );
@@ -359,5 +370,86 @@ export async function remediatePdf(
   return {
     summary: normalizeRemediationResponse(payload),
     remediatedPdfBase64: payload.remediatedPdfBase64,
+  };
+}
+
+function base64ToPdfBlob(value: string): Blob {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: 'application/pdf' });
+}
+
+function isEditApplyFixesResponse(payload: unknown): payload is {
+  before: RawAnalyzeResponse;
+  after: RawAnalyzeResponse;
+  appliedFixes: EditApplyFixesResult['appliedFixes'];
+  rejectedFixes: EditApplyFixesResult['rejectedFixes'];
+  fixedPdfBase64: string;
+} {
+  if (!payload || typeof payload !== 'object') return false;
+  const record = payload as Record<string, unknown>;
+  return (
+    isRawAnalyzeResponse(record.before) &&
+    isRawAnalyzeResponse(record.after) &&
+    Array.isArray(record.appliedFixes) &&
+    Array.isArray(record.rejectedFixes) &&
+    typeof record.fixedPdfBase64 === 'string'
+  );
+}
+
+export async function applyEditFixes(
+  baseUrl: string,
+  file: File | Blob,
+  fileName: string,
+  fixes: EditFixInstruction[],
+): Promise<EditApplyFixesResult> {
+  const formData = new FormData();
+  formData.append('file', file, fileName);
+  formData.append('fixes', JSON.stringify(fixes));
+
+  let response: Response;
+  try {
+    response = await fetch('/api/pdfaf/edit/apply-fixes', {
+      method: 'POST',
+      body: formData,
+      headers: buildProxyHeaders(baseUrl),
+      cache: 'no-store',
+    });
+  } catch {
+    throw {
+      message: 'Unable to reach the PDFAF API for edit fixes. Check the URL and server availability.',
+    } satisfies ApiErrorShape;
+  }
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw {
+      message: 'The API returned an invalid edit-fix response.',
+      httpStatus: response.status,
+    } satisfies ApiErrorShape;
+  }
+
+  if (!isEditApplyFixesResponse(payload)) {
+    throw {
+      message: 'The API returned a malformed edit-fix payload.',
+      httpStatus: response.status,
+    } satisfies ApiErrorShape;
+  }
+
+  return {
+    before: normalizeAnalyzeResponse(payload.before),
+    after: normalizeAnalyzeResponse(payload.after),
+    fixedPdfBlob: base64ToPdfBlob(payload.fixedPdfBase64),
+    appliedFixes: payload.appliedFixes,
+    rejectedFixes: payload.rejectedFixes,
   };
 }

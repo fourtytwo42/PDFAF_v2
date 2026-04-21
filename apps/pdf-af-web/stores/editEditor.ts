@@ -1,10 +1,15 @@
 'use client';
 
 import { create, type StateCreator } from 'zustand';
-import { analyzePdf } from '../lib/api/pdfafClient';
+import { analyzePdf, applyEditFixes } from '../lib/api/pdfafClient';
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../lib/constants/uploads';
 import { mapAnalyzeFindingsToEditorIssues } from '../lib/editor/analyzeFindings';
 import { clampEditZoom, stepEditZoom } from '../lib/editor/editOverlayGeometry';
+import {
+  removeEditFix,
+  upsertEditFix,
+  validateEditFixes,
+} from '../lib/editor/editFixes';
 import {
   clearActiveEditSource,
   loadActiveEditSource,
@@ -14,6 +19,9 @@ import { findAdjacentIssueId, filterEditorIssues, sortEditorIssues } from '../li
 import type { AnalyzeSummary } from '../types/analyze';
 import type {
   EditAnalyzeStatus,
+  EditApplyFixesResult,
+  EditApplyStatus,
+  EditFixInstruction,
   EditRenderStatus,
   EditSourceFileMetadata,
   EditStoredSourceFile,
@@ -34,6 +42,12 @@ interface EditEditorStoreState {
   zoom: number;
   renderStatus: EditRenderStatus;
   renderError: string | null;
+  originalSourceBlob: Blob | null;
+  pendingFixes: EditFixInstruction[];
+  applyStatus: EditApplyStatus;
+  applyError: string | null;
+  fixedSourceBlob: Blob | null;
+  scoreDelta: number | null;
   hydrate: () => Promise<void>;
   openFile: (file: File, apiBaseUrl: string) => Promise<void>;
   reanalyze: (apiBaseUrl: string) => Promise<void>;
@@ -47,6 +61,11 @@ interface EditEditorStoreState {
   zoomOut: () => void;
   resetZoom: () => void;
   setRenderStatus: (status: EditRenderStatus, error?: string | null) => void;
+  upsertPendingFix: (fix: EditFixInstruction) => void;
+  removePendingFix: (type: EditFixInstruction['type'], objectRef?: string) => void;
+  clearPendingFixes: () => void;
+  applyPendingFixes: (apiBaseUrl: string) => Promise<void>;
+  revertToOriginal: () => void;
 }
 
 type EditSet = Parameters<StateCreator<EditEditorStoreState>>[0];
@@ -165,6 +184,7 @@ async function analyzeStoredSource(
 export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, get: EditGet) => ({
   sourceFile: null,
   sourceBlob: null,
+  originalSourceBlob: null,
   analyzeStatus: 'idle',
   analyzeError: null,
   selectedIssueId: null,
@@ -176,6 +196,11 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
   zoom: 1,
   renderStatus: 'idle',
   renderError: null,
+  pendingFixes: [],
+  applyStatus: 'idle',
+  applyError: null,
+  fixedSourceBlob: null,
+  scoreDelta: null,
 
   hydrate: async () => {
     set({ analyzeStatus: 'hydrating', analyzeError: null });
@@ -189,6 +214,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       set({
         sourceFile: source.metadata,
         sourceBlob: source.blob,
+        originalSourceBlob: source.blob,
         analyzeStatus: 'idle',
         selectedPage: 1,
       });
@@ -215,6 +241,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
     set({
       sourceFile: source.metadata,
       sourceBlob: source.blob,
+      originalSourceBlob: source.blob,
       analyzeStatus: 'analyzing',
       renderStatus: 'loading',
       renderError: null,
@@ -224,6 +251,11 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       issues: [],
       selectedIssueId: null,
       selectedPage: 1,
+      pendingFixes: [],
+      applyStatus: 'idle',
+      applyError: null,
+      fixedSourceBlob: null,
+      scoreDelta: null,
     });
 
     try {
@@ -255,6 +287,7 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
     set({
       sourceFile: null,
       sourceBlob: null,
+      originalSourceBlob: null,
       analyzeStatus: 'idle',
       analyzeError: null,
       selectedIssueId: null,
@@ -265,6 +298,11 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
       zoom: 1,
       renderStatus: 'idle',
       renderError: null,
+      pendingFixes: [],
+      applyStatus: 'idle',
+      applyError: null,
+      fixedSourceBlob: null,
+      scoreDelta: null,
     });
   },
 
@@ -323,5 +361,89 @@ export const useEditEditorStore = create<EditEditorStoreState>((set: EditSet, ge
 
   setRenderStatus: (status: EditRenderStatus, error: string | null = null) => {
     set({ renderStatus: status, renderError: error });
+  },
+
+  upsertPendingFix: (fix: EditFixInstruction) => {
+    set((state) => ({
+      pendingFixes: upsertEditFix(state.pendingFixes, fix),
+      applyStatus: 'idle',
+      applyError: null,
+    }));
+  },
+
+  removePendingFix: (type: EditFixInstruction['type'], objectRef?: string) => {
+    set((state) => ({
+      pendingFixes: removeEditFix(state.pendingFixes, type, objectRef),
+      applyStatus: 'idle',
+      applyError: null,
+    }));
+  },
+
+  clearPendingFixes: () => {
+    set({ pendingFixes: [], applyStatus: 'idle', applyError: null });
+  },
+
+  applyPendingFixes: async (apiBaseUrl: string) => {
+    const state = get();
+    const sourceBlob = state.originalSourceBlob ?? state.sourceBlob;
+    const sourceFile = state.sourceFile;
+    const validationMessage = validateEditFixes(state.pendingFixes);
+    if (validationMessage) {
+      set({ applyStatus: 'failed', applyError: validationMessage });
+      return;
+    }
+
+    if (!sourceBlob || !sourceFile) {
+      set({ applyStatus: 'failed', applyError: 'Open a PDF before applying fixes.' });
+      return;
+    }
+
+    set({ applyStatus: 'applying', applyError: null });
+
+    try {
+      const result: EditApplyFixesResult = await applyEditFixes(
+        apiBaseUrl,
+        sourceBlob,
+        sourceFile.fileName,
+        state.pendingFixes,
+      );
+      const issues = mapAnalyzeResultToIssues(result.after);
+      set((current) => ({
+        sourceBlob: result.fixedPdfBlob,
+        fixedSourceBlob: result.fixedPdfBlob,
+        lastAnalyzeResult: result.after,
+        issues,
+        selectedIssueId: selectFirstFilteredIssue(issues, current.issueFilter, null),
+        selectedPage: 1,
+        pendingFixes: [],
+        applyStatus: 'complete',
+        applyError: result.rejectedFixes.length
+          ? `${result.rejectedFixes.length} fix could not be applied.`
+          : null,
+        scoreDelta: result.after.score - result.before.score,
+        renderStatus: 'loading',
+        renderError: null,
+      }));
+    } catch (error) {
+      set({
+        applyStatus: 'failed',
+        applyError: toErrorMessage(error),
+      });
+    }
+  },
+
+  revertToOriginal: () => {
+    const state = get();
+    if (!state.originalSourceBlob) return;
+    set({
+      sourceBlob: state.originalSourceBlob,
+      fixedSourceBlob: null,
+      pendingFixes: [],
+      applyStatus: 'idle',
+      applyError: null,
+      scoreDelta: null,
+      renderStatus: 'loading',
+      renderError: null,
+    });
   },
 }));
