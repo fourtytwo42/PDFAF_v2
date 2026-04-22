@@ -40,6 +40,19 @@ export interface Stage41RegressionRow {
   candidateScore: number;
   delta: number;
   explainedByNewCap: boolean;
+  categoryDeltas: Array<{
+    key: string;
+    baselineScore: number;
+    candidateScore: number;
+    delta: number;
+  }>;
+  precedingTools: Array<{
+    toolName: string;
+    outcome: string;
+    scoreBefore: number;
+    scoreAfter: number;
+    details?: string;
+  }>;
 }
 
 export interface Stage41BenchmarkGateAudit {
@@ -155,6 +168,43 @@ function capKeys(row: RemediateBenchmarkRow): Set<string> {
     .map(cap => `${cap.category}:${cap.cap}:${cap.reason}`));
 }
 
+function categoryScores(row: RemediateBenchmarkRow): Map<string, number> {
+  const categories = row.reanalyzedCategories?.length ? row.reanalyzedCategories : row.afterCategories ?? [];
+  return new Map(categories.map(category => [category.key, category.score]));
+}
+
+function regressionCategoryDeltas(
+  baseline: RemediateBenchmarkRow,
+  candidate: RemediateBenchmarkRow,
+): Stage41RegressionRow['categoryDeltas'] {
+  const before = categoryScores(baseline);
+  const after = categoryScores(candidate);
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .flatMap(key => {
+      const baselineScore = before.get(key);
+      const candidateScore = after.get(key);
+      if (baselineScore == null || candidateScore == null) return [];
+      const delta = candidateScore - baselineScore;
+      if (delta >= 0) return [];
+      return [{ key, baselineScore, candidateScore, delta }];
+    })
+    .sort((a, b) => a.delta - b.delta || a.key.localeCompare(b.key))
+    .slice(0, 5);
+}
+
+function regressionPrecedingTools(candidate: RemediateBenchmarkRow): Stage41RegressionRow['precedingTools'] {
+  return (candidate.appliedTools ?? [])
+    .filter(tool => tool.outcome === 'applied' || tool.outcome === 'rejected')
+    .slice(-8)
+    .map(tool => ({
+      toolName: tool.toolName,
+      outcome: tool.outcome,
+      scoreBefore: tool.scoreBefore,
+      scoreAfter: tool.scoreAfter,
+      ...(tool.details ? { details: tool.details.slice(0, 140) } : {}),
+    }));
+}
+
 function protectedScoreRegressions(
   baselineRows: RemediateBenchmarkRow[],
   candidateRows: RemediateBenchmarkRow[],
@@ -178,6 +228,8 @@ function protectedScoreRegressions(
       candidateScore,
       delta,
       explainedByNewCap: newCaps.length > 0,
+      categoryDeltas: regressionCategoryDeltas(baseline, candidate),
+      precedingTools: regressionPrecedingTools(candidate),
     });
   }
   return rows.sort((a, b) => a.delta - b.delta || a.id.localeCompare(b.id));
@@ -539,10 +591,16 @@ export function renderStage41BenchmarkGateMarkdown(audit: Stage41BenchmarkGateAu
   lines.push('');
   lines.push('## Top Score Regressions');
   lines.push('');
-  lines.push('| File | Baseline | Candidate | Delta | Explained by new cap |');
-  lines.push('| --- | ---: | ---: | ---: | --- |');
+  lines.push('| File | Baseline | Candidate | Delta | Explained by new cap | Top category deltas | Recent tools |');
+  lines.push('| --- | ---: | ---: | ---: | --- | --- | --- |');
   for (const row of audit.topScoreRegressions.slice(0, 10)) {
-    lines.push(`| ${row.id} | ${row.baselineScore} | ${row.candidateScore} | ${row.delta} | ${row.explainedByNewCap ? 'yes' : 'no'} |`);
+    const cats = row.categoryDeltas
+      .map(cat => `${cat.key}:${cat.baselineScore}->${cat.candidateScore}`)
+      .join('<br>');
+    const tools = row.precedingTools
+      .map(tool => `${tool.toolName}/${tool.outcome}:${tool.scoreBefore}->${tool.scoreAfter}`)
+      .join('<br>');
+    lines.push(`| ${row.id} | ${row.baselineScore} | ${row.candidateScore} | ${row.delta} | ${row.explainedByNewCap ? 'yes' : 'no'} | ${cats || 'n/a'} | ${tools || 'n/a'} |`);
   }
   lines.push('');
   lines.push('## Top Runtime Regressions');

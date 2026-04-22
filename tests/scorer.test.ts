@@ -682,6 +682,121 @@ describe('headingStructure', () => {
     expect(cat.findings.some(f => /reachable as H1/i.test(f.message))).toBe(true);
   });
 
+  it('uses tree heading evidence when exported heading labels are missing but root-reachable H roles exist', () => {
+    const snap = makeSnap({
+      headings: [],
+      pageCount: 8,
+      structureTree: { type: 'Document', children: [{ type: 'H1', children: [] }, { type: 'H2', children: [] }] },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 2,
+          headingTreeDepth: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBeGreaterThanOrEqual(70);
+    expect(cat.score).toBeLessThan(90);
+    expect(cat.findings.some(f => /tree exposes/i.test(f.message))).toBe(true);
+  });
+
+  it('uses extra tree heading evidence to avoid false no-H1 penalties when exported labels are incomplete', () => {
+    const snap = makeSnap({
+      pageCount: 16,
+      headings: [
+        { level: 2, text: 'Background', page: 1 },
+        { level: 2, text: 'Findings', page: 2 },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        headingSignals: {
+          extractedHeadingCount: 2,
+          treeHeadingCount: 3,
+          headingTreeDepth: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    });
+    const result = score(snap, META);
+    const cat = result.categories.find(c => c.key === 'heading_structure')!;
+    expect(cat.score).toBeGreaterThanOrEqual(90);
+    expect(cat.findings.some(f => /partial checker-visible heading evidence/i.test(f.message))).toBe(true);
+  });
+
   it('does not pass heading_structure for tagged Marked multi-page with no H tags and pdf.js text length 0', () => {
     const snap = makeSnap({
       headings: [],

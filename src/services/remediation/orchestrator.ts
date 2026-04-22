@@ -797,6 +797,41 @@ async function reanalyzeBufferForMutation(
   }
 }
 
+function categoryScore(analysis: AnalysisResult, key: string): number | null {
+  return analysis.categories.find(category => category.key === key)?.score ?? null;
+}
+
+function altRepairBenefitOverridesConfidenceGuard(
+  toolName: string,
+  before: AnalysisResult,
+  after: AnalysisResult,
+): boolean {
+  if (toolName !== 'repair_alt_text_structure') return false;
+  if (after.score <= before.score) return false;
+  const beforeAlt = categoryScore(before, 'alt_text');
+  const afterAlt = categoryScore(after, 'alt_text');
+  return beforeAlt !== null && afterAlt !== null && afterAlt >= beforeAlt;
+}
+
+function postPassCategoryBenefitAllowsSmallScoreRegression(
+  toolName: string,
+  before: AnalysisResult,
+  after: AnalysisResult,
+): boolean {
+  const categoryByTool: Record<string, string> = {
+    set_pdfua_identification: 'pdf_ua_compliance',
+    set_document_title: 'title_language',
+    set_document_language: 'title_language',
+    post_pass_bookmarks: 'bookmarks',
+  };
+  const category = categoryByTool[toolName];
+  if (!category) return false;
+  if (after.score < before.score - 1) return false;
+  const beforeCategory = categoryScore(before, category);
+  const afterCategory = categoryScore(after, category);
+  return beforeCategory !== null && afterCategory !== null && afterCategory > beforeCategory;
+}
+
 async function applyGuardedPostPass(args: {
   filename: string;
   toolName: string;
@@ -837,8 +872,43 @@ async function applyGuardedPostPass(args: {
 
   const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix);
   const durationMs = performance.now() - started;
+  if (
+    analyzed.result.score < currentAnalysis.score
+    && !postPassCategoryBenefitAllowsSmallScoreRegression(toolName, currentAnalysis, analyzed.result)
+  ) {
+    appliedTools.push({
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: currentAnalysis.score,
+      delta: 0,
+      outcome: 'rejected',
+      details: `post_pass_regressed_score(${analyzed.result.score})`,
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: 'rejected',
+    });
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
   const confidenceGuard = compareStructuralConfidence(currentAnalysis, analyzed.result);
-  if (analyzed.result.score > currentAnalysis.score && confidenceGuard.regressed) {
+  if (
+    analyzed.result.score > currentAnalysis.score
+    && confidenceGuard.regressed
+    && !altRepairBenefitOverridesConfidenceGuard(toolName, currentAnalysis, analyzed.result)
+  ) {
     appliedTools.push({
       toolName,
       stage,

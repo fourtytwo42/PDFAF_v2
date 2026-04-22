@@ -4,6 +4,7 @@ import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
 import { buildDefaultParams, deriveFailureDisposition, isToolAllowedByRouteContract, planForRemediation, routeContractFor } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
+import { classifyZeroHeadingRecovery } from '../../src/services/remediation/headingRecovery.js';
 import { score } from '../../src/services/scorer/scorer.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, RemediationRoute } from '../../src/types.js';
 
@@ -293,6 +294,108 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('classifies zero-heading recovery buckets without filename or family rules', () => {
+    const recoverableSnap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 4,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [{ type: 'P', children: [] }] }] },
+      paragraphStructElems: [{ tag: 'P', text: 'Executive Summary', page: 0, structRef: '10_0' }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 0, treeHeadingCount: 0, headingTreeDepth: 0, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const recoverableAnalysis = withCategoryScores(score(recoverableSnap, META), { heading_structure: 0 });
+    expect(classifyZeroHeadingRecovery(recoverableAnalysis, recoverableSnap).kind).toBe('recoverable_paragraph_tree');
+
+    const minimalSnap: DocumentSnapshot = {
+      ...recoverableSnap,
+      paragraphStructElems: [],
+      detectionProfile: {
+        ...recoverableSnap.detectionProfile!,
+        readingOrderSignals: {
+          ...recoverableSnap.detectionProfile!.readingOrderSignals,
+          structureTreeDepth: 2,
+          degenerateStructureTree: true,
+        },
+      },
+    };
+    expect(classifyZeroHeadingRecovery(withCategoryScores(score(minimalSnap, META), { heading_structure: 0 }), minimalSnap).kind)
+      .toBe('minimal_or_degenerate_tree');
+
+    const hiddenMismatchSnap: DocumentSnapshot = {
+      ...recoverableSnap,
+      paragraphStructElems: [],
+      detectionProfile: {
+        ...recoverableSnap.detectionProfile!,
+        headingSignals: { extractedHeadingCount: 0, treeHeadingCount: 2, headingTreeDepth: 3, extractedHeadingsMissingFromTree: false },
+      },
+    };
+    expect(classifyZeroHeadingRecovery(withCategoryScores(score(hiddenMismatchSnap, META), { heading_structure: 0 }), hiddenMismatchSnap).kind)
+      .toBe('hidden_export_mismatch');
+
+    const hierarchySnap: DocumentSnapshot = {
+      ...recoverableSnap,
+      headings: [{ level: 3, text: 'Details', page: 0, structRef: '20_0' }],
+    };
+    expect(classifyZeroHeadingRecovery(withCategoryScores(score(hierarchySnap, META), { heading_structure: 55 }), hierarchySnap).kind)
+      .toBe('hierarchy_only');
+  });
+
+  it('deduplicates repeated page furniture while keeping distinct candidate progression', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 5,
+      textByPage: ['Annual Report', 'Annual Report', 'Annual Report', 'Annual Report', 'Findings'],
+      textCharCount: 600,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Annual Report', page: 0, structRef: '10_0', bbox: [40, 730, 220, 750] },
+        { tag: 'P', text: 'Annual Report', page: 1, structRef: '11_0', bbox: [40, 730, 220, 750] },
+        { tag: 'P', text: 'Annual Report', page: 2, structRef: '12_0', bbox: [40, 730, 220, 750] },
+        { tag: 'P', text: 'Program Findings', page: 1, structRef: '13_0', bbox: [40, 650, 260, 670] },
+      ],
+    };
+
+    const candidates = buildEligibleHeadingBootstrapCandidates(snap);
+    expect(candidates.map(candidate => candidate.structRef)).toContain('13_0');
+    expect(candidates.filter(candidate => candidate.text === 'Annual Report')).toHaveLength(1);
+  });
+
   it('advances to the next ranked heading bootstrap candidate after a prior attempt', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -426,7 +529,7 @@ describe('planForRemediation', () => {
 
     expect(buildDefaultParams('create_heading_from_candidate', analysis, snap, applied)).toEqual({
       targetRef: '42_0',
-      level: 2,
+      level: 1,
       text: 'Key Findings',
     });
   });
@@ -1082,7 +1185,7 @@ describe('planForRemediation', () => {
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(plan.planningSummary?.primaryRoute).toBe('post_bootstrap_heading_convergence');
     expect(names).toContain('normalize_heading_hierarchy');
-    expect(names).toContain('create_heading_from_candidate');
+    expect(names).not.toContain('create_heading_from_candidate');
   });
 
   it('routes native Type1 font survivors into font_unicode_tail_recovery', () => {
@@ -2172,7 +2275,7 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('synthesize_basic_structure_from_layout');
   });
 
-  it('allows synthesize_basic_structure_from_layout for native_tagged P-only trees with zero headings', () => {
+  it('prefers direct heading promotion over synthesis for recoverable native_tagged P-only trees', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 6,
@@ -2247,7 +2350,8 @@ describe('planForRemediation', () => {
     });
     const plan = planForRemediation(analysis, snap, []);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
-    expect(names).toContain('synthesize_basic_structure_from_layout');
+    expect(names).toContain('create_heading_from_candidate');
+    expect(names).not.toContain('synthesize_basic_structure_from_layout');
   });
 
   it('does not schedule create_heading_from_candidate again when exported headings already exist', () => {

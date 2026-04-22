@@ -5,6 +5,7 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   const findings: Finding[] = [];
   const headings = snap.headings;
   const headingSignals = snap.detectionProfile?.headingSignals;
+  const readingSignals = snap.detectionProfile?.readingOrderSignals;
   const exportedHeadingsReachable =
     headings.length > 0 &&
     headingSignals?.extractedHeadingsMissingFromTree !== true &&
@@ -38,6 +39,37 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
     };
   }
 
+  // The Python tree walker may prove root-reachable H roles even when pdf.js text
+  // extraction cannot provide exported heading labels. Treat that as structural
+  // heading evidence instead of a zero-heading failure, but keep it below a clean pass.
+  if (
+    headings.length === 0 &&
+    (headingSignals?.treeHeadingCount ?? 0) > 0 &&
+    headingSignals?.extractedHeadingsMissingFromTree !== true &&
+    (readingSignals?.structureTreeDepth ?? 0) > 1
+  ) {
+    const expectedMinHeadings = Math.max(1, Math.floor(snap.pageCount / HEADING_COVERAGE_PAGES_PER_HEADING));
+    const treeHeadingCount = headingSignals?.treeHeadingCount ?? 0;
+    const score = Math.max(70, Math.min(86, treeHeadingCount >= expectedMinHeadings ? 86 : 78));
+    return {
+      key: 'heading_structure',
+      score,
+      weight: CATEGORY_BASE_WEIGHTS.heading_structure,
+      applicable: true,
+      severity: scoreSeverity(score),
+      findings: [
+        {
+          category: 'heading_structure',
+          severity: score >= 80 ? 'minor' : 'moderate',
+          wcag: '1.3.1',
+          message:
+            `Structure tree exposes ${treeHeadingCount} root-reachable heading role${treeHeadingCount !== 1 ? 's' : ''}, but heading text extraction did not export labels. Treating this as checker-visible heading evidence with reduced confidence.`,
+          count: treeHeadingCount,
+        },
+      ],
+    };
+  }
+
   // No headings at all on a multi-page document is a critical failure
   if (headings.length === 0) {
     return {
@@ -58,18 +90,34 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
   }
 
   let score = 100;
+  const treeHeadingCount = headingSignals?.treeHeadingCount ?? headings.length;
+  const hiddenTreeHeadingEvidence =
+    treeHeadingCount > headings.length &&
+    headingSignals?.extractedHeadingsMissingFromTree !== true &&
+    (headingSignals?.headingTreeDepth ?? 0) > 1;
+  const effectiveHeadingCount = hiddenTreeHeadingEvidence ? treeHeadingCount : headings.length;
 
   // 1. H1 presence and uniqueness
   const h1Count = headings.filter(h => h.level === 1).length;
   const hasH1 = h1Count >= 1;
   if (!hasH1) {
-    score -= 20;
-    findings.push({
-      category: 'heading_structure',
-      severity: 'moderate',
-      wcag: '1.3.1',
-      message: 'No H1 (top-level heading) found. Documents should have at least one H1.',
-    });
+    if (hiddenTreeHeadingEvidence) {
+      findings.push({
+        category: 'heading_structure',
+        severity: 'minor',
+        wcag: '1.3.1',
+        message: 'Exported heading labels do not include an H1, but the structure tree exposes additional root-reachable heading roles. Treating this as partial checker-visible heading evidence.',
+        count: treeHeadingCount,
+      });
+    } else {
+      score -= 20;
+      findings.push({
+        category: 'heading_structure',
+        severity: 'moderate',
+        wcag: '1.3.1',
+        message: 'No H1 (top-level heading) found. Documents should have at least one H1.',
+      });
+    }
   } else if (h1Count > 1) {
     score -= Math.min(40, 8 + (h1Count - 1) * 6);
     findings.push({
@@ -97,15 +145,15 @@ export function scoreHeadingStructure(snap: DocumentSnapshot): ScoredCategory {
 
   // 3. Coverage: expect roughly 1 heading per N pages
   const expectedMinHeadings = Math.max(1, Math.floor(snap.pageCount / HEADING_COVERAGE_PAGES_PER_HEADING));
-  if (headings.length < expectedMinHeadings) {
-    const deduction = Math.round((1 - headings.length / expectedMinHeadings) * 6);
+  if (effectiveHeadingCount < expectedMinHeadings) {
+    const deduction = Math.round((1 - effectiveHeadingCount / expectedMinHeadings) * 6);
     score -= deduction;
     findings.push({
       category: 'heading_structure',
       severity: 'minor',
       wcag: '2.4.6',
-      message: `Low heading density: ${headings.length} heading${headings.length !== 1 ? 's' : ''} for ${snap.pageCount} pages. Consider adding more section headings.`,
-      count: headings.length,
+      message: `Low heading density: ${effectiveHeadingCount} heading${effectiveHeadingCount !== 1 ? 's' : ''} for ${snap.pageCount} pages. Consider adding more section headings.`,
+      count: effectiveHeadingCount,
     });
   }
 

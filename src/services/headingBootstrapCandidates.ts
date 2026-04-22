@@ -29,6 +29,14 @@ function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
 }
 
+function normalizeCandidateFingerprint(text: string): string {
+  return normalizeText(text)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function wordCount(text: string): number {
   const trimmed = normalizeText(text);
   return trimmed ? trimmed.split(' ').length : 0;
@@ -67,6 +75,15 @@ function looksLikeBylineOrOfficialLine(text: string): boolean {
 function looksLikeFurnitureOrBoilerplate(text: string): boolean {
   const normalized = normalizeText(text);
   return /\b(page\s+\d+|www\.|http|copyright|all rights reserved|state of illinois|department of|research brief|source:)\b/i.test(normalized);
+}
+
+function looksLikeRepeatingHeaderOrFooter(candidate: HeadingBootstrapCandidate, pagesByFingerprint: Map<string, Set<number>>): boolean {
+  const key = normalizeCandidateFingerprint(candidate.text);
+  if (!key) return false;
+  const pages = pagesByFingerprint.get(key);
+  if (!pages || pages.size < 3) return false;
+  // Repeated exact text across many pages is usually running furniture, not a heading to promote.
+  return candidate.page > 0 || !candidate.reasons.includes('report_title_pattern');
 }
 
 function looksLikeTruncatedFragment(text: string): boolean {
@@ -245,16 +262,37 @@ export function scoreHeadingBootstrapCandidate(
 }
 
 export function buildHeadingBootstrapCandidates(snapshot: DocumentSnapshot): HeadingBootstrapCandidate[] {
-  const scored = (snapshot.paragraphStructElems ?? [])
+  const rawScored = (snapshot.paragraphStructElems ?? [])
     .map(scoreHeadingBootstrapCandidate)
-    .filter((row): row is HeadingBootstrapCandidate => row !== null)
+    .filter((row): row is HeadingBootstrapCandidate => row !== null);
+  const pagesByFingerprint = new Map<string, Set<number>>();
+  for (const row of rawScored) {
+    const key = normalizeCandidateFingerprint(row.text);
+    if (!key) continue;
+    const pages = pagesByFingerprint.get(key) ?? new Set<number>();
+    pages.add(row.page);
+    pagesByFingerprint.set(key, pages);
+  }
+  const scored = rawScored
+    .map(row => {
+      if (!looksLikeRepeatingHeaderOrFooter(row, pagesByFingerprint)) return row;
+      return {
+        ...row,
+        score: row.score - 55,
+        reasons: [...row.reasons, 'repeated_page_furniture_penalty'],
+      };
+    })
     .sort((a, b) => b.score - a.score || a.page - b.page || a.text.length - b.text.length);
 
   const seen = new Set<string>();
+  const seenText = new Set<string>();
   const unique: HeadingBootstrapCandidate[] = [];
   for (const row of scored) {
     if (seen.has(row.structRef)) continue;
+    const textKey = normalizeCandidateFingerprint(row.text);
+    if (textKey && seenText.has(textKey)) continue;
     seen.add(row.structRef);
+    if (textKey) seenText.add(textKey);
     unique.push(row);
   }
   return unique;

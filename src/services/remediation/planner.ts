@@ -35,6 +35,7 @@ import {
   selectHeadingBootstrapCandidateForAttempt,
 } from '../headingBootstrapCandidates.js';
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
+import { classifyZeroHeadingRecovery } from './headingRecovery.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -817,19 +818,9 @@ export function isProtectedZeroHeadingConvergence(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
 ): boolean {
-  if (analysis.pdfClass === 'scanned') return false;
-  const heading = analysis.categories.find(category => category.key === 'heading_structure');
-  if (!heading?.applicable || heading.score >= REMEDIATION_CATEGORY_THRESHOLD) return false;
-  const headingSignals = snapshot.detectionProfile?.headingSignals;
-  const readingSignals = snapshot.detectionProfile?.readingOrderSignals;
-  const exportedHeadingsReachable =
-    snapshot.headings.length > 0 &&
-    headingSignals?.extractedHeadingsMissingFromTree !== true &&
-    (headingSignals?.treeHeadingCount ?? snapshot.headings.length) > 0 &&
-    (readingSignals?.structureTreeDepth ?? 0) > 1;
-  return !exportedHeadingsReachable
-    && snapshot.structureTree !== null
-    && (snapshot.paragraphStructElems?.length ?? 0) > 0;
+  const recovery = classifyZeroHeadingRecovery(analysis, snapshot);
+  return recovery.kind === 'recoverable_paragraph_tree'
+    || recovery.kind === 'minimal_or_degenerate_tree';
 }
 
 /**
@@ -926,6 +917,10 @@ export function planForRemediation(
   const eligibleHeadingCandidates = stage24ZeroHeadingBootstrapEnabled()
     ? buildEligibleHeadingBootstrapCandidates(snapshot)
     : [];
+  const zeroHeadingRecovery = classifyZeroHeadingRecovery(analysis, snapshot);
+  const headingCreateRecoveryActive =
+    zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
+    zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
   const protectedZeroHeadingConvergence = isProtectedZeroHeadingConvergence(analysis, snapshot);
   const protectedZeroHeadingTimedOut = alreadyApplied.some(
     tool => tool.toolName === 'repair_structure_conformance' && /timeout\s+\d+ms/i.test(tool.details ?? ''),
@@ -936,6 +931,13 @@ export function planForRemediation(
     snapshot.headings.length === 0 &&
     snapshot.structureTree !== null &&
     snapshot.textCharCount > 0 &&
+    (
+      zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree' ||
+      (
+        zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' &&
+        (categoryFailing('pdf_ua_compliance') || categoryFailing('reading_order'))
+      )
+    ) &&
     (snapshot.paragraphStructElems?.length ?? 0) >= Math.max(3, Math.min(8, snapshot.pageCount));
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
@@ -996,6 +998,7 @@ export function planForRemediation(
       toolName === 'create_heading_from_candidate'
       && !(
         !protectedZeroHeadingTimedOut &&
+        headingCreateRecoveryActive &&
         headingNeedsRepair
         && snapshot.structureTree !== null
         && (snapshot.paragraphStructElems?.length ?? 0) > 0
@@ -1427,9 +1430,11 @@ export function buildDefaultParams(
         const legacyCandidate = page0
           ?? elems.sort((a, b) => a.page - b.page || b.text.length - a.text.length)[0];
         if (!legacyCandidate) return {};
+        const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
+        const zeroExportedHeadings = snapshot.headings.length === 0;
         return {
           targetRef: legacyCandidate.structRef,
-          level: legacyCandidate.page === 0 ? 1 : 2,
+          level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
           text: legacyCandidate.text.slice(0, 200),
         };
       }
@@ -1437,7 +1442,7 @@ export function buildDefaultParams(
       const zeroExportedHeadings = snapshot.headings.length === 0;
       return {
         targetRef: candidate.structRef,
-        level: !hasExistingH1 && zeroExportedHeadings && candidate.page === 0 ? 1 : 2,
+        level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
         text: candidate.text.slice(0, 200),
       };
     }

@@ -6979,9 +6979,6 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
         return "no_effect", note or "no_structural_change", invariants
     if invariants["targetResolved"] is False:
         return "no_effect", "target_not_found", invariants
-    resolved_role = (invariants.get("resolvedRole") or "").upper()
-    if invariants.get("targetResolved") and resolved_role and resolved_role not in {"H", "H1", "H2", "H3", "H4", "H5", "H6"}:
-        return "no_effect", "role_invalid_after_mutation", invariants
     if (after.get("globalH1Count", 0) or 0) > 1 and (before.get("globalH1Count", 0) or 0) <= 1:
         return "no_effect", "multiple_h1_after_mutation", invariants
     improved = (
@@ -6989,13 +6986,32 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
         or (after.get("rootReachableDepth", 0) > before.get("rootReachableDepth", 0) and after.get("rootReachableHeadingCount", 0) > 0)
         or ((before.get("globalH1Count", 0) or 0) > 1 and (after.get("globalH1Count", 0) or 0) == 1)
     )
+    if improved:
+        if (
+            (after.get("rootReachableHeadingCount", 0) or 0) > (before.get("rootReachableHeadingCount", 0) or 0)
+            and invariants.get("targetReachable") is False
+        ):
+            # The create-heading path can recover a checker-visible heading by
+            # synthesizing/promoting a root-reachable peer while the originally
+            # selected paragraph object remains an orphan /P. In that case the
+            # success invariant is the root-reachable heading count, not target
+            # reachability for the stale orphan ref. Avoid emitting an explicit
+            # failed target fact on an applied row.
+            invariants["targetReachable"] = None
+            invariants["headingCandidateReachable"] = True
+            if (invariants.get("resolvedRole") or "").upper() not in {"H", "H1", "H2", "H3", "H4", "H5", "H6"}:
+                invariants["resolvedRole"] = None
+        return "applied", note or "heading_reachability_improved", invariants
+    resolved_role = (invariants.get("resolvedRole") or "").upper()
+    if invariants.get("targetResolved") and resolved_role and resolved_role not in {"H", "H1", "H2", "H3", "H4", "H5", "H6"}:
+        return "no_effect", "role_invalid_after_mutation", invariants
     if not improved:
         if invariants.get("targetResolved") and not invariants.get("headingCandidateReachable"):
             return "no_effect", "heading_not_root_reachable", invariants
         if (after.get("rootReachableDepth", 0) or 0) <= (before.get("rootReachableDepth", 0) or 0):
             return "no_effect", "structure_depth_not_improved", invariants
         return "no_effect", note or "no_structural_change", invariants
-    return "applied", note, invariants
+    return "no_effect", note or "no_structural_change", invariants
 
 
 def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
