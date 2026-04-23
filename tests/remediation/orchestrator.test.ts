@@ -3,15 +3,32 @@ import {
   compareStructuralConfidence,
   mergePlanningSummaries,
   parseMutationDetails,
+  protectedBaselineFloorViolation,
+  protectedBaselineStateIsSafe,
+  protectedMetadataTopupDecision,
+  protectedReadingOrderTopupDecision,
+  protectedStrongAltPreservationViolation,
+  protectedStrongAltFigureStageViolation,
+  protectedTransactionDecision,
   shouldRejectStageResult,
+  shouldSkipProtectedFigureAlt,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
-import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, PlanningSummary, RemediationStagePlan } from '../../src/types.js';
+import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnapshot, PlanningSummary, RemediationStagePlan } from '../../src/types.js';
 
 function makeAnalysis(input: {
   score: number;
   confidence?: 'high' | 'medium' | 'low';
+  categories?: Partial<Record<CategoryKey, number>>;
 }): AnalysisResult {
+  const categories = Object.entries(input.categories ?? {}).map(([key, value]) => ({
+    key: key as CategoryKey,
+    score: value ?? 100,
+    weight: 1,
+    applicable: true,
+    severity: 'pass' as const,
+    findings: [],
+  }));
   return {
     id: `analysis-${input.score}-${input.confidence ?? 'none'}`,
     timestamp: '2026-04-18T00:00:00.000Z',
@@ -20,7 +37,7 @@ function makeAnalysis(input: {
     pdfClass: 'native_tagged',
     score: input.score,
     grade: 'B',
-    categories: [],
+    categories,
     findings: [],
     analysisDurationMs: 1,
     ...(input.confidence
@@ -273,6 +290,80 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects score-improving stages with unexplained protected category regressions', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 89, table_markup: 35 } }),
+      after: makeAnalysis({ score: 88, confidence: 'medium', categories: { alt_text: 52, table_markup: 100 } }),
+      stage: makeStage('normalize_table_structure'),
+      stageApplied: [{
+        toolName: 'normalize_table_structure',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 88,
+        delta: 8,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: { targetResolved: true, tableTreeValidAfter: true },
+          structuralBenefits: { tableValidityImproved: true },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(alt_text:89->52)',
+    });
+  });
+
+  it('allows table category movement when table normalization has typed table benefit', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { table_markup: 80 } }),
+      after: makeAnalysis({ score: 88, confidence: 'medium', categories: { table_markup: 76 } }),
+      stage: makeStage('normalize_table_structure'),
+      stageApplied: [{
+        toolName: 'normalize_table_structure',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 88,
+        delta: 8,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: { targetResolved: true, tableTreeValidAfter: true },
+          structuralBenefits: { tableValidityImproved: true },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('rejects category regressions when only legacy mutation details are present', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { title_language: 100 } }),
+      after: makeAnalysis({ score: 84, confidence: 'medium', categories: { title_language: 50 } }),
+      stage: makeStage('set_pdfua_identification'),
+      stageApplied: [{
+        toolName: 'set_pdfua_identification',
+        stage: 1,
+        round: 1,
+        scoreBefore: 80,
+        scoreAfter: 84,
+        delta: 4,
+        outcome: 'applied',
+        details: 'legacy_title_change',
+      }],
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(title_language:100->50)',
+    });
+  });
+
   it('keeps existing score-regression rollback behavior', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),
@@ -483,6 +574,216 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('allows weak-alt figure recovery when heading stays usable', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { heading_structure: 95, alt_text: 0 } }),
+      after: makeAnalysis({ score: 75, confidence: 'medium', categories: { heading_structure: 60, alt_text: 52 } }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 75,
+        delta: 16,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+      protectedBaseline: { score: 87, categories: { alt_text: 45, heading_structure: 95 } },
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('rejects weak-alt figure recovery when heading collapses below the usable floor', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { heading_structure: 95, alt_text: 0 } }),
+      after: makeAnalysis({ score: 75, confidence: 'medium', categories: { heading_structure: 50, alt_text: 52 } }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 75,
+        delta: 16,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+      protectedBaseline: { score: 87, categories: { alt_text: 45, heading_structure: 95 } },
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(heading_structure:95->50)',
+    });
+  });
+
+  it('rejects small unrelated category drift outside protected quarantine', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { reading_order: 100, alt_text: 0 } }),
+      after: makeAnalysis({ score: 76, confidence: 'medium', categories: { reading_order: 96, alt_text: 52 } }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 76,
+        delta: 17,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+      protectedBaseline: { score: 87 },
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:100->96)',
+    });
+  });
+
+  it('allows excellent reading-order drift when weak-alt protected recovery improves alt text', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { reading_order: 100, alt_text: 0 } }),
+      after: makeAnalysis({ score: 76, confidence: 'medium', categories: { reading_order: 96, alt_text: 52 } }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 76,
+        delta: 17,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+      protectedBaseline: { score: 87, categories: { alt_text: 52, reading_order: 96 } },
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('allows weak-alt figure stages with typed benefit when reading order stays high and alt does not worsen', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 76, confidence: 'medium', categories: { reading_order: 100, alt_text: 16 } }),
+      after: makeAnalysis({ score: 79, confidence: 'medium', categories: { reading_order: 96, alt_text: 16 } }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 76,
+        scoreAfter: 79,
+        delta: 3,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+      protectedBaseline: { score: 87, categories: { alt_text: 52, reading_order: 100 } },
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('rejects figure stages that regress score without improving alt text', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 78, confidence: 'medium', categories: { alt_text: 16, reading_order: 96 } }),
+      after: makeAnalysis({ score: 73, confidence: 'medium', categories: { alt_text: 16, reading_order: 96 } }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 78,
+        scoreAfter: 73,
+        delta: -5,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+      protectedBaseline: { score: 87, categories: { alt_text: 52, reading_order: 96 } },
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'figure_stage_regressed_without_alt_improvement(73)',
+    });
+  });
+
   it('rejects score-improving structural stages when ICJIA-parity debug says the root tree is still shallow', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),
@@ -576,5 +877,393 @@ describe('shouldRejectStageResult', () => {
       reject: true,
       reason: 'stage_externally_incomplete(parityReadingOrder=30)',
     });
+  });
+});
+
+describe('protectedBaselineFloorViolation', () => {
+  it('rejects a candidate that drops a protected row below the baseline floor', () => {
+    const result = protectedBaselineFloorViolation({
+      baseline: { score: 90 },
+      before: makeAnalysis({ score: 89, confidence: 'medium' }),
+      after: makeAnalysis({ score: 87, confidence: 'medium' }),
+    });
+
+    expect(result.reject).toBe(true);
+    expect(result.reason).toBe('protected_baseline_floor(87<88)');
+    expect(JSON.parse(result.details ?? '{}')).toMatchObject({
+      outcome: 'rejected',
+      protectedBaselineScore: 90,
+      protectedCandidateScore: 87,
+      protectedFloorReason: 'protected_baseline_floor(87<88)',
+    });
+  });
+
+  it('accepts a candidate that stays within the protected baseline floor', () => {
+    const result = protectedBaselineFloorViolation({
+      baseline: { score: 90 },
+      before: makeAnalysis({ score: 90, confidence: 'medium' }),
+      after: makeAnalysis({ score: 88, confidence: 'medium' }),
+    });
+
+    expect(result).toEqual({ reject: false, reason: null });
+  });
+
+  it('does not affect normal remediation when baseline data is missing', () => {
+    const result = protectedBaselineFloorViolation({
+      before: makeAnalysis({ score: 90, confidence: 'medium' }),
+      after: makeAnalysis({ score: 70, confidence: 'medium' }),
+    });
+
+    expect(result).toEqual({ reject: false, reason: null });
+  });
+
+  it('does not reject while a low row is still recovering toward the floor', () => {
+    const result = protectedBaselineFloorViolation({
+      baseline: { score: 90 },
+      before: makeAnalysis({ score: 59, confidence: 'medium' }),
+      after: makeAnalysis({ score: 75, confidence: 'medium' }),
+    });
+
+    expect(result).toEqual({ reject: false, reason: null });
+  });
+
+  it('allows drops below floor when a new stricter score cap explains the change', () => {
+    const result = protectedBaselineFloorViolation({
+      baseline: {
+        score: 90,
+        scoreCapsApplied: [{ category: 'heading_structure', cap: 69, rawScore: 100, finalScore: 69, reason: 'old cap' }],
+      },
+      before: makeAnalysis({ score: 90, confidence: 'medium' }),
+      after: {
+        ...makeAnalysis({ score: 80, confidence: 'medium' }),
+        scoreCapsApplied: [{ category: 'table_markup', cap: 69, rawScore: 100, finalScore: 69, reason: 'new strict cap' }],
+      },
+    });
+
+    expect(result).toEqual({ reject: false, reason: null });
+  });
+});
+
+describe('protectedBaselineStateIsSafe', () => {
+  it('treats a state at baseline minus tolerance with no new cap as safe', () => {
+    expect(protectedBaselineStateIsSafe({
+      baseline: { score: 90 },
+      analysis: makeAnalysis({ score: 88, confidence: 'medium' }),
+    })).toBe(true);
+  });
+
+  it('does not treat a below-floor state as safe', () => {
+    expect(protectedBaselineStateIsSafe({
+      baseline: { score: 90 },
+      analysis: makeAnalysis({ score: 87, confidence: 'medium' }),
+    })).toBe(false);
+  });
+
+  it('does not treat a state with a new stricter cap as safe', () => {
+    expect(protectedBaselineStateIsSafe({
+      baseline: {
+        score: 90,
+        scoreCapsApplied: [{ category: 'heading_structure', cap: 69, rawScore: 100, finalScore: 69, reason: 'old cap' }],
+      },
+      analysis: {
+        ...makeAnalysis({ score: 90, confidence: 'medium' }),
+        scoreCapsApplied: [{ category: 'table_markup', cap: 69, rawScore: 100, finalScore: 69, reason: 'new strict cap' }],
+      },
+    })).toBe(false);
+  });
+});
+
+describe('protectedTransactionDecision', () => {
+  it('commits the final transaction state when it reaches the protected floor', () => {
+    expect(protectedTransactionDecision({
+      baseline: { score: 90 },
+      final: makeAnalysis({ score: 88, confidence: 'medium' }),
+    })).toBe('commit_final');
+  });
+
+  it('restores the best safe in-transaction state when a later tool regresses', () => {
+    expect(protectedTransactionDecision({
+      baseline: { score: 90 },
+      final: makeAnalysis({ score: 76, confidence: 'medium' }),
+      best: { analysis: makeAnalysis({ score: 89, confidence: 'medium' }) },
+    })).toBe('commit_best');
+  });
+
+  it('rolls back when no transaction state reaches the protected floor', () => {
+    expect(protectedTransactionDecision({
+      baseline: { score: 90 },
+      final: makeAnalysis({ score: 77, confidence: 'medium' }),
+      best: { analysis: makeAnalysis({ score: 82, confidence: 'medium' }) },
+    })).toBe('rollback');
+  });
+});
+
+describe('protectedMetadataTopupDecision', () => {
+  it('accepts protected title and PDF/UA recovery from a restored below-floor state', () => {
+    const result = protectedMetadataTopupDecision({
+      baseline: {
+        score: 87,
+        categories: {
+          title_language: 100,
+          pdf_ua_compliance: 83,
+          heading_structure: 95,
+          alt_text: 52,
+          table_markup: 100,
+          reading_order: 96,
+        },
+      },
+      before: makeAnalysis({
+        score: 80,
+        confidence: 'medium',
+        categories: {
+          title_language: 0,
+          pdf_ua_compliance: 50,
+          heading_structure: 95,
+          alt_text: 52,
+          table_markup: 100,
+          reading_order: 96,
+        },
+      }),
+      after: makeAnalysis({
+        score: 87,
+        confidence: 'medium',
+        categories: {
+          title_language: 100,
+          pdf_ua_compliance: 83,
+          heading_structure: 95,
+          alt_text: 52,
+          table_markup: 100,
+          reading_order: 96,
+        },
+      }),
+    });
+
+    expect(result.accept).toBe(true);
+    expect(JSON.parse(result.details ?? '{}')).toMatchObject({
+      outcome: 'applied',
+      note: 'protected_metadata_topup',
+      protectedBaselineScore: 87,
+      protectedCandidateScore: 87,
+    });
+  });
+
+  it('rejects metadata top-up when it regresses structural categories', () => {
+    const result = protectedMetadataTopupDecision({
+      baseline: { score: 90, categories: { title_language: 100 } },
+      before: makeAnalysis({
+        score: 80,
+        confidence: 'medium',
+        categories: {
+          title_language: 0,
+          heading_structure: 95,
+          alt_text: 100,
+          table_markup: 100,
+          reading_order: 96,
+        },
+      }),
+      after: makeAnalysis({
+        score: 86,
+        confidence: 'medium',
+        categories: {
+          title_language: 100,
+          heading_structure: 80,
+          alt_text: 100,
+          table_markup: 100,
+          reading_order: 96,
+        },
+      }),
+    });
+
+    expect(result.accept).toBe(false);
+    expect(JSON.parse(result.details ?? '{}')).toMatchObject({
+      outcome: 'rejected',
+      note: 'protected_metadata_topup_rejected',
+      protectedFloorReason: 'protected_metadata_topup_structural_regression(heading_structure:95->80)',
+    });
+  });
+
+  it('rejects metadata top-up when metadata categories do not improve', () => {
+    const result = protectedMetadataTopupDecision({
+      baseline: { score: 90, categories: { title_language: 100 } },
+      before: makeAnalysis({
+        score: 80,
+        confidence: 'medium',
+        categories: { title_language: 100, pdf_ua_compliance: 83, heading_structure: 95 },
+      }),
+      after: makeAnalysis({
+        score: 82,
+        confidence: 'medium',
+        categories: { title_language: 100, pdf_ua_compliance: 83, heading_structure: 95 },
+      }),
+    });
+
+    expect(result.accept).toBe(false);
+    expect(JSON.parse(result.details ?? '{}').protectedFloorReason).toBe('protected_metadata_topup_no_metadata_improvement');
+  });
+});
+
+describe('protectedStrongAltPreservationViolation', () => {
+  it('rejects a below-floor protected mutation that collapses recovered strong alt', () => {
+    const result = protectedStrongAltPreservationViolation({
+      baseline: { score: 98, categories: { alt_text: 100 } },
+      before: makeAnalysis({ score: 92, categories: { alt_text: 100 } }),
+      after: makeAnalysis({ score: 79, categories: { alt_text: 20 } }),
+    });
+    expect(result.reject).toBe(true);
+    expect(result.reason).toBe('protected_strong_alt_regressed(100:100->20)');
+    expect(JSON.parse(result.details ?? '{}')).toMatchObject({
+      note: 'protected_strong_alt_regressed(100:100->20)',
+      protectedBaselineScore: 98,
+      protectedCandidateScore: 79,
+      protectedBaselineAltScore: 100,
+      protectedBeforeAltScore: 100,
+      protectedCandidateAltScore: 20,
+    });
+  });
+
+  it('does not reject when the row still reaches the protected total floor', () => {
+    const result = protectedStrongAltPreservationViolation({
+      baseline: { score: 98, categories: { alt_text: 100 } },
+      before: makeAnalysis({ score: 99, categories: { alt_text: 100 } }),
+      after: makeAnalysis({ score: 97, categories: { alt_text: 20 } }),
+    });
+    expect(result.reject).toBe(false);
+  });
+
+  it('does not reject weak-alt recovery rows before they have recovered strong alt', () => {
+    const result = protectedStrongAltPreservationViolation({
+      baseline: { score: 86, categories: { alt_text: 45 } },
+      before: makeAnalysis({ score: 78, categories: { alt_text: 45 } }),
+      after: makeAnalysis({ score: 85, categories: { alt_text: 70 } }),
+    });
+    expect(result.reject).toBe(false);
+  });
+});
+
+describe('protectedStrongAltFigureStageViolation', () => {
+  const figureStage: AppliedRemediationTool[] = [{
+    toolName: 'set_figure_alt_text',
+    stage: 1,
+    round: 1,
+    scoreBefore: 59,
+    scoreAfter: 55,
+    delta: -4,
+    outcome: 'applied',
+    details: JSON.stringify({
+      outcome: 'applied',
+      invariants: {
+        targetResolved: true,
+        targetReachable: true,
+        targetIsFigureAfter: true,
+        targetHasAltAfter: true,
+      },
+      structuralBenefits: {
+        figureAltAttachedToReachableFigure: true,
+      },
+    }),
+  }];
+
+  it('rejects strong-baseline-alt figure mutations that regress score without alt improvement', () => {
+    const result = protectedStrongAltFigureStageViolation({
+      baseline: { score: 86, categories: { alt_text: 100 } },
+      before: makeAnalysis({ score: 74, categories: { alt_text: 100 } }),
+      after: makeAnalysis({ score: 70, categories: { alt_text: 16 } }),
+      stageApplied: figureStage,
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'protected_strong_alt_figure_stage_regressed(100->16)',
+    });
+  });
+
+  it('does not block weak-baseline-alt figure recovery', () => {
+    const result = protectedStrongAltFigureStageViolation({
+      baseline: { score: 87, categories: { alt_text: 45 } },
+      before: makeAnalysis({ score: 59, categories: { alt_text: 0 } }),
+      after: makeAnalysis({ score: 55, categories: { alt_text: 52 } }),
+      stageApplied: figureStage,
+    });
+    expect(result.reject).toBe(false);
+  });
+
+  it('does not reject strong-baseline-alt figure mutations when alt improves', () => {
+    const result = protectedStrongAltFigureStageViolation({
+      baseline: { score: 86, categories: { alt_text: 100 } },
+      before: makeAnalysis({ score: 59, categories: { alt_text: 16 } }),
+      after: makeAnalysis({ score: 55, categories: { alt_text: 100 } }),
+      stageApplied: figureStage,
+    });
+    expect(result.reject).toBe(false);
+  });
+
+  it('allows hard-failure strong-baseline-alt figure recovery when typed benefit exists', () => {
+    const result = protectedStrongAltFigureStageViolation({
+      baseline: { score: 86, categories: { alt_text: 100 } },
+      before: makeAnalysis({ score: 59, categories: { alt_text: 0 } }),
+      after: makeAnalysis({ score: 55, categories: { alt_text: 16 } }),
+      stageApplied: figureStage,
+    });
+    expect(result.reject).toBe(false);
+  });
+});
+
+describe('protectedReadingOrderTopupDecision', () => {
+  it('accepts a protected reading-order improvement', () => {
+    const result = protectedReadingOrderTopupDecision({
+      baseline: { score: 100, categories: { reading_order: 100, alt_text: 100 } },
+      before: makeAnalysis({ score: 96, categories: { reading_order: 80, alt_text: 100 } }),
+      after: makeAnalysis({ score: 100, categories: { reading_order: 100, alt_text: 100 } }),
+    });
+    expect(result.accept).toBe(true);
+    expect(JSON.parse(result.details ?? '{}')).toMatchObject({
+      note: 'protected_reading_order_topup',
+      protectedBaselineReadingOrderScore: 100,
+      protectedBeforeReadingOrderScore: 80,
+      protectedCandidateReadingOrderScore: 100,
+    });
+  });
+
+  it('rejects when reading order does not improve and floor is not reached', () => {
+    const result = protectedReadingOrderTopupDecision({
+      baseline: { score: 100, categories: { reading_order: 100 } },
+      before: makeAnalysis({ score: 94, categories: { reading_order: 80 } }),
+      after: makeAnalysis({ score: 95, categories: { reading_order: 80 } }),
+    });
+    expect(result.accept).toBe(false);
+    expect(JSON.parse(result.details ?? '{}').protectedFloorReason).toBe('protected_reading_order_topup_no_improvement');
+  });
+
+  it('rejects when a baseline-strong non-reading-order category regresses', () => {
+    const result = protectedReadingOrderTopupDecision({
+      baseline: { score: 100, categories: { reading_order: 100, alt_text: 100 } },
+      before: makeAnalysis({ score: 94, categories: { reading_order: 80, alt_text: 100 } }),
+      after: makeAnalysis({ score: 98, categories: { reading_order: 100, alt_text: 50 } }),
+    });
+    expect(result.accept).toBe(false);
+    expect(JSON.parse(result.details ?? '{}').protectedFloorReason).toBe('protected_reading_order_topup_category_regressed(alt_text:100->50)');
+  });
+});
+
+describe('shouldSkipProtectedFigureAlt', () => {
+  it('skips speculative figure alt mutation on near-perfect protected rows', () => {
+    expect(shouldSkipProtectedFigureAlt({
+      baseline: { score: 100, categories: { alt_text: 100 } },
+      currentAltScore: 80,
+    })).toBe(true);
+  });
+
+  it('skips protected rows whose baseline alt was already strong when current alt is not collapsed', () => {
+    expect(shouldSkipProtectedFigureAlt({
+      baseline: { score: 92, categories: { alt_text: 100 } },
+      currentAltScore: 70,
+    })).toBe(true);
+  });
+
+  it('allows collapsed alt to be tried inside the protected transaction', () => {
+    expect(shouldSkipProtectedFigureAlt({
+      baseline: { score: 92, categories: { alt_text: 100 } },
+      currentAltScore: 12,
+      inProtectedTransaction: true,
+    })).toBe(false);
   });
 });

@@ -148,7 +148,7 @@ export const ADOBE_CHECKER_PARITY: AdobeRuleParity[] = [
     parity: 'partial',
     snapshotSignals: ['tables[].hasHeaders'],
     scorerCategories: ['table_markup'],
-    remediationHints: ['set_table_header_cells', 'repair_native_table_headers'],
+    remediationHints: ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'],
     notes: 'Requires table structure in tag tree; fails if tables are layout-only.',
   },
   {

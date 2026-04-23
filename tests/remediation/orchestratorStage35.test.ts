@@ -332,4 +332,45 @@ describe('Stage 39 structural batching', () => {
       }),
     }])).toBe(false);
   });
+
+  it('treats normalize_table_structure as a Stage 35 structural table tool', async () => {
+    expect(isStage35StructuralTool('normalize_table_structure')).toBe(true);
+    mocks.runPythonMutationBatch.mockResolvedValue({
+      buffer: Buffer.from('after'),
+      result: {
+        success: true,
+        applied: ['normalize_table_structure'],
+        failed: [],
+        opResults: [{
+          op: 'normalize_table_structure',
+          outcome: 'applied',
+          invariants: {
+            targetRef: '20_0',
+            targetResolved: true,
+            resolvedRole: 'Table',
+            directCellsUnderTableBefore: 4,
+            directCellsUnderTableAfter: 0,
+            headerCellCountBefore: 0,
+            headerCellCountAfter: 2,
+            tableTreeValidAfter: true,
+          },
+          structuralBenefits: { tableValidityImproved: true },
+        }],
+      },
+    });
+
+    const result = await runSingleTool(
+      Buffer.from('before'),
+      {
+        toolName: 'normalize_table_structure',
+        params: { structRef: '20_0' },
+        stage: 4,
+        reason: 'table',
+        route: 'native_structure_repair',
+      },
+      bareSnapshot(),
+    );
+    expect(result.outcome).toBe('applied');
+    expect(parseMutationDetails(result.details)?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
 });

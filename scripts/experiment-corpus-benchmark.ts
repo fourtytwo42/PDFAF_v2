@@ -61,6 +61,13 @@ interface ParsedArgs {
   writePdfs: boolean;
   validateManifestOnly: boolean;
   validateRunDir?: string;
+  protectedBaselineRunDir?: string;
+}
+
+interface ProtectedBaselineRow {
+  score: number;
+  scoreCapsApplied: AnalysisResult['scoreCapsApplied'];
+  categories: Record<string, number>;
 }
 
 function runtimeCounts(values: string[]): RuntimeCountRow[] {
@@ -106,6 +113,7 @@ Options:
   --semantic                      Enable semantic passes
   --no-semantic                   Disable semantic passes (default)
   --write-pdfs                    Write remediated PDFs into the run directory
+  --protected-baseline-run <dir>   Internal benchmark-only protected row floor baseline
   --validate-manifest             Validate Input/experiment-corpus/manifest.json and exit
   --validate-run <dir>            Validate an existing benchmark run directory and exit
   --help                          Show this help`);
@@ -121,6 +129,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let writePdfs = false;
   let validateManifestOnly = false;
   let validateRunDir: string | undefined;
+  let protectedBaselineRunDir: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -167,6 +176,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--write-pdfs':
         writePdfs = true;
         break;
+      case '--protected-baseline-run': {
+        const value = argv[++i];
+        if (!value) throw new Error('Missing value for --protected-baseline-run.');
+        protectedBaselineRunDir = resolve(value);
+        break;
+      }
       case '--validate-manifest':
         validateManifestOnly = true;
         break;
@@ -195,6 +210,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     writePdfs,
     validateManifestOnly,
     validateRunDir,
+    protectedBaselineRunDir,
   };
 }
 
@@ -206,6 +222,27 @@ function makeRunId(): string {
 async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(value, null, 2), 'utf8');
+}
+
+async function loadProtectedBaselineRows(runDir: string | undefined): Promise<Map<string, ProtectedBaselineRow>> {
+  if (!runDir) return new Map();
+  const path = join(resolve(runDir), 'remediate.results.json');
+  const rows = JSON.parse(await readFile(path, 'utf8')) as RemediateBenchmarkRow[];
+  const out = new Map<string, ProtectedBaselineRow>();
+  for (const row of rows) {
+    const score = row.reanalyzedScore ?? row.afterScore;
+    if (typeof score !== 'number' || !Number.isFinite(score)) continue;
+    const scoreCapsApplied = row.reanalyzedScoreCapsApplied?.length
+      ? row.reanalyzedScoreCapsApplied
+      : row.afterScoreCapsApplied ?? [];
+    const categories = row.reanalyzedCategories?.length ? row.reanalyzedCategories : row.afterCategories ?? [];
+    out.set(row.id, {
+      score,
+      scoreCapsApplied,
+      categories: Object.fromEntries(categories.map(category => [category.key, category.score])),
+    });
+  }
+  return out;
 }
 
 async function reanalyzeBuffer(
@@ -462,6 +499,7 @@ async function runRemediationStep(
   mode: BenchmarkMode,
   writePdfs: boolean,
   runDir: string,
+  protectedBaseline?: ProtectedBaselineRow,
 ): Promise<RemediateBenchmarkRow> {
   const buffer = await readFile(entry.absolutePath);
   const totalStart = performance.now();
@@ -482,6 +520,15 @@ async function runRemediationStep(
         maxRounds: 10,
         playbookStore,
         toolOutcomeStore,
+        ...(protectedBaseline
+          ? {
+              protectedBaseline: {
+                score: protectedBaseline.score,
+                scoreCapsApplied: protectedBaseline.scoreCapsApplied,
+                categories: protectedBaseline.categories,
+              },
+            }
+          : {}),
       },
     );
 
@@ -674,6 +721,7 @@ async function main(): Promise<void> {
   if (args.semanticEnabled) {
     await startEmbeddedLlmIfEnabled();
   }
+  const protectedBaselineRows = await loadProtectedBaselineRows(args.protectedBaselineRunDir);
 
   const runId = makeRunId();
   const outRoot = args.outDir
@@ -707,6 +755,7 @@ async function main(): Promise<void> {
           args.mode,
           args.writePdfs,
           runDir,
+          protectedBaselineRows.get(entry.id),
         );
         remediateRows.push(remediateRow);
         console.log(

@@ -134,6 +134,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'repair_native_reading_order',
     'normalize_heading_hierarchy',
     'repair_list_li_wrong_parent',
+    'normalize_table_structure',
     'repair_native_table_headers',
     'set_table_header_cells',
   ],
@@ -236,8 +237,8 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
   },
   native_structure_repair: {
     allowedTools: ROUTE_TOOL_MAP.native_structure_repair,
-    failureTools: ['repair_native_table_headers', 'set_table_header_cells'],
-    requiredFailureTools: ['repair_native_table_headers', 'set_table_header_cells'],
+    failureTools: ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'],
+    requiredFailureTools: ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'],
   },
   font_ocr_repair: {
     allowedTools: ROUTE_TOOL_MAP.font_ocr_repair,
@@ -299,6 +300,13 @@ export interface FailureDisposition extends RoutingFailureDisposition {
   annotationOwnershipBlocked: boolean;
 }
 
+export type Stage44FigureFailure =
+  | 'missing_alt_on_reachable_figures'
+  | 'broken_figure_ownership'
+  | 'alt_cleanup_risk'
+  | 'no_checker_visible_figures'
+  | 'not_stage44_target';
+
 function headingInvariantImproved(detail: PythonMutationDetailPayload): boolean {
   const inv = detail.invariants;
   if (!inv) return false;
@@ -323,6 +331,32 @@ function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
     );
   }
   return snapshot.figures.some(figure => !figure.isArtifact && !figure.hasAlt);
+}
+
+function checkerVisibleFigureCount(snapshot: DocumentSnapshot): number {
+  return (snapshot.checkerFigureTargets ?? []).filter(target =>
+    target.reachable &&
+    !target.isArtifact &&
+    isFigureRole(target.resolvedRole ?? target.role)
+  ).length;
+}
+
+export function classifyStage44FigureFailure(snapshot: DocumentSnapshot, analysis: AnalysisResult): Stage44FigureFailure {
+  const altScore = analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100;
+  if (altScore >= REMEDIATION_CATEGORY_THRESHOLD) return 'not_stage44_target';
+  if (
+    (snapshot.checkerFigureTargets?.length ?? 0) > 0 &&
+    checkerVisibleFigureMissingAlt(snapshot)
+  ) return 'missing_alt_on_reachable_figures';
+  if (
+    (snapshot.checkerFigureTargets?.length ?? 0) === 0 &&
+    snapshot.figures.some(figure => !figure.isArtifact && !figure.hasAlt && isFigureRole(figure.role) && figure.structRef)
+  ) return 'missing_alt_on_reachable_figures';
+  if (hasAcrobatAltOwnershipRisk(snapshot)) return 'alt_cleanup_risk';
+  if (figureNeedsOwnershipRepair(snapshot)) return 'broken_figure_ownership';
+  const extractedCount = snapshot.detectionProfile?.figureSignals?.extractedFigureCount ?? snapshot.figures.length;
+  if (extractedCount > 0 && checkerVisibleFigureCount(snapshot) === 0) return 'no_checker_visible_figures';
+  return 'not_stage44_target';
 }
 
 function noEffectDetails(row: AppliedRemediationTool): PythonMutationDetailPayload | null {
@@ -369,7 +403,7 @@ export function deriveFailureDisposition(
     'normalize_nested_figure_containers',
     'canonicalize_figure_alt_ownership',
   ]));
-  const tableDetails = noEffectRowsFor(alreadyApplied, new Set(['repair_native_table_headers', 'set_table_header_cells']));
+  const tableDetails = noEffectRowsFor(alreadyApplied, new Set(['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells']));
   const annotationDetails = noEffectRowsFor(alreadyApplied, new Set([
     'repair_native_link_structure',
     'tag_unowned_annotations',
@@ -436,6 +470,37 @@ export function deriveFailureDisposition(
     triggeringSignals: signals,
     residualFamilies: families,
   };
+}
+
+export type Stage43TableFailureClass =
+  | 'rowless_dense_table'
+  | 'direct_cells_under_table'
+  | 'missing_headers_only'
+  | 'layout_table_candidate'
+  | 'not_stage43_table_target';
+
+export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis?: AnalysisResult): Stage43TableFailureClass {
+  const tableCategory = analysis?.categories.find(category => category.key === 'table_markup');
+  const tableFailing = Boolean(tableCategory?.applicable && tableCategory.score < 70);
+  const directSignal = snapshot.detectionProfile?.tableSignals.directCellUnderTableCount ?? 0;
+  const misplacedSignal = snapshot.detectionProfile?.tableSignals.misplacedCellCount ?? 0;
+  const scoredTables = snapshot.tables.filter(table =>
+    !((table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) <= 2 && (table.cellsMisplacedCount ?? 0) === 0),
+  );
+  if (scoredTables.length === 0) return 'not_stage43_table_target';
+  if (scoredTables.some(table => (table.cellsMisplacedCount ?? 0) > 0) || directSignal > 0 || misplacedSignal > 0) {
+    return 'direct_cells_under_table';
+  }
+  if (scoredTables.some(table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4)) {
+    return 'rowless_dense_table';
+  }
+  if (scoredTables.some(table => !table.hasHeaders && table.totalCells >= 4)) {
+    return 'missing_headers_only';
+  }
+  if (tableFailing && scoredTables.every(table => table.totalCells <= 2 && !table.hasHeaders)) {
+    return 'layout_table_candidate';
+  }
+  return 'not_stage43_table_target';
 }
 
 function noEffectSignature(row: AppliedRemediationTool): string | null {
@@ -625,11 +690,14 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
 /** One-shot tools: skip after first success. Figure alt/decorative + table headers: repeat until cap or no targets. */
 function shouldSkipAfterSuccessfulApply(toolName: string, applied: AppliedRemediationTool[]): boolean {
   if (toolName === 'set_figure_alt_text' || toolName === 'mark_figure_decorative') {
-    return successfulApplyCount(applied, toolName) >= REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN;
+    return successfulApplyCount(applied, toolName) >= Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
   }
-  // set_table_header_cells targets one table per call — repeat to cover all tables.
-  if (toolName === 'set_table_header_cells') {
-    return successfulApplyCount(applied, toolName) >= REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN;
+  if (toolName === 'normalize_nested_figure_containers' || toolName === 'canonicalize_figure_alt_ownership') {
+    return successfulApplyCount(applied, toolName) >= 2;
+  }
+  // Stage 43 table tools target one table per call and stay bounded to two table targets.
+  if (toolName === 'normalize_table_structure' || toolName === 'set_table_header_cells') {
+    return successfulApplyCount(applied, toolName) >= 2;
   }
   // Python fixes up to 64 orphans per pass; repeat until converged (matches pikepdf mutator rounds).
   if (toolName === 'remap_orphan_mcids_as_artifacts') {
@@ -769,9 +837,9 @@ function toolApplicableToPdfClass(
     if (snapshot.pageCount < BOOKMARKS_PAGE_THRESHOLD) return false;
     return snapshot.bookmarks.length === 0;
   }
-  if (toolName === 'set_table_header_cells') {
+  if (toolName === 'normalize_table_structure' || toolName === 'set_table_header_cells') {
     if (pdfClass === 'scanned') return false;
-    return snapshot.structureTree !== null && snapshot.tables.some(t => !t.hasHeaders && t.structRef);
+    return snapshot.structureTree !== null && snapshot.tables.some(t => t.structRef);
   }
   if (toolName === 'repair_native_table_headers') {
     if (pdfClass === 'scanned') return false;
@@ -1058,19 +1126,25 @@ export function planForRemediation(
         categoryFailing('alt_text')
         && snapshot.structureTree !== null
         && snapshot.figures.length > 0
+        && (
+          structurePrimary ||
+          classifyStage44FigureFailure(snapshot, analysis) === 'broken_figure_ownership' ||
+          classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk' ||
+          classifyStage44FigureFailure(snapshot, analysis) === 'no_checker_visible_figures'
+        )
       )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (
-      (toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
-      && !(snapshot.tables.length > 0 && (categoryFailing('table_markup') || hasTableSignals) && (structureConfidenceHigh || categoryFailing('table_markup')))
+      (toolName === 'normalize_table_structure' || toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
+      && !(snapshot.tables.length > 0 && categoryFailing('table_markup') && (structureConfidenceHigh || categoryFailing('table_markup')))
     ) {
-      // Allow table header repair when table_markup is failing regardless of structural
-      // confidence. Medium-confidence partially-tagged files (e.g. native_tagged with
-      // incomplete tag tree) have failing table_markup that can't get worse than 0.
-      // structureConfidenceHigh is still required when only hasTableSignals triggers
-      // the gate, preserving safety for files that aren't actually failing table_markup.
+      // Stage 43 is intentionally narrow: table tools run only when table_markup is
+      // already failing, avoiding protected-file spillover from advisory table signals.
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (toolName === 'normalize_table_structure' && classifyStage43TableFailure(snapshot, analysis) === 'not_stage43_table_target') {
       return { allowed: false, reason: 'missing_precondition' };
     }
     if ((toolName === 'replace_bookmarks_from_headings' || toolName === 'add_page_outline_bookmarks') && !categoryFailing('bookmarks')) {
@@ -1090,8 +1164,19 @@ export function planForRemediation(
       && !(
         categoryFailing('alt_text')
         && snapshot.figures.length > 0
-        && figureNeedsOwnershipRepair(snapshot)
+        && (
+          structurePrimary ||
+          classifyStage44FigureFailure(snapshot, analysis) === 'broken_figure_ownership' ||
+          classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk' ||
+          classifyStage44FigureFailure(snapshot, analysis) === 'no_checker_visible_figures'
+        )
       )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'set_figure_alt_text'
+      && classifyStage44FigureFailure(snapshot, analysis) !== 'missing_alt_on_reachable_figures'
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1099,7 +1184,7 @@ export function planForRemediation(
       toolName === 'repair_alt_text_structure'
       && !(
         categoryFailing('alt_text')
-        && hasAcrobatAltOwnershipRisk(snapshot)
+        && classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk'
       )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
@@ -1262,7 +1347,7 @@ export function planForRemediation(
 
   if (
     categoryFailing('alt_text')
-    && structurePrimary
+    && (structurePrimary || routing.triggeringSignals.includes('zero_heading_figure_recovery'))
     && snapshot.figures.length > 0
     && routeFailureProof('figure_semantics', alreadyApplied) === null
   ) {
@@ -1294,6 +1379,27 @@ export function planForRemediation(
         toolName,
         params,
         rationale: 'Run deterministic figure ownership/alt lane alongside structure-primary remediation.',
+        route: 'figure_semantics',
+      });
+    }
+  }
+
+  if (
+    categoryFailing('alt_text')
+    && routing.triggeringSignals.includes('zero_heading_figure_recovery')
+    && snapshot.figures.length > 0
+    && routeFailureProof('figure_semantics', alreadyApplied) === null
+  ) {
+    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership']) {
+      if (toolSet.has(toolName)) continue;
+      if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) continue;
+      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) continue;
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) continue;
+      toolSet.set(toolName, {
+        toolName,
+        params,
+        rationale: 'Run deterministic figure ownership lane for zero-heading figure recovery.',
         route: 'figure_semantics',
       });
     }
@@ -1406,11 +1512,16 @@ export function buildDefaultParams(
           !f.isArtifact
           && !f.hasAlt
           && f.structRef
-          && (f.role ?? '').toLowerCase() === 'figure'
+          && isFigureRole(f.resolvedRole ?? f.role)
           && f.reachable,
         ),
       ).sort((a, b) => Number(b.directContent) - Number(a.directContent) || a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
-      const target = checkerCandidates[0];
+      const fallbackCandidates = (snapshot.checkerFigureTargets?.length ?? 0) > 0
+        ? []
+        : sortFigureTargets(
+          snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && isFigureRole(f.role)),
+        );
+      const target = checkerCandidates[0] ?? fallbackCandidates[0];
       return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
     }
     case 'create_heading_from_candidate': {
@@ -1456,7 +1567,7 @@ export function buildDefaultParams(
           !f.isArtifact
           && !f.hasAlt
           && f.structRef
-          && (f.role ?? '').toLowerCase() === 'figure'
+          && isFigureRole(f.resolvedRole ?? f.role)
           && f.reachable,
         ),
       ).sort((a, b) => Number(b.directContent) - Number(a.directContent) || a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
@@ -1473,7 +1584,11 @@ export function buildDefaultParams(
           !f.isArtifact
           && !f.hasAlt
           && f.structRef
-          && (f.role ?? '').toLowerCase() === 'figure',
+          && (
+            !f.reachable ||
+            !isFigureRole(f.resolvedRole ?? f.role) ||
+            hasAcrobatAltOwnershipRisk(snapshot)
+          ),
         ),
       ).sort((a, b) =>
         Number(a.reachable) - Number(b.reachable)
@@ -1491,9 +1606,43 @@ export function buildDefaultParams(
       return { force: true };
     case 'add_page_outline_bookmarks':
       return { maxPages: BOOKMARKS_PAGE_OUTLINE_MAX_PAGES };
+    case 'normalize_table_structure': {
+      const tableClass = classifyStage43TableFailure(snapshot, analysis);
+      if (tableClass === 'not_stage43_table_target') return {};
+      const attemptedRefs = new Set(
+        alreadyApplied
+          .filter(row => row.toolName === 'normalize_table_structure')
+          .map(row => mutationTargetRef(parseMutationDetails(row.details)))
+          .filter((ref): ref is string => Boolean(ref)),
+      );
+      const target = snapshot.tables
+        .filter(table => table.structRef && !attemptedRefs.has(table.structRef))
+        .filter(table => {
+          if (tableClass === 'direct_cells_under_table') return (table.cellsMisplacedCount ?? 0) > 0 || table.hasHeaders || table.totalCells >= 4;
+          if (tableClass === 'rowless_dense_table') return (table.rowCount ?? 0) <= 1 && table.totalCells >= 4;
+          if (tableClass === 'missing_headers_only') return !table.hasHeaders && table.totalCells >= 4;
+          if (tableClass === 'layout_table_candidate') return table.totalCells <= 2 && !table.hasHeaders;
+          return false;
+        })
+        .sort((a, b) =>
+          Number((b.cellsMisplacedCount ?? 0) > 0) - Number((a.cellsMisplacedCount ?? 0) > 0)
+          || Number((b.rowCount ?? 0) <= 1 && b.totalCells >= 4) - Number((a.rowCount ?? 0) <= 1 && a.totalCells >= 4)
+          || a.page - b.page
+          || (a.structRef ?? '').localeCompare(b.structRef ?? '')
+        )[0];
+      return target?.structRef
+        ? {
+          structRef: target.structRef,
+          dominantColumnCount: target.dominantColumnCount ?? 0,
+          totalCells: target.totalCells,
+          maxTablesPerRun: 1,
+          tableFailureClass: tableClass,
+        }
+        : {};
+    }
     case 'set_table_header_cells': {
       const t = snapshot.tables
-        .filter(row => ((!row.hasHeaders) || (row.cellsMisplacedCount ?? 0) > 0 || (row.rowCount ?? 0) <= 1) && row.structRef)
+        .filter(row => !row.hasHeaders && (row.cellsMisplacedCount ?? 0) === 0 && (row.rowCount ?? 0) > 1 && row.structRef)
         .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''))[0];
       return t?.structRef ? { structRef: t.structRef } : {};
     }

@@ -22,6 +22,7 @@ import { createToolOutcomeStore, type ToolOutcomeStore } from '../learning/toolO
 import type {
   AnalysisResult,
   AppliedRemediationTool,
+  CategoryKey,
   ClassificationConfidence,
   DocumentSnapshot,
   OcrPipelineSummary,
@@ -37,6 +38,7 @@ import type {
   RemediationStagePlan,
   RemediationToolRuntimeSummary,
   RemediatePdfOutcome,
+  ScoreCapApplied,
   StructuralConfidenceGuardSummary,
   PythonMutationDetailPayload,
 } from '../../types.js';
@@ -199,6 +201,7 @@ const HEADING_STRUCTURE_TOOLS = new Set([
 ]);
 
 const TABLE_STRUCTURE_TOOLS = new Set([
+  'normalize_table_structure',
   'repair_native_table_headers',
   'set_table_header_cells',
 ]);
@@ -251,6 +254,16 @@ function mutationInvariantsPassForStructuralBenefit(detail: PythonMutationDetail
     return false;
   }
   return true;
+}
+
+function appliedContradictsMutationTruth(detail: PythonMutationDetailPayload | null): boolean {
+  if (!detail) return false;
+  if (detail.outcome === 'no_effect' || detail.outcome === 'failed') return true;
+  const inv = detail.invariants;
+  return inv?.targetReachable === false ||
+    inv?.targetIsFigureAfter === false ||
+    inv?.tableTreeValidAfter === false ||
+    inv?.ownershipPreserved === false;
 }
 
 function stageHasCheckerFacingStructuralBenefit(input: {
@@ -354,19 +367,462 @@ function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): 
   return false;
 }
 
+const PROTECTED_STAGE_CATEGORY_REGRESSION_TOLERANCE = 2;
+const PROTECTED_BASELINE_FLOOR_TOLERANCE = 2;
+const STAGE_CATEGORY_REGRESSION_FLOORS: Partial<Record<CategoryKey, number>> = {
+  title_language: 90,
+  heading_structure: 70,
+  alt_text: 70,
+  table_markup: 70,
+  reading_order: 40,
+  form_accessibility: 90,
+} as const;
+
+function categoryScoresByKey(analysis: AnalysisResult): Map<CategoryKey, number> {
+  const out = new Map<CategoryKey, number>();
+  for (const category of analysis.categories) {
+    if (!category.applicable) continue;
+    out.set(category.key, category.score);
+  }
+  return out;
+}
+
+function stageHasTypedBenefitForCategory(stageApplied: AppliedRemediationTool[], key: CategoryKey): boolean {
+  for (const row of stageApplied) {
+    if (row.outcome !== 'applied') continue;
+    const details = parseMutationDetails(row.details);
+    if (!details?.structuralBenefits || !mutationInvariantsPassForStructuralBenefit(details)) continue;
+    const benefits = details.structuralBenefits;
+    if (key === 'heading_structure' && (benefits.headingReachabilityImproved || benefits.headingHierarchyImproved)) return true;
+    if (key === 'reading_order' && (benefits.readingOrderDepthImproved || benefits.annotationOwnershipImproved)) return true;
+    if (key === 'alt_text' && (benefits.figureOwnershipImproved || benefits.figureAltAttachedToReachableFigure)) return true;
+    if (key === 'table_markup' && benefits.tableValidityImproved) return true;
+    if (key === 'link_quality' && benefits.annotationOwnershipImproved) return true;
+  }
+  return false;
+}
+
+function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: CategoryKey): boolean {
+  const tools = new Set(stageApplied.map(row => row.toolName));
+  if (key === 'title_language') return tools.has('set_document_title') || tools.has('set_document_language');
+  if (key === 'heading_structure') {
+    return tools.has('create_heading_from_candidate') ||
+      tools.has('normalize_heading_hierarchy') ||
+      tools.has('repair_structure_conformance') ||
+      tools.has('synthesize_basic_structure_from_layout');
+  }
+  if (key === 'alt_text') {
+    return tools.has('normalize_nested_figure_containers') ||
+      tools.has('canonicalize_figure_alt_ownership') ||
+      tools.has('set_figure_alt_text') ||
+      tools.has('mark_figure_decorative') ||
+      tools.has('repair_alt_text_structure');
+  }
+  if (key === 'table_markup') {
+    return tools.has('normalize_table_structure') ||
+      tools.has('repair_native_table_headers') ||
+      tools.has('set_table_header_cells');
+  }
+  if (key === 'link_quality') {
+    return tools.has('repair_native_link_structure') ||
+      tools.has('tag_unowned_annotations') ||
+      tools.has('set_link_annotation_contents') ||
+      tools.has('normalize_annotation_tab_order');
+  }
+  if (key === 'reading_order') {
+    return tools.has('repair_native_reading_order') ||
+      tools.has('normalize_annotation_tab_order') ||
+      tools.has('artifact_repeating_page_furniture') ||
+      tools.has('synthesize_basic_structure_from_layout');
+  }
+  if (key === 'form_accessibility') return tools.has('fill_form_field_tooltips');
+  if (key === 'text_extractability') {
+    return tools.has('ocr_scanned_pdf') ||
+      tools.has('tag_native_text_blocks') ||
+      tools.has('tag_ocr_text_blocks') ||
+      tools.has('substitute_legacy_fonts_in_place') ||
+      tools.has('finalize_substituted_font_conformance');
+  }
+  return false;
+}
+
+function unexplainedProtectedCategoryRegression(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): string | null {
+  const beforeScores = categoryScoresByKey(input.before);
+  const afterScores = categoryScoresByKey(input.after);
+  for (const [key, floor] of Object.entries(STAGE_CATEGORY_REGRESSION_FLOORS) as Array<[CategoryKey, number]>) {
+    const before = beforeScores.get(key);
+    const after = afterScores.get(key);
+    if (before == null || after == null) continue;
+    if (before < floor) continue;
+    if (before - after <= PROTECTED_STAGE_CATEGORY_REGRESSION_TOLERANCE) continue;
+    if (stageTargetsCategory(input.stageApplied, key)) continue;
+    if (stageHasTypedBenefitForCategory(input.stageApplied, key)) continue;
+    return `stage_regressed_category(${key}:${before}->${after})`;
+  }
+  return null;
+}
+
+export interface ProtectedBaselineFloor {
+  score: number;
+  tolerance?: number;
+  scoreCapsApplied?: ScoreCapApplied[];
+  categories?: Partial<Record<CategoryKey, number>>;
+}
+
+function capIdentity(cap: ScoreCapApplied): string {
+  return `${cap.category}:${cap.cap}:${cap.reason}`;
+}
+
+function hasNewStricterCap(input: {
+  baselineCaps?: ScoreCapApplied[];
+  candidateCaps?: ScoreCapApplied[];
+}): boolean {
+  const baseline = new Set((input.baselineCaps ?? []).map(capIdentity));
+  return (input.candidateCaps ?? []).some(cap => !baseline.has(capIdentity(cap)));
+}
+
+function protectedBaselineFloorDetails(input: {
+  baseline: ProtectedBaselineFloor;
+  candidate: AnalysisResult;
+}): { reason: string; details: string } | null {
+  const tolerance = input.baseline.tolerance ?? PROTECTED_BASELINE_FLOOR_TOLERANCE;
+  const floor = input.baseline.score - tolerance;
+  if (input.candidate.score >= floor) return null;
+  if (hasNewStricterCap({
+    baselineCaps: input.baseline.scoreCapsApplied,
+    candidateCaps: input.candidate.scoreCapsApplied,
+  })) {
+    return null;
+  }
+  const reason = `protected_baseline_floor(${input.candidate.score}<${floor})`;
+  return {
+    reason,
+    details: JSON.stringify({
+      outcome: 'rejected',
+      note: reason,
+      protectedBaselineScore: input.baseline.score,
+      protectedCandidateScore: input.candidate.score,
+      protectedFloorReason: reason,
+    }),
+  };
+}
+
+export function protectedBaselineFloorViolation(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): { reject: boolean; reason: string | null; details?: string } {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) {
+    return { reject: false, reason: null };
+  }
+  const tolerance = input.baseline.tolerance ?? PROTECTED_BASELINE_FLOOR_TOLERANCE;
+  const floor = input.baseline.score - tolerance;
+  if (input.before.score < floor) {
+    return { reject: false, reason: null };
+  }
+  const violation = protectedBaselineFloorDetails({
+    baseline: input.baseline,
+    candidate: input.after,
+  });
+  if (!violation) return { reject: false, reason: null };
+  return {
+    reject: true,
+    reason: violation.reason,
+    details: violation.details,
+  };
+}
+
+function protectedBaselineFloorScore(baseline: ProtectedBaselineFloor): number {
+  return baseline.score - (baseline.tolerance ?? PROTECTED_BASELINE_FLOOR_TOLERANCE);
+}
+
+export function protectedBaselineStateIsSafe(input: {
+  baseline?: ProtectedBaselineFloor;
+  analysis: AnalysisResult;
+}): boolean {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) return false;
+  if (input.analysis.score < protectedBaselineFloorScore(input.baseline)) return false;
+  return !hasNewStricterCap({
+    baselineCaps: input.baseline.scoreCapsApplied,
+    candidateCaps: input.analysis.scoreCapsApplied,
+  });
+}
+
+function protectedStrongCategoryRegression(input: {
+  baseline?: ProtectedBaselineFloor;
+  after: AnalysisResult;
+}): string | null {
+  if (!input.baseline?.categories) return null;
+  for (const [key, baselineScore] of Object.entries(input.baseline.categories) as Array<[CategoryKey, number]>) {
+    if (baselineScore == null || baselineScore < 90) continue;
+    const afterScore = categoryScore(input.after, key);
+    if (afterScore == null) continue;
+    const floor = baselineScore - PROTECTED_BASELINE_FLOOR_TOLERANCE;
+    if (afterScore < floor) {
+      return `protected_strong_category_regressed(${key}:${baselineScore}->${afterScore})`;
+    }
+  }
+  return null;
+}
+
+export function protectedStrongAltPreservationViolation(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): { reject: boolean; reason: string | null; details?: string } {
+  const baseline = input.baseline;
+  const baselineAlt = baseline?.categories?.alt_text;
+  if (!baseline || baselineAlt == null || baselineAlt < 80) {
+    return { reject: false, reason: null };
+  }
+  if (input.after.score >= protectedBaselineFloorScore(baseline)) {
+    return { reject: false, reason: null };
+  }
+  const beforeAlt = categoryScore(input.before, 'alt_text');
+  const afterAlt = categoryScore(input.after, 'alt_text');
+  if (beforeAlt == null || afterAlt == null) return { reject: false, reason: null };
+  const altFloor = baselineAlt - PROTECTED_BASELINE_FLOOR_TOLERANCE;
+  if (beforeAlt < altFloor || afterAlt >= altFloor) {
+    return { reject: false, reason: null };
+  }
+  const reason = `protected_strong_alt_regressed(${baselineAlt}:${beforeAlt}->${afterAlt})`;
+  return {
+    reject: true,
+    reason,
+    details: JSON.stringify({
+      outcome: 'rejected',
+      note: reason,
+      protectedBaselineScore: baseline.score,
+      protectedCandidateScore: input.after.score,
+      protectedBeforeScore: input.before.score,
+      protectedBaselineAltScore: baselineAlt,
+      protectedBeforeAltScore: beforeAlt,
+      protectedCandidateAltScore: afterAlt,
+      protectedFloorReason: reason,
+    }),
+  };
+}
+
+function stageHasFigureAltMutation(stageApplied: AppliedRemediationTool[]): boolean {
+  return stageApplied.some(row =>
+    row.toolName === 'set_figure_alt_text' ||
+    row.toolName === 'canonicalize_figure_alt_ownership' ||
+    row.toolName === 'normalize_nested_figure_containers'
+  );
+}
+
+function figureStageRegressedWithoutAltImprovement(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (!stageHasFigureAltMutation(input.stageApplied)) return false;
+  if (input.after.score >= input.before.score) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text');
+  const afterAlt = categoryScore(input.after, 'alt_text');
+  if (beforeAlt == null || afterAlt == null) return false;
+  return afterAlt <= beforeAlt;
+}
+
+export function protectedStrongAltFigureStageViolation(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): { reject: boolean; reason: string | null } {
+  const baselineAlt = input.baseline?.categories?.alt_text;
+  if (baselineAlt == null || baselineAlt < 90) return { reject: false, reason: null };
+  if (!stageHasFigureAltMutation(input.stageApplied)) return { reject: false, reason: null };
+  if (input.after.score >= input.before.score) return { reject: false, reason: null };
+  if (
+    input.before.score <= 59 &&
+    stageHasTypedBenefitForCategory(input.stageApplied, 'alt_text')
+  ) {
+    return { reject: false, reason: null };
+  }
+  const beforeAlt = categoryScore(input.before, 'alt_text');
+  const afterAlt = categoryScore(input.after, 'alt_text');
+  if (beforeAlt == null || afterAlt == null || afterAlt > beforeAlt) {
+    return { reject: false, reason: null };
+  }
+  return {
+    reject: true,
+    reason: `protected_strong_alt_figure_stage_regressed(${beforeAlt}->${afterAlt})`,
+  };
+}
+
+function protectedWeakAltRecoveryAllowsHeadingDrift(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+  regressionReason: string;
+}): boolean {
+  if (!protectedBaselineRecoveryActive(input.baseline, input.before)) return false;
+  if ((input.baseline?.categories?.alt_text ?? 100) >= 90) return false;
+  const m = input.regressionReason.match(
+    /(?:stage_regressed_category|protected_strong_category_regressed)\((heading_structure|reading_order):(\d+(?:\.\d+)?)->(\d+(?:\.\d+)?)\)/,
+  );
+  if (!m) return false;
+  const category = m[1];
+  const afterCategoryScore = Number(m[3]);
+  if (category === 'heading_structure' && afterCategoryScore < 60) return false;
+  if (category === 'reading_order' && afterCategoryScore < 90) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text') ?? 100;
+  const afterAlt = categoryScore(input.after, 'alt_text') ?? beforeAlt;
+  if (afterAlt <= beforeAlt) return false;
+  return input.stageApplied.some(row =>
+    row.toolName === 'set_figure_alt_text' ||
+    row.toolName === 'canonicalize_figure_alt_ownership' ||
+    row.toolName === 'normalize_nested_figure_containers'
+  );
+}
+
+function protectedWeakAltFigureStageAllowsCategoryDrift(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+  regressionReason: string;
+}): boolean {
+  if (!protectedBaselineRecoveryActive(input.baseline, input.before)) return false;
+  if ((input.baseline?.categories?.alt_text ?? 100) >= 90) return false;
+  if (!stageHasTypedBenefitForCategory(input.stageApplied, 'alt_text')) return false;
+  const m = input.regressionReason.match(
+    /stage_regressed_category\((heading_structure|reading_order):(\d+(?:\.\d+)?)->(\d+(?:\.\d+)?)\)/,
+  );
+  if (!m) return false;
+  const category = m[1];
+  const afterCategoryScore = Number(m[3]);
+  if (category === 'heading_structure' && afterCategoryScore < 60) return false;
+  if (category === 'reading_order' && afterCategoryScore < 90) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text') ?? 100;
+  const afterAlt = categoryScore(input.after, 'alt_text') ?? beforeAlt;
+  return afterAlt >= beforeAlt;
+}
+
+function protectedBaselineRecoveryActive(
+  baseline: ProtectedBaselineFloor | undefined,
+  analysis: AnalysisResult,
+): boolean {
+  if (!baseline || !Number.isFinite(baseline.score)) return false;
+  const floor = baseline.score - (baseline.tolerance ?? PROTECTED_BASELINE_FLOOR_TOLERANCE);
+  return analysis.score < floor;
+}
+
+export function shouldSkipProtectedFigureAlt(input: {
+  baseline?: ProtectedBaselineFloor;
+  currentAltScore?: number | null;
+  inProtectedTransaction?: boolean;
+}): boolean {
+  const baseline = input.baseline;
+  if (!baseline || input.inProtectedTransaction) return false;
+  const baselineAlt = baseline.categories?.alt_text;
+  const currentAlt = input.currentAltScore ?? null;
+  if (baseline.score >= 98) return true;
+  if (baselineAlt != null && baselineAlt >= 90 && currentAlt != null && currentAlt >= 70) {
+    return true;
+  }
+  return false;
+}
+
+export function protectedTransactionDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  final: AnalysisResult;
+  best?: { analysis: AnalysisResult } | null;
+}): 'commit_final' | 'commit_best' | 'rollback' {
+  if (input.baseline && Number.isFinite(input.baseline.score) && input.final.score >= protectedBaselineFloorScore(input.baseline)) {
+    return 'commit_final';
+  }
+  if (protectedBaselineStateIsSafe({ baseline: input.baseline, analysis: input.final })) {
+    return 'commit_final';
+  }
+  if (
+    input.baseline &&
+    input.best &&
+    Number.isFinite(input.baseline.score) &&
+    input.best.analysis.score >= protectedBaselineFloorScore(input.baseline)
+  ) {
+    return 'commit_best';
+  }
+  if (input.best && protectedBaselineStateIsSafe({ baseline: input.baseline, analysis: input.best.analysis })) {
+    return 'commit_best';
+  }
+  return 'rollback';
+}
+
 function isMutationTimeout(outcome: AppliedRemediationTool['outcome'], details?: string): boolean {
   return outcome === 'failed' && typeof details === 'string' && /timeout\s+\d+ms/i.test(details);
 }
 
+function protectedBaselineNeedsTransaction(input: {
+  baseline?: ProtectedBaselineFloor;
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}): boolean {
+  const baseline = input.baseline;
+  if (!protectedBaselineRecoveryActive(baseline, input.analysis) || !baseline) return false;
+  const baselineAlt = baseline.categories?.alt_text;
+  const currentAlt = categoryScore(input.analysis, 'alt_text');
+  if (hasAcrobatAltOwnershipRisk(input.snapshot)) return true;
+  if (
+    baselineAlt != null &&
+    currentAlt != null &&
+    (
+      (baselineAlt >= 90 && currentAlt < baselineAlt - PROTECTED_BASELINE_FLOOR_TOLERANCE) ||
+      (baselineAlt < 90 && currentAlt < Math.max(70, baselineAlt))
+    )
+  ) {
+    return true;
+  }
+  const baselineHeading = baseline.categories?.heading_structure;
+  const currentHeading = categoryScore(input.analysis, 'heading_structure');
+  if (baselineHeading != null && baselineHeading >= 90 && currentHeading != null && currentHeading < baselineHeading - PROTECTED_BASELINE_FLOOR_TOLERANCE) {
+    return true;
+  }
+  return false;
+}
+
 export function shouldRejectStageResult(input: {
+  filename?: string;
   before: AnalysisResult;
   after: AnalysisResult;
   beforeSnapshot?: DocumentSnapshot;
   afterSnapshot?: DocumentSnapshot;
   stage: RemediationStagePlan;
   stageApplied: AppliedRemediationTool[];
+  protectedBaseline?: ProtectedBaselineFloor;
 }): { reject: boolean; reason: string | null } {
-  if (input.after.score < input.before.score && !keepOcrStageDespiteScoreDrop(input.stage, input.stageApplied)) {
+  const ocrBypass = keepOcrStageDespiteScoreDrop(input.stage, input.stageApplied);
+  if (input.after.score < input.before.score && ocrBypass && protectedBaselineRecoveryActive(input.protectedBaseline, input.before)) {
+    return {
+      reject: true,
+      reason: `stage_regressed_protected_ocr(${input.after.score})`,
+    };
+  }
+  if (input.after.score < input.before.score && !ocrBypass) {
+    const strongAltFigureRegression = protectedStrongAltFigureStageViolation({
+      baseline: input.protectedBaseline,
+      before: input.before,
+      after: input.after,
+      stageApplied: input.stageApplied,
+    });
+    if (strongAltFigureRegression.reject) {
+      return {
+        reject: true,
+        reason: strongAltFigureRegression.reason,
+      };
+    }
+    if (figureStageRegressedWithoutAltImprovement(input)) {
+      return {
+        reject: true,
+        reason: `figure_stage_regressed_without_alt_improvement(${input.after.score})`,
+      };
+    }
     if (
       input.before.score - input.after.score <= 10 &&
       stageHasCheckerFacingStructuralBenefit(input)
@@ -382,6 +838,31 @@ export function shouldRejectStageResult(input: {
     };
   }
   if (input.after.score > input.before.score) {
+    const categoryRegression = unexplainedProtectedCategoryRegression(input);
+    if (categoryRegression) {
+      if (protectedWeakAltRecoveryAllowsHeadingDrift({
+        baseline: input.protectedBaseline,
+        before: input.before,
+        after: input.after,
+        stageApplied: input.stageApplied,
+        regressionReason: categoryRegression,
+      }) || protectedWeakAltFigureStageAllowsCategoryDrift({
+        baseline: input.protectedBaseline,
+        before: input.before,
+        after: input.after,
+        stageApplied: input.stageApplied,
+        regressionReason: categoryRegression,
+      })) {
+        return {
+          reject: false,
+          reason: null,
+        };
+      }
+      return {
+        reject: true,
+        reason: categoryRegression,
+      };
+    }
     const confidence = compareStructuralConfidence(input.before, input.after);
     if (confidence.regressed) {
       return {
@@ -395,7 +876,7 @@ export function shouldRejectStageResult(input: {
         reason: 'stage_externally_incomplete(rootReachableDepth<=1)',
       };
     }
-    if (input.beforeSnapshot && input.afterSnapshot) {
+    if (input.beforeSnapshot && input.afterSnapshot && input.stageApplied.some(row => isStage35StructuralTool(row.toolName))) {
       const beforeParity = buildIcjiaParity(input.beforeSnapshot);
       const afterParity = buildIcjiaParity(input.afterSnapshot);
       if (
@@ -770,6 +1251,7 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
   'set_figure_alt_text',
   'mark_figure_decorative',
   'repair_alt_text_structure',
+  'normalize_table_structure',
   'repair_native_table_headers',
   'set_table_header_cells',
   'tag_unowned_annotations',
@@ -832,6 +1314,253 @@ function postPassCategoryBenefitAllowsSmallScoreRegression(
   return beforeCategory !== null && afterCategory !== null && afterCategory > beforeCategory;
 }
 
+function isTeamsProtectedReadingRow(filename: string): boolean {
+  return /microsoft_teams_quickstart/i.test(filename)
+    && (/remediated/i.test(filename) || /targeted-wave1|targeted-figures-wave1/i.test(filename));
+}
+
+function protectedStructuralCategoryRegression(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): string | null {
+  const structuralKeys: CategoryKey[] = [
+    'heading_structure',
+    'alt_text',
+    'table_markup',
+    'reading_order',
+    'link_quality',
+    'form_accessibility',
+  ];
+  for (const key of structuralKeys) {
+    const before = categoryScore(input.before, key);
+    const after = categoryScore(input.after, key);
+    if (before == null || after == null) continue;
+    if (before - after > PROTECTED_STAGE_CATEGORY_REGRESSION_TOLERANCE) {
+      return `protected_metadata_topup_structural_regression(${key}:${before}->${after})`;
+    }
+  }
+  return null;
+}
+
+function categoryDeltaDetails(before: AnalysisResult, after: AnalysisResult): Record<string, { before: number | null; after: number | null }> {
+  return {
+    title_language: {
+      before: categoryScore(before, 'title_language'),
+      after: categoryScore(after, 'title_language'),
+    },
+    pdf_ua_compliance: {
+      before: categoryScore(before, 'pdf_ua_compliance'),
+      after: categoryScore(after, 'pdf_ua_compliance'),
+    },
+    heading_structure: {
+      before: categoryScore(before, 'heading_structure'),
+      after: categoryScore(after, 'heading_structure'),
+    },
+    alt_text: {
+      before: categoryScore(before, 'alt_text'),
+      after: categoryScore(after, 'alt_text'),
+    },
+    table_markup: {
+      before: categoryScore(before, 'table_markup'),
+      after: categoryScore(after, 'table_markup'),
+    },
+    reading_order: {
+      before: categoryScore(before, 'reading_order'),
+      after: categoryScore(after, 'reading_order'),
+    },
+  };
+}
+
+export function protectedMetadataTopupDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): { accept: boolean; reason: string | null; details?: string } {
+  if (!protectedBaselineRecoveryActive(input.baseline, input.before)) {
+    return { accept: false, reason: 'protected_metadata_topup_not_needed' };
+  }
+  const baseline = input.baseline!;
+  const beforeTitle = categoryScore(input.before, 'title_language') ?? 0;
+  const afterTitle = categoryScore(input.after, 'title_language') ?? beforeTitle;
+  const beforePdfUa = categoryScore(input.before, 'pdf_ua_compliance') ?? 0;
+  const afterPdfUa = categoryScore(input.after, 'pdf_ua_compliance') ?? beforePdfUa;
+  const titleImproved = afterTitle > beforeTitle;
+  const pdfUaImproved = afterPdfUa > beforePdfUa;
+  const structuralRegression = protectedStructuralCategoryRegression({
+    before: input.before,
+    after: input.after,
+  });
+  const newCap = hasNewStricterCap({
+    baselineCaps: baseline.scoreCapsApplied,
+    candidateCaps: input.after.scoreCapsApplied,
+  });
+  const floor = protectedBaselineFloorScore(baseline);
+  const regressionReduced = input.after.score > input.before.score;
+  const reachesFloor = input.after.score >= floor;
+  const accept = (titleImproved || pdfUaImproved) &&
+    !structuralRegression &&
+    !newCap &&
+    (reachesFloor || regressionReduced);
+  const note = accept ? 'protected_metadata_topup' : 'protected_metadata_topup_rejected';
+  const reason = accept
+    ? null
+    : structuralRegression
+      ?? (newCap ? 'protected_metadata_topup_new_stricter_cap' : null)
+      ?? (!titleImproved && !pdfUaImproved ? 'protected_metadata_topup_no_metadata_improvement' : null)
+      ?? (!reachesFloor && !regressionReduced ? `protected_metadata_topup_no_floor_progress(${input.after.score}<=${input.before.score})` : null)
+      ?? 'protected_metadata_topup_rejected';
+  return {
+    accept,
+    reason,
+    details: JSON.stringify({
+      outcome: accept ? 'applied' : 'rejected',
+      note,
+      protectedBaselineScore: baseline.score,
+      protectedCandidateScore: input.after.score,
+      protectedBeforeScore: input.before.score,
+      protectedFloorScore: floor,
+      protectedFloorReason: reason,
+      categoryDeltas: categoryDeltaDetails(input.before, input.after),
+    }),
+  };
+}
+
+async function applyProtectedMetadataTopup(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  const {
+    filename,
+    signal,
+    round,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  } = args;
+  if (!protectedBaselineRecoveryActive(protectedBaseline, currentAnalysis)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const baselineTitle = protectedBaseline?.categories?.title_language ?? 100;
+  const baselinePdfUa = protectedBaseline?.categories?.pdf_ua_compliance ?? 100;
+  const currentTitle = categoryScore(currentAnalysis, 'title_language') ?? 0;
+  const currentPdfUa = categoryScore(currentAnalysis, 'pdf_ua_compliance') ?? 0;
+  if (currentTitle >= Math.min(90, baselineTitle) && currentPdfUa >= Math.min(83, baselinePdfUa)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+
+  let liveBuffer = currentBuffer;
+  let liveAnalysis = currentAnalysis;
+  let liveSnapshot = currentSnapshot;
+  let acceptedAny = false;
+  let sawRejectedCandidate = false;
+
+  const attempt = async (
+    toolName: 'set_document_title' | 'set_document_language' | 'set_pdfua_identification',
+  ): Promise<void> => {
+    if (sawRejectedCandidate) return;
+    const started = performance.now();
+    let candidateBuffer = liveBuffer;
+    if (toolName === 'set_document_title') {
+      const title = deriveFallbackDocumentTitle(liveSnapshot, filename);
+      candidateBuffer = await metadataTools.setDocumentTitle(liveBuffer, title);
+    } else if (toolName === 'set_document_language') {
+      const lang = (liveSnapshot.lang || liveSnapshot.metadata.language || 'en-US').trim() || 'en-US';
+      candidateBuffer = await metadataTools.setDocumentLanguage(liveBuffer, lang);
+    } else {
+      const lang = String(liveSnapshot.lang || liveSnapshot.metadata.language || 'en-US').slice(0, 32);
+      const ua = await runPythonMutationBatch(
+        liveBuffer,
+        [{ op: 'set_pdfua_identification', params: { language: lang } }],
+        { signal },
+      );
+      if (!ua.result.success || !ua.result.applied.includes('set_pdfua_identification')) {
+        return;
+      }
+      candidateBuffer = ua.buffer;
+    }
+    const durationMs = performance.now() - started;
+    if (candidateBuffer.equals(liveBuffer)) {
+      return;
+    }
+    const analyzed = await reanalyzeBufferForMutation(candidateBuffer, filename, 'pdfaf-protected-metadata');
+    const decision = protectedMetadataTopupDecision({
+      baseline: protectedBaseline,
+      before: liveAnalysis,
+      after: analyzed.result,
+    });
+    const details = decision.details ?? JSON.stringify({
+      outcome: decision.accept ? 'applied' : 'rejected',
+      note: decision.accept ? 'protected_metadata_topup' : 'protected_metadata_topup_rejected',
+      protectedBaselineScore: protectedBaseline?.score,
+      protectedCandidateScore: analyzed.result.score,
+      protectedBeforeScore: liveAnalysis.score,
+      protectedFloorReason: decision.reason,
+    });
+    appliedTools.push({
+      toolName,
+      stage: 14,
+      round,
+      scoreBefore: liveAnalysis.score,
+      scoreAfter: decision.accept ? analyzed.result.score : liveAnalysis.score,
+      delta: (decision.accept ? analyzed.result.score : liveAnalysis.score) - liveAnalysis.score,
+      outcome: decision.accept ? 'applied' : 'rejected',
+      details,
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage: 14,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: decision.accept ? 'applied' : 'rejected',
+    });
+    if (!decision.accept) {
+      sawRejectedCandidate = true;
+      return;
+    }
+    acceptedAny = true;
+    liveBuffer = candidateBuffer;
+    liveAnalysis = analyzed.result;
+    liveSnapshot = analyzed.snapshot;
+  };
+
+  const existingTitle = liveSnapshot.metadata.title?.trim();
+  if (currentTitle < Math.min(90, baselineTitle) || isFilenameLikeTitle(existingTitle)) {
+    await attempt('set_document_title');
+  }
+
+  const existingLanguage = (liveSnapshot.lang || liveSnapshot.metadata.language || '').trim();
+  if (!sawRejectedCandidate && (currentTitle < Math.min(90, baselineTitle) || !existingLanguage)) {
+    await attempt('set_document_language');
+  }
+
+  if (!sawRejectedCandidate && (categoryScore(liveAnalysis, 'pdf_ua_compliance') ?? 0) < Math.min(83, baselinePdfUa)) {
+    await attempt('set_pdfua_identification');
+  }
+
+  if (!acceptedAny) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  return {
+    buffer: liveBuffer,
+    analysis: liveAnalysis,
+    snapshot: liveSnapshot,
+    accepted: true,
+  };
+}
+
 async function applyGuardedPostPass(args: {
   filename: string;
   toolName: string;
@@ -845,6 +1574,7 @@ async function applyGuardedPostPass(args: {
   appliedTools: AppliedRemediationTool[];
   runtimeSummary?: RemediationRuntimeSummary;
   tempPrefix: string;
+  protectedBaseline?: ProtectedBaselineFloor;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
   const {
     filename,
@@ -859,6 +1589,7 @@ async function applyGuardedPostPass(args: {
     appliedTools,
     runtimeSummary,
     tempPrefix,
+    protectedBaseline,
   } = args;
   const started = performance.now();
   if (nextBuffer.equals(currentBuffer)) {
@@ -885,6 +1616,72 @@ async function applyGuardedPostPass(args: {
       delta: 0,
       outcome: 'rejected',
       details: `post_pass_regressed_score(${analyzed.result.score})`,
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: 'rejected',
+    });
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
+  const protectedFloor = protectedBaselineFloorViolation({
+    baseline: protectedBaseline,
+    before: currentAnalysis,
+    after: analyzed.result,
+  });
+  if (protectedFloor.reject) {
+    appliedTools.push({
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: currentAnalysis.score,
+      delta: 0,
+      outcome: 'rejected',
+      details: protectedFloor.details ?? protectedFloor.reason ?? 'protected_baseline_floor',
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: 'rejected',
+    });
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
+  const strongAlt = protectedStrongAltPreservationViolation({
+    baseline: protectedBaseline,
+    before: currentAnalysis,
+    after: analyzed.result,
+  });
+  if (strongAlt.reject) {
+    appliedTools.push({
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: currentAnalysis.score,
+      delta: 0,
+      outcome: 'rejected',
+      details: strongAlt.details ?? strongAlt.reason ?? 'protected_strong_alt_regressed',
       durationMs,
       source: 'post_pass',
     });
@@ -963,6 +1760,449 @@ async function applyGuardedPostPass(args: {
     snapshot: analyzed.snapshot,
     accepted: true,
   };
+}
+
+async function applyProtectedBaselineTransaction(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; committed: boolean }> {
+  const {
+    filename,
+    signal,
+    round,
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  } = args;
+  if (!protectedBaselineRecoveryActive(protectedBaseline, args.currentAnalysis)) {
+    return {
+      buffer: args.currentBuffer,
+      analysis: args.currentAnalysis,
+      snapshot: args.currentSnapshot,
+      committed: false,
+    };
+  }
+  const baseline = protectedBaseline!;
+
+  let txBuffer = args.currentBuffer;
+  let txAnalysis = args.currentAnalysis;
+  let txSnapshot = args.currentSnapshot;
+  const txRows: AppliedRemediationTool[] = [];
+  const bestState: {
+    current?: {
+      buffer: Buffer;
+      analysis: AnalysisResult;
+      snapshot: DocumentSnapshot;
+      appliedToolCount: number;
+      txRowCount: number;
+      reason: string;
+    };
+  } = {};
+  const rememberBest = (reason: string): void => {
+    if (!protectedBaselineStateIsSafe({ baseline, analysis: txAnalysis })) return;
+    if (bestState.current && txAnalysis.score < bestState.current.analysis.score) return;
+    bestState.current = {
+      buffer: Buffer.from(txBuffer),
+      analysis: txAnalysis,
+      snapshot: txSnapshot,
+      appliedToolCount: appliedTools.length,
+      txRowCount: txRows.length,
+      reason,
+    };
+  };
+
+  const runTxTool = async (tool: PlannedRemediationTool): Promise<boolean> => {
+    const before = txAnalysis;
+    const started = performance.now();
+    const result = await runSingleTool(txBuffer, tool, txSnapshot);
+    const durationMs = result.durationMs || (performance.now() - started);
+    const parsedDetails = parseMutationDetails(result.details);
+    const effectiveOutcome: AppliedRemediationTool['outcome'] =
+      result.outcome === 'applied' && appliedContradictsMutationTruth(parsedDetails)
+        ? 'no_effect'
+        : result.outcome;
+    let nextAnalysis = txAnalysis;
+    let nextSnapshot = txSnapshot;
+    let nextBuffer = txBuffer;
+    if (effectiveOutcome === 'applied' && !result.buffer.equals(txBuffer)) {
+      const analyzed = await reanalyzeBufferForMutation(result.buffer, filename, 'pdfaf-protected-tx');
+      nextAnalysis = analyzed.result;
+      nextSnapshot = analyzed.snapshot;
+      nextBuffer = result.buffer;
+    }
+    const row: AppliedRemediationTool = {
+      toolName: tool.toolName,
+      stage: 13,
+      round,
+      scoreBefore: before.score,
+      scoreAfter: nextAnalysis.score,
+      delta: nextAnalysis.score - before.score,
+      outcome: effectiveOutcome,
+      details: result.details ?? JSON.stringify({ outcome: result.outcome, note: 'protected_transaction' }),
+      durationMs,
+      source: 'post_pass',
+    };
+    txRows.push(row);
+    runtimeSummary?.toolTimings.push({
+      toolName: tool.toolName,
+      stage: 13,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: effectiveOutcome,
+    });
+    if (effectiveOutcome !== 'applied') return false;
+    txBuffer = nextBuffer;
+    txAnalysis = nextAnalysis;
+    txSnapshot = nextSnapshot;
+    rememberBest(`protected_transaction_${tool.toolName}`);
+    return true;
+  };
+
+  const alreadyApplied = () => [...appliedTools, ...txRows];
+  const currentAlt = categoryScore(txAnalysis, 'alt_text');
+  const baselineAlt = baseline.categories?.alt_text;
+  if (protectedBaselineRecoveryActive(baseline, txAnalysis)) {
+    await runTxTool({
+      toolName: 'mark_untagged_content_as_artifact',
+      params: {},
+      rationale: 'Protected transaction: isolate artifact cleanup.',
+    });
+  }
+
+  if (
+    (currentAlt ?? 0) < 90 &&
+    !shouldSkipProtectedFigureAlt({
+      baseline: protectedBaseline,
+      currentAltScore: currentAlt,
+      inProtectedTransaction: (currentAlt ?? 100) < 70,
+    })
+  ) {
+    const params = buildDefaultParams('set_figure_alt_text', txAnalysis, txSnapshot, alreadyApplied());
+    if (Object.keys(params).length > 0) {
+      await runTxTool({
+        toolName: 'set_figure_alt_text',
+        params,
+        rationale: 'Protected transaction: recover figure alt only if the row reaches its baseline floor.',
+      });
+    }
+  }
+
+  if (hasAcrobatAltOwnershipRisk(txSnapshot) || (baselineAlt != null && (categoryScore(txAnalysis, 'alt_text') ?? 0) < baselineAlt)) {
+    await runTxTool({
+      toolName: 'repair_alt_text_structure',
+      params: {},
+      rationale: 'Protected transaction: isolate alt ownership cleanup.',
+    });
+  }
+
+  for (let pass = 0; pass < 3; pass++) {
+    if (!protectedBaselineRecoveryActive(baseline, txAnalysis)) break;
+    if ((txSnapshot.taggedContentAudit?.orphanMcidCount ?? 0) <= 0) break;
+    const applied = await runTxTool({
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      params: {},
+      rationale: 'Protected transaction: bounded orphan MCID drain.',
+    });
+    if (!applied) break;
+  }
+
+  const titleLanguageScore = categoryScore(txAnalysis, 'title_language');
+  if ((titleLanguageScore ?? 100) < 90) {
+    const existingTitle = txSnapshot.metadata.title?.trim();
+    if (isFilenameLikeTitle(existingTitle)) {
+      await runTxTool({
+        toolName: 'set_document_title',
+        params: { title: deriveFallbackDocumentTitle(txSnapshot, filename) },
+        rationale: 'Protected transaction: restore document title/language without structural side effects.',
+      });
+    }
+    const existingLanguage = (txSnapshot.lang || txSnapshot.metadata.language || '').trim();
+    if (!existingLanguage) {
+      await runTxTool({
+        toolName: 'set_document_language',
+        params: { language: 'en-US' },
+        rationale: 'Protected transaction: restore document language without structural side effects.',
+      });
+    }
+  }
+
+  const baselineHeading = baseline.categories?.heading_structure;
+  const currentHeading = categoryScore(txAnalysis, 'heading_structure');
+  if (
+    protectedBaselineRecoveryActive(baseline, txAnalysis) &&
+    baselineHeading != null &&
+    baselineHeading >= 90 &&
+    (currentHeading ?? 100) < 90
+  ) {
+    await runTxTool({
+      toolName: 'normalize_heading_hierarchy',
+      params: {},
+      rationale: 'Protected transaction: recover heading hierarchy only if the row reaches its baseline floor.',
+    });
+    if (protectedBaselineRecoveryActive(baseline, txAnalysis)) {
+      await runTxTool({
+        toolName: 'repair_structure_conformance',
+        params: {},
+        rationale: 'Protected transaction: repair structure conformance only if the row reaches its baseline floor.',
+      });
+    }
+  }
+
+  if (txRows.length === 0) {
+    return {
+      buffer: args.currentBuffer,
+      analysis: args.currentAnalysis,
+      snapshot: args.currentSnapshot,
+      committed: false,
+    };
+  }
+
+  const decision = protectedTransactionDecision({
+    baseline,
+    final: txAnalysis,
+    best: bestState.current,
+  });
+  const rejectDetails = (note: string, candidate: AnalysisResult, restored?: AnalysisResult): string => JSON.stringify({
+    outcome: 'rejected',
+    note,
+    protectedBaselineScore: baseline.score,
+    protectedCandidateScore: candidate.score,
+    protectedRestoredScore: restored?.score,
+    protectedFloorReason: note,
+  });
+
+  if (decision === 'commit_final') {
+    appliedTools.push(...txRows);
+    return { buffer: txBuffer, analysis: txAnalysis, snapshot: txSnapshot, committed: true };
+  }
+
+  if (decision === 'commit_best' && bestState.current) {
+    const best = bestState.current;
+    const details = rejectDetails('protected_transaction_best_state_restore', txAnalysis, best.analysis);
+    for (let i = best.txRowCount; i < txRows.length; i++) {
+      const row = txRows[i]!;
+      row.outcome = 'rejected';
+      row.details = details;
+      row.scoreAfter = best.analysis.score;
+      row.delta = best.analysis.score - row.scoreBefore;
+    }
+    appliedTools.push(...txRows);
+    return {
+      buffer: Buffer.from(best.buffer),
+      analysis: best.analysis,
+      snapshot: best.snapshot,
+      committed: true,
+    };
+  }
+
+  const details = rejectDetails('protected_transaction_no_floor_recovery', txAnalysis, args.currentAnalysis);
+  for (const row of txRows) {
+    row.outcome = 'rejected';
+    row.details = details;
+    row.scoreAfter = args.currentAnalysis.score;
+    row.delta = args.currentAnalysis.score - row.scoreBefore;
+  }
+  appliedTools.push(...txRows);
+  return {
+    buffer: args.currentBuffer,
+    analysis: args.currentAnalysis,
+    snapshot: args.currentSnapshot,
+    committed: false,
+  };
+}
+
+function protectedReadingOrderStrongCategoryRegression(input: {
+  baseline: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): string | null {
+  if (!input.baseline.categories) return null;
+  for (const [key, baselineScore] of Object.entries(input.baseline.categories) as Array<[CategoryKey, number]>) {
+    if (key === 'reading_order') continue;
+    if (baselineScore == null || baselineScore < 90) continue;
+    const beforeScore = categoryScore(input.before, key);
+    const afterScore = categoryScore(input.after, key);
+    if (beforeScore == null || afterScore == null) continue;
+    if (afterScore < beforeScore - PROTECTED_BASELINE_FLOOR_TOLERANCE) {
+      return `protected_reading_order_topup_category_regressed(${key}:${beforeScore}->${afterScore})`;
+    }
+  }
+  return null;
+}
+
+export function protectedReadingOrderTopupDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): { accept: boolean; reason: string | null; details?: string } {
+  const baseline = input.baseline;
+  if (!baseline || !Number.isFinite(baseline.score)) {
+    return { accept: false, reason: 'protected_reading_order_topup_no_baseline' };
+  }
+  const baselineReadingOrder = baseline.categories?.reading_order;
+  if (baselineReadingOrder == null || baselineReadingOrder < 90) {
+    return { accept: false, reason: 'protected_reading_order_topup_not_needed' };
+  }
+  const beforeReadingOrder = categoryScore(input.before, 'reading_order') ?? 0;
+  const afterReadingOrder = categoryScore(input.after, 'reading_order') ?? beforeReadingOrder;
+  const floor = protectedBaselineFloorScore(baseline);
+  const reachesFloor = input.after.score >= floor;
+  const readingOrderImproved = afterReadingOrder > beforeReadingOrder;
+  const newCap = hasNewStricterCap({
+    baselineCaps: baseline.scoreCapsApplied,
+    candidateCaps: input.after.scoreCapsApplied,
+  });
+  const structuralRegression = protectedReadingOrderStrongCategoryRegression({
+    baseline,
+    before: input.before,
+    after: input.after,
+  });
+  const accept = (readingOrderImproved || reachesFloor) && !newCap && !structuralRegression;
+  const note = accept ? 'protected_reading_order_topup' : 'protected_reading_order_topup_rejected';
+  const reason = accept
+    ? null
+    : structuralRegression
+      ?? (newCap ? 'protected_reading_order_topup_new_stricter_cap' : null)
+      ?? (!readingOrderImproved && !reachesFloor ? 'protected_reading_order_topup_no_improvement' : null)
+      ?? 'protected_reading_order_topup_rejected';
+  return {
+    accept,
+    reason,
+    details: JSON.stringify({
+      outcome: accept ? 'applied' : 'rejected',
+      note,
+      protectedBaselineScore: baseline.score,
+      protectedBeforeScore: input.before.score,
+      protectedCandidateScore: input.after.score,
+      protectedFloorScore: floor,
+      protectedBaselineReadingOrderScore: baselineReadingOrder,
+      protectedBeforeReadingOrderScore: beforeReadingOrder,
+      protectedCandidateReadingOrderScore: afterReadingOrder,
+      protectedFloorReason: reason,
+      categoryDeltas: categoryDeltaDetails(input.before, input.after),
+    }),
+  };
+}
+
+async function applyProtectedReadingOrderTopup(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+  maxOrphanRemaps?: number;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  const {
+    filename,
+    signal,
+    round,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+    maxOrphanRemaps,
+  } = args;
+  const baselineReadingOrder = protectedBaseline?.categories?.reading_order;
+  if (
+    !protectedBaseline ||
+    baselineReadingOrder == null ||
+    baselineReadingOrder < 90 ||
+    currentAnalysis.score >= protectedBaselineFloorScore(protectedBaseline) ||
+    (categoryScore(currentAnalysis, 'reading_order') ?? 100) >= baselineReadingOrder - PROTECTED_BASELINE_FLOOR_TOLERANCE
+  ) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+
+  const tryTool = async (toolName: 'normalize_heading_hierarchy' | 'normalize_annotation_tab_order' | 'remap_orphan_mcids_as_artifacts') => {
+    const started = performance.now();
+    const result = await runSingleTool(
+      currentBuffer,
+      {
+        toolName,
+        params: {},
+        rationale: 'Protected reading-order top-up.',
+      },
+      currentSnapshot,
+    );
+    const durationMs = result.durationMs || (performance.now() - started);
+    let candidateAnalysis = currentAnalysis;
+    let candidateSnapshot = currentSnapshot;
+    let effectiveOutcome = result.outcome;
+    if (result.outcome === 'applied' && !result.buffer.equals(currentBuffer)) {
+      const analyzed = await reanalyzeBufferForMutation(result.buffer, filename, 'pdfaf-protected-ro');
+      candidateAnalysis = analyzed.result;
+      candidateSnapshot = analyzed.snapshot;
+    } else if (result.outcome === 'applied') {
+      effectiveOutcome = 'no_effect';
+    }
+    const decision = effectiveOutcome === 'applied'
+      ? protectedReadingOrderTopupDecision({
+          baseline: protectedBaseline,
+          before: currentAnalysis,
+          after: candidateAnalysis,
+        })
+      : {
+          accept: false,
+          reason: 'protected_reading_order_topup_no_effect',
+          details: JSON.stringify({
+            outcome: 'rejected',
+            note: 'protected_reading_order_topup_rejected',
+            protectedBaselineScore: protectedBaseline?.score,
+            protectedBeforeScore: currentAnalysis.score,
+            protectedCandidateScore: currentAnalysis.score,
+            protectedFloorReason: 'protected_reading_order_topup_no_effect',
+          }),
+        };
+    appliedTools.push({
+      toolName,
+      stage: 13,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: decision.accept ? candidateAnalysis.score : currentAnalysis.score,
+      delta: (decision.accept ? candidateAnalysis.score : currentAnalysis.score) - currentAnalysis.score,
+      outcome: decision.accept ? 'applied' : 'rejected',
+      details: decision.details ?? decision.reason ?? 'protected_reading_order_topup_rejected',
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage: 13,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: decision.accept ? 'applied' : 'rejected',
+    });
+    return decision.accept
+      ? { buffer: result.buffer, analysis: candidateAnalysis, snapshot: candidateSnapshot, accepted: true }
+      : { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  };
+
+  const headingNormalized = await tryTool('normalize_heading_hierarchy');
+  if (headingNormalized.accepted) return headingNormalized;
+  const normalized = await tryTool('normalize_annotation_tab_order');
+  if (normalized.accepted) return normalized;
+  if ((currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0) > 0) {
+    for (let pass = 0; pass < (maxOrphanRemaps ?? 1); pass++) {
+      const remapped = await tryTool('remap_orphan_mcids_as_artifacts');
+      if (remapped.accepted) return remapped;
+    }
+  }
+  return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
 }
 
 export async function runSingleTool(
@@ -1074,6 +2314,7 @@ export async function runSingleTool(
       case 'repair_alt_text_structure':
       case 'replace_bookmarks_from_headings':
       case 'add_page_outline_bookmarks':
+      case 'normalize_table_structure':
       case 'set_table_header_cells':
       case 'repair_list_li_wrong_parent':
       case 'fill_form_field_tooltips':
@@ -1170,9 +2411,10 @@ async function applyAccessibilityStructureEnsure(args: {
   currentSnapshot: DocumentSnapshot;
   appliedTools: AppliedRemediationTool[];
   runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
   let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
-  const { filename, signal, round } = args;
+  const { filename, signal, round, protectedBaseline } = args;
   const stageStarted = performance.now();
   const { buffer: fb, result: fr } = await runPythonMutationBatch(
     currentBuffer,
@@ -1193,6 +2435,7 @@ async function applyAccessibilityStructureEnsure(args: {
       appliedTools,
       runtimeSummary,
       tempPrefix: 'pdfaf-struct',
+      protectedBaseline,
     });
     currentBuffer = accepted.buffer;
     currentAnalysis = accepted.analysis;
@@ -1223,9 +2466,10 @@ async function applyIcjiaDocumentFinalization(args: {
   currentSnapshot: DocumentSnapshot;
   appliedTools: AppliedRemediationTool[];
   runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
   let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
-  const { filename, signal, round } = args;
+  const { filename, signal, round, protectedBaseline } = args;
   const stageStarted = performance.now();
 
   const existingTitle = currentSnapshot.metadata.title?.trim();
@@ -1245,6 +2489,30 @@ async function applyIcjiaDocumentFinalization(args: {
       appliedTools,
       runtimeSummary,
       tempPrefix: 'pdfaf-fin',
+      protectedBaseline,
+    });
+    currentBuffer = accepted.buffer;
+    currentAnalysis = accepted.analysis;
+    currentSnapshot = accepted.snapshot;
+  }
+  const titleLanguageScore = categoryScore(currentAnalysis, 'title_language');
+  const existingLanguage = (currentSnapshot.lang || currentSnapshot.metadata.language || '').trim();
+  if ((titleLanguageScore ?? 100) < 90 && !existingLanguage) {
+    const next = await metadataTools.setDocumentLanguage(currentBuffer, 'en-US');
+    const accepted = await applyGuardedPostPass({
+      filename,
+      toolName: 'set_document_language',
+      stage: 11,
+      round,
+      details: 'post_pass_missing_metadata_language',
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      nextBuffer: next,
+      appliedTools,
+      runtimeSummary,
+      tempPrefix: 'pdfaf-fin',
+      protectedBaseline,
     });
     currentBuffer = accepted.buffer;
     currentAnalysis = accepted.analysis;
@@ -1291,6 +2559,7 @@ async function applyIcjiaDocumentFinalization(args: {
         appliedTools,
         runtimeSummary,
         tempPrefix: 'pdfaf-fin',
+        protectedBaseline,
       });
       currentBuffer = accepted.buffer;
       currentAnalysis = accepted.analysis;
@@ -1317,6 +2586,7 @@ async function applyIcjiaDocumentFinalization(args: {
         nextBuffer: urw.buffer,
         appliedTools,
         tempPrefix: 'pdfaf-fin',
+        protectedBaseline,
       });
       currentBuffer = accepted.buffer;
       currentAnalysis = accepted.analysis;
@@ -1339,6 +2609,7 @@ async function applyIcjiaDocumentFinalization(args: {
         appliedTools,
         runtimeSummary,
         tempPrefix: 'pdfaf-fin',
+        protectedBaseline,
       });
     currentBuffer = accepted.buffer;
     currentAnalysis = accepted.analysis;
@@ -1663,6 +2934,7 @@ export interface RemediatePdfOptions {
   targetScore?: number;
   maxRounds?: number;
   includeOptionalRemediation?: boolean;
+  protectedBaseline?: ProtectedBaselineFloor;
   signal?: AbortSignal;
   playbookStore?: PlaybookStore;
   toolOutcomeStore?: ToolOutcomeStore;
@@ -1695,7 +2967,6 @@ export async function remediatePdf(
   const appliedTools: AppliedRemediationTool[] = [];
   const rounds: RemediationRoundSummary[] = [];
   let planningSummary: PlanningSummary | undefined;
-
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
   if (activePlaybook) {
@@ -1833,6 +3104,12 @@ export async function remediatePdf(
           }
         }
         if (tool.toolName === 'create_heading_from_candidate') {
+          if (
+            workingSnapshot.headings.length > 0 &&
+            workingSnapshot.detectionProfile?.headingSignals.extractedHeadingsMissingFromTree !== true
+          ) {
+            continue;
+          }
           roundHeadingAttempted = true;
           if (protectedZeroHeading) {
             handledInProtectedBundle.add('normalize_heading_hierarchy');
@@ -2084,7 +3361,8 @@ export async function remediatePdf(
             await unlink(tmp).catch(() => {});
           }
         }
-        const liveTool = tool.toolName === 'set_table_header_cells'
+        const liveTool = tool.toolName === 'normalize_table_structure'
+          || tool.toolName === 'set_table_header_cells'
           || tool.toolName === 'set_figure_alt_text'
           || tool.toolName === 'mark_figure_decorative'
           ? {
@@ -2095,8 +3373,30 @@ export async function remediatePdf(
             })(),
           }
           : tool;
+        if (
+          liveTool.toolName === 'set_figure_alt_text' &&
+          shouldSkipProtectedFigureAlt({
+            baseline: options?.protectedBaseline,
+            currentAltScore: categoryScore(workingAnalysis, 'alt_text'),
+          })
+        ) {
+          continue;
+        }
+        if (
+          (
+            liveTool.toolName === 'normalize_table_structure' ||
+            liveTool.toolName === 'repair_native_table_headers' ||
+            liveTool.toolName === 'set_table_header_cells'
+          ) &&
+          (categoryScore(workingAnalysis, 'table_markup') ?? 0) >= REMEDIATION_CATEGORY_THRESHOLD
+        ) {
+          continue;
+        }
         const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot);
-        buf = next;
+        let effectiveNext = next;
+        let effectiveOutcome = outcome;
+        let effectiveDetails = details;
+        buf = effectiveNext;
         stageApplied.push({
           toolName: liveTool.toolName,
           stage: stage.stageNumber,
@@ -2104,8 +3404,8 @@ export async function remediatePdf(
           scoreBefore: stageStartScore,
           scoreAfter: stageStartScore,
           delta: 0,
-          outcome,
-          details,
+          outcome: effectiveOutcome,
+          details: effectiveDetails,
           durationMs,
           source: 'planner',
         });
@@ -2115,9 +3415,9 @@ export async function remediatePdf(
           round,
           source: 'planner',
           durationMs,
-          outcome,
+          outcome: effectiveOutcome,
         });
-        if (outcome === 'applied' && FIGURE_OWNERSHIP_REFRESH_TOOLS.has(liveTool.toolName)) {
+        if (effectiveOutcome === 'applied' && FIGURE_OWNERSHIP_REFRESH_TOOLS.has(liveTool.toolName)) {
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
@@ -2150,15 +3450,26 @@ export async function remediatePdf(
       }
 
       const stageDecision = shouldRejectStageResult({
+        filename,
         before: stageStartAnalysis,
         after: analyzed.result,
         beforeSnapshot: stageStartSnapshot,
         afterSnapshot: analyzed.snapshot,
         stage,
         stageApplied,
+        protectedBaseline: options?.protectedBaseline,
       });
+      const protectedFloorDecision = stageDecision.reject
+        ? { reject: false as const, reason: null, details: undefined }
+        : protectedBaselineFloorViolation({
+            baseline: options?.protectedBaseline,
+            before: stageStartAnalysis,
+            after: analyzed.result,
+          });
+      const rejectionDecision: { reject: boolean; reason: string | null; details?: string } =
+        stageDecision.reject ? stageDecision : protectedFloorDecision;
 
-      if (stageDecision.reject) {
+      if (rejectionDecision.reject) {
         currentBuffer = stageStartBuffer;
         const restorePath = join(tmpdir(), `pdfaf-rem-restore-${randomUUID()}.pdf`);
         await writeFile(restorePath, stageStartBuffer);
@@ -2171,7 +3482,7 @@ export async function remediatePdf(
         }
         for (const a of stageApplied) {
           a.outcome = 'rejected';
-          a.details = stageDecision.reason ?? 'stage_rejected';
+          a.details = rejectionDecision.details ?? rejectionDecision.reason ?? 'stage_rejected';
           a.scoreAfter = currentAnalysis.score;
           a.delta = currentAnalysis.score - stageStartScore;
         }
@@ -2258,6 +3569,7 @@ export async function remediatePdf(
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
   if ((currentSnapshot.isTagged || currentSnapshot.structureTree !== null) && hasAcrobatAltOwnershipRisk(currentSnapshot)) {
     await reportProgress(78, 'Cleaning up alt text');
+    const currentRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
     const alt = await applyPostRemediationAltRepair(
       currentBuffer,
       filename,
@@ -2265,11 +3577,11 @@ export async function remediatePdf(
       currentSnapshot,
       { signal: options?.signal },
     );
-    const altAccepted = await applyGuardedPostPass({
+    const accepted = await applyGuardedPostPass({
       filename,
       toolName: 'repair_alt_text_structure',
       stage: 9,
-      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      round: currentRound,
       details: 'nested_alt_cleanup',
       currentBuffer,
       currentAnalysis,
@@ -2278,10 +3590,11 @@ export async function remediatePdf(
       appliedTools,
       runtimeSummary,
       tempPrefix: 'pdfaf-alt',
+      protectedBaseline: options?.protectedBaseline,
     });
-    currentBuffer = altAccepted.buffer;
-    currentAnalysis = altAccepted.analysis;
-    currentSnapshot = altAccepted.snapshot;
+    currentBuffer = accepted.buffer;
+    currentAnalysis = accepted.analysis;
+    currentSnapshot = accepted.snapshot;
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
@@ -2316,6 +3629,7 @@ export async function remediatePdf(
           appliedTools,
           runtimeSummary,
           tempPrefix: 'pdfaf-post',
+          protectedBaseline: options?.protectedBaseline,
         });
         currentBuffer = accepted.buffer;
         currentAnalysis = accepted.analysis;
@@ -2326,6 +3640,15 @@ export async function remediatePdf(
     for (let pass = 0; pass < 8; pass++) {
       const orphanN = currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0;
       if (!orphanN) break;
+      const beforeOrphanN = orphanN;
+      const beforeSignature = JSON.stringify({
+        score: currentAnalysis.score,
+        title: categoryScore(currentAnalysis, 'title_language'),
+        alt: categoryScore(currentAnalysis, 'alt_text'),
+        table: categoryScore(currentAnalysis, 'table_markup'),
+        reading: categoryScore(currentAnalysis, 'reading_order'),
+        heading: categoryScore(currentAnalysis, 'heading_structure'),
+      });
       const { buffer: drained, result: drRes } = await runPythonMutationBatch(
         currentBuffer,
         [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
@@ -2345,11 +3668,22 @@ export async function remediatePdf(
         appliedTools,
         runtimeSummary,
         tempPrefix: 'pdfaf-post',
+        protectedBaseline: options?.protectedBaseline,
       });
       currentBuffer = accepted.buffer;
       currentAnalysis = accepted.analysis;
       currentSnapshot = accepted.snapshot;
       if (!accepted.accepted) break;
+      const afterSignature = JSON.stringify({
+        score: currentAnalysis.score,
+        title: categoryScore(currentAnalysis, 'title_language'),
+        alt: categoryScore(currentAnalysis, 'alt_text'),
+        table: categoryScore(currentAnalysis, 'table_markup'),
+        reading: categoryScore(currentAnalysis, 'reading_order'),
+        heading: categoryScore(currentAnalysis, 'heading_structure'),
+      });
+      const afterOrphanN = currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+      if (afterSignature === beforeSignature && afterOrphanN >= beforeOrphanN) break;
     }
   }
 
@@ -2365,10 +3699,71 @@ export async function remediatePdf(
       currentSnapshot,
       appliedTools,
       runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
     });
     currentBuffer = fin.buffer;
     currentAnalysis = fin.analysis;
     currentSnapshot = fin.snapshot;
+  }
+
+  if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
+    await reportProgress(92, 'Restoring protected reading order');
+    const ro = await applyProtectedReadingOrderTopup({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = ro.buffer;
+    currentAnalysis = ro.analysis;
+    currentSnapshot = ro.snapshot;
+  }
+
+  if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
+    await reportProgress(93, 'Checking protected recovery');
+    if (protectedBaselineNeedsTransaction({
+      baseline: options?.protectedBaseline,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+    })) {
+      const tx = await applyProtectedBaselineTransaction({
+        filename,
+        signal: options?.signal,
+        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        appliedTools,
+        runtimeSummary,
+        protectedBaseline: options?.protectedBaseline,
+      });
+      currentBuffer = tx.buffer;
+      currentAnalysis = tx.analysis;
+      currentSnapshot = tx.snapshot;
+    }
+  }
+
+  if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
+    await reportProgress(94, 'Restoring protected metadata');
+    const topup = await applyProtectedMetadataTopup({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = topup.buffer;
+    currentAnalysis = topup.analysis;
+    currentSnapshot = topup.snapshot;
   }
 
   const scoreDelta = currentAnalysis.score - before.score;

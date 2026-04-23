@@ -2104,7 +2104,7 @@ def _count_tr_row_cells(tr_elem) -> int:
     """Count /TH and /TD that are direct StructElem children of a /TR (Acrobat row model)."""
     n = 0
     try:
-        for rc in _struct_elem_children(tr_elem):
+        for rc in _direct_role_children(tr_elem):
             rtag = (get_name(rc) or "").lstrip("/").upper()
             if rtag in ("TH", "TD"):
                 n += 1
@@ -2117,7 +2117,7 @@ def _tr_cell_span_max(tr_elem) -> tuple[int, int]:
     """Max /RowSpan and /ColSpan on TH/TD direct children of TR (defaults 1)."""
     max_rs, max_cs = 1, 1
     try:
-        for rc in _struct_elem_children(tr_elem):
+        for rc in _direct_role_children(tr_elem):
             rtag = (get_name(rc) or "").lstrip("/").upper()
             if rtag not in ("TH", "TD"):
                 continue
@@ -2153,7 +2153,7 @@ def _audit_table_structure(table_elem) -> dict:
     def scan_section(section) -> None:
         nonlocal row_count, cells_misplaced, row_cell_counts, max_row_span, max_col_span
         try:
-            for ch in _struct_elem_children(section):
+            for ch in _direct_role_children(section):
                 tag = (get_name(ch) or "").lstrip("/").upper()
                 if tag == "TR":
                     row_count += 1
@@ -2170,7 +2170,7 @@ def _audit_table_structure(table_elem) -> dict:
             pass
 
     try:
-        for ch in _struct_elem_children(table_elem):
+        for ch in _direct_role_children(table_elem):
             tag = (get_name(ch) or "").lstrip("/").upper()
             if tag == "TR":
                 row_count += 1
@@ -5082,6 +5082,24 @@ def _wrap_misplaced_th_td_children(parent_elem, pdf: pikepdf.Pdf) -> bool:
         k = parent_elem.get("/K")
     except Exception:
         return False
+    if isinstance(k, pikepdf.Dictionary):
+        tag = (get_name(k) or "").lstrip("/").upper()
+        if tag not in ("TH", "TD"):
+            return False
+        tr = pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name("/StructElem"),
+                S=pikepdf.Name("/TR"),
+                P=parent_elem,
+                K=pikepdf.Array([k]),
+            )
+        )
+        try:
+            k["/P"] = tr
+        except Exception:
+            pass
+        parent_elem["/K"] = pikepdf.Array([tr])
+        return True
     if not isinstance(k, pikepdf.Array) or len(k) == 0:
         return False
     new_k = pikepdf.Array()
@@ -5115,6 +5133,163 @@ def _wrap_misplaced_th_td_children(parent_elem, pdf: pikepdf.Pdf) -> bool:
     if changed_local:
         parent_elem["/K"] = new_k
     return changed_local
+
+
+def _table_direct_cell_children(elem) -> list:
+    out: list = []
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return out
+    items = list(k) if isinstance(k, pikepdf.Array) else ([k] if isinstance(k, pikepdf.Dictionary) else [])
+    for child in items:
+        if not isinstance(child, pikepdf.Dictionary):
+            continue
+        tag = (get_name(child) or "").lstrip("/").upper()
+        if tag in ("TH", "TD"):
+            out.append(child)
+    return out
+
+
+def _infer_table_column_count(total_cells: int, params: dict) -> int:
+    for key in ("dominantColumnCount", "expectedColumnCount"):
+        try:
+            value = int(params.get(key) or 0)
+        except Exception:
+            value = 0
+        if 2 <= value <= 12 and total_cells >= value:
+            return value
+    # Bounded fallback for common small grids. Prefer factors that produce 2+ rows.
+    for candidate in (4, 3, 5, 2, 6):
+        if total_cells >= candidate * 2 and total_cells % candidate == 0:
+            return candidate
+    return 0
+
+
+def _wrap_direct_table_cells_into_rows(parent_elem, pdf: pikepdf.Pdf, column_count: int = 0) -> bool:
+    """
+    Normalize direct TH/TD children into TR rows. When a credible column count exists,
+    group consecutive cells into multi-cell rows; otherwise keep the older single-cell
+    conservative repair so direct-cell violations are still removed.
+    """
+    try:
+        k = parent_elem.get("/K")
+    except Exception:
+        return False
+    if not isinstance(k, pikepdf.Array) or len(k) == 0:
+        return False
+
+    new_k = pikepdf.Array()
+    changed = False
+    run: list = []
+
+    def flush_run() -> None:
+        nonlocal changed, run
+        if not run:
+            return
+        chunk_size = column_count if column_count >= 2 and len(run) >= column_count * 2 else 1
+        for start in range(0, len(run), chunk_size):
+            cells = run[start:start + chunk_size]
+            if not cells:
+                continue
+            tr = pdf.make_indirect(
+                pikepdf.Dictionary(
+                    Type=pikepdf.Name("/StructElem"),
+                    S=pikepdf.Name("/TR"),
+                    P=parent_elem,
+                    K=pikepdf.Array(cells),
+                )
+            )
+            for cell in cells:
+                try:
+                    cell["/P"] = tr
+                except Exception:
+                    pass
+            new_k.append(tr)
+            changed = True
+        run = []
+
+    for child in list(k):
+        if isinstance(child, pikepdf.Dictionary):
+            tag = (get_name(child) or "").lstrip("/").upper()
+            if tag in ("TH", "TD"):
+                run.append(child)
+                continue
+        flush_run()
+        new_k.append(child)
+    flush_run()
+    if changed:
+        parent_elem["/K"] = new_k
+    return changed
+
+
+def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
+    audit_before = _audit_table_structure(table_elem)
+    direct_cells = int(audit_before.get("directCellUnderTableCount") or audit_before.get("cellsMisplacedCount") or 0)
+    th, td = _count_table_cells(table_elem)
+    total_cells = th + td
+    column_count = _infer_table_column_count(total_cells, params)
+    changed = False
+
+    if direct_cells > 0:
+        if _wrap_direct_table_cells_into_rows(table_elem, pdf, column_count):
+            changed = True
+        for sec in _direct_role_children(table_elem):
+            st = (get_name(sec) or "").lstrip("/").upper()
+            if st in ("THEAD", "TBODY", "TFOOT"):
+                if _wrap_direct_table_cells_into_rows(sec, pdf, column_count):
+                    changed = True
+
+    audit_after_wrap = _audit_table_structure(table_elem)
+    row_count = int(audit_after_wrap.get("rowCount") or 0)
+    if row_count > 0 and _count_table_cells(table_elem)[0] == 0:
+        if _promote_first_row_td_to_th(table_elem):
+            changed = True
+
+    return changed
+
+
+def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
+    ref = params.get("structRef")
+    max_tables = 1
+    try:
+        max_tables = max(1, min(2, int(params.get("maxTablesPerRun") or 1)))
+    except Exception:
+        max_tables = 1
+    changed = False
+    touched = 0
+    targets: list = []
+    if ref:
+        try:
+            target = _resolve_ref(pdf, ref)
+        except Exception:
+            target = None
+        if isinstance(target, pikepdf.Dictionary):
+            targets = [target]
+    else:
+        targets = list(_iter_table_struct_elems(pdf))[:max_tables]
+
+    for table in targets:
+        if not isinstance(table, pikepdf.Dictionary):
+            continue
+        if (get_name(table) or "").lstrip("/").upper() != "TABLE":
+            continue
+        if touched >= max_tables:
+            break
+        if _normalize_one_table_structure(table, pdf, params):
+            changed = True
+        touched += 1
+
+    if changed:
+        try:
+            _set_last_mutation_debug({
+                "targetRef": ref,
+                "maxTablesPerRun": max_tables,
+                "dominantColumnCount": params.get("dominantColumnCount"),
+            })
+        except Exception:
+            pass
+    return changed
 
 
 def _struct_dict_same(a, b) -> bool:
@@ -6849,10 +7024,11 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
             continue
         th_count, _td_count = _count_table_cells(table)
         audit = _audit_table_structure(table)
-        direct_cells += int(audit.get("directCellUnderTableCount") or 0)
+        direct_cells += int(audit.get("cellsMisplacedCount") or 0)
         header_cells += th_count
     table_tree_valid = direct_cells == 0 and (target_resolved if target_ref else True)
     return {
+        "targetRef": target_ref if target_ref else None,
         "targetResolved": target_resolved if target_ref else None,
         "resolvedRole": target_role,
         "directCellsUnderTable": direct_cells,
@@ -6937,6 +7113,7 @@ _STAGE35_FIGURE_OPS = {
     "repair_alt_text_structure",
 }
 _STAGE35_TABLE_OPS = {
+    "normalize_table_structure",
     "repair_native_table_headers",
     "set_table_header_cells",
 }
@@ -6964,6 +7141,7 @@ def _collect_stage35_snapshot(pdf: pikepdf.Pdf, op: str, params: dict) -> dict |
 
 def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
     invariants = {
+        "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
         "targetReachable": after.get("targetReachable"),
         "resolvedRole": after.get("resolvedRole"),
@@ -7049,6 +7227,7 @@ def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, 
 
 def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
     invariants = {
+        "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
         "resolvedRole": after.get("resolvedRole"),
         "ownershipPreserved": True,
@@ -7787,6 +7966,7 @@ MUTATORS = {
     "wrap_singleton_orphan_mcid": _op_wrap_singleton_orphan_mcid,
     "replace_bookmarks_from_headings": _op_replace_bookmarks_from_headings,
     "add_page_outline_bookmarks": _op_add_page_outline_bookmarks,
+    "normalize_table_structure": _op_normalize_table_structure,
     "set_table_header_cells": _op_set_table_header_cells,
     "repair_native_table_headers": _op_repair_native_table_headers,
     "repair_list_li_wrong_parent": _op_repair_list_li_wrong_parent,
