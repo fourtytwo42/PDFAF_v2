@@ -17,4 +17,5 @@
 - Stage 45 keeps the same deferred debt:
   - protected-row instability on `fixture-teams-original` and `fixture-teams-remediated`
   - runtime tail on `structure-4076` and `structure-4438`
-- Stage 46 should target runtime-tail reduction only, and Stage 47 should return to Teams-only protected parity if needed.
+- Stage 46A is now diagnostic-only. Broad runtime-tail suppression was not safe to keep; use `scripts/stage46-runtime-regression-isolation.ts` and `docs/stage46-runtime-regression-isolation.md` to compare Stage 45 against any new runtime candidate before reintroducing guard behavior.
+- Stage 47 should return to Teams-only protected parity only after a safe Stage 46B runtime candidate exists.
