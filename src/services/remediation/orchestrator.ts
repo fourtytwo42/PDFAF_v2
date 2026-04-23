@@ -1241,6 +1241,12 @@ export async function runStage39Batch(
   };
 }
 
+interface RemediationState {
+  buffer: Buffer;
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}
+
 const STAGE35_STRUCTURAL_TOOLS = new Set([
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
@@ -1760,6 +1766,104 @@ async function applyGuardedPostPass(args: {
     snapshot: analyzed.snapshot,
     accepted: true,
   };
+}
+
+function resolveStageRejectionDecision(input: {
+  filename: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+  protectedBaseline?: ProtectedBaselineFloor;
+}): { reject: boolean; reason: string | null; details?: string } {
+  const stageDecision = shouldRejectStageResult({
+    filename: input.filename,
+    before: input.before,
+    after: input.after,
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.afterSnapshot,
+    stage: input.stage,
+    stageApplied: input.stageApplied,
+    protectedBaseline: input.protectedBaseline,
+  });
+  if (stageDecision.reject) {
+    return stageDecision;
+  }
+  return protectedBaselineFloorViolation({
+    baseline: input.protectedBaseline,
+    before: input.before,
+    after: input.after,
+  });
+}
+
+async function finalizeAnalyzedStage(args: {
+  filename: string;
+  stateBeforeStage: RemediationState;
+  analyzedState: RemediationState;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+  stageStartScore: number;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const {
+    filename,
+    stateBeforeStage,
+    analyzedState,
+    stage,
+    stageApplied,
+    stageStartScore,
+    protectedBaseline,
+  } = args;
+  const rejectionDecision = resolveStageRejectionDecision({
+    filename,
+    before: stateBeforeStage.analysis,
+    after: analyzedState.analysis,
+    beforeSnapshot: stateBeforeStage.snapshot,
+    afterSnapshot: analyzedState.snapshot,
+    stage,
+    stageApplied,
+    protectedBaseline,
+  });
+
+  if (rejectionDecision.reject) {
+    const restorePath = join(tmpdir(), `pdfaf-rem-restore-${randomUUID()}.pdf`);
+    await writeFile(restorePath, stateBeforeStage.buffer);
+    let restoredState: RemediationState;
+    try {
+      const restored = await analyzePdf(restorePath, filename);
+      restoredState = {
+        buffer: stateBeforeStage.buffer,
+        analysis: restored.result,
+        snapshot: restored.snapshot,
+      };
+    } finally {
+      await unlink(restorePath).catch(() => {});
+    }
+    for (const row of stageApplied) {
+      row.outcome = 'rejected';
+      row.details = rejectionDecision.details ?? rejectionDecision.reason ?? 'stage_rejected';
+      row.scoreAfter = restoredState.analysis.score;
+      row.delta = restoredState.analysis.score - stageStartScore;
+    }
+    return restoredState;
+  }
+
+  const headingConverged = headingCreationConverged(analyzedState.snapshot);
+  for (const row of stageApplied) {
+    if (
+      row.toolName === 'create_heading_from_candidate' &&
+      row.outcome === 'applied' &&
+      !headingConverged
+    ) {
+      row.outcome = 'no_effect';
+      row.details = 'applied_without_exported_heading_convergence';
+    }
+    row.scoreAfter = analyzedState.analysis.score;
+    row.delta = analyzedState.analysis.score - stageStartScore;
+  }
+  return analyzedState;
 }
 
 async function applyProtectedBaselineTransaction(args: {
@@ -2630,6 +2734,203 @@ async function applyIcjiaDocumentFinalization(args: {
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
 }
 
+async function applyAltCleanupPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  let { buffer, analysis, snapshot } = args.state;
+  if (!(snapshot.isTagged || snapshot.structureTree !== null) || !hasAcrobatAltOwnershipRisk(snapshot)) {
+    return args.state;
+  }
+  const alt = await applyPostRemediationAltRepair(buffer, filename, analysis, snapshot, { signal });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    toolName: 'repair_alt_text_structure',
+    stage: 9,
+    round,
+    details: 'nested_alt_cleanup',
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer: alt.buffer,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-alt',
+    protectedBaseline,
+  });
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+  };
+}
+
+async function applyTaggedCleanupPostPasses(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  let { buffer, analysis, snapshot } = args.state;
+  if (!snapshot.isTagged) {
+    return args.state;
+  }
+
+  const ocrRewrotePdf = appliedTools.some(
+    tool => tool.toolName === 'ocr_scanned_pdf' && tool.outcome === 'applied',
+  );
+  if (!(snapshot.pdfUaVersion ?? '').trim() || ocrRewrotePdf) {
+    const lang = String(snapshot.lang || snapshot.metadata.language || 'en-US').slice(0, 32);
+    const { buffer: stamped, result: uaRes } = await runPythonMutationBatch(
+      buffer,
+      [{ op: 'set_pdfua_identification', params: { language: lang } }],
+      { signal },
+    );
+    if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
+      const accepted = await applyGuardedPostPass({
+        filename,
+        toolName: 'set_pdfua_identification',
+        stage: 10,
+        round,
+        details: 'post_pass_pdfua_xmp',
+        currentBuffer: buffer,
+        currentAnalysis: analysis,
+        currentSnapshot: snapshot,
+        nextBuffer: stamped,
+        appliedTools,
+        runtimeSummary,
+        tempPrefix: 'pdfaf-post',
+        protectedBaseline,
+      });
+      buffer = accepted.buffer;
+      analysis = accepted.analysis;
+      snapshot = accepted.snapshot;
+    }
+  }
+
+  for (let pass = 0; pass < 8; pass++) {
+    const orphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+    if (!orphanN) break;
+    const beforeOrphanN = orphanN;
+    const beforeSignature = JSON.stringify({
+      score: analysis.score,
+      title: categoryScore(analysis, 'title_language'),
+      alt: categoryScore(analysis, 'alt_text'),
+      table: categoryScore(analysis, 'table_markup'),
+      reading: categoryScore(analysis, 'reading_order'),
+      heading: categoryScore(analysis, 'heading_structure'),
+    });
+    const { buffer: drained, result: drRes } = await runPythonMutationBatch(
+      buffer,
+      [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
+      { signal },
+    );
+    if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
+    const accepted = await applyGuardedPostPass({
+      filename,
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 10,
+      round,
+      details: `post_pass_orphan_drain_${pass + 1}`,
+      currentBuffer: buffer,
+      currentAnalysis: analysis,
+      currentSnapshot: snapshot,
+      nextBuffer: drained,
+      appliedTools,
+      runtimeSummary,
+      tempPrefix: 'pdfaf-post',
+      protectedBaseline,
+    });
+    buffer = accepted.buffer;
+    analysis = accepted.analysis;
+    snapshot = accepted.snapshot;
+    if (!accepted.accepted) break;
+    const afterSignature = JSON.stringify({
+      score: analysis.score,
+      title: categoryScore(analysis, 'title_language'),
+      alt: categoryScore(analysis, 'alt_text'),
+      table: categoryScore(analysis, 'table_markup'),
+      reading: categoryScore(analysis, 'reading_order'),
+      heading: categoryScore(analysis, 'heading_structure'),
+    });
+    const afterOrphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+    if (afterSignature === beforeSignature && afterOrphanN >= beforeOrphanN) break;
+  }
+
+  return { buffer, analysis, snapshot };
+}
+
+async function applyProtectedRecoveryPostPasses(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  let state = args.state;
+  if (!protectedBaselineRecoveryActive(protectedBaseline, state.analysis)) {
+    return state;
+  }
+
+  const ro = await applyProtectedReadingOrderTopup({
+    filename,
+    signal,
+    round,
+    currentBuffer: state.buffer,
+    currentAnalysis: state.analysis,
+    currentSnapshot: state.snapshot,
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  });
+  state = { buffer: ro.buffer, analysis: ro.analysis, snapshot: ro.snapshot };
+
+  if (protectedBaselineNeedsTransaction({
+    baseline: protectedBaseline,
+    analysis: state.analysis,
+    snapshot: state.snapshot,
+  })) {
+    const tx = await applyProtectedBaselineTransaction({
+      filename,
+      signal,
+      round,
+      currentBuffer: state.buffer,
+      currentAnalysis: state.analysis,
+      currentSnapshot: state.snapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline,
+    });
+    state = { buffer: tx.buffer, analysis: tx.analysis, snapshot: tx.snapshot };
+  }
+
+  const topup = await applyProtectedMetadataTopup({
+    filename,
+    signal,
+    round,
+    currentBuffer: state.buffer,
+    currentAnalysis: state.analysis,
+    currentSnapshot: state.snapshot,
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  });
+  return { buffer: topup.buffer, analysis: topup.analysis, snapshot: topup.snapshot };
+}
+
 /**
  * Replays a stored playbook using the same per-tool execution and stage reanalyze / regression rules as the main loop.
  */
@@ -2781,41 +3082,25 @@ export async function executePlaybook(
       await unlink(tmp).catch(() => {});
     }
 
-    const stageDecision = shouldRejectStageResult({
-      before: stageStartAnalysis,
-      after: analyzed.result,
-      beforeSnapshot: stageStartSnapshot,
-      afterSnapshot: analyzed.snapshot,
+    const finalizedState = await finalizeAnalyzedStage({
+      filename,
+      stateBeforeStage: {
+        buffer: stageStartBuffer,
+        analysis: stageStartAnalysis,
+        snapshot: stageStartSnapshot,
+      },
+      analyzedState: {
+        buffer: buf,
+        analysis: analyzed.result,
+        snapshot: analyzed.snapshot,
+      },
       stage,
       stageApplied,
+      stageStartScore,
     });
-
-    if (stageDecision.reject) {
-      currentBuffer = stageStartBuffer;
-      const restorePath = join(tmpdir(), `pdfaf-pb-restore-${randomUUID()}.pdf`);
-      await writeFile(restorePath, stageStartBuffer);
-      try {
-        const restored = await analyzePdf(restorePath, filename);
-        currentAnalysis = restored.result;
-        currentSnapshot = restored.snapshot;
-      } finally {
-        await unlink(restorePath).catch(() => {});
-      }
-      for (const a of stageApplied) {
-        a.outcome = 'rejected';
-        a.details = stageDecision.reason ?? 'stage_rejected';
-        a.scoreAfter = currentAnalysis.score;
-        a.delta = currentAnalysis.score - stageStartScore;
-      }
-    } else {
-      currentBuffer = buf;
-      currentAnalysis = analyzed.result;
-      currentSnapshot = analyzed.snapshot;
-      for (const a of stageApplied) {
-        a.scoreAfter = analyzed.result.score;
-        a.delta = analyzed.result.score - stageStartScore;
-      }
-    }
+    currentBuffer = finalizedState.buffer;
+    currentAnalysis = finalizedState.analysis;
+    currentSnapshot = finalizedState.snapshot;
     pushStageTiming(runtimeSummary, {
       stageNumber: stage.stageNumber,
       round: 1,
@@ -2843,28 +3128,16 @@ export async function executePlaybook(
   }
 
   {
-    if (hasAcrobatAltOwnershipRisk(currentSnapshot)) {
-      const scoreBefore = currentAnalysis.score;
-      const alt = await applyPostRemediationAltRepair(currentBuffer, filename, currentAnalysis, currentSnapshot);
-      if (!alt.buffer.equals(currentBuffer)) {
-        const durationMs = 0;
-        currentBuffer = alt.buffer;
-        currentAnalysis = alt.analysis;
-        currentSnapshot = alt.snapshot;
-        appliedTools.push({
-          toolName: 'repair_alt_text_structure',
-          stage: 9,
-          round: 1,
-          scoreBefore,
-          scoreAfter: currentAnalysis.score,
-          delta: currentAnalysis.score - scoreBefore,
-          outcome: 'applied',
-          details: 'nested_alt_cleanup',
-          durationMs,
-          source: 'post_pass',
-        });
-      }
-    }
+    const state = await applyAltCleanupPostPass({
+      filename,
+      round: 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
   }
 
   const finPb = await applyIcjiaDocumentFinalization({
@@ -3449,61 +3722,26 @@ export async function remediatePdf(
         analyzed = { result: currentAnalysis, snapshot: currentSnapshot };
       }
 
-      const stageDecision = shouldRejectStageResult({
+      const finalizedState = await finalizeAnalyzedStage({
         filename,
-        before: stageStartAnalysis,
-        after: analyzed.result,
-        beforeSnapshot: stageStartSnapshot,
-        afterSnapshot: analyzed.snapshot,
+        stateBeforeStage: {
+          buffer: stageStartBuffer,
+          analysis: stageStartAnalysis,
+          snapshot: stageStartSnapshot,
+        },
+        analyzedState: {
+          buffer: buf,
+          analysis: analyzed.result,
+          snapshot: analyzed.snapshot,
+        },
         stage,
         stageApplied,
+        stageStartScore,
         protectedBaseline: options?.protectedBaseline,
       });
-      const protectedFloorDecision = stageDecision.reject
-        ? { reject: false as const, reason: null, details: undefined }
-        : protectedBaselineFloorViolation({
-            baseline: options?.protectedBaseline,
-            before: stageStartAnalysis,
-            after: analyzed.result,
-          });
-      const rejectionDecision: { reject: boolean; reason: string | null; details?: string } =
-        stageDecision.reject ? stageDecision : protectedFloorDecision;
-
-      if (rejectionDecision.reject) {
-        currentBuffer = stageStartBuffer;
-        const restorePath = join(tmpdir(), `pdfaf-rem-restore-${randomUUID()}.pdf`);
-        await writeFile(restorePath, stageStartBuffer);
-        try {
-          const restored = await analyzePdf(restorePath, filename);
-          currentAnalysis = restored.result;
-          currentSnapshot = restored.snapshot;
-        } finally {
-          await unlink(restorePath).catch(() => {});
-        }
-        for (const a of stageApplied) {
-          a.outcome = 'rejected';
-          a.details = rejectionDecision.details ?? rejectionDecision.reason ?? 'stage_rejected';
-          a.scoreAfter = currentAnalysis.score;
-          a.delta = currentAnalysis.score - stageStartScore;
-        }
-      } else {
-        currentBuffer = buf;
-        currentAnalysis = analyzed.result;
-        currentSnapshot = analyzed.snapshot;
-        const headingConverged = headingCreationConverged(analyzed.snapshot);
-        for (const a of stageApplied) {
-          if (
-            a.toolName === 'create_heading_from_candidate' &&
-            a.outcome === 'applied' &&
-            !headingConverged
-          ) {
-            a.outcome = 'no_effect';
-            a.details = 'applied_without_exported_heading_convergence';
-          }
-          a.scoreAfter = analyzed.result.score;
-          a.delta = analyzed.result.score - stageStartScore;
-        }
-      }
+      currentBuffer = finalizedState.buffer;
+      currentAnalysis = finalizedState.analysis;
+      currentSnapshot = finalizedState.snapshot;
       pushStageTiming(runtimeSummary, {
         stageNumber: stage.stageNumber,
         round,
@@ -3569,122 +3807,36 @@ export async function remediatePdf(
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
   if ((currentSnapshot.isTagged || currentSnapshot.structureTree !== null) && hasAcrobatAltOwnershipRisk(currentSnapshot)) {
     await reportProgress(78, 'Cleaning up alt text');
-    const currentRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
-    const alt = await applyPostRemediationAltRepair(
-      currentBuffer,
+    const state = await applyAltCleanupPostPass({
       filename,
-      currentAnalysis,
-      currentSnapshot,
-      { signal: options?.signal },
-    );
-    const accepted = await applyGuardedPostPass({
-      filename,
-      toolName: 'repair_alt_text_structure',
-      stage: 9,
-      round: currentRound,
-      details: 'nested_alt_cleanup',
-      currentBuffer,
-      currentAnalysis,
-      currentSnapshot,
-      nextBuffer: alt.buffer,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
       appliedTools,
       runtimeSummary,
-      tempPrefix: 'pdfaf-alt',
       protectedBaseline: options?.protectedBaseline,
     });
-    currentBuffer = accepted.buffer;
-    currentAnalysis = accepted.analysis;
-    currentSnapshot = accepted.snapshot;
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
   // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
   if (currentSnapshot.isTagged) {
     await reportProgress(84, 'Running final cleanup');
-    // OCRmyPDF often preserves PDF/UA XMP but strips /ViewerPreferences; Acrobat then fails DocTitle.
-    // Re-run identification whenever UA metadata is missing *or* OCR rewrote the file.
-    const ocrRewrotePdf = appliedTools.some(
-      t => t.toolName === 'ocr_scanned_pdf' && t.outcome === 'applied',
-    );
-    if (!(currentSnapshot.pdfUaVersion ?? '').trim() || ocrRewrotePdf) {
-      const lang = String(
-        currentSnapshot.lang || currentSnapshot.metadata.language || 'en-US',
-      ).slice(0, 32);
-      const { buffer: stamped, result: uaRes } = await runPythonMutationBatch(
-        currentBuffer,
-        [{ op: 'set_pdfua_identification', params: { language: lang } }],
-        { signal: options?.signal },
-      );
-      if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
-        const accepted = await applyGuardedPostPass({
-          filename,
-          toolName: 'set_pdfua_identification',
-          stage: 10,
-          round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-          details: 'post_pass_pdfua_xmp',
-          currentBuffer,
-          currentAnalysis,
-          currentSnapshot,
-          nextBuffer: stamped,
-          appliedTools,
-          runtimeSummary,
-          tempPrefix: 'pdfaf-post',
-          protectedBaseline: options?.protectedBaseline,
-        });
-        currentBuffer = accepted.buffer;
-        currentAnalysis = accepted.analysis;
-        currentSnapshot = accepted.snapshot;
-      }
-    }
-
-    for (let pass = 0; pass < 8; pass++) {
-      const orphanN = currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0;
-      if (!orphanN) break;
-      const beforeOrphanN = orphanN;
-      const beforeSignature = JSON.stringify({
-        score: currentAnalysis.score,
-        title: categoryScore(currentAnalysis, 'title_language'),
-        alt: categoryScore(currentAnalysis, 'alt_text'),
-        table: categoryScore(currentAnalysis, 'table_markup'),
-        reading: categoryScore(currentAnalysis, 'reading_order'),
-        heading: categoryScore(currentAnalysis, 'heading_structure'),
-      });
-      const { buffer: drained, result: drRes } = await runPythonMutationBatch(
-        currentBuffer,
-        [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
-        { signal: options?.signal },
-      );
-      if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
-      const accepted = await applyGuardedPostPass({
-        filename,
-        toolName: 'remap_orphan_mcids_as_artifacts',
-        stage: 10,
-        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-        details: `post_pass_orphan_drain_${pass + 1}`,
-        currentBuffer,
-        currentAnalysis,
-        currentSnapshot,
-        nextBuffer: drained,
-        appliedTools,
-        runtimeSummary,
-        tempPrefix: 'pdfaf-post',
-        protectedBaseline: options?.protectedBaseline,
-      });
-      currentBuffer = accepted.buffer;
-      currentAnalysis = accepted.analysis;
-      currentSnapshot = accepted.snapshot;
-      if (!accepted.accepted) break;
-      const afterSignature = JSON.stringify({
-        score: currentAnalysis.score,
-        title: categoryScore(currentAnalysis, 'title_language'),
-        alt: categoryScore(currentAnalysis, 'alt_text'),
-        table: categoryScore(currentAnalysis, 'table_markup'),
-        reading: categoryScore(currentAnalysis, 'reading_order'),
-        heading: categoryScore(currentAnalysis, 'heading_structure'),
-      });
-      const afterOrphanN = currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0;
-      if (afterSignature === beforeSignature && afterOrphanN >= beforeOrphanN) break;
-    }
+    const state = await applyTaggedCleanupPostPasses({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
   }
 
   {
@@ -3707,63 +3859,19 @@ export async function remediatePdf(
   }
 
   if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
-    await reportProgress(92, 'Restoring protected reading order');
-    const ro = await applyProtectedReadingOrderTopup({
+    await reportProgress(92, 'Restoring protected state');
+    const state = await applyProtectedRecoveryPostPasses({
       filename,
       signal: options?.signal,
       round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-      currentBuffer,
-      currentAnalysis,
-      currentSnapshot,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
       appliedTools,
       runtimeSummary,
       protectedBaseline: options?.protectedBaseline,
     });
-    currentBuffer = ro.buffer;
-    currentAnalysis = ro.analysis;
-    currentSnapshot = ro.snapshot;
-  }
-
-  if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
-    await reportProgress(93, 'Checking protected recovery');
-    if (protectedBaselineNeedsTransaction({
-      baseline: options?.protectedBaseline,
-      analysis: currentAnalysis,
-      snapshot: currentSnapshot,
-    })) {
-      const tx = await applyProtectedBaselineTransaction({
-        filename,
-        signal: options?.signal,
-        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-        currentBuffer,
-        currentAnalysis,
-        currentSnapshot,
-        appliedTools,
-        runtimeSummary,
-        protectedBaseline: options?.protectedBaseline,
-      });
-      currentBuffer = tx.buffer;
-      currentAnalysis = tx.analysis;
-      currentSnapshot = tx.snapshot;
-    }
-  }
-
-  if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
-    await reportProgress(94, 'Restoring protected metadata');
-    const topup = await applyProtectedMetadataTopup({
-      filename,
-      signal: options?.signal,
-      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-      currentBuffer,
-      currentAnalysis,
-      currentSnapshot,
-      appliedTools,
-      runtimeSummary,
-      protectedBaseline: options?.protectedBaseline,
-    });
-    currentBuffer = topup.buffer;
-    currentAnalysis = topup.analysis;
-    currentSnapshot = topup.snapshot;
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
   }
 
   const scoreDelta = currentAnalysis.score - before.score;

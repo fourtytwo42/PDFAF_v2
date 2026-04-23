@@ -13,4 +13,8 @@
   - protected-row instability on `fixture-teams-original` and `fixture-teams-remediated`
   - runtime tail on `structure-4076` and `structure-4438`
   - Stage 41 still failing on protected regressions and p95
-- Stage 45 is cleanup/stabilization work only: simplify the orchestrator and preserve the measured Stage 43/44 general gains without adding more broad protected-row heuristics.
+- Stage 45 cleanup/stabilization is now provisionally implemented on top of the frozen checkpoint. Reference run: `Output/experiment-corpus-baseline/run-stage45-full-2026-04-23-r2` with mean `89.24`, median `95`, grades `31 A / 10 B / 2 C / 3 D / 4 F`, attempts `799`, false-positive applied `0`, and p95 effectively flat versus the freeze checkpoint.
+- Stage 45 keeps the same deferred debt:
+  - protected-row instability on `fixture-teams-original` and `fixture-teams-remediated`
+  - runtime tail on `structure-4076` and `structure-4438`
+- Stage 46 should target runtime-tail reduction only, and Stage 47 should return to Teams-only protected parity if needed.
