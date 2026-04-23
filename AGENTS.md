@@ -18,4 +18,6 @@
   - protected-row instability on `fixture-teams-original` and `fixture-teams-remediated`
   - runtime tail on `structure-4076` and `structure-4438`
 - Stage 46A is now diagnostic-only. Broad runtime-tail suppression was not safe to keep; use `scripts/stage46-runtime-regression-isolation.ts` and `docs/stage46-runtime-regression-isolation.md` to compare Stage 45 against any new runtime candidate before reintroducing guard behavior.
-- Stage 47 should return to Teams-only protected parity only after a safe Stage 46B runtime candidate exists.
+- Stage 46B was rejected as a no-op candidate: the narrow annotation guard did not materially improve `structure-4438` and regressed `figure-4188`, `structure-4076`, `fixture-teams-targeted-wave1`, and `long-4683`; do not reintroduce it without new diagnostic evidence.
+- Stage 47 is Teams-only protected parity. Keep it limited to `fixture-teams-original`, `fixture-teams-remediated`, and `fixture-teams-targeted-wave1`; no broad protected replay, runtime suppression, scorer changes, or new repair breadth.
+- Stage 47 attempt r1 was rejected and reverted: quarantining Teams `repair_alt_text_structure` preserved reading order by sacrificing alt recovery, dropping `fixture-teams-remediated` to `80/B`. Do not retry that pattern; the next Stage 47 attempt needs a different mechanism that can preserve both alt and reading order.
