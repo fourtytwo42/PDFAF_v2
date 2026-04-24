@@ -574,6 +574,18 @@ function stageHasTypedBenefitForCategory(stageApplied: AppliedRemediationTool[],
   return false;
 }
 
+function noGainOrphanArtifactMutation(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (input.after.score !== input.before.score) return false;
+  if (!input.stageApplied.some(row => row.toolName === 'remap_orphan_mcids_as_artifacts' && row.outcome === 'applied')) return false;
+  return !stageHasCheckerFacingStructuralBenefit(input);
+}
+
 function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: CategoryKey): boolean {
   const tools = new Set(stageApplied.map(row => row.toolName));
   if (key === 'title_language') return tools.has('set_document_title') || tools.has('set_document_language');
@@ -789,6 +801,81 @@ function stageHasFigureAltMutation(stageApplied: AppliedRemediationTool[]): bool
   );
 }
 
+const FIGURE_ALT_ACCEPTANCE_TOOLS = new Set([
+  'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
+  'set_figure_alt_text',
+]);
+
+function checkerVisibleFigureCounts(snapshot?: DocumentSnapshot): { figures: number; figuresWithAlt: number } {
+  const targets = snapshot?.checkerFigureTargets ?? [];
+  return {
+    figures: targets.filter(target => target.reachable).length,
+    figuresWithAlt: targets.filter(target => target.reachable && target.hasAlt).length,
+  };
+}
+
+function figureAltAcceptanceInvariantFailure(stageApplied: AppliedRemediationTool[]): boolean {
+  for (const row of stageApplied) {
+    if (!FIGURE_ALT_ACCEPTANCE_TOOLS.has(row.toolName) || row.outcome !== 'applied') continue;
+    if (appliedContradictsMutationTruth(parseMutationDetails(row.details))) return true;
+  }
+  return false;
+}
+
+function stageHasDeterministicFigureAltImprovement(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (!input.stageApplied.some(row => FIGURE_ALT_ACCEPTANCE_TOOLS.has(row.toolName))) return false;
+  if (figureAltAcceptanceInvariantFailure(input.stageApplied)) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text');
+  const afterAlt = categoryScore(input.after, 'alt_text');
+  if (beforeAlt == null || afterAlt == null || afterAlt <= beforeAlt) return false;
+  const beforeReadingOrder = categoryScore(input.before, 'reading_order');
+  const afterReadingOrder = categoryScore(input.after, 'reading_order');
+  if (
+    beforeReadingOrder != null &&
+    afterReadingOrder != null &&
+    beforeReadingOrder - afterReadingOrder > PROTECTED_STAGE_CATEGORY_REGRESSION_TOLERANCE
+  ) {
+    return false;
+  }
+  const beforeFigures = checkerVisibleFigureCounts(input.beforeSnapshot);
+  const afterFigures = checkerVisibleFigureCounts(input.afterSnapshot);
+  if (
+    afterFigures.figures <= beforeFigures.figures &&
+    afterFigures.figuresWithAlt <= beforeFigures.figuresWithAlt
+  ) {
+    return false;
+  }
+  if (hasNewStricterCap({
+    baselineCaps: input.before.scoreCapsApplied,
+    candidateCaps: input.after.scoreCapsApplied,
+  })) {
+    return false;
+  }
+  return true;
+}
+
+export function shouldSkipCanonicalizeFigureAltBeforeRetag(input: {
+  stageTools: PlannedRemediationTool[];
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}): boolean {
+  if (!input.stageTools.some(tool => tool.toolName === 'retag_as_figure')) return false;
+  if ((categoryScore(input.analysis, 'alt_text') ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if (checkerVisibleFigureCounts(input.snapshot).figures > 0) return false;
+  const extractedFigureCount =
+    input.snapshot.detectionProfile?.figureSignals.extractedFigureCount ??
+    input.snapshot.figures.length;
+  if (extractedFigureCount <= 0) return false;
+  return true;
+}
+
 function figureStageRegressedWithoutAltImprovement(input: {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -973,6 +1060,12 @@ export function shouldRejectStageResult(input: {
   protectedBaseline?: ProtectedBaselineFloor;
 }): { reject: boolean; reason: string | null } {
   const ocrBypass = keepOcrStageDespiteScoreDrop(input.stage, input.stageApplied);
+  if (noGainOrphanArtifactMutation(input)) {
+    return {
+      reject: true,
+      reason: 'stage_no_gain_orphan_artifact_mutation',
+    };
+  }
   if (input.after.score < input.before.score && ocrBypass && protectedBaselineRecoveryActive(input.protectedBaseline, input.before)) {
     return {
       reject: true,
@@ -3914,6 +4007,16 @@ export async function remediatePdf(
           shouldSkipProtectedFigureAlt({
             baseline: options?.protectedBaseline,
             currentAltScore: categoryScore(workingAnalysis, 'alt_text'),
+          })
+        ) {
+          continue;
+        }
+        if (
+          liveTool.toolName === 'canonicalize_figure_alt_ownership' &&
+          shouldSkipCanonicalizeFigureAltBeforeRetag({
+            stageTools: stage.tools,
+            analysis: workingAnalysis,
+            snapshot: workingSnapshot,
           })
         ) {
           continue;

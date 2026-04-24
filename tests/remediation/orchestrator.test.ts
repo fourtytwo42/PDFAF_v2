@@ -13,6 +13,7 @@ import {
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
   shouldRejectStageResult,
+  shouldSkipCanonicalizeFigureAltBeforeRetag,
   shouldSkipProtectedFigureAlt,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
@@ -22,6 +23,7 @@ function makeAnalysis(input: {
   score: number;
   confidence?: 'high' | 'medium' | 'low';
   categories?: Partial<Record<CategoryKey, number>>;
+  scoreCapsApplied?: AnalysisResult['scoreCapsApplied'];
 }): AnalysisResult {
   const categories = Object.entries(input.categories ?? {}).map(([key, value]) => ({
     key: key as CategoryKey,
@@ -42,6 +44,7 @@ function makeAnalysis(input: {
     categories,
     findings: [],
     analysisDurationMs: 1,
+    ...(input.scoreCapsApplied ? { scoreCapsApplied: input.scoreCapsApplied } : {}),
     ...(input.confidence
       ? {
           structuralClassification: {
@@ -458,6 +461,31 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects no-gain orphan remap mutations so mutated buffers are not preserved', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { alt_text: 88, reading_order: 80, table_markup: 100, pdf_ua_compliance: 67 } }),
+      after: makeAnalysis({ score: 59, confidence: 'medium', categories: { alt_text: 88, reading_order: 80, table_markup: 100, pdf_ua_compliance: 80 } }),
+      beforeSnapshot: makeSnapshot({ depth: 4 }),
+      afterSnapshot: makeSnapshot({ depth: 4 }),
+      stage: makeStage('remap_orphan_mcids_as_artifacts'),
+      stageApplied: [{
+        toolName: 'remap_orphan_mcids_as_artifacts',
+        stage: 2,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 59,
+        delta: 0,
+        outcome: 'applied',
+        details: JSON.stringify({ outcome: 'applied' }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_no_gain_orphan_artifact_mutation',
+    });
+  });
+
   it('keeps existing score-regression rollback behavior', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),
@@ -543,6 +571,194 @@ describe('shouldRejectStageResult', () => {
     expect(result).toEqual({
       reject: false,
       reason: null,
+    });
+  });
+
+  it('rejects score-improving figure-alt stages when reading order collapses', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 4 });
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      checkerFigureTargets: [{
+        hasAlt: true,
+        altText: 'Figure',
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        structRef: '239_0',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document', 'Figure'],
+      }],
+      detectionProfile: {
+        ...beforeSnapshot.detectionProfile!,
+        figureSignals: {
+          ...beforeSnapshot.detectionProfile!.figureSignals,
+          extractedFigureCount: 2,
+          treeFigureCount: 1,
+          treeFigureMissingForExtractedFigures: false,
+        },
+      },
+    };
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({
+        score: 54,
+        confidence: 'medium',
+        categories: { alt_text: 20, reading_order: 96, heading_structure: 0, table_markup: 100 },
+      }),
+      after: makeAnalysis({
+        score: 76,
+        confidence: 'medium',
+        categories: { alt_text: 100, reading_order: 45, heading_structure: 45, table_markup: 100 },
+      }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('canonicalize_figure_alt_ownership'),
+      stageApplied: [{
+        toolName: 'canonicalize_figure_alt_ownership',
+        stage: 6,
+        round: 1,
+        scoreBefore: 54,
+        scoreAfter: 76,
+        delta: 22,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            ownershipPreserved: true,
+            rootReachableFigureCountBefore: 0,
+            rootReachableFigureCountAfter: 1,
+          },
+        }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:96->45)',
+    });
+  });
+
+  it('does not keep figure-alt stages when checker-visible figure alt does not improve', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 4 });
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({
+        score: 54,
+        confidence: 'medium',
+        categories: { alt_text: 20, reading_order: 96, heading_structure: 0 },
+      }),
+      after: makeAnalysis({
+        score: 76,
+        confidence: 'medium',
+        categories: { alt_text: 100, reading_order: 45, heading_structure: 45 },
+      }),
+      beforeSnapshot,
+      afterSnapshot: beforeSnapshot,
+      stage: makeStage('canonicalize_figure_alt_ownership'),
+      stageApplied: [{
+        toolName: 'canonicalize_figure_alt_ownership',
+        stage: 6,
+        round: 1,
+        scoreBefore: 54,
+        scoreAfter: 76,
+        delta: 22,
+        outcome: 'applied',
+        details: JSON.stringify({ outcome: 'applied', invariants: { ownershipPreserved: true } }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:96->45)',
+    });
+  });
+
+  it('does not keep figure-alt stages when applied invariants fail', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 4 });
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      checkerFigureTargets: [{
+        hasAlt: true,
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        structRef: '239_0',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document', 'Figure'],
+      }],
+    };
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 54, confidence: 'medium', categories: { alt_text: 20, reading_order: 96 } }),
+      after: makeAnalysis({ score: 76, confidence: 'medium', categories: { alt_text: 100, reading_order: 45 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 6,
+        round: 1,
+        scoreBefore: 54,
+        scoreAfter: 76,
+        delta: 22,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: { targetReachable: false, targetIsFigureAfter: true, targetHasAltAfter: true },
+          structuralBenefits: { figureAltAttachedToReachableFigure: true },
+        }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:96->45)',
+    });
+  });
+
+  it('does not keep figure-alt stages that introduce a new score cap', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 4 });
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      checkerFigureTargets: [{
+        hasAlt: true,
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        structRef: '239_0',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document', 'Figure'],
+      }],
+    };
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 54, confidence: 'medium', categories: { alt_text: 20, reading_order: 96 } }),
+      after: makeAnalysis({
+        score: 76,
+        confidence: 'medium',
+        categories: { alt_text: 100, reading_order: 45 },
+        scoreCapsApplied: [{ category: 'reading_order', cap: 69, rawScore: 45, finalScore: 45, reason: 'new_cap' }],
+      }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('canonicalize_figure_alt_ownership'),
+      stageApplied: [{
+        toolName: 'canonicalize_figure_alt_ownership',
+        stage: 6,
+        round: 1,
+        scoreBefore: 54,
+        scoreAfter: 76,
+        delta: 22,
+        outcome: 'applied',
+        details: JSON.stringify({ outcome: 'applied', invariants: { ownershipPreserved: true } }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:96->45)',
     });
   });
 
@@ -1358,6 +1574,66 @@ describe('shouldSkipProtectedFigureAlt', () => {
       baseline: { score: 92, categories: { alt_text: 100 } },
       currentAltScore: 12,
       inProtectedTransaction: true,
+    })).toBe(false);
+  });
+});
+
+describe('shouldSkipCanonicalizeFigureAltBeforeRetag', () => {
+  it('skips broad canonicalization when precise retag recovery is already scheduled from zero checker-visible figures', () => {
+    const snapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 4 }),
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Lbl',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+      }],
+      checkerFigureTargets: [],
+      detectionProfile: {
+        ...makeSnapshot({ depth: 4 }).detectionProfile!,
+        figureSignals: {
+          extractedFigureCount: 2,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 2,
+          treeFigureMissingForExtractedFigures: true,
+        },
+      },
+    };
+
+    expect(shouldSkipCanonicalizeFigureAltBeforeRetag({
+      stageTools: [
+        { toolName: 'canonicalize_figure_alt_ownership', params: {}, rationale: 'test' },
+        { toolName: 'retag_as_figure', params: {}, rationale: 'test' },
+      ],
+      analysis: makeAnalysis({ score: 54, categories: { alt_text: 20 } }),
+      snapshot,
+    })).toBe(true);
+  });
+
+  it('does not skip canonicalization when checker-visible figures already exist', () => {
+    const snapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 4 }),
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, reachable: true, directContent: true }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document', 'Figure'],
+      }],
+    };
+
+    expect(shouldSkipCanonicalizeFigureAltBeforeRetag({
+      stageTools: [
+        { toolName: 'canonicalize_figure_alt_ownership', params: {}, rationale: 'test' },
+        { toolName: 'retag_as_figure', params: {}, rationale: 'test' },
+      ],
+      analysis: makeAnalysis({ score: 75, categories: { alt_text: 20 } }),
+      snapshot,
     })).toBe(false);
   });
 });
