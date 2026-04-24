@@ -188,10 +188,18 @@ function normalizeCategorySnapshot(value: unknown): CategoryScores {
 
 function stateSignatureFromDetails(details: Record<string, unknown>, scoreBefore: number | null): string | null {
   const debug = nestedRecord(details, 'debug');
-  const explicit = debug['runtimeTailStateSignature'] ?? debug['stateSignatureBefore'] ?? debug['stateSignature'];
+  const replayState = nestedRecord(debug, 'replayState');
+  const explicit = replayState['stateSignatureBefore']
+    ?? debug['runtimeTailStateSignature']
+    ?? debug['stateSignatureBefore']
+    ?? debug['stateSignature'];
   if (typeof explicit === 'string' && explicit.trim()) return explicit;
   const beforeSnapshot = nestedRecord(debug, 'beforeSnapshot');
-  const beforeCategories = normalizeCategorySnapshot(debug['categoryBefore'] ?? debug['categoriesBefore']);
+  const beforeCategories = normalizeCategorySnapshot(
+    replayState['categoryScoresBefore']
+      ?? debug['categoryBefore']
+      ?? debug['categoriesBefore'],
+  );
   const compact: Record<string, unknown> = {};
   const rootReachableHeadingCount = beforeSnapshot['rootReachableHeadingCount'] ?? beforeSnapshot['globalHeadingCount'];
   const checkerVisibleFigureCount = beforeSnapshot['checkerVisibleFigureCount'] ?? beforeSnapshot['checkerVisibleFigures'];
@@ -217,6 +225,7 @@ function timelineEntry(tool: ToolRow, index: number): Stage54aTimelineEntry {
   const invariants = nestedRecord(details, 'invariants');
   const structuralBenefits = nestedRecord(details, 'structuralBenefits');
   const debug = nestedRecord(details, 'debug');
+  const replayState = nestedRecord(debug, 'replayState');
   const scoreBefore = typeof tool.scoreBefore === 'number' ? tool.scoreBefore : null;
   const scoreAfter = typeof tool.scoreAfter === 'number' ? tool.scoreAfter : null;
   const targetRef = [invariants['targetRef'], debug['targetRef']]
@@ -230,8 +239,16 @@ function timelineEntry(tool: ToolRow, index: number): Stage54aTimelineEntry {
     outcome: tool.outcome ?? 'unknown',
     scoreBefore,
     scoreAfter,
-    categoryBefore: normalizeCategorySnapshot(debug['categoryBefore'] ?? debug['categoriesBefore']) || categoriesFromScore(scoreBefore),
-    categoryAfter: normalizeCategorySnapshot(debug['categoryAfter'] ?? debug['categoriesAfter']) || categoriesFromScore(scoreAfter),
+    categoryBefore: normalizeCategorySnapshot(
+      replayState['categoryScoresBefore']
+        ?? debug['categoryBefore']
+        ?? debug['categoriesBefore'],
+    ) || categoriesFromScore(scoreBefore),
+    categoryAfter: normalizeCategorySnapshot(
+      replayState['categoryScoresAfter']
+        ?? debug['categoryAfter']
+        ?? debug['categoriesAfter'],
+    ) || categoriesFromScore(scoreAfter),
     note: noteFromDetails(details),
     invariants,
     structuralBenefits,

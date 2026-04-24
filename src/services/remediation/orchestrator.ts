@@ -165,6 +165,176 @@ export function parseMutationDetails(details: string | undefined): PythonMutatio
   }
 }
 
+const REPLAY_CATEGORY_KEYS = [
+  'heading_structure',
+  'alt_text',
+  'table_markup',
+  'reading_order',
+  'title_language',
+  'pdf_ua_compliance',
+] as const;
+
+type ReplayCategoryKey = typeof REPLAY_CATEGORY_KEYS[number];
+
+interface ReplayStateInstrumentationInput {
+  beforeAnalysis: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterAnalysis?: AnalysisResult;
+  afterSnapshot?: DocumentSnapshot;
+  params?: Record<string, unknown>;
+  targetRef?: unknown;
+}
+
+function stableReplayStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableReplayStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableReplayStringify(object[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function buildReplayStateSignature(value: unknown): string {
+  return createHash('sha256').update(stableReplayStringify(value)).digest('hex').slice(0, 24);
+}
+
+function replayCategoryScores(analysis: AnalysisResult): Partial<Record<ReplayCategoryKey, number>> {
+  const out: Partial<Record<ReplayCategoryKey, number>> = {};
+  for (const key of REPLAY_CATEGORY_KEYS) {
+    const score = categoryScore(analysis, key);
+    if (typeof score === 'number') out[key] = score;
+  }
+  return out;
+}
+
+function replayDetectionSignals(snapshot: DocumentSnapshot): Record<string, unknown> {
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  const figureSignals = snapshot.detectionProfile?.figureSignals;
+  const tableSignals = snapshot.detectionProfile?.tableSignals;
+  const readingOrderSignals = snapshot.detectionProfile?.readingOrderSignals;
+  const annotationSignals = snapshot.detectionProfile?.annotationSignals;
+  const checkerFigures = snapshot.checkerFigureTargets ?? [];
+  const out: Record<string, unknown> = {
+    extractedHeadingCount: headingSignals?.extractedHeadingCount ?? snapshot.headings.length,
+    treeHeadingCount: headingSignals?.treeHeadingCount,
+    headingTreeDepth: headingSignals?.headingTreeDepth,
+    extractedHeadingsMissingFromTree: headingSignals?.extractedHeadingsMissingFromTree,
+    checkerVisibleFigureCount: checkerFigures.filter(figure => figure.reachable).length,
+    checkerVisibleFigureAltCount: checkerFigures.filter(figure => figure.reachable && figure.hasAlt).length,
+    extractedFigureCount: figureSignals?.extractedFigureCount ?? snapshot.figures.length,
+    treeFigureCount: figureSignals?.treeFigureCount,
+    treeFigureMissingForExtractedFigures: figureSignals?.treeFigureMissingForExtractedFigures,
+    directCellUnderTableCount: tableSignals?.directCellUnderTableCount,
+    malformedTableCount: tableSignals?.tablesWithMisplacedCells,
+    misplacedCellCount: tableSignals?.misplacedCellCount,
+    structureTreeDepth: readingOrderSignals?.structureTreeDepth,
+    annotationOrderRiskCount: readingOrderSignals?.annotationOrderRiskCount,
+    annotationStructParentRiskCount: readingOrderSignals?.annotationStructParentRiskCount,
+    orphanMcidCount: snapshot.taggedContentAudit?.orphanMcidCount ?? snapshot.orphanMcids?.length ?? 0,
+    linkAnnotationsMissingStructure: annotationSignals?.linkAnnotationsMissingStructure
+      ?? snapshot.annotationAccessibility?.linkAnnotationsMissingStructure,
+    linkAnnotationsMissingStructParent: annotationSignals?.linkAnnotationsMissingStructParent
+      ?? snapshot.annotationAccessibility?.linkAnnotationsMissingStructParent,
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, value]) => value !== undefined));
+}
+
+function replayTargetRef(details: Record<string, unknown>, explicitTargetRef?: unknown): string | undefined {
+  if (typeof explicitTargetRef === 'string' && explicitTargetRef.length > 0) return explicitTargetRef;
+  const invariants = details['invariants'];
+  if (invariants && typeof invariants === 'object' && !Array.isArray(invariants)) {
+    const value = (invariants as Record<string, unknown>)['targetRef'];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  const debug = details['debug'];
+  if (debug && typeof debug === 'object' && !Array.isArray(debug)) {
+    const value = (debug as Record<string, unknown>)['targetRef'];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function buildReplayState(input: ReplayStateInstrumentationInput, details: Record<string, unknown>): Record<string, unknown> {
+  const categoryScoresBefore = replayCategoryScores(input.beforeAnalysis);
+  const detectionSignalsBefore = replayDetectionSignals(input.beforeSnapshot);
+  const targetRef = replayTargetRef(details, input.targetRef);
+  const params = input.params && Object.keys(input.params).length > 0
+    ? Object.fromEntries(Object.entries(input.params).filter(([, value]) => value !== undefined))
+    : undefined;
+  const signatureBeforePayload: Record<string, unknown> = {
+    score: input.beforeAnalysis.score,
+    categories: categoryScoresBefore,
+    signals: detectionSignalsBefore,
+  };
+  if (targetRef) signatureBeforePayload['targetRef'] = targetRef;
+  if (params) signatureBeforePayload['params'] = params;
+
+  const replayState: Record<string, unknown> = {
+    stateSignatureBefore: buildReplayStateSignature(signatureBeforePayload),
+    scoreBefore: input.beforeAnalysis.score,
+    categoryScoresBefore,
+    detectionSignalsBefore,
+  };
+
+  if (input.afterAnalysis && input.afterSnapshot) {
+    const categoryScoresAfter = replayCategoryScores(input.afterAnalysis);
+    const detectionSignalsAfter = replayDetectionSignals(input.afterSnapshot);
+    const signatureAfterPayload: Record<string, unknown> = {
+      score: input.afterAnalysis.score,
+      categories: categoryScoresAfter,
+      signals: detectionSignalsAfter,
+    };
+    if (targetRef) signatureAfterPayload['targetRef'] = targetRef;
+    if (params) signatureAfterPayload['params'] = params;
+    replayState['stateSignatureAfter'] = buildReplayStateSignature(signatureAfterPayload);
+    replayState['scoreAfter'] = input.afterAnalysis.score;
+    replayState['categoryScoresAfter'] = categoryScoresAfter;
+    replayState['detectionSignalsAfter'] = detectionSignalsAfter;
+  }
+
+  if (targetRef) replayState['targetRef'] = targetRef;
+  if (params) replayState['params'] = params;
+  return replayState;
+}
+
+function parseDetailsObject(details: string | undefined): Record<string, unknown> | null {
+  if (!details?.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(details);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function enrichDetailsWithReplayState(
+  details: string | undefined,
+  input: ReplayStateInstrumentationInput,
+): string {
+  const parsed = parseDetailsObject(details);
+  const base: Record<string, unknown> = parsed ? { ...parsed } : {};
+  if (!parsed && details) base['raw'] = details;
+  const debug = base['debug'] && typeof base['debug'] === 'object' && !Array.isArray(base['debug'])
+    ? { ...(base['debug'] as Record<string, unknown>) }
+    : {};
+  debug['replayState'] = buildReplayState(input, base);
+  base['debug'] = debug;
+  return JSON.stringify(base);
+}
+
+function enrichRowDetailsWithReplayState(
+  row: AppliedRemediationTool,
+  input: ReplayStateInstrumentationInput,
+): void {
+  row.details = enrichDetailsWithReplayState(row.details, input);
+}
+
 export function withHeadingTargetRef(
   details: string | undefined,
   targetRef: unknown,
@@ -1526,7 +1696,12 @@ async function applyProtectedMetadataTopup(args: {
       scoreAfter: decision.accept ? analyzed.result.score : liveAnalysis.score,
       delta: (decision.accept ? analyzed.result.score : liveAnalysis.score) - liveAnalysis.score,
       outcome: decision.accept ? 'applied' : 'rejected',
-      details,
+      details: enrichDetailsWithReplayState(details, {
+        beforeAnalysis: liveAnalysis,
+        beforeSnapshot: liveSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
       durationMs,
       source: 'post_pass',
     });
@@ -1627,7 +1802,12 @@ async function applyGuardedPostPass(args: {
       scoreAfter: currentAnalysis.score,
       delta: 0,
       outcome: 'rejected',
-      details: `post_pass_regressed_score(${analyzed.result.score})`,
+      details: enrichDetailsWithReplayState(`post_pass_regressed_score(${analyzed.result.score})`, {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
       durationMs,
       source: 'post_pass',
     });
@@ -1660,7 +1840,12 @@ async function applyGuardedPostPass(args: {
       scoreAfter: currentAnalysis.score,
       delta: 0,
       outcome: 'rejected',
-      details: protectedFloor.details ?? protectedFloor.reason ?? 'protected_baseline_floor',
+      details: enrichDetailsWithReplayState(protectedFloor.details ?? protectedFloor.reason ?? 'protected_baseline_floor', {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
       durationMs,
       source: 'post_pass',
     });
@@ -1693,7 +1878,12 @@ async function applyGuardedPostPass(args: {
       scoreAfter: currentAnalysis.score,
       delta: 0,
       outcome: 'rejected',
-      details: strongAlt.details ?? strongAlt.reason ?? 'protected_strong_alt_regressed',
+      details: enrichDetailsWithReplayState(strongAlt.details ?? strongAlt.reason ?? 'protected_strong_alt_regressed', {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
       durationMs,
       source: 'post_pass',
     });
@@ -1726,7 +1916,12 @@ async function applyGuardedPostPass(args: {
       scoreAfter: currentAnalysis.score,
       delta: 0,
       outcome: 'rejected',
-      details: confidenceGuard.reason ?? 'stage_regressed_structural_confidence',
+      details: enrichDetailsWithReplayState(confidenceGuard.reason ?? 'stage_regressed_structural_confidence', {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
       durationMs,
       source: 'post_pass',
     });
@@ -1754,7 +1949,12 @@ async function applyGuardedPostPass(args: {
     scoreAfter: analyzed.result.score,
     delta: analyzed.result.score - currentAnalysis.score,
     outcome: 'applied',
-    details,
+    details: enrichDetailsWithReplayState(details, {
+      beforeAnalysis: currentAnalysis,
+      beforeSnapshot: currentSnapshot,
+      afterAnalysis: analyzed.result,
+      afterSnapshot: analyzed.snapshot,
+    }),
     durationMs,
     source: 'post_pass',
   });
@@ -1852,6 +2052,12 @@ async function finalizeAnalyzedStage(args: {
       row.details = rejectionDecision.details ?? rejectionDecision.reason ?? 'stage_rejected';
       row.scoreAfter = restoredState.analysis.score;
       row.delta = restoredState.analysis.score - stageStartScore;
+      enrichRowDetailsWithReplayState(row, {
+        beforeAnalysis: stateBeforeStage.analysis,
+        beforeSnapshot: stateBeforeStage.snapshot,
+        afterAnalysis: analyzedState.analysis,
+        afterSnapshot: analyzedState.snapshot,
+      });
     }
     return restoredState;
   }
@@ -1868,6 +2074,12 @@ async function finalizeAnalyzedStage(args: {
     }
     row.scoreAfter = analyzedState.analysis.score;
     row.delta = analyzedState.analysis.score - stageStartScore;
+    enrichRowDetailsWithReplayState(row, {
+      beforeAnalysis: stateBeforeStage.analysis,
+      beforeSnapshot: stateBeforeStage.snapshot,
+      afterAnalysis: analyzedState.analysis,
+      afterSnapshot: analyzedState.snapshot,
+    });
   }
   return analyzedState;
 }
@@ -1955,7 +2167,13 @@ async function applyProtectedBaselineTransaction(args: {
       scoreAfter: nextAnalysis.score,
       delta: nextAnalysis.score - before.score,
       outcome: effectiveOutcome,
-      details: result.details ?? JSON.stringify({ outcome: result.outcome, note: 'protected_transaction' }),
+      details: enrichDetailsWithReplayState(result.details ?? JSON.stringify({ outcome: result.outcome, note: 'protected_transaction' }), {
+        beforeAnalysis: before,
+        beforeSnapshot: txSnapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+        params: tool.params,
+      }),
       durationMs,
       source: 'post_pass',
     };
@@ -2103,6 +2321,12 @@ async function applyProtectedBaselineTransaction(args: {
       row.details = details;
       row.scoreAfter = best.analysis.score;
       row.delta = best.analysis.score - row.scoreBefore;
+      enrichRowDetailsWithReplayState(row, {
+        beforeAnalysis: args.currentAnalysis,
+        beforeSnapshot: args.currentSnapshot,
+        afterAnalysis: best.analysis,
+        afterSnapshot: best.snapshot,
+      });
     }
     appliedTools.push(...txRows);
     return {
@@ -2119,6 +2343,12 @@ async function applyProtectedBaselineTransaction(args: {
     row.details = details;
     row.scoreAfter = args.currentAnalysis.score;
     row.delta = args.currentAnalysis.score - row.scoreBefore;
+    enrichRowDetailsWithReplayState(row, {
+      beforeAnalysis: args.currentAnalysis,
+      beforeSnapshot: args.currentSnapshot,
+      afterAnalysis: txAnalysis,
+      afterSnapshot: txSnapshot,
+    });
   }
   appliedTools.push(...txRows);
   return {
@@ -2285,7 +2515,12 @@ async function applyProtectedReadingOrderTopup(args: {
       scoreAfter: decision.accept ? candidateAnalysis.score : currentAnalysis.score,
       delta: (decision.accept ? candidateAnalysis.score : currentAnalysis.score) - currentAnalysis.score,
       outcome: decision.accept ? 'applied' : 'rejected',
-      details: decision.details ?? decision.reason ?? 'protected_reading_order_topup_rejected',
+      details: enrichDetailsWithReplayState(decision.details ?? decision.reason ?? 'protected_reading_order_topup_rejected', {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: candidateAnalysis,
+        afterSnapshot: candidateSnapshot,
+      }),
       durationMs,
       source: 'post_pass',
     });

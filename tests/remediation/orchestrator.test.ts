@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   compareStructuralConfidence,
+  buildReplayStateSignature,
+  enrichDetailsWithReplayState,
   mergePlanningSummaries,
   parseMutationDetails,
   protectedBaselineFloorViolation,
@@ -158,6 +160,98 @@ function makeSnapshot(input: { depth: number; title?: string; textCharCount?: nu
     },
   };
 }
+
+describe('replay state instrumentation', () => {
+  it('enriches JSON mutation details without losing invariants or benefits', () => {
+    const beforeAnalysis = makeAnalysis({
+      score: 80,
+      categories: { heading_structure: 70, alt_text: 40, table_markup: 90, reading_order: 88, title_language: 100, pdf_ua_compliance: 83 },
+    });
+    const afterAnalysis = makeAnalysis({
+      score: 86,
+      categories: { heading_structure: 78, alt_text: 80, table_markup: 90, reading_order: 88, title_language: 100, pdf_ua_compliance: 83 },
+    });
+    const details = JSON.stringify({
+      outcome: 'applied',
+      note: 'figure_retagged',
+      invariants: { targetRef: '12_0', targetReachable: true },
+      structuralBenefits: { figureAltAttachedToReachableFigure: true },
+      debug: { existingDebug: true },
+    });
+
+    const enriched = enrichDetailsWithReplayState(details, {
+      beforeAnalysis,
+      beforeSnapshot: makeSnapshot({ depth: 2 }),
+      afterAnalysis,
+      afterSnapshot: makeSnapshot({ depth: 3 }),
+      params: { targetRef: '12_0' },
+    });
+    const parsed = JSON.parse(enriched);
+
+    expect(parsed.note).toBe('figure_retagged');
+    expect(parsed.invariants).toMatchObject({ targetRef: '12_0', targetReachable: true });
+    expect(parsed.structuralBenefits).toMatchObject({ figureAltAttachedToReachableFigure: true });
+    expect(parsed.debug.existingDebug).toBe(true);
+    expect(parsed.debug.replayState.stateSignatureBefore).toEqual(expect.any(String));
+    expect(parsed.debug.replayState.stateSignatureAfter).toEqual(expect.any(String));
+    expect(parsed.debug.replayState.categoryScoresBefore.alt_text).toBe(40);
+    expect(parsed.debug.replayState.categoryScoresAfter.alt_text).toBe(80);
+    expect(parsed.debug.replayState.targetRef).toBe('12_0');
+  });
+
+  it('wraps legacy string details with replay state', () => {
+    const enriched = enrichDetailsWithReplayState('post_pass_regressed_score(75)', {
+      beforeAnalysis: makeAnalysis({ score: 80, categories: { reading_order: 100 } }),
+      beforeSnapshot: makeSnapshot({ depth: 2 }),
+      afterAnalysis: makeAnalysis({ score: 75, categories: { reading_order: 67 } }),
+      afterSnapshot: makeSnapshot({ depth: 1 }),
+    });
+    const parsed = JSON.parse(enriched);
+
+    expect(parsed.raw).toBe('post_pass_regressed_score(75)');
+    expect(parsed.debug.replayState.scoreBefore).toBe(80);
+    expect(parsed.debug.replayState.scoreAfter).toBe(75);
+    expect(parsed.debug.replayState.stateSignatureBefore).toEqual(expect.any(String));
+  });
+
+  it('builds stable state signatures and changes when core state changes', () => {
+    const first = buildReplayStateSignature({
+      score: 80,
+      categories: { alt_text: 40, reading_order: 90 },
+      signals: { orphanMcidCount: 2 },
+    });
+    const reordered = buildReplayStateSignature({
+      signals: { orphanMcidCount: 2 },
+      categories: { reading_order: 90, alt_text: 40 },
+      score: 80,
+    });
+    const changed = buildReplayStateSignature({
+      score: 80,
+      categories: { alt_text: 80, reading_order: 90 },
+      signals: { orphanMcidCount: 2 },
+    });
+
+    expect(first).toBe(reordered);
+    expect(first).not.toBe(changed);
+  });
+
+  it('keeps applied outcome parseable for false-positive checks', () => {
+    const enriched = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: 'applied',
+      invariants: { targetReachable: true, targetIsFigureAfter: true },
+    }), {
+      beforeAnalysis: makeAnalysis({ score: 80 }),
+      beforeSnapshot: makeSnapshot({ depth: 2 }),
+      afterAnalysis: makeAnalysis({ score: 82 }),
+      afterSnapshot: makeSnapshot({ depth: 2 }),
+    });
+
+    expect(parseMutationDetails(enriched)).toMatchObject({
+      outcome: 'applied',
+      invariants: { targetReachable: true, targetIsFigureAfter: true },
+    });
+  });
+});
 
 describe('compareStructuralConfidence', () => {
   it('detects a confidence regression', () => {

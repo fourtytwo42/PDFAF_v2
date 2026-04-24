@@ -129,4 +129,59 @@ describe('Stage 54A edge-mix mutator replay', () => {
     expect(report.rows[0]!.pairReplays[0]!.divergenceClass).toBe('different_state_same_tool');
     expect(report.decision.status).toBe('diagnostic_only');
   });
+
+  it('uses Stage 54B replayState signatures from tool details', () => {
+    const report = buildStage54aReport({
+      runs: [
+        run('base', [row({
+          id: 'v1-4683',
+          score: 86,
+          tools: [{
+            toolName: 'set_document_language',
+            outcome: 'rejected',
+            stage: 1,
+            round: 1,
+            source: 'planner',
+            scoreBefore: 80,
+            scoreAfter: 80,
+            details: JSON.stringify({
+              debug: {
+                replayState: {
+                  stateSignatureBefore: 'replay-before-a',
+                  categoryScoresBefore: { alt_text: 20 },
+                },
+              },
+            }),
+          }],
+        })]),
+        run('candidate', [row({
+          id: 'v1-4683',
+          score: 79,
+          tools: [{
+            toolName: 'set_document_language',
+            outcome: 'applied',
+            stage: 1,
+            round: 1,
+            source: 'planner',
+            scoreBefore: 80,
+            scoreAfter: 81,
+            details: JSON.stringify({
+              debug: {
+                replayState: {
+                  stateSignatureBefore: 'replay-before-a',
+                  categoryScoresBefore: { alt_text: 20 },
+                },
+              },
+            }),
+          }],
+        })]),
+      ],
+      focusIds: ['v1-4683'],
+      controlIds: [],
+      generatedAt: '2026-04-24T00:00:00.000Z',
+    });
+
+    expect(report.rows[0]!.pairReplays[0]!.baselineEntry?.stateSignatureBefore).toBe('replay-before-a');
+    expect(report.rows[0]!.pairReplays[0]!.divergenceClass).toBe('same_state_different_decision');
+  });
 });
