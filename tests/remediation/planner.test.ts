@@ -1739,6 +1739,58 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('progresses to a distinct figure alt target after a prior target attempt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      checkerFigureTargets: [
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 0,
+          structRef: '3_0',
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document@root', 'Figure@3_0'],
+        },
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 1,
+          structRef: '4_0',
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document@root', 'Figure@4_0'],
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    const applied: AppliedRemediationTool[] = [{
+      toolName: 'set_figure_alt_text',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'no_effect',
+      details: JSON.stringify({
+        outcome: 'no_effect',
+        invariants: { targetRef: '3_0', targetReachable: true, targetIsFigureAfter: false },
+      }),
+    }];
+
+    expect(buildDefaultParams('set_figure_alt_text', analysis, snap, applied)).toEqual({
+      structRef: '4_0',
+      altText: 'Illustration (page 2)',
+    });
+  });
+
   it('does not schedule canonicalize_figure_alt_ownership without checker-visible ownership debt', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

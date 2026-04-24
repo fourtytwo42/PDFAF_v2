@@ -1561,11 +1561,18 @@ export function buildDefaultParams(
         forceOcr: true,
       };
     case 'set_figure_alt_text': {
+      const attemptedRefs = new Set(
+        alreadyApplied
+          .filter(row => row.toolName === 'set_figure_alt_text')
+          .map(row => mutationTargetRef(parseMutationDetails(row.details)))
+          .filter((value): value is string => typeof value === 'string' && value.length > 0),
+      );
       const checkerCandidates = sortFigureTargets(
         (snapshot.checkerFigureTargets ?? []).filter(f =>
           !f.isArtifact
           && !f.hasAlt
           && f.structRef
+          && !attemptedRefs.has(f.structRef)
           && isFigureRole(f.resolvedRole ?? f.role)
           && f.reachable,
         ),
@@ -1573,7 +1580,7 @@ export function buildDefaultParams(
       const fallbackCandidates = (snapshot.checkerFigureTargets?.length ?? 0) > 0
         ? []
         : sortFigureTargets(
-          snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && isFigureRole(f.role)),
+          snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && !attemptedRefs.has(f.structRef) && isFigureRole(f.role)),
         );
       const target = checkerCandidates[0] ?? fallbackCandidates[0];
       return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};

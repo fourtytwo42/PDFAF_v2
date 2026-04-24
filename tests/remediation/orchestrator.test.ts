@@ -942,6 +942,62 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('keeps checker-visible figure-alt progress despite structural confidence shape drift', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({
+        score: 59,
+        confidence: 'high',
+        categories: { heading_structure: 99, alt_text: 0, table_markup: 100, reading_order: 100 },
+      }),
+      after: makeAnalysis({
+        score: 81,
+        confidence: 'medium',
+        categories: { heading_structure: 99, alt_text: 20, table_markup: 100, reading_order: 100 },
+      }),
+      beforeSnapshot: {
+        ...makeSnapshot({ depth: 4 }),
+        checkerFigureTargets: [
+          { structRef: '1_0', page: 0, role: 'Figure', resolvedRole: 'Figure', hasAlt: false, reachable: true, isArtifact: false },
+          { structRef: '2_0', page: 0, role: 'Figure', resolvedRole: 'Figure', hasAlt: false, reachable: true, isArtifact: false },
+        ],
+      },
+      afterSnapshot: {
+        ...makeSnapshot({ depth: 4 }),
+        checkerFigureTargets: [
+          { structRef: '1_0', page: 0, role: 'Figure', resolvedRole: 'Figure', hasAlt: true, reachable: true, isArtifact: false },
+          { structRef: '2_0', page: 0, role: 'Figure', resolvedRole: 'Figure', hasAlt: true, reachable: true, isArtifact: false },
+        ],
+      },
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 81,
+        delta: 22,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
   it('rejects weak-alt figure recovery when heading collapses below the usable floor', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 59, confidence: 'medium', categories: { heading_structure: 95, alt_text: 0 } }),

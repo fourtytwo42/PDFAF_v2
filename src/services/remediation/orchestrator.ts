@@ -9,6 +9,7 @@ import {
   PLAYBOOK_LEARN_MIN_SCORE_DELTA,
   REMEDIATION_CATEGORY_THRESHOLD,
   REMEDIATION_IMPLEMENTED_TOOLS,
+  REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN,
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_MAX_ROUNDS,
   REMEDIATION_MIN_ROUND_IMPROVEMENT,
@@ -388,6 +389,8 @@ const FIGURE_OWNERSHIP_REFRESH_TOOLS = new Set([
   'retag_as_figure',
 ]);
 
+const MAX_STAGE64_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
+
 const LINK_STRUCTURE_TOOLS = new Set([
   'set_link_annotation_contents',
   'repair_native_link_structure',
@@ -436,6 +439,14 @@ function appliedContradictsMutationTruth(detail: PythonMutationDetailPayload | n
     inv?.targetIsFigureAfter === false ||
     inv?.tableTreeValidAfter === false ||
     inv?.ownershipPreserved === false;
+}
+
+function normalizeRecordedOutcomeForMutationTruth(
+  outcome: AppliedRemediationTool['outcome'],
+  details: string | undefined,
+): AppliedRemediationTool['outcome'] {
+  if (outcome !== 'applied') return outcome;
+  return appliedContradictsMutationTruth(parseMutationDetails(details)) ? 'no_effect' : outcome;
 }
 
 function stageHasCheckerFacingStructuralBenefit(input: {
@@ -1184,6 +1195,12 @@ export function shouldRejectStageResult(input: {
     }
     const confidence = compareStructuralConfidence(input.before, input.after);
     if (confidence.regressed) {
+      if (hasCheckerVisibleFigureAltProgressDespiteScoreShape(input)) {
+        return {
+          reject: false,
+          reason: null,
+        };
+      }
       return {
         reject: true,
         reason: confidence.reason,
@@ -1607,6 +1624,10 @@ async function reanalyzeBufferForMutation(
 
 function categoryScore(analysis: AnalysisResult, key: string): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
+}
+
+function figureAltMutationAttemptCount(rows: AppliedRemediationTool[]): number {
+  return rows.filter(row => row.toolName === 'set_figure_alt_text').length;
 }
 
 function altRepairBenefitOverridesConfidenceGuard(
@@ -3792,6 +3813,8 @@ export async function remediatePdf(
               runtimeSummary.boundedWork.headingConvergenceAttemptCount += 1;
               const headingTool: PlannedRemediationTool = { ...tool, params: headingParams };
               const headingResult = await runSingleTool(buf, headingTool, workingSnapshot);
+              const headingDetails = withHeadingTargetRef(headingResult.details, targetRef, headingResult.outcome);
+              const headingOutcome = normalizeRecordedOutcomeForMutationTruth(headingResult.outcome, headingDetails);
               buf = headingResult.buffer;
               const headingRow: AppliedRemediationTool = {
                 toolName: headingTool.toolName,
@@ -3800,8 +3823,8 @@ export async function remediatePdf(
                 scoreBefore: stageStartScore,
                 scoreAfter: stageStartScore,
                 delta: 0,
-                outcome: headingResult.outcome,
-                details: withHeadingTargetRef(headingResult.details, targetRef, headingResult.outcome),
+                outcome: headingOutcome,
+                details: headingDetails,
                 durationMs: headingResult.durationMs,
                 source: 'planner',
               };
@@ -3812,10 +3835,10 @@ export async function remediatePdf(
                 round,
                 source: 'planner',
                 durationMs: headingResult.durationMs,
-                outcome: headingResult.outcome,
+                outcome: headingOutcome,
               });
-              if (headingResult.outcome !== 'applied') {
-                if (headingResult.outcome !== 'no_effect') {
+              if (headingOutcome !== 'applied') {
+                if (headingOutcome !== 'no_effect') {
                   runtimeSummary.boundedWork.headingConvergenceFailureCount += 1;
                   break;
                 }
@@ -3968,6 +3991,7 @@ export async function remediatePdf(
               const activeDetails = activeTool.toolName === 'create_heading_from_candidate'
                 ? withHeadingTargetRef(details, activeRef, outcome)
                 : details;
+              const activeOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, activeDetails);
               buf = next;
               stageApplied.push({
                 toolName: activeTool.toolName,
@@ -3976,7 +4000,7 @@ export async function remediatePdf(
                 scoreBefore: stageStartScore,
                 scoreAfter: stageStartScore,
                 delta: 0,
-                outcome,
+                outcome: activeOutcome,
                 details: activeDetails,
                 durationMs,
                 source: 'planner',
@@ -3987,9 +4011,9 @@ export async function remediatePdf(
                 round,
                 source: 'planner',
                 durationMs,
-                outcome,
+                outcome: activeOutcome,
               });
-              if (outcome !== 'no_effect') break;
+              if (activeOutcome !== 'no_effect') break;
               const nextParams = buildDefaultParams(
                 activeTool.toolName,
                 workingAnalysis,
@@ -4088,9 +4112,74 @@ export async function remediatePdf(
         ) {
           continue;
         }
+        if (liveTool.toolName === 'set_figure_alt_text') {
+          let activeFigureTool: PlannedRemediationTool | null = liveTool;
+          const attemptedRefs = new Set<string>();
+          while (
+            activeFigureTool &&
+            figureAltMutationAttemptCount([...appliedTools, ...stageApplied]) < MAX_STAGE64_FIGURE_ALT_TARGETS_PER_RUN
+          ) {
+            const activeRef = typeof activeFigureTool.params['structRef'] === 'string'
+              ? activeFigureTool.params['structRef']
+              : typeof activeFigureTool.params['targetRef'] === 'string'
+                ? activeFigureTool.params['targetRef']
+                : null;
+            if (!activeRef) break;
+            if (attemptedRefs.has(activeRef)) {
+              noteEarlyExit(runtimeSummary, 'figure_alt_repeated_target');
+              break;
+            }
+            attemptedRefs.add(activeRef);
+
+            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeFigureTool, workingSnapshot);
+            const effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
+            buf = next;
+            stageApplied.push({
+              toolName: activeFigureTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              scoreBefore: stageStartScore,
+              scoreAfter: stageStartScore,
+              delta: 0,
+              outcome: effectiveOutcome,
+              details,
+              durationMs,
+              source: 'planner',
+            });
+            runtimeSummary.toolTimings.push({
+              toolName: activeFigureTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              source: 'planner',
+              durationMs,
+              outcome: effectiveOutcome,
+            });
+
+            if (effectiveOutcome !== 'applied') {
+              activeFigureTool = null;
+              break;
+            }
+
+            lastStageAnalysis = await reanalyzeBufferForMutation(buf, filename, 'pdfaf-figure-alt');
+            lastAnalyzedBuffer = buf;
+            workingAnalysis = lastStageAnalysis.result;
+            workingSnapshot = lastStageAnalysis.snapshot;
+
+            const nextParams = buildDefaultParams(
+              'set_figure_alt_text',
+              workingAnalysis,
+              workingSnapshot,
+              [...appliedTools, ...stageApplied],
+            );
+            activeFigureTool = typeof nextParams['structRef'] === 'string' && nextParams['structRef'].length > 0
+              ? { ...activeFigureTool, params: nextParams }
+              : null;
+          }
+          continue;
+        }
         const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot);
         let effectiveNext = next;
-        let effectiveOutcome = outcome;
+        let effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
         let effectiveDetails = details;
         buf = effectiveNext;
         stageApplied.push({
