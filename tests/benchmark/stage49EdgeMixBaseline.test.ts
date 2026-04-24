@@ -69,6 +69,7 @@ describe('Stage 49 edge-mix baseline helpers', () => {
     expect(summary.medianAfter).toBe(80);
     expect(summary.gradeDistributionAfter).toMatchObject({ A: 1, B: 1, C: 1, D: 0, F: 0 });
     expect(summary.totalToolAttempts).toBe(1);
+    expect(summary.selectedNextFixerFamily).toBe('Next deterministic structural family from edge-mix residuals');
   });
 
   it('counts invariant-backed false-positive applied rows', () => {

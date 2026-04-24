@@ -1,0 +1,271 @@
+{
+  "name": "from_sibling_pdfaf_v1_edge_mix_2",
+  "createdAt": "2026-04-24",
+  "sourceRepository": "/home/hendo420/pdfaf",
+  "sourcePolicy": "Original cached v1 PDFs from ICJIA-PDFs/backups/server-cache selected from v1 manifests for broad v2 validation. v1 scores/manifests are selection context only.",
+  "purpose": "Second v1-derived edge mix to validate PDFAF_v2 generality after Stage 56B parked Python structural volatility.",
+  "selectionNotes": [
+    "Balanced mix of figure/alt, structure/heading, table/font/link, long mixed, and manual/scanned-looking PDFs.",
+    "Do not tune fixes to publication IDs, filenames, or v1 scores; use fresh v2 baseline output as source of truth.",
+    "PDF files are local inputs and ignored by git."
+  ],
+  "rows": [
+    {
+      "publicationId": "4758",
+      "title": "Firearm Prohibitors and Records Improvement Task Force 2025 Report",
+      "localFile": "long_mixed/4758-firearm-prohibitors-and-records-improvement-task-force-2025-.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/2025FirearmProhibitorsReport-250626T19175938.pdf",
+      "sourceManifest": "remediation-priority-candidates.json",
+      "v1Score": 61,
+      "v1Grade": "D",
+      "pageCount": 20,
+      "problemMix": [
+        "figure_alt",
+        "table",
+        "heading_structure",
+        "metadata"
+      ],
+      "selectionNote": "priority modern long mixed"
+    },
+    {
+      "publicationId": "4700",
+      "title": "R3 2022 Annual Report",
+      "localFile": "table_font_link/4700-r3-2022-annual-report.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/192.241.146.85/R3_Report_Final_c3f12abc60.pdf",
+      "sourceManifest": "remediation-priority-candidates.json",
+      "v1Score": 75,
+      "v1Grade": "C",
+      "pageCount": 23,
+      "problemMix": [
+        "table",
+        "figure_alt",
+        "long_report"
+      ],
+      "selectionNote": "stage 43 table-tail reference class"
+    },
+    {
+      "publicationId": "4726",
+      "title": "InfoNet: State Fiscal Year 2023 Highlights",
+      "localFile": "figure_alt/4726-infonet-state-fiscal-year-2023-highlights.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/SFY23 InfoNet Infographic-240305T20320674.pdf",
+      "sourceManifest": "remediation-priority-candidates.json",
+      "v1Score": 53,
+      "v1Grade": "F",
+      "pageCount": 1,
+      "problemMix": [
+        "figure_alt",
+        "infographic",
+        "short_visual"
+      ],
+      "selectionNote": "visual/infographic figure-heavy"
+    },
+    {
+      "publicationId": "4699",
+      "title": "Criminal History Record Checks for Federally Assisted Housing Applications: Annual Report",
+      "localFile": "table_font_link/4699-criminal-history-record-checks-for-federally-assisted-housin.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/Federally Assisted Housing Criminal Records Check Annual Report 2023-230328T20561734.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 67,
+      "v1Grade": "D",
+      "pageCount": 8,
+      "problemMix": [
+        "table",
+        "font",
+        "heading_structure"
+      ],
+      "selectionNote": "table/font annual report"
+    },
+    {
+      "publicationId": "4659",
+      "title": "Civil Rights Policy 2019",
+      "localFile": "near_pass_manual/4659-civil-rights-policy-2019.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/192.241.146.85/Civil_Rights_Policy_2019_98afd9b363.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 79,
+      "v1Grade": "C",
+      "pageCount": 8,
+      "problemMix": [
+        "metadata",
+        "heading_structure",
+        "short_policy"
+      ],
+      "selectionNote": "policy/near-pass style"
+    },
+    {
+      "publicationId": "3614",
+      "title": "KENDALL County Profile",
+      "localFile": "figure_alt/3614-kendall-county-profile.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/CountyProfiles/Kendall.pdf",
+      "sourceManifest": "remediation-benchmark-candidates.json",
+      "v1Score": 24,
+      "v1Grade": "F",
+      "pageCount": 32,
+      "problemMix": [
+        "figure_alt",
+        "county_profile",
+        "short_report"
+      ],
+      "selectionNote": "stage3 figure canary"
+    },
+    {
+      "publicationId": "4184",
+      "title": "Child sex exploitation study probes extent of victimization in Illinois",
+      "localFile": "figure_alt/4184-child-sex-exploitation-study-probes-extent-of-victimization-.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/CSEC 2008 Research Bulletin.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 59,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "structure_heading",
+        "bulletin"
+      ],
+      "selectionNote": "stage3 mixed figure/structure canary"
+    },
+    {
+      "publicationId": "4487",
+      "title": "Collaboration in Action: Overview and Lessons from \u201cData, Planning, and Impact: A Joint Adult Redeploy Illinois and Criminal Justice Coordinating Councils Summit\u201d",
+      "localFile": "long_mixed/4487-collaboration-in-action-overview-and-lessons-from-data-plann.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Summit_Reports/ARI-CJCC_summit_report_050818.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 64,
+      "v1Grade": "D",
+      "pageCount": 9,
+      "problemMix": [
+        "figure_alt",
+        "structure_heading",
+        "long_report"
+      ],
+      "selectionNote": "stage3 mixed figure long report"
+    },
+    {
+      "publicationId": "3585",
+      "title": "Juvenile Justice",
+      "localFile": "structure_heading/3585-juvenile-justice.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/GetTheFacts/GTF_JuvenileJustice.pdf",
+      "sourceManifest": "remediation-next-relaxed-batch-candidates.json",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "figure_alt",
+        "short_fact_sheet",
+        "heading_structure"
+      ],
+      "selectionNote": "short flyer/infographic"
+    },
+    {
+      "publicationId": "4187",
+      "title": "The response to domestic violence  Updated protocol aids law enforcement officials states attorneys and the judiciary in addressing abuse issues",
+      "localFile": "long_mixed/4187-the-response-to-domestic-violence-updated-protocol-aids-law-.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/compiler/WinterSpring08CompilerVol25No2.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 86,
+      "v1Grade": "B",
+      "pageCount": 8,
+      "problemMix": [
+        "structure_heading",
+        "reading_order",
+        "long_report"
+      ],
+      "selectionNote": "stage4 structure wave"
+    },
+    {
+      "publicationId": "4028",
+      "title": "Illinois Integrated Justice Information System (IIJIS) 2005 Annual Report",
+      "localFile": "long_mixed/4028-illinois-integrated-justice-information-system-iijis-2005-an.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/iijis2005.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 83,
+      "v1Grade": "B",
+      "pageCount": 23,
+      "problemMix": [
+        "structure_heading",
+        "table",
+        "long_report"
+      ],
+      "selectionNote": "stage4 annual report"
+    },
+    {
+      "publicationId": "4003",
+      "title": "2003 Annual Report Motor Vehicle Theft Prevention Council",
+      "localFile": "table_font_link/4003-2003-annual-report-motor-vehicle-theft-prevention-council.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/mvtpc/AR2003.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 86,
+      "v1Grade": "B",
+      "pageCount": 24,
+      "problemMix": [
+        "table",
+        "structure_heading",
+        "long_report"
+      ],
+      "selectionNote": "stage4 table/structure annual report"
+    },
+    {
+      "publicationId": "4722",
+      "title": "Police Use of Discretion in Encounters with People with Opioid Use Disorder: A Study of Illinois Police Officers",
+      "localFile": "long_mixed/4722-police-use-of-discretion-in-encounters-with-people-with-opio.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/Use of Discretion PDF for POSTING-231128T20591887.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 52,
+      "v1Grade": "F",
+      "pageCount": 25,
+      "problemMix": [
+        "structure_heading",
+        "reading_order",
+        "long_report"
+      ],
+      "selectionNote": "stage4 modern long report"
+    },
+    {
+      "publicationId": "4171",
+      "title": "Issues in Illinois College Campus Safety History and Development of Campus Safety Planning",
+      "localFile": "long_mixed/4171-issues-in-illinois-college-campus-safety-history-and-develop.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/CampusCrimeReport032010.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 93,
+      "v1Grade": "B",
+      "pageCount": 27,
+      "problemMix": [
+        "structure_heading",
+        "table",
+        "long_report"
+      ],
+      "selectionNote": "stage4 campus safety report"
+    },
+    {
+      "publicationId": "3479",
+      "title": "McGruff Seniors protect yourselves from crime!",
+      "localFile": "manual_scanned/3479-mcgruff-seniors-protect-yourselves-from-crime.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/brochures/Seniors.pdf",
+      "sourceManifest": "manual-scanned-deferred.json",
+      "v1Score": 56,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "manual_or_scanned",
+        "brochure",
+        "figure_alt"
+      ],
+      "selectionNote": "manual/scanned deferred brochure"
+    },
+    {
+      "publicationId": "3507",
+      "title": "Law Expands Access To Juvenile Justice Information",
+      "localFile": "manual_scanned/3507-law-expands-access-to-juvenile-justice-information.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/Law Expands Access to Juv Justice Info.pdf",
+      "sourceManifest": "manual-scanned-deferred.json",
+      "v1Score": 56,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "manual_or_scanned",
+        "bulletin",
+        "heading_structure"
+      ],
+      "selectionNote": "manual/scanned deferred bulletin"
+    }
+  ]
+}

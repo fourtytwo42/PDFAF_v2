@@ -110,6 +110,7 @@ interface EdgeMixSummary {
   totalToolAttempts: number;
   falsePositiveAppliedCount: number;
   residualFamilyDistribution: Record<string, number>;
+  selectedNextFixerFamily: string;
   selectedStage50FixerFamily: string;
 }
 
@@ -361,6 +362,7 @@ export function buildEdgeMixSummary(rows: EdgeMixBenchmarkRow[]): EdgeMixSummary
     const family = classifyEdgeMixResidual(row).recommendedFamily;
     residualFamilyDistribution[family] = (residualFamilyDistribution[family] ?? 0) + 1;
   }
+  const selectedNextFixerFamily = chooseStage50Fixer(rows);
   return {
     count: rows.length,
     success: ok.length,
@@ -374,12 +376,13 @@ export function buildEdgeMixSummary(rows: EdgeMixBenchmarkRow[]): EdgeMixSummary
     totalToolAttempts: rows.reduce((sum, row) => sum + row.appliedTools.length, 0),
     falsePositiveAppliedCount: rows.reduce((sum, row) => sum + row.falsePositiveAppliedCount, 0),
     residualFamilyDistribution,
-    selectedStage50FixerFamily: chooseStage50Fixer(rows),
+    selectedNextFixerFamily,
+    selectedStage50FixerFamily: selectedNextFixerFamily,
   };
 }
 
 function renderMarkdown(rows: EdgeMixBenchmarkRow[], summary: EdgeMixSummary): string {
-  const lines = ['# Stage 49 v1 Edge Mix Baseline', ''];
+  const lines = ['# v1 Edge Mix Baseline', ''];
   lines.push(`Files: ${summary.count} (${summary.success} OK, ${summary.errors} errors)`);
   lines.push(`Mean score: ${summary.meanBefore.toFixed(2)} -> ${summary.meanAfter.toFixed(2)}`);
   lines.push(`Median score: ${summary.medianBefore} -> ${summary.medianAfter}`);
@@ -387,7 +390,7 @@ function renderMarkdown(rows: EdgeMixBenchmarkRow[], summary: EdgeMixSummary): s
   lines.push(`Total tool attempts: ${summary.totalToolAttempts}`);
   lines.push(`False-positive applied: ${summary.falsePositiveAppliedCount}`);
   lines.push(`Residual families: \`${JSON.stringify(summary.residualFamilyDistribution)}\``);
-  lines.push(`Selected Stage 50 fixer family: **${summary.selectedStage50FixerFamily}**`, '');
+  lines.push(`Selected next fixer family: **${summary.selectedNextFixerFamily}**`, '');
   lines.push('| ID | File | v1 | Before | After | Family | Attempts | Runtime ms |');
   lines.push('| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |');
   for (const row of rows) {
@@ -537,7 +540,7 @@ async function main(): Promise<void> {
   console.log(`Wrote Stage 49 edge-mix baseline to ${outDir}`);
   console.log(`Mean: ${summary.meanBefore.toFixed(2)} -> ${summary.meanAfter.toFixed(2)}`);
   console.log(`Grades after: ${JSON.stringify(summary.gradeDistributionAfter)}`);
-  console.log(`Selected Stage 50 fixer family: ${summary.selectedStage50FixerFamily}`);
+  console.log(`Selected next fixer family: ${summary.selectedNextFixerFamily}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
