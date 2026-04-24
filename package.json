@@ -19,6 +19,7 @@
     "benchmark:runtime-isolation": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage46-runtime-regression-isolation.ts",
     "benchmark:teams-parity": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage47-teams-parity-diagnostic.ts",
     "benchmark:df-tail": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage48-df-tail-diagnostic.ts",
+    "benchmark:edge-mix": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage49-edge-mix-baseline.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
