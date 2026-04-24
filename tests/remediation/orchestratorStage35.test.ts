@@ -142,6 +142,93 @@ describe('Stage 35 orchestrator mutation contract', () => {
     expect(details.debug?.rootReachableFigureCount).toBe(1);
   });
 
+  it('treats role-map figure retag as structural and preserves invariant details', async () => {
+    mocks.runPythonMutationBatch.mockResolvedValue({
+      buffer: Buffer.from('after'),
+      result: {
+        success: true,
+        applied: ['retag_as_figure'],
+        failed: [],
+        opResults: [{
+          op: 'retag_as_figure',
+          outcome: 'applied',
+          note: 'rolemap_figure_retagged',
+          invariants: {
+            targetRef: '44_0',
+            targetResolved: true,
+            targetReachable: true,
+            resolvedRole: 'Figure',
+            targetHasAltAfter: true,
+            targetIsFigureAfter: true,
+            rootReachableFigureCountBefore: 0,
+            rootReachableFigureCountAfter: 1,
+            ownershipPreserved: true,
+          },
+          structuralBenefits: {
+            figureOwnershipImproved: true,
+            figureAltAttachedToReachableFigure: true,
+          },
+          debug: {
+            candidate: {
+              rawRole: 'InlineShape',
+              resolvedRole: 'Figure',
+              directContent: true,
+            },
+          },
+        }],
+      },
+    });
+
+    const result = await runSingleTool(
+      Buffer.from('before'),
+      { toolName: 'retag_as_figure', params: { structRef: '44_0' }, rationale: 'test' },
+      bareSnapshot(),
+    );
+
+    expect(result.outcome).toBe('applied');
+    expect(isStage35StructuralTool('retag_as_figure')).toBe(true);
+    const details = parseMutationDetails(result.details) as PythonMutationDetailPayload;
+    expect(details.note).toBe('rolemap_figure_retagged');
+    expect(details.invariants?.targetRef).toBe('44_0');
+    expect(details.structuralBenefits?.figureAltAttachedToReachableFigure).toBe(true);
+  });
+
+  it('does not report role-map retag as applied when Python says alt did not attach', async () => {
+    mocks.runPythonMutationBatch.mockResolvedValue({
+      buffer: Buffer.from('after'),
+      result: {
+        success: true,
+        applied: [],
+        failed: [],
+        opResults: [{
+          op: 'retag_as_figure',
+          outcome: 'no_effect',
+          note: 'alt_not_attached_to_reachable_figure',
+          invariants: {
+            targetRef: '44_0',
+            targetResolved: true,
+            targetReachable: true,
+            resolvedRole: 'Figure',
+            targetHasAltAfter: false,
+            targetIsFigureAfter: true,
+            rootReachableFigureCountBefore: 0,
+            rootReachableFigureCountAfter: 1,
+          },
+        }],
+      },
+    });
+
+    const result = await runSingleTool(
+      Buffer.from('before'),
+      { toolName: 'retag_as_figure', params: { structRef: '44_0' }, rationale: 'test' },
+      bareSnapshot(),
+    );
+
+    expect(result.outcome).toBe('no_effect');
+    expect(result.buffer.equals(Buffer.from('before'))).toBe(true);
+    expect(parseMutationDetails(result.details)?.invariants?.targetHasAltAfter).toBe(false);
+  });
+
   it('rejects tools that violate their route contract before calling Python', async () => {
     const result = await runSingleTool(
       Buffer.from('before'),

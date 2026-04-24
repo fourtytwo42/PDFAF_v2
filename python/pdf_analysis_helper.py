@@ -1841,12 +1841,18 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                     alt = get_alt(elem)
                     is_artifact = _is_artifact(elem)
                     ref = object_ref_str(elem)
+                    raw_tag = (get_name(elem) or "").lstrip("/")
                     row = {
                         "hasAlt": alt is not None and len(alt) > 0,
                         "altText": alt,
                         "isArtifact": is_artifact,
                         "page": page,
+                        "rawRole": raw_tag,
                         "role": tag,
+                        "reachable": _is_root_reachable_elem(str_root, elem),
+                        "directContent": _elem_has_direct_mcid_content(elem),
+                        "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                        "parentPath": _struct_parent_chain(elem),
                     }
                     if ref:
                         row["structRef"] = ref
@@ -4765,6 +4771,17 @@ def _elem_has_direct_mcid_content(elem) -> bool:
         return False
 
 
+def _elem_has_figure_subtree_content(elem) -> bool:
+    if not isinstance(elem, pikepdf.Dictionary):
+        return False
+    if _elem_has_direct_mcid_content(elem):
+        return True
+    try:
+        return len(_collect_subtree_mcids(elem)) > 0
+    except Exception:
+        return False
+
+
 def _descendant_leaf_figures_with_direct_content(node) -> list:
     figures: list = []
     visited: set = set()
@@ -4981,6 +4998,70 @@ def _op_set_figure_alt_text(pdf: pikepdf.Pdf, params: dict) -> bool:
         return False
     _set_last_mutation_note("figure_alt_set")
     return True
+
+
+def _op_retag_as_figure(pdf: pikepdf.Pdf, params: dict) -> bool:
+    ref = params.get("structRef")
+    if not ref:
+        _set_last_mutation_note("missing_struct_ref")
+        return False
+    elem = _resolve_ref(pdf, ref)
+    if elem is None:
+        _set_last_mutation_debug(_figure_ownership_debug(pdf, None, "before"))
+        _set_last_mutation_note("target_ref_not_found")
+        return False
+    before_debug = _figure_ownership_debug(pdf, elem, "before")
+    _set_last_mutation_debug(before_debug)
+    sr = pdf.Root.get("/StructTreeRoot")
+    if not isinstance(sr, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+    if not _is_root_reachable_elem(sr, elem):
+        _set_last_mutation_note("target_unreachable")
+        return False
+    raw_role = (get_name(elem) or "").lstrip("/").upper()
+    resolved_role = (_resolved_struct_role(sr, elem) or "").lstrip("/").upper()
+    if raw_role == "FIGURE":
+        _set_last_mutation_note("target_already_figure")
+        return False
+    if resolved_role != "FIGURE":
+        _set_last_mutation_note("rolemap_not_figure")
+        return False
+    if not _elem_has_figure_subtree_content(elem):
+        _set_last_mutation_note("target_has_no_figure_content")
+        return False
+
+    changed = False
+    try:
+        elem["/S"] = pikepdf.Name("/Figure")
+        changed = True
+    except Exception:
+        _set_last_mutation_note("retag_failed")
+        return False
+    if not get_alt(elem):
+        try:
+            page_map = build_page_map(pdf)
+            elem["/Alt"] = _pdf_text_string(_missing_figure_alt_for_elem(elem, page_map), 500)
+            changed = True
+        except Exception:
+            pass
+
+    after_debug = _figure_ownership_debug(pdf, elem, "after")
+    _set_last_mutation_debug({
+        **after_debug,
+        "before": before_debug,
+    })
+    if (
+        (get_name(elem) or "").lstrip("/").upper() != "FIGURE"
+        or not _is_root_reachable_elem(sr, elem)
+    ):
+        _set_last_mutation_note("figure_ownership_not_preserved")
+        return False
+    if not get_alt(elem):
+        _set_last_mutation_note("alt_not_attached_to_reachable_figure")
+        return False
+    _set_last_mutation_note("rolemap_figure_retagged")
+    return changed
 
 
 def _op_set_document_title(pdf: pikepdf.Pdf, params: dict) -> bool:
@@ -6911,13 +6992,18 @@ def _figure_ownership_debug(pdf: pikepdf.Pdf, elem, reason: str | None = None) -
     sr = pdf.Root.get("/StructTreeRoot")
     snapshot = _mutation_debug_snapshot(pdf)
     page_map = build_page_map(pdf)
+    raw_tag = (str(elem.get("/S") or "").lstrip("/") if isinstance(elem, pikepdf.Dictionary) else None)
+    resolved_tag = _resolved_struct_role(sr, elem) if isinstance(sr, pikepdf.Dictionary) and isinstance(elem, pikepdf.Dictionary) else None
     candidate = {
         "structRef": object_ref_str(elem) if isinstance(elem, pikepdf.Dictionary) else None,
-        "tag": (str(elem.get("/S") or "").lstrip("/") if isinstance(elem, pikepdf.Dictionary) else None),
+        "tag": raw_tag,
+        "rawRole": raw_tag,
+        "resolvedRole": resolved_tag,
         "page": get_page_number(elem, page_map) if isinstance(elem, pikepdf.Dictionary) else 0,
         "parentPath": _struct_parent_chain(elem) if isinstance(elem, pikepdf.Dictionary) else [],
         "rootReachable": _is_root_reachable_elem(sr, elem) if isinstance(sr, pikepdf.Dictionary) and isinstance(elem, pikepdf.Dictionary) else False,
         "directContent": _elem_has_direct_mcid_content(elem) if isinstance(elem, pikepdf.Dictionary) else False,
+        "subtreeMcidCount": len(_collect_subtree_mcids(elem)) if isinstance(elem, pikepdf.Dictionary) else 0,
         "hasAlt": bool(get_alt(elem)) if isinstance(elem, pikepdf.Dictionary) else False,
         "altOnFigureNode": bool(get_alt(elem)) and (get_name(elem) or "").lstrip("/").upper() == "FIGURE" if isinstance(elem, pikepdf.Dictionary) else False,
     }
@@ -7109,6 +7195,7 @@ _STAGE35_FIGURE_OPS = {
     "normalize_nested_figure_containers",
     "canonicalize_figure_alt_ownership",
     "set_figure_alt_text",
+    "retag_as_figure",
     "mark_figure_decorative",
     "repair_alt_text_structure",
 }
@@ -7194,6 +7281,7 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
 
 def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
     invariants = {
+        "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
         "targetReachable": after.get("targetReachable"),
         "resolvedRole": after.get("resolvedRole"),
@@ -7209,7 +7297,7 @@ def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, 
         return "no_effect", "target_not_found", invariants
     if op in {"normalize_nested_figure_containers", "canonicalize_figure_alt_ownership"} and not invariants["ownershipPreserved"]:
         return "no_effect", "figure_ownership_not_preserved", invariants
-    if op == "set_figure_alt_text":
+    if op in {"set_figure_alt_text", "retag_as_figure"}:
         if not invariants.get("targetIsFigureAfter"):
             return "no_effect", "target_not_checker_visible_figure", invariants
         if not invariants.get("targetReachable"):
@@ -7944,6 +8032,7 @@ MUTATORS = {
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_candidate": _op_create_heading_from_candidate,
     "set_figure_alt_text": _op_set_figure_alt_text,
+    "retag_as_figure": _op_retag_as_figure,
     "mark_figure_decorative": _op_mark_figure_decorative,
     "normalize_nested_figure_containers": _op_normalize_nested_figure_containers,
     "canonicalize_figure_alt_ownership": _op_canonicalize_figure_alt_ownership,

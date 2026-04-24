@@ -209,11 +209,13 @@ const TABLE_STRUCTURE_TOOLS = new Set([
 const FIGURE_STRUCTURE_TOOLS = new Set([
   'normalize_nested_figure_containers',
   'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
 ]);
 
 const FIGURE_OWNERSHIP_REFRESH_TOOLS = new Set([
   'normalize_nested_figure_containers',
   'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
 ]);
 
 const LINK_STRUCTURE_TOOLS = new Set([
@@ -414,6 +416,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
   if (key === 'alt_text') {
     return tools.has('normalize_nested_figure_containers') ||
       tools.has('canonicalize_figure_alt_ownership') ||
+      tools.has('retag_as_figure') ||
       tools.has('set_figure_alt_text') ||
       tools.has('mark_figure_decorative') ||
       tools.has('repair_alt_text_structure');
@@ -610,6 +613,7 @@ export function protectedStrongAltPreservationViolation(input: {
 function stageHasFigureAltMutation(stageApplied: AppliedRemediationTool[]): boolean {
   return stageApplied.some(row =>
     row.toolName === 'set_figure_alt_text' ||
+    row.toolName === 'retag_as_figure' ||
     row.toolName === 'canonicalize_figure_alt_ownership' ||
     row.toolName === 'normalize_nested_figure_containers'
   );
@@ -677,6 +681,7 @@ function protectedWeakAltRecoveryAllowsHeadingDrift(input: {
   if (afterAlt <= beforeAlt) return false;
   return input.stageApplied.some(row =>
     row.toolName === 'set_figure_alt_text' ||
+    row.toolName === 'retag_as_figure' ||
     row.toolName === 'canonicalize_figure_alt_ownership' ||
     row.toolName === 'normalize_nested_figure_containers'
   );
@@ -1254,6 +1259,7 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
   'synthesize_basic_structure_from_layout',
   'normalize_nested_figure_containers',
   'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
   'set_figure_alt_text',
   'mark_figure_decorative',
   'repair_alt_text_structure',
@@ -2412,6 +2418,7 @@ export async function runSingleTool(
       case 'normalize_heading_hierarchy':
       case 'normalize_nested_figure_containers':
       case 'canonicalize_figure_alt_ownership':
+      case 'retag_as_figure':
       case 'repair_annotation_alt_text':
       case 'set_figure_alt_text':
       case 'mark_figure_decorative':
@@ -3619,23 +3626,44 @@ export async function remediatePdf(
           }
           continue;
         }
+        let skipLiveToolForMissingTarget = false;
         if (
-          (tool.toolName === 'set_figure_alt_text' || tool.toolName === 'mark_figure_decorative')
+          (tool.toolName === 'set_figure_alt_text' || tool.toolName === 'mark_figure_decorative' || tool.toolName === 'retag_as_figure')
           && !buf.equals(lastAnalyzedBuffer)
         ) {
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            lastStageAnalysis = await analyzePdf(tmp, filename);
-            lastAnalyzedBuffer = buf;
-            workingAnalysis = lastStageAnalysis.result;
-            workingSnapshot = lastStageAnalysis.snapshot;
+            const liveAnalysis = await analyzePdf(tmp, filename);
+            if (tool.toolName === 'retag_as_figure') {
+              const liveParams = buildDefaultParams(
+                tool.toolName,
+                liveAnalysis.result,
+                liveAnalysis.snapshot,
+                [...appliedTools, ...stageApplied],
+              );
+              if (typeof liveParams['structRef'] !== 'string') {
+                skipLiveToolForMissingTarget = true;
+              } else {
+                lastStageAnalysis = liveAnalysis;
+                lastAnalyzedBuffer = buf;
+                workingAnalysis = liveAnalysis.result;
+                workingSnapshot = liveAnalysis.snapshot;
+              }
+            } else {
+              lastStageAnalysis = liveAnalysis;
+              lastAnalyzedBuffer = buf;
+              workingAnalysis = lastStageAnalysis.result;
+              workingSnapshot = lastStageAnalysis.snapshot;
+            }
           } finally {
             await unlink(tmp).catch(() => {});
           }
         }
+        if (skipLiveToolForMissingTarget) continue;
         const liveTool = tool.toolName === 'normalize_table_structure'
           || tool.toolName === 'set_table_header_cells'
+          || tool.toolName === 'retag_as_figure'
           || tool.toolName === 'set_figure_alt_text'
           || tool.toolName === 'mark_figure_decorative'
           ? {
@@ -3652,6 +3680,12 @@ export async function remediatePdf(
             baseline: options?.protectedBaseline,
             currentAltScore: categoryScore(workingAnalysis, 'alt_text'),
           })
+        ) {
+          continue;
+        }
+        if (
+          liveTool.toolName === 'retag_as_figure' &&
+          typeof liveTool.params['structRef'] !== 'string'
         ) {
           continue;
         }

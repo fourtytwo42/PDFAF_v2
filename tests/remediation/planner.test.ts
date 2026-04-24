@@ -735,7 +735,7 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_figure_alt_text');
     expect(plan.planningSummary?.skippedTools).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ toolName: 'retag_as_figure', reason: 'semantic_deferred' }),
+        expect.objectContaining({ toolName: 'retag_as_figure', reason: 'missing_precondition' }),
       ]),
     );
   });
@@ -1191,6 +1191,90 @@ describe('planForRemediation', () => {
     expect(names).toContain('normalize_nested_figure_containers');
     expect(names).toContain('canonicalize_figure_alt_ownership');
     expect(names).not.toContain('set_figure_alt_text');
+  });
+
+  it('targets role-mapped reachable figure elements for narrow retagging before alt assignment', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        rawRole: 'InlineShape',
+        role: 'Figure',
+        structRef: '90_0',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 1,
+      }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 1,
+          treeFigureMissingForExtractedFigures: true,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: { tablesWithMisplacedCells: 0, misplacedCellCount: 0, irregularTableCount: 0, stronglyIrregularTableCount: 0, directCellUnderTableCount: 0 },
+        sampledPages: [],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), { alt_text: 0 }), {
+      detectionProfile: snap.detectionProfile,
+    });
+
+    expect(classifyStage44FigureFailure(snap, analysis)).toBe('broken_figure_ownership');
+    expect(buildDefaultParams('retag_as_figure', analysis, snap)).toEqual({
+      structRef: '90_0',
+      altText: 'Image',
+    });
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('retag_as_figure');
+  });
+
+  it('does not target unreachable or contentless role-mapped figures for retagging', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [
+        { hasAlt: false, isArtifact: false, page: 0, rawRole: 'InlineShape', role: 'Figure', structRef: '91_0', reachable: false, directContent: true, subtreeMcidCount: 1 },
+        { hasAlt: false, isArtifact: false, page: 0, rawRole: 'Shape', role: 'Figure', structRef: '92_0', reachable: true, directContent: false, subtreeMcidCount: 0 },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    expect(buildDefaultParams('retag_as_figure', analysis, snap)).toEqual({});
   });
 
   it('classifies Stage 44 alt cleanup risk only when Acrobat-style ownership risks exist', () => {

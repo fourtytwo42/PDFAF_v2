@@ -217,8 +217,15 @@ export interface DocumentSnapshot {
     altText?: string;
     isArtifact: boolean;
     page: number;
+    /** Raw /S role from the structure element before RoleMap resolution. */
+    rawRole?: string;
+    /** Role after applying /StructTreeRoot /RoleMap. */
     role?: string;
     structRef?: string;
+    reachable?: boolean;
+    directContent?: boolean;
+    subtreeMcidCount?: number;
+    parentPath?: string[];
     bbox?: [number, number, number, number];
   }>;
   checkerFigureTargets?: Array<{

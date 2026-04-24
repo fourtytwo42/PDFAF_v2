@@ -481,6 +481,7 @@ export const REMEDIATION_IMPLEMENTED_TOOLS: readonly string[] = [
   'normalize_annotation_tab_order',
   'create_heading_from_candidate',
   'normalize_nested_figure_containers',
+  'retag_as_figure',
   'canonicalize_figure_alt_ownership',
   'normalize_heading_hierarchy',
   'repair_annotation_alt_text',

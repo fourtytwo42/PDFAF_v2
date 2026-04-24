@@ -204,7 +204,7 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
   },
   figure_semantics: {
     allowedTools: ROUTE_TOOL_MAP.figure_semantics,
-    failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
+    failureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'retag_as_figure', 'set_figure_alt_text'],
     requiredFailureTools: ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text'],
   },
   near_pass_figure_recovery: {
@@ -348,9 +348,16 @@ export function classifyStage44FigureFailure(snapshot: DocumentSnapshot, analysi
     (snapshot.checkerFigureTargets?.length ?? 0) > 0 &&
     checkerVisibleFigureMissingAlt(snapshot)
   ) return 'missing_alt_on_reachable_figures';
+  if (hasRoleMappedFigureCandidate(snapshot)) return 'broken_figure_ownership';
   if (
     (snapshot.checkerFigureTargets?.length ?? 0) === 0 &&
-    snapshot.figures.some(figure => !figure.isArtifact && !figure.hasAlt && isFigureRole(figure.role) && figure.structRef)
+    snapshot.figures.some(figure =>
+      !figure.isArtifact &&
+      !figure.hasAlt &&
+      isFigureRole(figure.role) &&
+      isFigureRole(figure.rawRole ?? figure.role) &&
+      figure.structRef
+    )
   ) return 'missing_alt_on_reachable_figures';
   if (hasAcrobatAltOwnershipRisk(snapshot)) return 'alt_cleanup_risk';
   if (figureNeedsOwnershipRepair(snapshot)) return 'broken_figure_ownership';
@@ -600,6 +607,7 @@ function routeFailureProof(
 const DETERMINISTIC_FIGURE_TOOLS = new Set([
   'normalize_nested_figure_containers',
   'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
   'set_figure_alt_text',
   'mark_figure_decorative',
 ]);
@@ -644,6 +652,19 @@ function figureNeedsOwnershipRepair(snapshot: DocumentSnapshot): boolean {
     (figureSignals?.treeFigureMissingForExtractedFigures ?? false) ||
     (figureSignals?.nonFigureRoleCount ?? 0) > 0 ||
     (figureSignals.extractedFigureCount > 0 && figureSignals.treeFigureCount < figureSignals.extractedFigureCount)
+  );
+}
+
+function hasRoleMappedFigureCandidate(snapshot: DocumentSnapshot): boolean {
+  return snapshot.figures.some(figure =>
+    !figure.isArtifact &&
+    !!figure.structRef &&
+    figure.reachable === true &&
+    isFigureRole(figure.role) &&
+    typeof figure.rawRole === 'string' &&
+    figure.rawRole.length > 0 &&
+    !isFigureRole(figure.rawRole) &&
+    (figure.directContent === true || (figure.subtreeMcidCount ?? 0) > 0)
   );
 }
 
@@ -692,7 +713,7 @@ function shouldSkipAfterSuccessfulApply(toolName: string, applied: AppliedRemedi
   if (toolName === 'set_figure_alt_text' || toolName === 'mark_figure_decorative') {
     return successfulApplyCount(applied, toolName) >= Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
   }
-  if (toolName === 'normalize_nested_figure_containers' || toolName === 'canonicalize_figure_alt_ownership') {
+  if (toolName === 'normalize_nested_figure_containers' || toolName === 'canonicalize_figure_alt_ownership' || toolName === 'retag_as_figure') {
     return successfulApplyCount(applied, toolName) >= 2;
   }
   // Stage 43 table tools target one table per call and stay bounded to two table targets.
@@ -1154,6 +1175,9 @@ export function planForRemediation(
       return { allowed: false, reason: 'category_not_failing' };
     }
     if (ROUTE_TOOL_MAP.figure_semantics.includes(toolName) && structurePrimary) {
+      if (toolName === 'retag_as_figure' && !hasRoleMappedFigureCandidate(snapshot)) {
+        return { allowed: false, reason: 'missing_precondition' };
+      }
       if (toolName === 'repair_annotation_alt_text' || DETERMINISTIC_FIGURE_TOOLS.has(toolName)) {
         return { allowed: true };
       }
@@ -1170,6 +1194,16 @@ export function planForRemediation(
           classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk' ||
           classifyStage44FigureFailure(snapshot, analysis) === 'no_checker_visible_figures'
         )
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'retag_as_figure'
+      && !(
+        categoryFailing('alt_text')
+        && snapshot.figures.length > 0
+        && hasRoleMappedFigureCandidate(snapshot)
       )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
@@ -1351,7 +1385,7 @@ export function planForRemediation(
     && snapshot.figures.length > 0
     && routeFailureProof('figure_semantics', alreadyApplied) === null
   ) {
-    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text']) {
+    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'retag_as_figure', 'set_figure_alt_text']) {
       if (toolSet.has(toolName)) continue;
       const routeGate = toolIsRouteRelevant(toolName);
       if (!routeGate.allowed) {
@@ -1390,7 +1424,7 @@ export function planForRemediation(
     && snapshot.figures.length > 0
     && routeFailureProof('figure_semantics', alreadyApplied) === null
   ) {
-    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership']) {
+    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'retag_as_figure']) {
       if (toolSet.has(toolName)) continue;
       if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) continue;
       if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) continue;
@@ -1576,6 +1610,35 @@ export function buildDefaultParams(
       );
       const target = checkerCandidates[0] ?? fallbackCandidates[0];
       return target?.structRef ? { structRef: target.structRef } : {};
+    }
+    case 'retag_as_figure': {
+      const attemptedRefs = new Set(
+        alreadyApplied
+          .filter(row => row.toolName === 'retag_as_figure')
+          .map(row => mutationTargetRef(parseMutationDetails(row.details)))
+          .filter((value): value is string => typeof value === 'string' && value.length > 0),
+      );
+      const candidates = sortFigureTargets(
+        snapshot.figures.filter(f =>
+          !f.isArtifact
+          && !f.hasAlt
+          && f.structRef
+          && !attemptedRefs.has(f.structRef)
+          && f.reachable === true
+          && isFigureRole(f.role)
+          && typeof f.rawRole === 'string'
+          && f.rawRole.length > 0
+          && !isFigureRole(f.rawRole)
+          && (f.directContent === true || (f.subtreeMcidCount ?? 0) > 0)
+        ),
+      ).sort((a, b) =>
+        Number(b.directContent) - Number(a.directContent)
+        || (b.subtreeMcidCount ?? 0) - (a.subtreeMcidCount ?? 0)
+        || a.page - b.page
+        || (a.structRef ?? '').localeCompare(b.structRef ?? '')
+      );
+      const target = candidates[0];
+      return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
     }
     case 'canonicalize_figure_alt_ownership':
     case 'normalize_nested_figure_containers': {
