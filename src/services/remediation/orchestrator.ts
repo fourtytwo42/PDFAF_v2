@@ -876,13 +876,64 @@ export function shouldSkipCanonicalizeFigureAltBeforeRetag(input: {
   return true;
 }
 
+function nonFigureStructuralCategoryCollapsed(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+}): boolean {
+  for (const key of ['heading_structure', 'table_markup', 'reading_order'] as const) {
+    const beforeScore = categoryScore(input.before, key);
+    const afterScore = categoryScore(input.after, key);
+    if (
+      beforeScore != null &&
+      afterScore != null &&
+      beforeScore - afterScore > PROTECTED_STAGE_CATEGORY_REGRESSION_TOLERANCE
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function hasCheckerVisibleFigureAltProgressDespiteScoreShape(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (input.after.score < input.before.score - 2) return false;
+  if (figureAltAcceptanceInvariantFailure(input.stageApplied)) return false;
+  if (!input.stageApplied.some(row =>
+    row.toolName === 'set_figure_alt_text' &&
+    row.outcome === 'applied' &&
+    parseMutationDetails(row.details)?.structuralBenefits?.figureAltAttachedToReachableFigure === true
+  )) {
+    return false;
+  }
+  const beforeFigures = checkerVisibleFigureCounts(input.beforeSnapshot);
+  const afterFigures = checkerVisibleFigureCounts(input.afterSnapshot);
+  if (afterFigures.figures < beforeFigures.figures) return false;
+  if (afterFigures.figuresWithAlt <= beforeFigures.figuresWithAlt) return false;
+  if (nonFigureStructuralCategoryCollapsed(input)) return false;
+  if (hasNewStricterCap({
+    baselineCaps: input.before.scoreCapsApplied,
+    candidateCaps: input.after.scoreCapsApplied,
+  })) {
+    return false;
+  }
+  return true;
+}
+
 function figureStageRegressedWithoutAltImprovement(input: {
   before: AnalysisResult;
   after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
   stageApplied: AppliedRemediationTool[];
 }): boolean {
   if (!stageHasFigureAltMutation(input.stageApplied)) return false;
   if (input.after.score >= input.before.score) return false;
+  if (hasCheckerVisibleFigureAltProgressDespiteScoreShape(input)) return false;
   const beforeAlt = categoryScore(input.before, 'alt_text');
   const afterAlt = categoryScore(input.after, 'alt_text');
   if (beforeAlt == null || afterAlt == null) return false;

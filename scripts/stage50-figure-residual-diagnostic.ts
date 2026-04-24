@@ -43,6 +43,11 @@ export interface Stage50FigureDiagnosticRow {
     unreachableFigureLikeCount: number;
     noContentFigureLikeCount: number;
     checkerVisibleFigureCount: number;
+    checkerVisibleFigureWithAltCount: number;
+    terminalFigureToolCount: number;
+    scoreShapeFigureRejectionCount: number;
+    invariantFigureFailureCount: number;
+    attemptedTargetRefs: string[];
   };
 }
 
@@ -116,7 +121,76 @@ export function buildFigureCandidateDiagnostics(snapshot: DocumentSnapshot): Fig
     .sort((a, b) => a.page - b.page || a.structRef.localeCompare(b.structRef));
 }
 
-export function summarizeFigureCandidates(candidates: FigureCandidateDiagnostic[]): Stage50FigureDiagnosticRow['summary'] {
+function parseDetails(details: unknown): Record<string, unknown> | null {
+  if (!details) return null;
+  if (typeof details === 'object' && !Array.isArray(details)) return details as Record<string, unknown>;
+  if (typeof details !== 'string') return null;
+  const trimmed = details.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function detailNote(details: unknown): string {
+  const parsed = parseDetails(details);
+  if (typeof parsed?.['note'] === 'string') return parsed['note'];
+  if (typeof parsed?.['raw'] === 'string') return parsed['raw'];
+  return typeof details === 'string' ? details : '';
+}
+
+function invariantFailed(details: unknown): boolean {
+  const parsed = parseDetails(details);
+  const inv = parsed?.['invariants'];
+  if (!inv || typeof inv !== 'object' || Array.isArray(inv)) return false;
+  const invariants = inv as Record<string, unknown>;
+  return invariants['targetReachable'] === false ||
+    invariants['targetIsFigureAfter'] === false ||
+    invariants['targetHasAltAfter'] === false ||
+    invariants['ownershipPreserved'] === false;
+}
+
+function targetRefFromDetails(details: unknown): string | null {
+  const parsed = parseDetails(details);
+  const inv = parsed?.['invariants'];
+  if (inv && typeof inv === 'object' && !Array.isArray(inv) && typeof (inv as Record<string, unknown>)['targetRef'] === 'string') {
+    return (inv as Record<string, unknown>)['targetRef'] as string;
+  }
+  const replay = parsed?.['debug'];
+  if (replay && typeof replay === 'object' && !Array.isArray(replay)) {
+    const state = (replay as Record<string, unknown>)['replayState'];
+    if (state && typeof state === 'object' && !Array.isArray(state) && typeof (state as Record<string, unknown>)['targetRef'] === 'string') {
+      return (state as Record<string, unknown>)['targetRef'] as string;
+    }
+  }
+  return null;
+}
+
+function figureTools(row: unknown): Array<{ toolName?: unknown; outcome?: unknown; details?: unknown }> {
+  if (!row || typeof row !== 'object') return [];
+  const tools = (row as { appliedTools?: unknown }).appliedTools;
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map(tool => tool as { toolName?: unknown; outcome?: unknown; details?: unknown })
+    .filter(tool => typeof tool.toolName === 'string' && [
+      'normalize_nested_figure_containers',
+      'canonicalize_figure_alt_ownership',
+      'set_figure_alt_text',
+      'retag_as_figure',
+      'repair_alt_text_structure',
+      'mark_figure_decorative',
+    ].includes(tool.toolName));
+}
+
+export function summarizeFigureCandidates(
+  candidates: FigureCandidateDiagnostic[],
+  baselineRow?: unknown,
+): Stage50FigureDiagnosticRow['summary'] {
+  const terminal = figureTools(baselineRow).filter(tool => ['rejected', 'no_effect', 'failed'].includes(String(tool.outcome)));
+  const attemptedTargetRefs = [...new Set(figureTools(baselineRow).map(tool => targetRefFromDetails(tool.details)).filter((value): value is string => Boolean(value)))].sort();
   return {
     roleMapMismatchCount: candidates.filter(candidate => candidate.blocker === 'role_map_mismatch').length,
     safeRoleMapRetagTargetCount: candidates.filter(candidate => candidate.safeRoleMapRetagTarget).length,
@@ -124,6 +198,11 @@ export function summarizeFigureCandidates(candidates: FigureCandidateDiagnostic[
     unreachableFigureLikeCount: candidates.filter(candidate => candidate.blocker === 'unreachable').length,
     noContentFigureLikeCount: candidates.filter(candidate => candidate.blocker === 'no_content').length,
     checkerVisibleFigureCount: candidates.filter(candidate => candidate.checkerVisible).length,
+    checkerVisibleFigureWithAltCount: candidates.filter(candidate => candidate.checkerVisible && candidate.hasAlt).length,
+    terminalFigureToolCount: terminal.length,
+    scoreShapeFigureRejectionCount: terminal.filter(tool => /figure_stage_regressed_without_alt_improvement/.test(detailNote(tool.details))).length,
+    invariantFigureFailureCount: terminal.filter(tool => invariantFailed(tool.details)).length,
+    attemptedTargetRefs,
   };
 }
 
@@ -140,7 +219,7 @@ async function analyzeRow(row: EdgeMixManifestRow, baselineRows: Map<string, unk
     afterGrade: typeof baseline?.afterGrade === 'string' ? baseline.afterGrade : null,
     altTextScore: baseline ? scoreFor(baseline, 'alt_text') : null,
     candidates,
-    summary: summarizeFigureCandidates(candidates),
+    summary: summarizeFigureCandidates(candidates, baseline),
   };
 }
 
@@ -148,8 +227,8 @@ function renderMarkdown(rows: Stage50FigureDiagnosticRow[]): string {
   const lines = [
     '# Stage 50 Figure Residual Diagnostic',
     '',
-    '| file | score | alt | candidates | safe role-map retags | checker-visible | main blockers |',
-    '| --- | ---: | ---: | ---: | ---: | ---: | --- |',
+    '| file | score | alt | checker-visible alt | missing-alt targets | terminal tools | score-shape rejects | invariant failures | main blockers |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     const blockers = Object.entries(
@@ -158,10 +237,10 @@ function renderMarkdown(rows: Stage50FigureDiagnosticRow[]): string {
         return acc;
       }, {}),
     ).map(([key, value]) => `${key}:${value}`).join(', ');
-    lines.push(`| ${row.publicationId} | ${row.afterScore ?? 'n/a'} ${row.afterGrade ?? ''} | ${row.altTextScore ?? 'n/a'} | ${row.candidates.length} | ${row.summary.safeRoleMapRetagTargetCount} | ${row.summary.checkerVisibleFigureCount} | ${blockers || 'none'} |`);
+    lines.push(`| ${row.publicationId} | ${row.afterScore ?? 'n/a'} ${row.afterGrade ?? ''} | ${row.altTextScore ?? 'n/a'} | ${row.summary.checkerVisibleFigureWithAltCount}/${row.summary.checkerVisibleFigureCount} | ${row.summary.reachableRawFigureMissingAltCount} | ${row.summary.terminalFigureToolCount} | ${row.summary.scoreShapeFigureRejectionCount} | ${row.summary.invariantFigureFailureCount} | ${blockers || 'none'} |`);
   }
   lines.push('');
-  lines.push('Rows with `safe role-map retags > 0` are the only Stage 50 mutator candidates.');
+  lines.push('Rows with low checker-visible alt coverage and score-shape rejects are Stage 59 bounded multi-target alt candidates.');
   return `${lines.join('\n')}\n`;
 }
 
@@ -171,14 +250,23 @@ async function main(): Promise<void> {
   let baselineRun = DEFAULT_BASELINE_RUN;
   let outDir = todayOutDir();
   const targets = new Set(DEFAULT_TARGETS);
+  let explicitTargets = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--manifest') manifestPath = args[++i] ?? manifestPath;
     else if (arg === '--baseline-run') baselineRun = args[++i] ?? baselineRun;
     else if (arg === '--out') outDir = args[++i] ?? outDir;
-    else if (arg === '--file') targets.add(args[++i] ?? '');
-    else if (arg === '--all') targets.clear();
+    else if (arg === '--file') {
+      if (!explicitTargets) {
+        targets.clear();
+        explicitTargets = true;
+      }
+      targets.add(args[++i] ?? '');
+    } else if (arg === '--all') {
+      targets.clear();
+      explicitTargets = true;
+    }
     else if (arg === '--help') {
       console.log('Usage: pnpm run benchmark:figure-diagnostic -- [--manifest path] [--baseline-run dir] [--out dir] [--file publicationId] [--all]');
       return;

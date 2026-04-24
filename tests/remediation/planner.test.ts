@@ -1111,7 +1111,7 @@ describe('planForRemediation', () => {
     expect(classifyStage44FigureFailure(snap, analysis)).toBe('missing_alt_on_reachable_figures');
     expect(buildDefaultParams('set_figure_alt_text', analysis, snap)).toEqual({
       structRef: '70_0',
-      altText: 'Image',
+      altText: 'Illustration (page 1)',
     });
   });
 
@@ -1256,7 +1256,7 @@ describe('planForRemediation', () => {
     expect(classifyStage44FigureFailure(snap, analysis)).toBe('broken_figure_ownership');
     expect(buildDefaultParams('retag_as_figure', analysis, snap)).toEqual({
       structRef: '90_0',
-      altText: 'Image',
+      altText: 'Illustration (page 1)',
     });
     const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
     expect(names).toContain('retag_as_figure');
@@ -1732,7 +1732,7 @@ describe('planForRemediation', () => {
     const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
     expect(buildDefaultParams('set_figure_alt_text', analysis, snap)).toEqual({
       structRef: '3_0',
-      altText: 'Image',
+      altText: 'Illustration (page 1)',
     });
     expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({
       structRef: '3_0',

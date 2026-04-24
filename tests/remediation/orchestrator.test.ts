@@ -3,6 +3,7 @@ import {
   compareStructuralConfidence,
   buildReplayStateSignature,
   enrichDetailsWithReplayState,
+  hasCheckerVisibleFigureAltProgressDespiteScoreShape,
   mergePlanningSummaries,
   parseMutationDetails,
   protectedBaselineFloorViolation,
@@ -162,6 +163,28 @@ function makeSnapshot(input: { depth: number; title?: string; textCharCount?: nu
       confidence: 'medium',
     },
   };
+}
+
+function makeFigureSnapshot(input: { figures: number; figuresWithAlt: number }): DocumentSnapshot {
+  const snap = makeSnapshot({ depth: 2 });
+  snap.checkerFigureTargets = Array.from({ length: input.figures }, (_, index) => ({
+    structRef: `${index + 1}_0`,
+    page: 0,
+    role: 'Figure',
+    resolvedRole: 'Figure',
+    hasAlt: index < input.figuresWithAlt,
+    isArtifact: false,
+    reachable: true,
+    directContent: true,
+    parentPath: [],
+  }));
+  snap.detectionProfile!.figureSignals = {
+    extractedFigureCount: input.figures,
+    treeFigureCount: input.figures,
+    nonFigureRoleCount: 0,
+    treeFigureMissingForExtractedFigures: false,
+  };
+  return snap;
 }
 
 describe('replay state instrumentation', () => {
@@ -1091,6 +1114,179 @@ describe('shouldRejectStageResult', () => {
     expect(result).toEqual({
       reject: true,
       reason: 'figure_stage_regressed_without_alt_improvement(73)',
+    });
+  });
+
+  it('keeps bounded multi-target figure alt progress despite a small score-shape dip', () => {
+    const stageApplied: AppliedRemediationTool[] = [{
+      toolName: 'set_figure_alt_text',
+      stage: 1,
+      round: 1,
+      scoreBefore: 80,
+      scoreAfter: 79,
+      delta: -1,
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: {
+          targetResolved: true,
+          targetReachable: true,
+          targetIsFigureAfter: true,
+          targetHasAltAfter: true,
+        },
+        structuralBenefits: {
+          figureAltAttachedToReachableFigure: true,
+        },
+      }),
+    }];
+    const input = {
+      before: makeAnalysis({
+        score: 80,
+        confidence: 'medium' as const,
+        categories: { alt_text: 16, heading_structure: 100, table_markup: 100, reading_order: 96 },
+      }),
+      after: makeAnalysis({
+        score: 79,
+        confidence: 'medium' as const,
+        categories: { alt_text: 12, heading_structure: 100, table_markup: 100, reading_order: 96 },
+      }),
+      beforeSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 1 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 2 }),
+      stageApplied,
+    };
+
+    expect(hasCheckerVisibleFigureAltProgressDespiteScoreShape(input)).toBe(true);
+    expect(shouldRejectStageResult({
+      ...input,
+      stage: makeStage('set_figure_alt_text'),
+    })).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('does not treat a score-shape dip as figure progress without checker-visible alt gain', () => {
+    const stageApplied: AppliedRemediationTool[] = [{
+      toolName: 'set_figure_alt_text',
+      stage: 1,
+      round: 1,
+      scoreBefore: 80,
+      scoreAfter: 79,
+      delta: -1,
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: {
+          targetResolved: true,
+          targetReachable: true,
+          targetIsFigureAfter: true,
+          targetHasAltAfter: true,
+        },
+        structuralBenefits: {
+          figureAltAttachedToReachableFigure: true,
+        },
+      }),
+    }];
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 16, reading_order: 96 } }),
+      after: makeAnalysis({ score: 79, confidence: 'medium', categories: { alt_text: 12, reading_order: 96 } }),
+      beforeSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 1 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 1 }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied,
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'figure_stage_regressed_without_alt_improvement(79)',
+    });
+  });
+
+  it('rejects score-shape figure progress when target invariants fail', () => {
+    const stageApplied: AppliedRemediationTool[] = [{
+      toolName: 'set_figure_alt_text',
+      stage: 1,
+      round: 1,
+      scoreBefore: 80,
+      scoreAfter: 79,
+      delta: -1,
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: {
+          targetResolved: true,
+          targetReachable: false,
+          targetIsFigureAfter: true,
+          targetHasAltAfter: true,
+        },
+        structuralBenefits: {
+          figureAltAttachedToReachableFigure: true,
+        },
+      }),
+    }];
+
+    expect(hasCheckerVisibleFigureAltProgressDespiteScoreShape({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 16, reading_order: 96 } }),
+      after: makeAnalysis({ score: 79, confidence: 'medium', categories: { alt_text: 12, reading_order: 96 } }),
+      beforeSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 1 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 2 }),
+      stageApplied,
+    })).toBe(false);
+    expect(shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 16, reading_order: 96 } }),
+      after: makeAnalysis({ score: 79, confidence: 'medium', categories: { alt_text: 12, reading_order: 96 } }),
+      beforeSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 1 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 2 }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied,
+    })).toEqual({
+      reject: true,
+      reason: 'figure_stage_regressed_without_alt_improvement(79)',
+    });
+  });
+
+  it('rejects score-shape figure progress when non-figure structural categories collapse', () => {
+    const stageApplied: AppliedRemediationTool[] = [{
+      toolName: 'set_figure_alt_text',
+      stage: 1,
+      round: 1,
+      scoreBefore: 80,
+      scoreAfter: 79,
+      delta: -1,
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: {
+          targetResolved: true,
+          targetReachable: true,
+          targetIsFigureAfter: true,
+          targetHasAltAfter: true,
+        },
+        structuralBenefits: {
+          figureAltAttachedToReachableFigure: true,
+        },
+      }),
+    }];
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({
+        score: 80,
+        confidence: 'medium',
+        categories: { alt_text: 16, heading_structure: 100, table_markup: 100, reading_order: 96 },
+      }),
+      after: makeAnalysis({
+        score: 79,
+        confidence: 'medium',
+        categories: { alt_text: 12, heading_structure: 100, table_markup: 100, reading_order: 80 },
+      }),
+      beforeSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 1 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 3, figuresWithAlt: 2 }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied,
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'figure_stage_regressed_without_alt_improvement(79)',
     });
   });
 

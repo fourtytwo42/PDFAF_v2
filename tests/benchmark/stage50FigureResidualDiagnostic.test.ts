@@ -98,4 +98,34 @@ describe('Stage 50 figure residual diagnostic helpers', () => {
       safeRoleMapRetagTarget: false,
     });
   });
+
+  it('reports score-shape rejections separately from invariant failures', () => {
+    const rows = buildFigureCandidateDiagnostics(snapshot({
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, rawRole: 'Figure', role: 'Figure', structRef: '13_0', reachable: true, directContent: true, subtreeMcidCount: 1 }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        structRef: '13_0',
+        reachable: true,
+        directContent: true,
+        parentPath: [],
+      }],
+    }));
+    const summary = summarizeFigureCandidates(rows, {
+      appliedTools: [
+        { toolName: 'set_figure_alt_text', outcome: 'rejected', details: 'figure_stage_regressed_without_alt_improvement(82)' },
+        { toolName: 'set_figure_alt_text', outcome: 'no_effect', details: JSON.stringify({ invariants: { targetReachable: false, targetRef: '99_0' } }) },
+      ],
+    });
+
+    expect(summary.reachableRawFigureMissingAltCount).toBe(1);
+    expect(summary.checkerVisibleFigureWithAltCount).toBe(0);
+    expect(summary.terminalFigureToolCount).toBe(2);
+    expect(summary.scoreShapeFigureRejectionCount).toBe(1);
+    expect(summary.invariantFigureFailureCount).toBe(1);
+    expect(summary.attemptedTargetRefs).toEqual(['99_0']);
+  });
 });

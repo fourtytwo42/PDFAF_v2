@@ -124,6 +124,7 @@ function usage(): string {
 Options:
   --manifest <path>   Edge-mix manifest path (default: ${DEFAULT_MANIFEST})
   --out <dir>         Output run directory (default: ${DEFAULT_OUT_ROOT}/run-stage49-baseline-<date>-r1)
+  --file <id>         Limit run to a publication id or manifest id; repeatable
   --write-pdfs        Write remediated PDFs into output dir
   --help              Show this help`;
 }
@@ -510,10 +511,12 @@ async function main(): Promise<void> {
   let manifestPath = DEFAULT_MANIFEST;
   let outDir = todayRunDir();
   let writePdfs = false;
+  const targetIds = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--manifest') manifestPath = args[++i] ?? '';
     else if (arg === '--out') outDir = args[++i] ?? '';
+    else if (arg === '--file') targetIds.add(args[++i] ?? '');
     else if (arg === '--write-pdfs') writePdfs = true;
     else if (arg === '--help' || arg === '-h') {
       console.log(usage());
@@ -524,7 +527,15 @@ async function main(): Promise<void> {
   }
   if (!manifestPath || !outDir) throw new Error(usage());
   await mkdir(outDir, { recursive: true });
-  const rows = await loadEdgeMixManifest(manifestPath);
+  const manifestRows = await loadEdgeMixManifest(manifestPath);
+  const rows = targetIds.size > 0
+    ? manifestRows.filter(row => targetIds.has(row.publicationId) || targetIds.has(row.id))
+    : manifestRows;
+  if (targetIds.size > 0) {
+    const found = new Set(rows.flatMap(row => [row.publicationId, row.id]));
+    const missing = [...targetIds].filter(id => !found.has(id));
+    if (missing.length > 0) throw new Error(`Manifest target(s) not found: ${missing.join(', ')}`);
+  }
   const results: EdgeMixBenchmarkRow[] = [];
   for (const row of rows) {
     const result = await runRow(row, writePdfs, outDir);

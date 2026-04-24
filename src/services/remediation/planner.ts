@@ -321,6 +321,13 @@ function isFigureRole(role: string | undefined): boolean {
   return (role ?? '').replace(/^\//, '').toLowerCase() === 'figure';
 }
 
+function deterministicFigureAltPlaceholder(target: { page?: number | null }): string {
+  const page = typeof target.page === 'number' && Number.isFinite(target.page)
+    ? Math.max(1, Math.floor(target.page) + 1)
+    : 1;
+  return `Illustration (page ${page})`;
+}
+
 function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
   if (snapshot.checkerFigureTargets && snapshot.checkerFigureTargets.length > 0) {
     return snapshot.checkerFigureTargets.some(target =>
@@ -1556,7 +1563,7 @@ export function buildDefaultParams(
           snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && isFigureRole(f.role)),
         );
       const target = checkerCandidates[0] ?? fallbackCandidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
     }
     case 'create_heading_from_candidate': {
       const candidate = stage24ZeroHeadingBootstrapEnabled()
@@ -1638,7 +1645,7 @@ export function buildDefaultParams(
         || (a.structRef ?? '').localeCompare(b.structRef ?? '')
       );
       const target = candidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: 'Image' } : {};
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
     }
     case 'canonicalize_figure_alt_ownership':
     case 'normalize_nested_figure_containers': {
