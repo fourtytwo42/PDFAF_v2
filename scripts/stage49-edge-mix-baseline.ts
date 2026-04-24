@@ -14,6 +14,7 @@ import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js
 import { analyzePdf } from '../src/services/pdfAnalyzer.js';
 import { remediatePdf } from '../src/services/remediation/orchestrator.js';
 import type { AnalysisResult, AppliedRemediationTool } from '../src/types.js';
+import { applyFinalHiddenHeadingParity, type Stage52bHiddenHeadingParityAdjustment } from './stage52b-hidden-heading-parity.js';
 
 type EdgeMixResidualFamily =
   | 'figure_alt_tail'
@@ -92,6 +93,7 @@ export interface EdgeMixBenchmarkRow {
   analysisBeforeMs: number | null;
   analysisAfterMs: number | null;
   totalPipelineMs: number | null;
+  finalAdjustments?: Stage52bHiddenHeadingParityAdjustment[];
   error?: string;
 }
 
@@ -457,7 +459,7 @@ async function runRow(row: EdgeMixManifestRow, writePdfs: boolean, outDir: strin
     }
 
     const appliedTools = remediation.remediation.appliedTools.map(normalizeTool);
-    return {
+    return applyFinalHiddenHeadingParity({
       ...baseFields,
       beforeScore: analyzed.result.score,
       beforeGrade: analyzed.result.grade,
@@ -476,7 +478,7 @@ async function runRow(row: EdgeMixManifestRow, writePdfs: boolean, outDir: strin
       analysisBeforeMs,
       analysisAfterMs,
       totalPipelineMs: Math.round(performance.now() - pipelineStart),
-    };
+    });
   } catch (error) {
     return {
       ...baseFields,

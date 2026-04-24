@@ -23,6 +23,7 @@
     "benchmark:figure-diagnostic": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage50-figure-residual-diagnostic.ts",
     "benchmark:stage50-isolation": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage51-stage50-acceptance-isolation.ts",
     "benchmark:heading-tail": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage52a-heading-tail-diagnostic.ts",
+    "benchmark:hidden-heading-parity": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage52b-hidden-heading-parity.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
