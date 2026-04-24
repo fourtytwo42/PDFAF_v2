@@ -1,0 +1,134 @@
+{
+  "name": "from_sibling_pdfaf_v1_edge_mix",
+  "createdAt": "2026-04-24",
+  "sourceRepository": "/home/hendo420/pdfaf",
+  "sourcePolicy": "Original cached v1 PDFs from ICJIA-PDFs/backups/server-cache, selected from v1 manifests by score, cohort, and blocker metadata. v1 remediated artifacts were intentionally avoided for this mix.",
+  "purpose": "Broaden v2 regression/fixer coverage with a compact mixture of v1 edge cases before resuming D/F-tail fixer work.",
+  "selectionNotes": [
+    "Includes severe F rows, D/C near-pass rows, very long reports, short two-page fact sheets, table-heavy reports, font/link/annotation debt, figure/alt debt, heading/structure debt, and manual/scanned-tail candidates.",
+    "Scores and blocker families below are v1 manifest metadata, not fresh v2 grading.",
+    "PDF files are local test inputs and should not be pasted into logs or committed unless explicitly approved as source assets."
+  ],
+  "rows": [
+    {
+      "publicationId": "4751",
+      "title": "A Content Analysis of Illinois School Bullying Policies",
+      "localFile": "figure_alt/4751-bullying-policy-report.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/Bullying Policy Report_Final_upd2025-250422T16330229.pdf",
+      "v1Score": 30,
+      "v1Grade": "F",
+      "pageCount": 14,
+      "problemMix": ["figure_alt", "table", "font", "link_annotation", "metadata"]
+    },
+    {
+      "publicationId": "4627",
+      "title": "FY2015 Freedom from Drones Annual report",
+      "localFile": "table_font_link/4627-drone-report-2015.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/drone/Drone_Report_2015.pdf",
+      "v1Score": 30,
+      "v1Grade": "F",
+      "pageCount": 1,
+      "problemMix": ["single_page", "table", "figure_alt", "font", "heading_structure"]
+    },
+    {
+      "publicationId": "4720",
+      "title": "SEED: A Diversion Program for Young Adults, An Alternative to Incarceration",
+      "localFile": "structure_heading/4720-seed-diversion-brief.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/PDF brief-231021T16005363.pdf",
+      "v1Score": 30,
+      "v1Grade": "F",
+      "pageCount": 6,
+      "problemMix": ["heading_structure", "logical_structure", "link_annotation", "metadata"]
+    },
+    {
+      "publicationId": "4122",
+      "title": "Criminal justice system The pretrial process",
+      "localFile": "structure_heading/4122-pretrial-process-get-the-facts.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/GetTheFacts/GTF_Pretrial_process_092011.pdf",
+      "v1Score": 31,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": ["short_fact_sheet", "figure_alt", "heading_structure", "logical_structure", "link_annotation"]
+    },
+    {
+      "publicationId": "4145",
+      "title": "Justice Assistance Grant Planning Materials Illinois crime and criminal justice trends 1997-2007",
+      "localFile": "table_font_link/4145-crime-trends-1997-2007.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/Web Edition CRIME TRENDS 032509.pdf",
+      "v1Score": 30,
+      "v1Grade": "F",
+      "pageCount": 40,
+      "problemMix": ["font", "link_annotation", "heading_structure", "longish_report", "metadata"]
+    },
+    {
+      "publicationId": "4139",
+      "title": "Examining at-risk and delinquent girls in Illinois",
+      "localFile": "long_report/4139-at-risk-delinquent-girls.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/Examining at-risk and delinquent girls in Illinois.pdf",
+      "v1Score": 30,
+      "v1Grade": "F",
+      "pageCount": 94,
+      "problemMix": ["long_report", "figure_alt", "font", "link_annotation", "heading_structure"]
+    },
+    {
+      "publicationId": "4567",
+      "title": "Police-Led Referrals to Treatment for Substance Use Disorders in Rural Illinois",
+      "localFile": "long_report/4567-safe-passage-report.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/articles/Safe_Passage_Report_100217.pdf",
+      "v1Score": 30,
+      "v1Grade": "F",
+      "pageCount": 39,
+      "problemMix": ["long_report", "table", "figure_alt", "font", "link_annotation"]
+    },
+    {
+      "publicationId": "4178",
+      "title": "Victim and Household Characteristics Reporting Violence to the Police Illinois Crime Victimization Survey 2002 Data Analysis",
+      "localFile": "table_font_link/4178-crime-victimization-survey-2002.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/Illinois Crime Victimization Survey 2002 Data Analysis.pdf",
+      "v1Score": 31,
+      "v1Grade": "F",
+      "pageCount": 32,
+      "problemMix": ["table", "font", "link_annotation", "longish_report", "metadata"]
+    },
+    {
+      "publicationId": "4215",
+      "title": "Juvenile Justice System and Risk Factor Data 2008 Annual Report",
+      "localFile": "long_report/4215-juvenile-justice-data-2008.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/JJSRF_Data_2008_Annual_Rpt_March_2011.pdf",
+      "v1Score": 31,
+      "v1Grade": "F",
+      "pageCount": 245,
+      "problemMix": ["very_long_report", "table", "font", "link_annotation", "runtime_tail"]
+    },
+    {
+      "publicationId": "4683",
+      "title": "Illinois Higher Education in Prison Task Force 2022 Report",
+      "localFile": "long_report/4683-higher-education-prison-task-force.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/HEP Task Force Report 10-20-22-221020T18252759.pdf",
+      "v1Score": 32,
+      "v1Grade": "F",
+      "pageCount": 80,
+      "problemMix": ["long_report", "table", "figure_alt", "font", "protected_regression_reference"]
+    },
+    {
+      "publicationId": "3921",
+      "title": "Enhancing Local Juvenile Justice Systems in Illinois Evaluation Manual",
+      "localFile": "near_pass_manual/3921-juvenile-justice-eval-manual.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/Juvenile_Justice_System_Eval_Manual_07_2001.pdf",
+      "v1Score": 38,
+      "v1Grade": "F",
+      "pageCount": 55,
+      "problemMix": ["manual_tail", "table", "font", "link_annotation", "figure_alt"]
+    },
+    {
+      "publicationId": "3788",
+      "title": "Understanding and addressing female delinquency in Illinois",
+      "localFile": "near_pass_manual/3788-female-delinquency-bulletin.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/ResBdelinq girls.pdf",
+      "v1Score": 70,
+      "v1Grade": "C",
+      "pageCount": 12,
+      "problemMix": ["near_pass", "logical_structure", "font"]
+    }
+  ]
+}
