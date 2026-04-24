@@ -26,6 +26,7 @@
     "benchmark:hidden-heading-parity": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage52b-hidden-heading-parity.ts",
     "benchmark:edge-mix-volatility": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage53-edge-mix-volatility.ts",
     "benchmark:edge-mix-replay": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage54a-edge-mix-replay.ts",
+    "benchmark:edge-mix-replay54c": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage54c-instrumented-replay-summary.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
