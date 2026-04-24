@@ -18,6 +18,7 @@
     "benchmark:gate": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage41-benchmark-gate.ts",
     "benchmark:runtime-isolation": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage46-runtime-regression-isolation.ts",
     "benchmark:teams-parity": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage47-teams-parity-diagnostic.ts",
+    "benchmark:df-tail": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage48-df-tail-diagnostic.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
