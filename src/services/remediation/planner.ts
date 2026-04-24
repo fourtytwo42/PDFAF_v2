@@ -489,6 +489,7 @@ export function deriveFailureDisposition(
 export type Stage43TableFailureClass =
   | 'rowless_dense_table'
   | 'direct_cells_under_table'
+  | 'strongly_irregular_rows'
   | 'missing_headers_only'
   | 'layout_table_candidate'
   | 'not_stage43_table_target';
@@ -507,6 +508,18 @@ export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis
   }
   if (scoredTables.some(table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4)) {
     return 'rowless_dense_table';
+  }
+  if (
+    tableFailing &&
+    scoredTables.some(table =>
+      table.hasHeaders &&
+      (table.cellsMisplacedCount ?? 0) === 0 &&
+      (table.rowCount ?? 0) > 1 &&
+      (table.irregularRows ?? 0) >= 2 &&
+      (table.dominantColumnCount ?? 0) >= 2,
+    )
+  ) {
+    return 'strongly_irregular_rows';
   }
   if (scoredTables.some(table => !table.hasHeaders && table.totalCells >= 4)) {
     return 'missing_headers_only';
@@ -1690,6 +1703,13 @@ export function buildDefaultParams(
         .filter(table => {
           if (tableClass === 'direct_cells_under_table') return (table.cellsMisplacedCount ?? 0) > 0 || table.hasHeaders || table.totalCells >= 4;
           if (tableClass === 'rowless_dense_table') return (table.rowCount ?? 0) <= 1 && table.totalCells >= 4;
+          if (tableClass === 'strongly_irregular_rows') {
+            return table.hasHeaders
+              && (table.cellsMisplacedCount ?? 0) === 0
+              && (table.rowCount ?? 0) > 1
+              && (table.irregularRows ?? 0) >= 2
+              && (table.dominantColumnCount ?? 0) >= 2;
+          }
           if (tableClass === 'missing_headers_only') return !table.hasHeaders && table.totalCells >= 4;
           if (tableClass === 'layout_table_candidate') return table.totalCells <= 2 && !table.hasHeaders;
           return false;
@@ -1697,9 +1717,18 @@ export function buildDefaultParams(
         .sort((a, b) =>
           Number((b.cellsMisplacedCount ?? 0) > 0) - Number((a.cellsMisplacedCount ?? 0) > 0)
           || Number((b.rowCount ?? 0) <= 1 && b.totalCells >= 4) - Number((a.rowCount ?? 0) <= 1 && a.totalCells >= 4)
+          || (b.irregularRows ?? 0) - (a.irregularRows ?? 0)
           || a.page - b.page
           || (a.structRef ?? '').localeCompare(b.structRef ?? '')
         )[0];
+      if (tableClass === 'strongly_irregular_rows') {
+        return {
+          dominantColumnCount: 0,
+          maxTablesPerRun: 2,
+          maxSyntheticCells: 80,
+          tableFailureClass: tableClass,
+        };
+      }
       return target?.structRef
         ? {
           structRef: target.structRef,

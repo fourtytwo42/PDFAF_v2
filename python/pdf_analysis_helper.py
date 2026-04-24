@@ -2119,6 +2119,37 @@ def _count_tr_row_cells(tr_elem) -> int:
     return n
 
 
+def _append_empty_table_cell(tr_elem, pdf: pikepdf.Pdf, role: str = "TD") -> bool:
+    """Append an empty TH/TD StructElem to make a row's structural column count explicit."""
+    if not isinstance(tr_elem, pikepdf.Dictionary):
+        return False
+    role_name = "TH" if str(role).upper() == "TH" else "TD"
+    try:
+        empty_cell = pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name("/StructElem"),
+                S=pikepdf.Name(f"/{role_name}"),
+                P=tr_elem,
+            )
+        )
+    except Exception:
+        return False
+    try:
+        k = tr_elem.get("/K")
+    except Exception:
+        k = None
+    try:
+        if k is None:
+            tr_elem["/K"] = pikepdf.Array([empty_cell])
+        elif isinstance(k, pikepdf.Array):
+            k.append(empty_cell)
+        else:
+            tr_elem["/K"] = pikepdf.Array([k, empty_cell])
+        return True
+    except Exception:
+        return False
+
+
 def _tr_cell_span_max(tr_elem) -> tuple[int, int]:
     """Max /RowSpan and /ColSpan on TH/TD direct children of TR (defaults 1)."""
     max_rs, max_cs = 1, 1
@@ -5304,6 +5335,55 @@ def _wrap_direct_table_cells_into_rows(parent_elem, pdf: pikepdf.Pdf, column_cou
     return changed
 
 
+def _normalize_strongly_irregular_table_rows(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Pad short TR rows with empty structural TD cells when a dominant column count is clear.
+
+    This is intentionally narrow: it only applies to already-rowed tables with no direct-cell
+    violations. It does not infer semantics; it makes the existing row grid explicit for
+    checker-visible regularity.
+    """
+    audit = _audit_table_structure(table_elem)
+    if int(audit.get("cellsMisplacedCount") or 0) > 0:
+        return False
+    dominant = int(params.get("dominantColumnCount") or audit.get("dominantColumnCount") or 0)
+    row_counts = list(audit.get("rowCellCounts") or [])
+    if dominant < 2 or len(row_counts) < 2:
+        return False
+    irregular_rows = int(audit.get("irregularRows") or 0)
+    if irregular_rows < 2:
+        return False
+    try:
+        max_synthetic = max(1, min(80, int(params.get("maxSyntheticCells") or 48)))
+    except Exception:
+        max_synthetic = 48
+    synthetic_count = 0
+    changed = False
+
+    def scan_section(section) -> None:
+        nonlocal synthetic_count, changed
+        for ch in _direct_role_children(section):
+            tag = (get_name(ch) or "").lstrip("/").upper()
+            if tag in ("THEAD", "TBODY", "TFOOT"):
+                scan_section(ch)
+                continue
+            if tag != "TR":
+                continue
+            current = _count_tr_row_cells(ch)
+            if current <= 0 or current >= dominant:
+                continue
+            missing = dominant - current
+            if synthetic_count + missing > max_synthetic:
+                continue
+            for _ in range(missing):
+                if _append_empty_table_cell(ch, pdf, "TD"):
+                    synthetic_count += 1
+                    changed = True
+
+    scan_section(table_elem)
+    return changed
+
+
 def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
     audit_before = _audit_table_structure(table_elem)
     direct_cells = int(audit_before.get("directCellUnderTableCount") or audit_before.get("cellsMisplacedCount") or 0)
@@ -5327,6 +5407,10 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
         if _promote_first_row_td_to_th(table_elem):
             changed = True
 
+    if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
+        if _normalize_strongly_irregular_table_rows(table_elem, pdf, params):
+            changed = True
+
     return changed
 
 
@@ -5348,7 +5432,21 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
         if isinstance(target, pikepdf.Dictionary):
             targets = [target]
     else:
-        targets = list(_iter_table_struct_elems(pdf))[:max_tables]
+        targets = list(_iter_table_struct_elems(pdf))
+        if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
+            def strong_key(table) -> int:
+                try:
+                    audit = _audit_table_structure(table)
+                    if int(audit.get("cellsMisplacedCount") or 0) > 0:
+                        return -1
+                    if int(audit.get("dominantColumnCount") or 0) < 2:
+                        return -1
+                    return int(audit.get("irregularRows") or 0)
+                except Exception:
+                    return -1
+            targets = [table for table in targets if strong_key(table) >= 2]
+            targets.sort(key=strong_key, reverse=True)
+        targets = targets[:max_tables]
 
     for table in targets:
         if not isinstance(table, pikepdf.Dictionary):
@@ -7094,6 +7192,8 @@ def _annotation_invariant_stats(pdf: pikepdf.Pdf) -> dict:
 def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> dict:
     direct_cells = 0
     header_cells = 0
+    irregular_rows = 0
+    strongly_irregular_tables = 0
     table_tree_valid = False
     target_resolved = False
     target_role = None
@@ -7112,6 +7212,10 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
         audit = _audit_table_structure(table)
         direct_cells += int(audit.get("cellsMisplacedCount") or 0)
         header_cells += th_count
+        table_irregular = int(audit.get("irregularRows") or 0)
+        irregular_rows += table_irregular
+        if table_irregular >= 2:
+            strongly_irregular_tables += 1
     table_tree_valid = direct_cells == 0 and (target_resolved if target_ref else True)
     return {
         "targetRef": target_ref if target_ref else None,
@@ -7119,6 +7223,8 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
         "resolvedRole": target_role,
         "directCellsUnderTable": direct_cells,
         "headerCellCount": header_cells,
+        "irregularRows": irregular_rows,
+        "stronglyIrregularTableCount": strongly_irregular_tables,
         "tableTreeValid": table_tree_valid,
     }
 
@@ -7323,6 +7429,10 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         "directCellsUnderTableAfter": after.get("directCellsUnderTable", 0),
         "headerCellCountBefore": before.get("headerCellCount", 0),
         "headerCellCountAfter": after.get("headerCellCount", 0),
+        "irregularRowsBefore": before.get("irregularRows", 0),
+        "irregularRowsAfter": after.get("irregularRows", 0),
+        "stronglyIrregularTableCountBefore": before.get("stronglyIrregularTableCount", 0),
+        "stronglyIrregularTableCountAfter": after.get("stronglyIrregularTableCount", 0),
         "tableTreeValidAfter": after.get("tableTreeValid", False),
     }
     if not mutated:
@@ -7334,7 +7444,8 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
     if (after.get("directCellsUnderTable", 0) or 0) > 0 and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
         return "no_effect", "direct_cells_under_table_remain", invariants
     if (after.get("headerCellCount", 0) or 0) <= (before.get("headerCellCount", 0) or 0) and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
-        return "no_effect", "headers_not_created", invariants
+        if (after.get("irregularRows", 0) or 0) >= (before.get("irregularRows", 0) or 0):
+            return "no_effect", "headers_not_created", invariants
     if not invariants.get("tableTreeValidAfter"):
         return "no_effect", "table_tree_still_invalid", invariants
     return "applied", note, invariants
@@ -7437,6 +7548,8 @@ def _stage36_structural_benefits(op: str, outcome: str, before: dict | None, inv
         benefits["tableValidityImproved"] = (
             after_direct < before_direct
             or after_headers > before_headers
+            or int(invariants.get("irregularRowsAfter") or 0) < int(before.get("irregularRowsAfter") or before.get("irregularRows") or 0)
+            or int(invariants.get("stronglyIrregularTableCountAfter") or 0) < int(before.get("stronglyIrregularTableCountAfter") or before.get("stronglyIrregularTableCount") or 0)
             or bool(invariants.get("tableTreeValidAfter"))
         )
 

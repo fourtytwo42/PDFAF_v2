@@ -2175,6 +2175,21 @@ describe('planForRemediation', () => {
     })).toBe('missing_headers_only');
     expect(classifyStage43TableFailure({
       ...base,
+      tables: [{
+        hasHeaders: true,
+        headerCount: 2,
+        totalCells: 20,
+        page: 0,
+        rowCount: 5,
+        cellsMisplacedCount: 0,
+        irregularRows: 3,
+        dominantColumnCount: 4,
+        rowCellCounts: [2, 4, 4, 4, 4],
+        structRef: '1_0',
+      }],
+    }, withCategoryScores(score(base, META), { table_markup: 35 }))).toBe('strongly_irregular_rows');
+    expect(classifyStage43TableFailure({
+      ...base,
       tables: [{ hasHeaders: true, headerCount: 1, totalCells: 8, page: 0, rowCount: 2, cellsMisplacedCount: 0, structRef: '1_0' }],
     })).toBe('not_stage43_table_target');
   });
@@ -2417,6 +2432,36 @@ describe('planForRemediation', () => {
       tableFailureClass: 'missing_headers_only',
     });
     expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({ structRef: '21_0' });
+  });
+
+  it('targets strongly irregular dense tables with bounded normalization params', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 4,
+          totalCells: 20,
+          page: 0,
+          structRef: '22_0',
+          rowCount: 5,
+          cellsMisplacedCount: 0,
+          irregularRows: 3,
+          dominantColumnCount: 4,
+          rowCellCounts: [2, 4, 4, 3, 4],
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), { table_markup: 35 });
+    expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({
+      dominantColumnCount: 0,
+      maxTablesPerRun: 2,
+      maxSyntheticCells: 80,
+      tableFailureClass: 'strongly_irregular_rows',
+    });
   });
 
   it('allows synthesize_basic_structure_from_layout for native_tagged when structureTreeDepth <= 1 and reading_order is failing', () => {
