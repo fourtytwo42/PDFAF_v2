@@ -31,6 +31,7 @@
     "benchmark:analysis-repeat": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage56b-analysis-repeat.ts",
     "benchmark:structural-boundary": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage58-structural-boundary-diagnostic.ts",
     "benchmark:volatility-decision": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage60-volatility-decision.ts",
+    "benchmark:heading-scheduling": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage61-heading-scheduling-diagnostic.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
