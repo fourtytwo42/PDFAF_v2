@@ -13,11 +13,13 @@ import {
   protectedBaselineRunStateUnsafeReason,
   protectedBaselineRunStateIsSafe,
   protectedBaselineStateIsSafe,
+  protectedRouteCategoryRegressionDecision,
   protectedMetadataTopupDecision,
   protectedReadingOrderTopupDecision,
   protectedStrongAltPreservationViolation,
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
+  shouldReplaceProtectedSafeCheckpoint,
   shouldRecordSameStateNoGainRuntimeAttempt,
   shouldRejectStageResult,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -1635,6 +1637,47 @@ describe('protectedBaselineRunCheckpointDecision', () => {
   });
 });
 
+describe('shouldReplaceProtectedSafeCheckpoint', () => {
+  it('keeps the earliest safe checkpoint when scores tie', () => {
+    expect(shouldReplaceProtectedSafeCheckpoint({
+      baseline: { score: 98, categories: { heading_structure: 100 } },
+      current: {
+        analysis: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 100 } }),
+        appliedToolCount: 4,
+      },
+      candidate: {
+        analysis: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 100 } }),
+        appliedToolCount: 7,
+      },
+    })).toBe(false);
+  });
+
+  it('replaces a checkpoint when the candidate has a higher safe score', () => {
+    expect(shouldReplaceProtectedSafeCheckpoint({
+      baseline: { score: 98, categories: { heading_structure: 100 } },
+      current: {
+        analysis: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 100 } }),
+        appliedToolCount: 4,
+      },
+      candidate: {
+        analysis: makeAnalysis({ score: 99, confidence: 'medium', categories: { heading_structure: 100 } }),
+        appliedToolCount: 7,
+      },
+    })).toBe(true);
+  });
+
+  it('does not store an unsafe candidate', () => {
+    expect(shouldReplaceProtectedSafeCheckpoint({
+      baseline: { score: 98, categories: { heading_structure: 100 } },
+      current: null,
+      candidate: {
+        analysis: makeAnalysis({ score: 99, confidence: 'medium', categories: { heading_structure: 86 } }),
+        appliedToolCount: 7,
+      },
+    })).toBe(false);
+  });
+});
+
 describe('protectedBaselineReanalysisDecision', () => {
   it('commits final when protected final reanalysis is floor-safe', () => {
     expect(protectedBaselineReanalysisDecision({
@@ -1692,6 +1735,45 @@ describe('protectedBaselineReanalysisDecision', () => {
       finalReanalysis: makeAnalysis({ score: 70, confidence: 'medium', categories: { reading_order: 100 } }),
       bestReanalysis: makeAnalysis({ score: 75, confidence: 'medium', categories: { reading_order: 100 } }),
     })).toBe('none');
+  });
+});
+
+describe('protectedRouteCategoryRegressionDecision', () => {
+  it('rejects high-risk orphan remap when a strong protected category regresses', () => {
+    const result = protectedRouteCategoryRegressionDecision({
+      baseline: { score: 98, categories: { heading_structure: 100 } },
+      before: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 100 } }),
+      after: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 86 } }),
+      toolName: 'remap_orphan_mcids_as_artifacts',
+    });
+    expect(result.reject).toBe(true);
+    expect(result.reason).toBe('protected_route_category_regressed(heading_structure:100:100->86)');
+  });
+
+  it('does not reject score-improving orphan remap when protected categories stay safe', () => {
+    expect(protectedRouteCategoryRegressionDecision({
+      baseline: { score: 98, categories: { heading_structure: 100, reading_order: 100 } },
+      before: makeAnalysis({ score: 94, confidence: 'medium', categories: { heading_structure: 100, reading_order: 98 } }),
+      after: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 99, reading_order: 100 } }),
+      toolName: 'remap_orphan_mcids_as_artifacts',
+    }).reject).toBe(false);
+  });
+
+  it('does not apply without a protected baseline', () => {
+    expect(protectedRouteCategoryRegressionDecision({
+      before: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 100 } }),
+      after: makeAnalysis({ score: 98, confidence: 'medium', categories: { heading_structure: 86 } }),
+      toolName: 'remap_orphan_mcids_as_artifacts',
+    }).reject).toBe(false);
+  });
+
+  it('does not block non-risk tools that improve a targeted category', () => {
+    expect(protectedRouteCategoryRegressionDecision({
+      baseline: { score: 100, categories: { reading_order: 100, alt_text: 100 } },
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { reading_order: 100, alt_text: 20 } }),
+      after: makeAnalysis({ score: 93, confidence: 'medium', categories: { reading_order: 80, alt_text: 100 } }),
+      toolName: 'repair_alt_text_structure',
+    }).reject).toBe(false);
   });
 });
 

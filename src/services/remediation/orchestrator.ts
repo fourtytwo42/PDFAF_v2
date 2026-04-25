@@ -833,6 +833,27 @@ export function protectedBaselineRunCheckpointDecision(input: {
   return 'none';
 }
 
+export function shouldReplaceProtectedSafeCheckpoint(input: {
+  baseline?: ProtectedBaselineFloor;
+  current?: { analysis: AnalysisResult; appliedToolCount?: number; sequence?: number } | null;
+  candidate: { analysis: AnalysisResult; appliedToolCount?: number; sequence?: number };
+}): boolean {
+  if (!protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.candidate.analysis })) {
+    return false;
+  }
+  const current = input.current ?? null;
+  if (!current) return true;
+  if (input.candidate.analysis.score > current.analysis.score) return true;
+  if (input.candidate.analysis.score < current.analysis.score) return false;
+  const candidateApplied = input.candidate.appliedToolCount ?? Number.POSITIVE_INFINITY;
+  const currentApplied = current.appliedToolCount ?? Number.POSITIVE_INFINITY;
+  if (candidateApplied < currentApplied) return true;
+  if (candidateApplied > currentApplied) return false;
+  const candidateSequence = input.candidate.sequence ?? Number.POSITIVE_INFINITY;
+  const currentSequence = current.sequence ?? Number.POSITIVE_INFINITY;
+  return candidateSequence < currentSequence;
+}
+
 export function protectedBaselineReanalysisDecision(input: {
   baseline?: ProtectedBaselineFloor;
   finalReanalysis: AnalysisResult;
@@ -894,6 +915,54 @@ function protectedStrongCategoryRegression(input: {
     }
   }
   return null;
+}
+
+const PROTECTED_ROUTE_HIGH_RISK_TOOLS = new Set([
+  'remap_orphan_mcids_as_artifacts',
+  'mark_untagged_content_as_artifact',
+  'artifact_repeating_page_furniture',
+]);
+
+export function protectedRouteCategoryRegressionDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  toolName: string;
+}): { reject: boolean; reason: string | null; details?: string } {
+  const baseline = input.baseline;
+  if (!baseline?.categories || !PROTECTED_ROUTE_HIGH_RISK_TOOLS.has(input.toolName)) {
+    return { reject: false, reason: null };
+  }
+  for (const [key, baselineScore] of Object.entries(baseline.categories) as Array<[CategoryKey, number]>) {
+    if (baselineScore == null) continue;
+    const requiredBaseline = key === 'alt_text' ? PROTECTED_RUN_ALT_CATEGORY_FLOOR : 90;
+    if (baselineScore < requiredBaseline) continue;
+    const beforeScore = categoryScore(input.before, key);
+    const afterScore = categoryScore(input.after, key);
+    if (beforeScore == null || afterScore == null) continue;
+    const floor = baselineScore - PROTECTED_BASELINE_FLOOR_TOLERANCE;
+    if (beforeScore >= floor && afterScore < floor) {
+      const reason = `protected_route_category_regressed(${key}:${baselineScore}:${beforeScore}->${afterScore})`;
+      return {
+        reject: true,
+        reason,
+        details: JSON.stringify({
+          outcome: 'rejected',
+          note: reason,
+          protectedBaselineScore: baseline.score,
+          protectedBeforeScore: input.before.score,
+          protectedCandidateScore: input.after.score,
+          protectedBaselineCategory: key,
+          protectedBaselineCategoryScore: baselineScore,
+          protectedBeforeCategoryScore: beforeScore,
+          protectedCandidateCategoryScore: afterScore,
+          protectedFloorReason: reason,
+          categoryDeltas: categoryDeltaDetails(input.before, input.after),
+        }),
+      };
+    }
+  }
+  return { reject: false, reason: null };
 }
 
 export function protectedStrongAltPreservationViolation(input: {
@@ -2240,6 +2309,45 @@ async function applyGuardedPostPass(args: {
       accepted: false,
     };
   }
+  const protectedRoute = protectedRouteCategoryRegressionDecision({
+    baseline: protectedBaseline,
+    before: currentAnalysis,
+    after: analyzed.result,
+    toolName,
+  });
+  if (protectedRoute.reject) {
+    appliedTools.push({
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: currentAnalysis.score,
+      delta: 0,
+      outcome: 'rejected',
+      details: enrichDetailsWithReplayState(protectedRoute.details ?? protectedRoute.reason ?? 'protected_route_category_regressed', {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: 'rejected',
+    });
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
   if (toolName === 'embed_local_font_substitutes') {
     const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
     const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
@@ -2561,9 +2669,7 @@ async function applyProtectedBaselineTransaction(args: {
     };
   } = {};
   const rememberBest = (reason: string): void => {
-    if (!protectedBaselineStateIsSafe({ baseline, analysis: txAnalysis })) return;
-    if (bestState.current && txAnalysis.score < bestState.current.analysis.score) return;
-    bestState.current = {
+    const candidate = {
       buffer: Buffer.from(txBuffer),
       analysis: txAnalysis,
       snapshot: txSnapshot,
@@ -2571,6 +2677,12 @@ async function applyProtectedBaselineTransaction(args: {
       txRowCount: txRows.length,
       reason,
     };
+    if (!shouldReplaceProtectedSafeCheckpoint({
+      baseline,
+      current: bestState.current,
+      candidate,
+    })) return;
+    bestState.current = candidate;
   };
 
   const runTxTool = async (tool: PlannedRemediationTool): Promise<boolean> => {
@@ -2611,14 +2723,33 @@ async function applyProtectedBaselineTransaction(args: {
       source: 'post_pass',
     };
     txRows.push(row);
+    const protectedRoute = protectedRouteCategoryRegressionDecision({
+      baseline,
+      before,
+      after: nextAnalysis,
+      toolName: tool.toolName,
+    });
+    if (effectiveOutcome === 'applied' && protectedRoute.reject) {
+      row.outcome = 'rejected';
+      row.scoreAfter = before.score;
+      row.delta = 0;
+      row.details = enrichDetailsWithReplayState(protectedRoute.details ?? protectedRoute.reason ?? 'protected_route_category_regressed', {
+        beforeAnalysis: before,
+        beforeSnapshot: txSnapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+        params: tool.params,
+      });
+    }
     runtimeSummary?.toolTimings.push({
       toolName: tool.toolName,
       stage: 13,
       round,
       source: 'post_pass',
       durationMs,
-      outcome: effectiveOutcome,
+      outcome: row.outcome,
     });
+    if (row.outcome !== 'applied') return false;
     if (effectiveOutcome !== 'applied') return false;
     txBuffer = nextBuffer;
     txAnalysis = nextAnalysis;
@@ -4043,15 +4174,19 @@ export async function remediatePdf(
   const sameStateNoGainRuntimeAttempts = new Set<string>();
   const protectedRunBestState: { current?: RemediationState & { appliedToolCount: number; reason: string } } = {};
   const rememberProtectedRunBestState = (reason: string): void => {
-    if (!protectedBaselineRunStateIsSafe({ baseline: options?.protectedBaseline, analysis: currentAnalysis })) return;
-    if (protectedRunBestState.current && currentAnalysis.score < protectedRunBestState.current.analysis.score) return;
-    protectedRunBestState.current = {
+    const candidate = {
       buffer: Buffer.from(currentBuffer),
       analysis: currentAnalysis,
       snapshot: currentSnapshot,
       appliedToolCount: appliedTools.length,
       reason,
     };
+    if (!shouldReplaceProtectedSafeCheckpoint({
+      baseline: options?.protectedBaseline,
+      current: protectedRunBestState.current,
+      candidate,
+    })) return;
+    protectedRunBestState.current = candidate;
   };
   rememberProtectedRunBestState('initial_state');
   let planningSummary: PlanningSummary | undefined;
