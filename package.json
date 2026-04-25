@@ -43,6 +43,7 @@
     "benchmark:end-gate": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage71-end-gate-report.ts",
     "benchmark:ab-feasibility": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage72-edge-mix-ab-feasibility.ts",
     "benchmark:stage73-figure-cleanup": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage73-figure-alt-cleanup-diagnostic.ts",
+    "benchmark:end-gate-revisit": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage74-end-gate-revisit.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",

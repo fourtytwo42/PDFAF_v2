@@ -17,12 +17,16 @@ The default rule is simple: evidence first, one narrow general change, target va
 - Stage 72 report: `Output/from_sibling_pdfaf_v1_edge_mix_2/stage72-edge-mix-ab-feasibility-2026-04-25-r1/stage72-edge-mix-ab-feasibility.md`
 - Stage 73 report: `Output/from_sibling_pdfaf_v1_edge_mix/stage73-figure-alt-cleanup-diagnostic-2026-04-25-r1/stage73-figure-alt-cleanup-diagnostic.md`
 - Stage 73 decision: `diagnostic_only_no_stable_ab_lift`
+- Stage 74 report: `Output/engine-v2-general-acceptance/stage74-end-gate-revisit-2026-04-25-r1/stage74-end-gate-revisit.md`
+- Stage 74 decision: `accept_engine_v2_general_checkpoint_with_documented_waivers`
 
 Stage 71 did not accept the engine because combined edge-mix A/B is `21/28 = 75%`, below the `80%` target. Legacy quality is strong and protected regressions are gone, but p95 remains documented debt.
 
 Stage 72 found that the `80%` edge-mix A/B target is not reachable using only stable non-parked rows. Only `v1-4145` was a stable A/B lift candidate; fixing it would have moved edge mix from `21/28` to `22/28`, still below the `23/28` target.
 
 Stage 73 tested that final stable candidate and did not find an accepted behavior change. The diagnostic confirmed safe role-map figure targets remain, but a bounded third-retag experiment left `v1-4145` at `78/C` with `alt_text=20`, so it was rejected/not kept. Under current deterministic structural guardrails, no stable non-parked edge-mix A/B lift remains.
+
+Stage 74 revisited the end gate and recommends accepting Engine v2 as a general checkpoint with documented waivers. There are no hard blockers: false-positive applied remains `0`, protected regressions remain `0`, and all unresolved rows are bucketed. The explicit waivers are `runtime_p95_wall`, `edge_mix_ab_shortfall`, `parked_analyzer_volatility`, and `manual_scanned_policy_debt`.
 
 ## Workflow
 
@@ -137,11 +141,11 @@ Reports under `Output/...` can be referenced by docs, but they remain generated 
 
 ## Current Branch Options
 
-### Option A: `end_gate_target_revisit`
+### Option A: `accept_with_waiver_checkpoint`
 
-Goal: update the acceptance decision now that the single-row stable A/B cleanup branch has been exhausted.
+Goal: formally mark the Engine v2 general checkpoint accepted with the Stage 74 waiver list.
 
-Use Stage 71, Stage 72, and Stage 73 evidence. The remaining blockers are policy/project decisions rather than an obvious next deterministic structural fixer.
+Use Stage 74 as the decision source of truth. This is the recommended next operational step.
 
 ### Option B: `p95_project`
 
@@ -149,30 +153,23 @@ Goal: close or materially reduce the Stage 69 `runtime_p95_wall` failure without
 
 Start from Stage 69, not Stage 70. Treat the Stage 70 high-alt repeated-figure-alt skip as rejected evidence. Only suppress repeated no-gain work when same-state proof exists.
 
-### Option C: `accept_with_waiver`
+### Option C: `analyzer_volatility_project`
 
-Goal: accept the current Engine v2 general checkpoint with explicit waivers.
+Goal: make parked analyzer-volatility rows eligible for future A/B improvements.
 
-Required waivers:
-
-- Stage 69 p95 gate failure.
-- Edge-mix combined A/B at `75%` instead of `80%`.
-- Parked analyzer volatility.
-- Manual/scanned policy debt.
-
-This is a policy decision, not an engineering fix.
+Start only if the Stage 74 waiver is not acceptable for the release target.
 
 ## Recommended Next Move
 
-Choose `end_gate_target_revisit`.
+Choose `accept_with_waiver_checkpoint`.
 
 Reason:
 
 - Legacy quality is already strong.
 - Protected regressions are gone.
 - False-positive applied is `0`.
-- Stage 73 exhausted the only stable non-parked edge-mix A/B lift candidate without material score/category improvement.
-- The remaining acceptance blockers are p95 debt, parked analyzer volatility, manual/scanned policy debt, and the edge-mix A/B target itself.
-- Further structural fixer work should wait until we explicitly choose a p95 project, analyzer-volatility project, or acceptance waiver/rebaseline path.
+- Stage 74 found no hard blockers and recommends `accept_engine_v2_general_checkpoint_with_documented_waivers`.
+- The waiver list is explicit and evidence-backed.
+- Further structural fixer work should wait until this checkpoint is formally tagged/released or a dedicated p95/analyzer project is opened.
 
 Do not pull a third v1 corpus until one of the current Stage 71 blockers is closed or explicitly waived.
