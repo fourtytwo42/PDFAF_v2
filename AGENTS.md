@@ -4,6 +4,7 @@
 - Do not include local verification artifacts in commits unless they are explicitly required source assets.
 - Keep PDF payloads and generated Base64 content out of logs, docs, and commits.
 - Before starting any local LLM instance or benchmark path that can spawn one, first check whether an existing LLM process or listener is already running, such as `llama-server` on the expected port. Reuse the existing instance when possible and do not start a second copy on the same machine unless explicitly required.
+- Use multiagent workflows where they materially speed up work, especially for read-only diagnostics, independent artifact comparisons, regression attribution, and review. Keep the lead agent responsible for stage decisions, integration, commits, and docs. Assign implementation agents explicit, non-overlapping file ownership; do not let multiple agents edit the same orchestrator/planner/scorer path in parallel. Prefer parallel agents for evidence gathering, then make one narrow integrated behavior change.
 
 # Stage Notes
 
