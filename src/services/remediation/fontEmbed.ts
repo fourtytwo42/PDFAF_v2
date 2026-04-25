@@ -4,7 +4,7 @@ import { writeFile, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { DocumentSnapshot } from '../../types.js';
+import type { AnalysisResult, DocumentSnapshot, ScoredCategory } from '../../types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,19 +43,41 @@ export function shouldTryUrwType1Embed(snapshot: DocumentSnapshot | null | undef
   );
 }
 
+function category(analysis: AnalysisResult | null | undefined, key: string): ScoredCategory | null {
+  return analysis?.categories.find(item => item.key === key) ?? null;
+}
+
+function hasTextExtractabilityFontRisk(analysis: AnalysisResult | null | undefined): boolean {
+  const text = category(analysis, 'text_extractability');
+  if (!text) return false;
+  if (text.score < 100) return true;
+  if (text.manualReviewRequired === true) return true;
+  return text.findings.some(finding => /font|unicode|encoding|ToUnicode|character encoding/i.test(finding.message));
+}
+
 /**
  * Structure-preserving local font substitution pass. Unlike Ghostscript, this does not rewrite
  * the whole PDF; it only embeds installed open-font substitutes for analyzer-visible encoding risk.
  * Set `PDFAF_LOCAL_FONT_SUBSTITUTION=0` to skip. Default on.
  */
-export function shouldTryLocalFontSubstitution(snapshot: DocumentSnapshot | null | undefined): boolean {
+export function shouldTryLocalFontSubstitution(
+  snapshot: DocumentSnapshot | null | undefined,
+  analysis?: AnalysisResult | null,
+): boolean {
   if (process.env['PDFAF_LOCAL_FONT_SUBSTITUTION']?.trim() === '0') return false;
   if (!snapshot || snapshot.pdfClass === 'scanned') return false;
   if ((snapshot.textCharCount ?? 0) <= 0) return false;
-  return snapshot.fonts.some(font =>
+  const hasRiskyRepairableFont = snapshot.fonts.some(font =>
     Boolean(font.encodingRisk) &&
-    (!font.isEmbedded || !font.hasUnicode)
+    (!font.isEmbedded || !font.hasUnicode),
   );
+  if (!hasRiskyRepairableFont) return false;
+  if (!analysis) return true;
+  if (!hasTextExtractabilityFontRisk(analysis)) return false;
+
+  const text = category(analysis, 'text_extractability');
+  const fontCategoryIsLimiting = text !== null && text.score <= 90;
+  return analysis.score < 98 || fontCategoryIsLimiting;
 }
 
 /**

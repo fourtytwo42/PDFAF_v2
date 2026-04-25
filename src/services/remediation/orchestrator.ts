@@ -1981,9 +1981,10 @@ async function applyGuardedPostPass(args: {
 
   const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix);
   const durationMs = performance.now() - started;
+  const localFontScoreLoss = toolName === 'embed_local_font_substitutes' && analyzed.result.score < currentAnalysis.score;
   if (
     analyzed.result.score < currentAnalysis.score
-    && !postPassCategoryBenefitAllowsSmallScoreRegression(toolName, currentAnalysis, analyzed.result)
+    && (localFontScoreLoss || !postPassCategoryBenefitAllowsSmallScoreRegression(toolName, currentAnalysis, analyzed.result))
   ) {
     appliedTools.push({
       toolName,
@@ -2059,10 +2060,16 @@ async function applyGuardedPostPass(args: {
     const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
     const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
     const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
+    const beforeText = categoryScore(currentAnalysis, 'text_extractability');
+    const afterText = categoryScore(analyzed.result, 'text_extractability');
+    const textCategoryImproved = beforeText !== null && afterText !== null && afterText > beforeText;
+    const scoreImproved = analyzed.result.score > currentAnalysis.score;
+    const noMaterialScoreBenefit = !scoreImproved;
     const invalidRewrite =
       analyzed.snapshot.pageCount !== currentSnapshot.pageCount ||
       textDropped > textDropLimit ||
       structureLost ||
+      noMaterialScoreBenefit ||
       !fontEvidenceImproved({
         beforeAnalysis: currentAnalysis,
         afterAnalysis: analyzed.result,
@@ -2079,7 +2086,7 @@ async function applyGuardedPostPass(args: {
         delta: 0,
         outcome: 'rejected',
         details: enrichDetailsWithReplayState(
-          `local_font_substitution_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost})`,
+          `local_font_substitution_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},scoreImproved:${scoreImproved},textCategoryImproved:${textCategoryImproved})`,
           {
             beforeAnalysis: currentAnalysis,
             beforeSnapshot: currentSnapshot,
@@ -3182,7 +3189,7 @@ async function applyIcjiaDocumentFinalization(args: {
     }
   }
 
-  if (shouldTryLocalFontSubstitution(currentSnapshot)) {
+  if (shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis)) {
     const localFonts = await runPythonMutationBatch(
       currentBuffer,
       [{ op: 'embed_local_font_substitutes', params: { maxWidthDrift: 0.12, heuristicMaxWidthDrift: 0.35 } }],
