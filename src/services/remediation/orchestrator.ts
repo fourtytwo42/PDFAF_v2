@@ -851,6 +851,34 @@ export function protectedBaselineReanalysisDecision(input: {
   return 'none';
 }
 
+export function protectedFinalReanalysisPolicyDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  final: AnalysisResult;
+  best?: { analysis: AnalysisResult; appliedToolCount?: number } | null;
+  appliedToolCount?: number;
+  env?: NodeJS.ProcessEnv;
+}): 'run' | 'skip_no_baseline' | 'skip_disabled' | 'skip_no_restore_candidate' {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) return 'skip_no_baseline';
+  const env = input.env ?? process.env;
+  const configured = env['PDFAF_PROTECTED_FINAL_REANALYSIS']?.trim();
+  if (configured === '0') return 'skip_disabled';
+  if (configured === '1') return 'run';
+
+  const best = input.best ?? null;
+  if (!best || !protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: best.analysis })) {
+    return 'skip_no_restore_candidate';
+  }
+
+  const finalSafe = protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.final });
+  const bestIsEarlierState =
+    best.appliedToolCount != null &&
+    input.appliedToolCount != null &&
+    best.appliedToolCount < input.appliedToolCount;
+  const bestHasHigherScore = best.analysis.score > input.final.score;
+  if (!finalSafe || bestIsEarlierState || bestHasHigherScore) return 'run';
+  return 'skip_no_restore_candidate';
+}
+
 function protectedStrongCategoryRegression(input: {
   baseline?: ProtectedBaselineFloor;
   after: AnalysisResult;
@@ -3668,7 +3696,7 @@ async function applyProtectedFinalReanalysisConfirmation(args: {
   }
 
   if (!restoredState) {
-    return confirmedState;
+    return args.state;
   }
 
   appliedTools.push({
@@ -4828,17 +4856,25 @@ export async function remediatePdf(
   }
 
   {
-    const confirmed = await applyProtectedFinalReanalysisConfirmation({
-      filename,
-      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
-      bestState: protectedRunBestState.current ?? null,
-      appliedTools,
-      protectedBaseline: options?.protectedBaseline,
+    const finalReanalysisPolicy = protectedFinalReanalysisPolicyDecision({
+      baseline: options?.protectedBaseline,
+      final: currentAnalysis,
+      best: protectedRunBestState.current ?? null,
+      appliedToolCount: appliedTools.length,
     });
-    currentBuffer = confirmed.buffer;
-    currentAnalysis = confirmed.analysis;
-    currentSnapshot = confirmed.snapshot;
+    if (finalReanalysisPolicy === 'run') {
+      const confirmed = await applyProtectedFinalReanalysisConfirmation({
+        filename,
+        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+        state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+        bestState: protectedRunBestState.current ?? null,
+        appliedTools,
+        protectedBaseline: options?.protectedBaseline,
+      });
+      currentBuffer = confirmed.buffer;
+      currentAnalysis = confirmed.analysis;
+      currentSnapshot = confirmed.snapshot;
+    }
   }
 
   const scoreDelta = currentAnalysis.score - before.score;

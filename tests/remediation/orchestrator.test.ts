@@ -8,6 +8,7 @@ import {
   parseMutationDetails,
   protectedBaselineFloorViolation,
   protectedBaselineReanalysisDecision,
+  protectedFinalReanalysisPolicyDecision,
   protectedBaselineRunCheckpointDecision,
   protectedBaselineRunStateUnsafeReason,
   protectedBaselineRunStateIsSafe,
@@ -1691,6 +1692,73 @@ describe('protectedBaselineReanalysisDecision', () => {
       finalReanalysis: makeAnalysis({ score: 70, confidence: 'medium', categories: { reading_order: 100 } }),
       bestReanalysis: makeAnalysis({ score: 75, confidence: 'medium', categories: { reading_order: 100 } }),
     })).toBe('none');
+  });
+});
+
+describe('protectedFinalReanalysisPolicyDecision', () => {
+  it('skips final reanalysis when no protected baseline is supplied', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      final: makeAnalysis({ score: 70, confidence: 'medium' }),
+      env: {},
+    })).toBe('skip_no_baseline');
+  });
+
+  it('can be disabled by environment configuration', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90 },
+      final: makeAnalysis({ score: 88, confidence: 'medium' }),
+      best: { analysis: makeAnalysis({ score: 90, confidence: 'medium' }), appliedToolCount: 1 },
+      appliedToolCount: 3,
+      env: { PDFAF_PROTECTED_FINAL_REANALYSIS: '0' },
+    })).toBe('skip_disabled');
+  });
+
+  it('can be forced by environment configuration', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90 },
+      final: makeAnalysis({ score: 90, confidence: 'medium' }),
+      env: { PDFAF_PROTECTED_FINAL_REANALYSIS: '1' },
+    })).toBe('run');
+  });
+
+  it('skips volatile final confirmation when no reanalysis-safe restore candidate exists', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90, categories: { reading_order: 100 } },
+      final: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100 } }),
+      best: { analysis: makeAnalysis({ score: 70, confidence: 'medium', categories: { reading_order: 100 } }), appliedToolCount: 1 },
+      appliedToolCount: 4,
+      env: {},
+    })).toBe('skip_no_restore_candidate');
+  });
+
+  it('runs when an earlier safe checkpoint can restore a later externally-unsafe final state', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90, categories: { reading_order: 100 } },
+      final: makeAnalysis({ score: 91, confidence: 'medium', categories: { reading_order: 100 } }),
+      best: { analysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100 } }), appliedToolCount: 2 },
+      appliedToolCount: 5,
+      env: {},
+    })).toBe('run');
+  });
+
+  it('runs when a safe checkpoint can restore a protected-category regression', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90, categories: { reading_order: 100 } },
+      final: makeAnalysis({ score: 91, confidence: 'medium', categories: { reading_order: 80 } }),
+      best: { analysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100 } }), appliedToolCount: 2 },
+      appliedToolCount: 5,
+      env: {},
+    })).toBe('run');
+  });
+
+  it('runs when the current final state is not floor-safe but a checkpoint is safe', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90, categories: { reading_order: 100 } },
+      final: makeAnalysis({ score: 70, confidence: 'medium', categories: { reading_order: 100 } }),
+      best: { analysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100 } }), appliedToolCount: 5 },
+      appliedToolCount: 5,
+      env: {},
+    })).toBe('run');
   });
 });
 
