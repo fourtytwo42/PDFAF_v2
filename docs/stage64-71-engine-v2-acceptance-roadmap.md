@@ -13,6 +13,15 @@ Current base when this roadmap was written:
 - Manual/scanned debt rows: `v1-3479`, `v1-3507`
 - Mixed/no-safe rows: `v1-4139`, `v1-4567`
 
+Current end-gate status after Stage 71:
+
+- Stage 71 report: `Output/engine-v2-general-acceptance/stage71-end-gate-2026-04-25-r1/stage71-end-gate-report.md`
+- Decision: `defer_acceptance_for_p95_project`
+- Legacy Stage 69 reference remains the best 50-file candidate: mean `91.48`, median `96`, grades `35 A / 9 B / 2 C / 2 D / 2 F`, attempts `814`, false-positive applied `0`, protected regressions `0`.
+- Stage 69 gate still fails `runtime_p95_wall`; Stage 70 runtime guard was tested and rejected/not kept because the full run still failed p95 and reintroduced protected regressions.
+- Edge-mix combined Stage 68 references are mean `85.96`, median `94`, grades `19 A / 2 B / 1 C / 2 D / 4 F`, false-positive applied `0`, A/B `21/28 = 75%`.
+- The end-gate does not pass because edge-mix A/B is below the `80%` target. P95 remains documented legacy gate debt, not accepted engine behavior debt from the latest structural fixers.
+
 ## End Gate: Engine v2 General Acceptance
 
 The end gate is `Engine v2 General Acceptance`.
@@ -214,9 +223,14 @@ Acceptance:
 
 ## Current North Star
 
-The immediate next stage is `Stage 64: Figure/Alt Recovery v5`.
+Stage 71 reached the end-gate report and deferred acceptance. The next branch must be chosen explicitly rather than continuing open-ended fixer work.
 
-The longer path is:
+Recommended branches:
+
+- `p95_project`: isolate runtime p95 with no score regressions, starting from the Stage 69 candidate and treating the Stage 70 guard as rejected evidence.
+- `edge_mix_ab_cleanup`: target only stable, non-parked edge-mix rows that can move combined A/B from `75%` to at least `80%` without touching analyzer-volatility or manual/scanned debt.
+- `accept_with_waiver`: accept the Engine v2 general checkpoint with explicit waivers for p95 and the current `75%` edge-mix A/B result.
+
+Do not pull a third v1 corpus until one of those branches is selected. More PDFs would broaden evidence without resolving the explicit Stage 71 blockers.
 
 `stable structural gains -> repeatability -> analyzer-volatility decision -> legacy reconciliation -> final acceptance gate`
-
