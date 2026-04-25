@@ -8,14 +8,6 @@ const items = [
     href: '/',
     label: 'Fix PDFs',
   },
-  {
-    href: '/create',
-    label: 'Create PDF',
-  },
-  {
-    href: '/edit',
-    label: 'Edit PDF',
-  },
 ];
 
 function isActivePath(pathname: string, href: string): boolean {

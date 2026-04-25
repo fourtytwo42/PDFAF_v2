@@ -20,14 +20,24 @@ function analysis(score: number): AnalyzeSummary {
 
 describe('edit handoff source selection', () => {
   it('prefers fixed output when it is available', () => {
-    expect(chooseEditorHandoffSource({ fileStatus: 'available', hasServerSource: true })).toBe(
-      'fixed',
+    expect(
+      chooseEditorHandoffSource({
+        fileStatus: 'available',
+        hasServerSource: true,
+        remediationResult: { before: analysis(20), after: analysis(95) },
+      }),
+    ).toBe('fixed');
+  });
+
+  it('does not open saved source before automatic remediation exists', () => {
+    expect(chooseEditorHandoffSource({ fileStatus: 'none', hasServerSource: true })).toBe(
+      'unavailable',
     );
   });
 
-  it('falls back to saved source when no fixed output exists', () => {
-    expect(chooseEditorHandoffSource({ fileStatus: 'none', hasServerSource: true })).toBe(
-      'source',
+  it('does not open an available source unless it has remediation output', () => {
+    expect(chooseEditorHandoffSource({ fileStatus: 'available', hasServerSource: true })).toBe(
+      'unavailable',
     );
   });
 
@@ -48,14 +58,14 @@ describe('edit handoff source selection', () => {
     ).toBe(95);
   });
 
-  it('uses original analysis for source handoff', () => {
+  it('does not provide original analysis for source-only handoff', () => {
     expect(
       chooseEditorHandoffAnalysis({
         fileStatus: 'none',
         hasServerSource: true,
         analyzeResult: analysis(20),
         remediationResult: { before: analysis(20), after: analysis(95) },
-      })?.score,
-    ).toBe(20);
+      }),
+    ).toBeNull();
   });
 });
