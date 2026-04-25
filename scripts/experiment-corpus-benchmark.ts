@@ -38,6 +38,16 @@ import {
   type RemediateBenchmarkRow,
   validateBenchmarkArtifacts,
 } from '../src/services/benchmark/experimentCorpus.js';
+import {
+  cachedProtectedReanalysis,
+  protectedReanalysisCacheKey,
+  protectedReanalysisRepeatCount,
+  protectedReanalysisUnsafeReason,
+  selectProtectedReanalysis,
+  sha256Buffer,
+  type ProtectedReanalysisCandidate,
+  type ProtectedReanalysisSelectionSummary,
+} from '../src/services/benchmark/protectedReanalysisSelection.js';
 import { createPlaybookStore } from '../src/services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js';
 import { analyzePdf } from '../src/services/pdfAnalyzer.js';
@@ -68,6 +78,19 @@ interface ProtectedBaselineRow {
   score: number;
   scoreCapsApplied: AnalysisResult['scoreCapsApplied'];
   categories: Record<string, number>;
+}
+
+interface ReanalysisAttempt extends ProtectedReanalysisCandidate {
+  snapshot: DocumentSnapshot;
+  parity: ReturnType<typeof buildIcjiaParity>;
+}
+
+interface SelectedReanalysis {
+  result: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  parity: ReturnType<typeof buildIcjiaParity>;
+  wallMs: number;
+  selection?: ProtectedReanalysisSelectionSummary;
 }
 
 function runtimeCounts(values: string[]): RuntimeCountRow[] {
@@ -261,6 +284,64 @@ async function reanalyzeBuffer(
   } finally {
     await unlink(tempPath).catch(() => {});
   }
+}
+
+async function selectProtectedFinalReanalysis(input: {
+  buffer: Buffer;
+  filename: string;
+  protectedBaseline?: ProtectedBaselineRow;
+  cache: Map<string, Promise<SelectedReanalysis>>;
+}): Promise<SelectedReanalysis> {
+  const repeatCount = protectedReanalysisRepeatCount();
+  const bufferSha256 = sha256Buffer(input.buffer);
+  const key = protectedReanalysisCacheKey({
+    bufferSha256,
+    filename: input.filename,
+    protectedBaselineEnabled: input.protectedBaseline != null,
+    repeatCount,
+  });
+
+  return cachedProtectedReanalysis(input.cache, key, async () => {
+    const attempts: ReanalysisAttempt[] = [];
+    const maxRepeats = input.protectedBaseline ? repeatCount : 1;
+    for (let index = 1; index <= maxRepeats; index += 1) {
+      const analyzed = await reanalyzeBuffer(input.buffer, input.filename);
+      const attempt: ReanalysisAttempt = {
+        index,
+        bufferSha256,
+        result: analyzed.result,
+        snapshot: analyzed.snapshot,
+        parity: buildIcjiaParity(analyzed.snapshot),
+        wallMs: analyzed.wallMs,
+      };
+      attempts.push(attempt);
+
+      if (
+        input.protectedBaseline &&
+        protectedReanalysisUnsafeReason({
+          baseline: input.protectedBaseline,
+          analysis: analyzed.result,
+        }) === null
+      ) {
+        break;
+      }
+    }
+
+    const selected = selectProtectedReanalysis({
+      baseline: input.protectedBaseline,
+      candidates: attempts,
+      enabled: input.protectedBaseline != null,
+      repeatCount,
+    });
+    const attempt = attempts.find(candidate => candidate.index === selected.candidate.index) ?? attempts[0]!;
+    return {
+      result: attempt.result,
+      snapshot: attempt.snapshot,
+      parity: attempt.parity,
+      wallMs: attempt.wallMs ?? 0,
+      ...(input.protectedBaseline ? { selection: selected.summary } : {}),
+    };
+  });
 }
 
 function sanitizeError(error: unknown): string {
@@ -499,6 +580,7 @@ async function runRemediationStep(
   mode: BenchmarkMode,
   writePdfs: boolean,
   runDir: string,
+  protectedReanalysisCache: Map<string, Promise<SelectedReanalysis>>,
   protectedBaseline?: ProtectedBaselineRow,
 ): Promise<RemediateBenchmarkRow> {
   const buffer = await readFile(entry.absolutePath);
@@ -558,11 +640,20 @@ async function runRemediationStep(
 
     let reanalyzed: AnalysisResult | null = null;
     let reanalyzedSnapshot: DocumentSnapshot | null = null;
+    let reanalyzedParity: ReturnType<typeof buildIcjiaParity> | null = null;
+    let protectedReanalysisSelection: ProtectedReanalysisSelectionSummary | undefined;
     let analysisAfterMs: number | null = null;
     if (mode === 'full') {
-      const finalAnalyze = await reanalyzeBuffer(finalBuffer, entry.filename);
+      const finalAnalyze = await selectProtectedFinalReanalysis({
+        buffer: finalBuffer,
+        filename: entry.filename,
+        protectedBaseline,
+        cache: protectedReanalysisCache,
+      });
       reanalyzed = finalAnalyze.result;
       reanalyzedSnapshot = finalAnalyze.snapshot;
+      reanalyzedParity = finalAnalyze.parity;
+      protectedReanalysisSelection = finalAnalyze.selection;
       analysisAfterMs = finalAnalyze.result.analysisDurationMs;
     }
 
@@ -634,7 +725,8 @@ async function runRemediationStep(
       reanalyzedStructuralClassification: reanalyzed?.structuralClassification ?? null,
       reanalyzedFailureProfile: reanalyzed?.failureProfile ?? null,
       reanalyzedDetectionProfile: reanalyzed?.detectionProfile ?? null,
-      reanalyzedIcjiaParity: reanalyzedSnapshot ? buildIcjiaParity(reanalyzedSnapshot) : null,
+      reanalyzedIcjiaParity: reanalyzedSnapshot ? reanalyzedParity : null,
+      ...(protectedReanalysisSelection ? { protectedReanalysisSelection } : {}),
       planningSummary: remediation.planningSummary ?? null,
       delta: effectiveAfter.score - remediation.before.score,
       appliedTools: remediation.appliedTools,
@@ -734,6 +826,7 @@ async function main(): Promise<void> {
 
   const analyzeRows: AnalyzeBenchmarkRow[] = [];
   const remediateRows: RemediateBenchmarkRow[] = [];
+  const protectedReanalysisCache = new Map<string, Promise<SelectedReanalysis>>();
 
   try {
     for (const entry of selectedEntries) {
@@ -755,6 +848,7 @@ async function main(): Promise<void> {
           args.mode,
           args.writePdfs,
           runDir,
+          protectedReanalysisCache,
           protectedBaselineRows.get(entry.id),
         );
         remediateRows.push(remediateRow);

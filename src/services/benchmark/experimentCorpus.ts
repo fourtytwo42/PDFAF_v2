@@ -1,6 +1,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import type { IcjiaParityResult } from '../compliance/icjiaParity.js';
+import type { ProtectedReanalysisSelectionSummary } from './protectedReanalysisSelection.js';
 import type {
   AnalysisResult,
   AppliedRemediationTool,
@@ -114,6 +115,7 @@ export interface RemediateBenchmarkRow {
   reanalyzedFailureProfile?: FailureProfile | null;
   reanalyzedDetectionProfile?: DetectionProfile | null;
   reanalyzedIcjiaParity?: IcjiaParityResult | null;
+  protectedReanalysisSelection?: ProtectedReanalysisSelectionSummary;
   planningSummary?: PlanningSummary | null;
   delta: number | null;
   appliedTools: AppliedRemediationTool[];
