@@ -21,6 +21,8 @@ Current end-gate status after Stage 71:
 - Stage 69 gate still fails `runtime_p95_wall`; Stage 70 runtime guard was tested and rejected/not kept because the full run still failed p95 and reintroduced protected regressions.
 - Edge-mix combined Stage 68 references are mean `85.96`, median `94`, grades `19 A / 2 B / 1 C / 2 D / 4 F`, false-positive applied `0`, A/B `21/28 = 75%`.
 - The end-gate does not pass because edge-mix A/B is below the `80%` target. P95 remains documented legacy gate debt, not accepted engine behavior debt from the latest structural fixers.
+- Stage 72 feasibility report: `Output/from_sibling_pdfaf_v1_edge_mix_2/stage72-edge-mix-ab-feasibility-2026-04-25-r1/stage72-edge-mix-ab-feasibility.md`.
+- Stage 72 found only one stable non-parked A/B lift candidate (`v1-4145`), so stable cleanup can project only to `22/28`, still below the `23/28` target.
 
 ## End Gate: Engine v2 General Acceptance
 
@@ -227,8 +229,9 @@ Stage 71 reached the end-gate report and deferred acceptance. The next branch mu
 
 Recommended branches:
 
+- `single_row_edge_mix_cleanup`: target `v1-4145`, the only stable non-parked edge-mix A/B lift candidate; follow with end-gate target revisit because this cannot reach `80%` alone.
 - `p95_project`: isolate runtime p95 with no score regressions, starting from the Stage 69 candidate and treating the Stage 70 guard as rejected evidence.
-- `edge_mix_ab_cleanup`: target only stable, non-parked edge-mix rows that can move combined A/B from `75%` to at least `80%` without touching analyzer-volatility or manual/scanned debt.
+- `analyzer_or_policy_waiver`: decide whether parked analyzer-volatility and manual/scanned rows should be waived, rebaselined, or assigned a dedicated project.
 - `accept_with_waiver`: accept the Engine v2 general checkpoint with explicit waivers for p95 and the current `75%` edge-mix A/B result.
 
 Do not pull a third v1 corpus until one of those branches is selected. More PDFs would broaden evidence without resolving the explicit Stage 71 blockers.

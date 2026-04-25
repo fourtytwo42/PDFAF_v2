@@ -14,8 +14,12 @@ The default rule is simple: evidence first, one narrow general change, target va
 - Edge mix 1 reference: `Output/from_sibling_pdfaf_v1_edge_mix/run-stage68-edge-mix-2026-04-25-r1`
 - Edge mix 2 reference: `Output/from_sibling_pdfaf_v1_edge_mix_2/run-stage68-edge-mix2-2026-04-25-r1`
 - Stage 71 decision: `defer_acceptance_for_p95_project`
+- Stage 72 report: `Output/from_sibling_pdfaf_v1_edge_mix_2/stage72-edge-mix-ab-feasibility-2026-04-25-r1/stage72-edge-mix-ab-feasibility.md`
+- Stage 72 decision: `Stage 73: Single-Row Stable Cleanup plus End-Gate Target Revisit`
 
 Stage 71 did not accept the engine because combined edge-mix A/B is `21/28 = 75%`, below the `80%` target. Legacy quality is strong and protected regressions are gone, but p95 remains documented debt.
+
+Stage 72 found that the `80%` edge-mix A/B target is not reachable using only stable non-parked rows. Only `v1-4145` is a stable A/B lift candidate; fixing it would move edge mix from `21/28` to `22/28`, still below the `23/28` target.
 
 ## Workflow
 
@@ -130,13 +134,13 @@ Reports under `Output/...` can be referenced by docs, but they remain generated 
 
 ## Current Branch Options
 
-### Option A: `edge_mix_ab_cleanup`
+### Option A: `single_row_edge_mix_cleanup`
 
-Goal: move combined edge-mix A/B from `75%` to at least `80%`.
+Goal: improve the one remaining stable edge-mix A/B lift candidate, `v1-4145`.
 
-Use Stage 71 low-row inventory. Target only stable, non-parked C/D rows. Do not build on analyzer-volatility rows or manual/scanned rows.
+Use Stage 72 feasibility evidence. This branch can improve quality but cannot meet the `80%` end-gate target alone.
 
-This is the recommended next branch because it directly addresses the failed Stage 71 quality target.
+This is the recommended next implementation branch if we want one more low-risk structural improvement before revisiting acceptance.
 
 ### Option B: `p95_project`
 
@@ -159,14 +163,15 @@ This is a policy decision, not an engineering fix.
 
 ## Recommended Next Move
 
-Choose `edge_mix_ab_cleanup`.
+Choose `single_row_edge_mix_cleanup`.
 
 Reason:
 
 - Legacy quality is already strong.
 - Protected regressions are gone.
 - False-positive applied is `0`.
-- The end-gate miss is concrete: edge-mix combined A/B needs to move from `21/28` to at least `23/28`.
-- A small stable-row cleanup is likely lower risk than another p95 suppression attempt.
+- Stage 72 proves only `v1-4145` is eligible under current guardrails.
+- A `v1-4145` cleanup is lower risk than another p95 suppression attempt or analyzer-volatility project.
+- The result should be followed by an explicit end-gate target revisit because `22/28` is still short of `80%`.
 
 Do not pull a third v1 corpus until one of the current Stage 71 blockers is closed or explicitly waived.
