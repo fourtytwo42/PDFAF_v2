@@ -7,7 +7,7 @@ import {
 import { logError, logInfo } from '../logging.js';
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r));
+  return new Promise(r => setTimeout(r, ms));
 }
 
 /**

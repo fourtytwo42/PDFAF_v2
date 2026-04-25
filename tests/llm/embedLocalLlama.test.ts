@@ -64,6 +64,7 @@ describe('embedLocalLlama', () => {
   it('spawns local-file mode when GGUF and mmproj are present and sets env from /models', async () => {
     process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
     process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '50';
+    process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] = '1';
 
     const child = createChild();
     spawnMock.mockReturnValue(child);
@@ -114,6 +115,7 @@ describe('embedLocalLlama', () => {
   it('spawns HF mode when local model files are absent', async () => {
     process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
     process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '50';
+    process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] = '1';
 
     const child = createChild();
     spawnMock.mockReturnValue(child);
@@ -140,9 +142,10 @@ describe('embedLocalLlama', () => {
     expect(process.env['OPENAI_COMPAT_MODEL']).toBe('remote-model.gguf');
   });
 
-  it('throws and stops the child when readiness times out', async () => {
+  it('stops the child and leaves semantic env unset when readiness times out', async () => {
     process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
     process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '1';
+    process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] = '1';
 
     const child = createChild();
     spawnMock.mockReturnValue(child);
@@ -157,15 +160,37 @@ describe('embedLocalLlama', () => {
 
     const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
 
-    await expect(startEmbeddedLlmIfEnabled()).rejects.toThrow(
-      /Embedded llama-server did not become ready at http:\/\/127\.0\.0\.1:1234\/v1\/models within 1ms/,
-    );
+    await expect(startEmbeddedLlmIfEnabled()).resolves.toBeUndefined();
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(process.env['OPENAI_COMPAT_BASE_URL']).toBeUndefined();
+    expect(process.env['OPENAI_COMPAT_MODEL']).toBeUndefined();
+  });
+
+  it('does not throw when llama-server spawn fails synchronously', async () => {
+    process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
+    process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] = '1';
+    spawnMock.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+    existsSyncMock.mockReturnValue(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        json: async () => ({ data: [] }),
+      })),
+    );
+
+    const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
+
+    await expect(startEmbeddedLlmIfEnabled()).resolves.toBeUndefined();
+    expect(process.env['OPENAI_COMPAT_BASE_URL']).toBeUndefined();
   });
 
   it('stopEmbeddedLlm is safe with no child and kills active child once', async () => {
     process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
     process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '50';
+    process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] = '1';
 
     const child = createChild();
     spawnMock.mockReturnValue(child);
@@ -192,5 +217,34 @@ describe('embedLocalLlama', () => {
 
     expect(child.kill).toHaveBeenCalledTimes(1);
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('clears embedded semantic env when the managed child exits', async () => {
+    process.env['PDFAF_RUN_LOCAL_LLM'] = '1';
+    process.env['PDFAF_LLAMA_READY_TIMEOUT_MS'] = '50';
+    process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] = '1';
+
+    const child = createChild();
+    spawnMock.mockReturnValue(child);
+    existsSyncMock.mockReturnValue(false);
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, json: async () => ({ data: [] }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: [{ id: 'ready-model' }] }),
+        }),
+    );
+
+    const { startEmbeddedLlmIfEnabled } = await import('../../src/llm/embedLocalLlama.js');
+    await startEmbeddedLlmIfEnabled();
+    expect(process.env['OPENAI_COMPAT_BASE_URL']).toBe('http://127.0.0.1:1234/v1');
+
+    child.emit('exit', 1, null);
+
+    expect(process.env['OPENAI_COMPAT_BASE_URL']).toBeUndefined();
+    expect(process.env['OPENAI_COMPAT_MODEL']).toBeUndefined();
   });
 });

@@ -565,6 +565,12 @@ export const PDFAF_LLAMA_READY_TIMEOUT_MS = parseInt(
   10,
 );
 
+/** Short probe for an already-running embedded listener before spawning our own. */
+export const PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS'] ?? '2000',
+  10,
+);
+
 /** Per chat/completions request (ms). */
 export const SEMANTIC_REQUEST_TIMEOUT_MS = parseInt(
   process.env['SEMANTIC_REQUEST_TIMEOUT_MS'] ?? '120000',

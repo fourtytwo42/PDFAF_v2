@@ -8,12 +8,14 @@ import {
   LLAMA_SERVER_BIN,
   PDFAF_LLAMA_PORT,
   PDFAF_LLAMA_READY_TIMEOUT_MS,
+  PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS,
   PDFAF_LLAMA_WORKDIR,
   runLocalLlmEnabled,
 } from '../config.js';
 import { logError, logInfo } from '../logging.js';
 
 let llamaChild: ChildProcess | null = null;
+let embeddedBaseV1: string | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
@@ -32,17 +34,29 @@ function preferWorkdirFile(filename: string): string {
   return workFile;
 }
 
-async function waitForModelsJson(baseV1: string, apiKey: string): Promise<{ firstModelId: string | null }> {
+async function waitForModelsJson(
+  baseV1: string,
+  apiKey: string,
+  timeoutMs: number,
+): Promise<{ firstModelId: string | null }> {
   const url = `${baseV1.replace(/\/$/, '')}/models`;
-  const deadline = Date.now() + PDFAF_LLAMA_READY_TIMEOUT_MS;
+  const deadline = Date.now() + Math.max(0, timeoutMs);
   const headers: Record<string, string> = {};
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-  while (Date.now() < deadline) {
+  do {
     try {
-      const res = await fetch(url, { headers });
+      const ac = new AbortController();
+      const remainingMs = Math.max(1, deadline - Date.now());
+      const t = setTimeout(() => ac.abort(), Math.min(remainingMs, 500));
+      let res: Response;
+      try {
+        res = await fetch(url, { headers, signal: ac.signal });
+      } finally {
+        clearTimeout(t);
+      }
       if (!res.ok) {
-        await sleep(500);
+        await sleep(Math.min(100, Math.max(1, deadline - Date.now())));
         continue;
       }
       const j = (await res.json()) as { data?: Array<{ id?: string }> };
@@ -51,21 +65,33 @@ async function waitForModelsJson(baseV1: string, apiKey: string): Promise<{ firs
     } catch {
       /* server not ready */
     }
-    await sleep(500);
-  }
+    await sleep(Math.min(100, Math.max(1, deadline - Date.now())));
+  } while (Date.now() < deadline);
   return { firstModelId: null };
 }
 
 function applyCompatEnv(baseV1: string, apiKey: string, firstModelId: string): void {
+  embeddedBaseV1 = baseV1;
   process.env['OPENAI_COMPAT_BASE_URL'] = baseV1;
   process.env['OPENAI_COMPAT_API_KEY'] = apiKey;
   process.env['OPENAI_COMPAT_MODEL'] = firstModelId;
 }
 
+function clearEmbeddedCompatEnv(): void {
+  if (!embeddedBaseV1) return;
+  if ((process.env['OPENAI_COMPAT_BASE_URL'] ?? '').trim() === embeddedBaseV1) {
+    delete process.env['OPENAI_COMPAT_BASE_URL'];
+    delete process.env['OPENAI_COMPAT_API_KEY'];
+    delete process.env['OPENAI_COMPAT_MODEL'];
+  }
+  embeddedBaseV1 = null;
+}
+
 /**
  * If `PDFAF_RUN_LOCAL_LLM=1` and `OPENAI_COMPAT_BASE_URL` is unset, spawn `llama-server` (Gemma 4 E2B instruct
  * GGUF defaults: `unsloth/gemma-4-E2B-it-GGUF` + `gemma-4-E2B-it-Q4_K_M.gguf`, same weights family as
- * `google/gemma-4-E2B-it`) and point OpenAI-compat env at it. First HF fetch can take many minutes.
+ * `google/gemma-4-E2B-it`) and point OpenAI-compat env at it. Startup is fail-soft: deterministic
+ * remediation remains available when the embedded LLM cannot start.
  */
 export async function startEmbeddedLlmIfEnabled(): Promise<void> {
   if (!runLocalLlmEnabled()) return;
@@ -82,7 +108,7 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
   const port = PDFAF_LLAMA_PORT;
   const baseV1 = `http://${host}:${port}/v1`;
   const apiKey = (process.env['OPENAI_COMPAT_API_KEY'] ?? '').trim() || 'local';
-  const reused = await waitForModelsJson(baseV1, apiKey);
+  const reused = await waitForModelsJson(baseV1, apiKey, PDFAF_LLAMA_REUSE_PROBE_TIMEOUT_MS);
   if (reused.firstModelId) {
     applyCompatEnv(baseV1, apiKey, reused.firstModelId);
     logInfo({
@@ -164,31 +190,38 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
     },
   });
 
-  llamaChild = spawn(LLAMA_SERVER_BIN, args, {
-    stdio: 'inherit',
-    env: { ...process.env },
-    cwd: PDFAF_LLAMA_WORKDIR,
-  });
+  try {
+    llamaChild = spawn(LLAMA_SERVER_BIN, args, {
+      stdio: 'inherit',
+      env: { ...process.env },
+      cwd: PDFAF_LLAMA_WORKDIR,
+    });
+  } catch (err) {
+    clearEmbeddedCompatEnv();
+    logError({ message: 'embed_llm_spawn_failed', error: String(err) });
+    return;
+  }
 
   llamaChild.on('error', err => {
+    clearEmbeddedCompatEnv();
     logError({ message: 'embed_llm_spawn_failed', error: String(err) });
   });
 
   llamaChild.on('exit', (code, signal) => {
     logInfo({ message: 'embed_llm_exit', details: { code, signal } });
     llamaChild = null;
+    clearEmbeddedCompatEnv();
   });
 
-  const { firstModelId } = await waitForModelsJson(baseV1, apiKey);
+  const { firstModelId } = await waitForModelsJson(baseV1, apiKey, PDFAF_LLAMA_READY_TIMEOUT_MS);
   if (!firstModelId) {
     logError({
       message: 'embed_llm_timeout',
       details: { baseV1, timeoutMs: PDFAF_LLAMA_READY_TIMEOUT_MS },
     });
     stopEmbeddedLlm();
-    throw new Error(
-      `Embedded llama-server did not become ready at ${baseV1}/models within ${PDFAF_LLAMA_READY_TIMEOUT_MS}ms. Install llama.cpp llama-server and ensure HF access, or set OPENAI_COMPAT_BASE_URL to an external endpoint.`,
-    );
+    clearEmbeddedCompatEnv();
+    return;
   }
 
   // Always use the id from llama-server (GGUF basename), not a HF Transformers id like google/gemma-4-E2B-it.
@@ -201,11 +234,15 @@ export async function startEmbeddedLlmIfEnabled(): Promise<void> {
 }
 
 export function stopEmbeddedLlm(): void {
-  if (!llamaChild || llamaChild.killed) return;
+  if (!llamaChild || llamaChild.killed) {
+    clearEmbeddedCompatEnv();
+    return;
+  }
   try {
     llamaChild.kill('SIGTERM');
   } catch {
     /* ignore */
   }
   llamaChild = null;
+  clearEmbeddedCompatEnv();
 }

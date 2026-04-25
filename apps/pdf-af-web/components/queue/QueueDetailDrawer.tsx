@@ -41,6 +41,12 @@ function formatFileAvailability(job: QueueJob): string {
   }
 }
 
+export function hasUnavailableSemanticHelp(
+  semanticSummaries: Array<{ label: string; summary: SemanticSummary }>,
+): boolean {
+  return semanticSummaries.some(({ summary }) => summary.skippedReason === 'no_llm_config');
+}
+
 function DetailSection({
   title,
   children,
@@ -100,6 +106,7 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
           : null,
       ].filter(Boolean) as Array<{ label: string; summary: SemanticSummary }>
     : [];
+  const semanticHelpUnavailable = hasUnavailableSemanticHelp(semanticSummaries);
 
   return (
     <div className="mt-4 overflow-hidden rounded-[24px] border border-[color:var(--surface-border)] bg-[#f8fafc]">
@@ -272,6 +279,15 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
         {remediation ? (
           <ExpandSection title="AI help" subtitle="See what the AI part did.">
             <div className="grid gap-2">
+              {semanticHelpUnavailable ? (
+                <section className="rounded-[18px] border border-[color:rgba(183,121,31,0.18)] bg-[color:rgba(183,121,31,0.08)] px-3 py-3">
+                  <p className="text-sm font-semibold text-[var(--warning)]">AI semantic fixes unavailable</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--warning)]">
+                    AI semantic fixes were not available for this run. Deterministic fixes still ran.
+                    Try again after the AI service is healthy.
+                  </p>
+                </section>
+              ) : null}
               {semanticSummaries.map(({ label, summary }) => (
                 <article
                   key={label}

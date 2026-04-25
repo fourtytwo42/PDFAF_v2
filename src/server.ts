@@ -6,9 +6,6 @@ import { bootstrapOpenAiModelFromServer } from './llm/syncRemoteOpenAiModel.js';
 import { logError, logInfo } from './logging.js';
 
 async function main(): Promise<void> {
-  await startEmbeddedLlmIfEnabled();
-  await bootstrapOpenAiModelFromServer();
-
   const app = createApp();
 
   try {
@@ -30,6 +27,12 @@ async function main(): Promise<void> {
       },
     });
   });
+
+  void startEmbeddedLlmIfEnabled()
+    .then(() => bootstrapOpenAiModelFromServer())
+    .catch(err => {
+      logError({ message: 'llm_background_init_failed', error: String(err) });
+    });
 
   const shutdown = () => {
     stopEmbeddedLlm();

@@ -111,6 +111,38 @@ describe('POST /v1/remediate', () => {
     expect(res.body.semantic.gate.reason).toBe('no_llm_config');
   }, 120_000);
 
+  it('uses semantic defaults and skips cleanly when no LLM base URL is set', async () => {
+    if (process.env['OPENAI_COMPAT_BASE_URL']) {
+      console.log('[integration] OPENAI_COMPAT_BASE_URL set — skipping default no_llm_config assertion');
+      return;
+    }
+    const prevDefaultSemantic = process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC'];
+    const prevDefaultHeadings = process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS'];
+    process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC'] = '1';
+    process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS'] = '1';
+    try {
+      const pdf = await barePdfBuffer();
+      const res = await request(app)
+        .post('/v1/remediate')
+        .attach('file', pdf, { filename: 'default-semantic.pdf', contentType: 'application/pdf' });
+      if (res.status === 429) return;
+      expect(res.status).toBe(200);
+      expect(res.body.semantic?.skippedReason).toBe('no_llm_config');
+      expect(res.body.semanticHeadings?.skippedReason).toBe('no_llm_config');
+    } finally {
+      if (prevDefaultSemantic === undefined) {
+        delete process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC'];
+      } else {
+        process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC'] = prevDefaultSemantic;
+      }
+      if (prevDefaultHeadings === undefined) {
+        delete process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS'];
+      } else {
+        process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS'] = prevDefaultHeadings;
+      }
+    }
+  }, 120_000);
+
   it('includes semanticHeadings summary when requested without LLM base URL', async () => {
     if (process.env['OPENAI_COMPAT_BASE_URL']) {
       console.log('[integration] OPENAI_COMPAT_BASE_URL set — skipping heading no_llm assertion');
