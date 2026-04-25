@@ -59,6 +59,9 @@ services:
       PDFAF_RUN_LOCAL_LLM: '1'
       LLAMA_SERVER_BIN: /opt/llama/llama-server
       PDFAF_LLAMA_WORKDIR: /app/data/llama-work
+      # One-time upgrade cleanup for installs with poisoned learned planner state.
+      # Set to '1' for the first Engine v2 fail-soft boot; a marker prevents repeat resets.
+      # PDFAF_RESET_LEARNED_DB_ON_BOOT: '1'
       # PDFAF_REMEDIATE_DEFAULT_SEMANTIC_PROMOTE: '0'
       # PDFAF_REMEDIATE_DEFAULT_SEMANTIC_UNTAGGED: '0'
     volumes:

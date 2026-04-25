@@ -69,6 +69,18 @@ What they store:
 - web `/data`
   saved uploaded files, remediated downloads, web-side SQLite metadata, retention state
 
+### Upgrade Note: Learned DB State
+
+Engine v2 general/fail-soft releases should not inherit a poisoned older API `pdfaf.db`.
+If an upgraded install remediates worse than a fresh deployment, archive the API DB state once and let the container initialize a new DB:
+
+```yaml
+environment:
+  PDFAF_RESET_LEARNED_DB_ON_BOOT: "1"
+```
+
+On first boot this moves `pdfaf.db`, `pdfaf.db-shm`, and `pdfaf.db-wal` into `/data/backups/<timestamp>/`, creates a marker at `/data/.pdfaf-engine-v2-db-reset-complete`, and then starts normally. The marker prevents repeat resets on future restarts. This does not touch the web container storage or saved PDFs.
+
 ## Quick Start With Docker Compose
 
 Use a compose file like this:
@@ -86,6 +98,8 @@ services:
       TMPDIR: /data/tmp
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC: "1"
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS: "1"
+      # For first boot after upgrading from an older learned-state DB, uncomment once:
+      # PDFAF_RESET_LEARNED_DB_ON_BOOT: "1"
     volumes:
       - pdfaf-data:/data
     restart: unless-stopped
@@ -160,6 +174,7 @@ Useful API environment variables:
 - `TMPDIR`
 - `PDFAF_REMEDIATE_DEFAULT_SEMANTIC`
 - `PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS`
+- `PDFAF_RESET_LEARNED_DB_ON_BOOT`
 - `RATE_LIMIT_ANALYZE_MAX`
 - `RATE_LIMIT_ANALYZE_WINDOW_MS`
 - `RATE_LIMIT_REMEDIATE_MAX`

@@ -117,6 +117,7 @@ Important notes:
 - `DB_PATH` defaults to `/data/pdfaf.db`
 - `TMPDIR` defaults to `/data/tmp`
 - Semantic LLM remediation is already enabled in the single-container image
+- For first boot after upgrading from an older learned-state DB, set `PDFAF_RESET_LEARNED_DB_ON_BOOT=1` once. The entrypoint archives `pdfaf.db`, `pdfaf.db-shm`, and `pdfaf.db-wal` under `/data/backups/<timestamp>/`, writes `/data/.pdfaf-engine-v2-db-reset-complete`, and lets the app create a fresh DB. The marker prevents repeat resets.
 
 Rate limiting and request protection are configurable at runtime:
 
