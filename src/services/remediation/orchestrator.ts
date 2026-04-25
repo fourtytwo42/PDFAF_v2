@@ -55,7 +55,7 @@ import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
 import * as metadataTools from './tools/metadata.js';
 import { applyPostRemediationAltRepair } from './altStructureRepair.js';
-import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.js';
+import { embedFontsWithGhostscript, shouldTryLocalFontSubstitution, shouldTryUrwType1Embed } from './fontEmbed.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
@@ -636,6 +636,9 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
     return tools.has('ocr_scanned_pdf') ||
       tools.has('tag_native_text_blocks') ||
       tools.has('tag_ocr_text_blocks') ||
+      tools.has('embed_local_font_substitutes') ||
+      tools.has('embed_urw_type1_substitutes') ||
+      tools.has('embed_fonts_ghostscript') ||
       tools.has('substitute_legacy_fonts_in_place') ||
       tools.has('finalize_substituted_font_conformance');
   }
@@ -1626,6 +1629,26 @@ function categoryScore(analysis: AnalysisResult, key: string): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
 }
 
+function fontEvidenceImproved(input: {
+  beforeAnalysis: AnalysisResult;
+  afterAnalysis: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+}): boolean {
+  const beforeRisk = input.beforeSnapshot.fonts.filter(font => Boolean(font.encodingRisk)).length;
+  const afterRisk = input.afterSnapshot.fonts.filter(font => Boolean(font.encodingRisk)).length;
+  if (afterRisk < beforeRisk) return true;
+  const beforeEmbedded = input.beforeSnapshot.fonts.filter(font => font.isEmbedded).length;
+  const afterEmbedded = input.afterSnapshot.fonts.filter(font => font.isEmbedded).length;
+  if (afterEmbedded > beforeEmbedded) return true;
+  const beforeUnicode = input.beforeSnapshot.fonts.filter(font => font.hasUnicode).length;
+  const afterUnicode = input.afterSnapshot.fonts.filter(font => font.hasUnicode).length;
+  if (afterUnicode > beforeUnicode) return true;
+  const beforeText = categoryScore(input.beforeAnalysis, 'text_extractability');
+  const afterText = categoryScore(input.afterAnalysis, 'text_extractability');
+  return beforeText !== null && afterText !== null && afterText > beforeText;
+}
+
 function figureAltMutationAttemptCount(rows: AppliedRemediationTool[]): number {
   return rows.filter(row => row.toolName === 'set_figure_alt_text').length;
 }
@@ -1652,6 +1675,9 @@ function postPassCategoryBenefitAllowsSmallScoreRegression(
     set_document_title: 'title_language',
     set_document_language: 'title_language',
     post_pass_bookmarks: 'bookmarks',
+    embed_local_font_substitutes: 'text_extractability',
+    embed_urw_type1_substitutes: 'text_extractability',
+    embed_fonts_ghostscript: 'text_extractability',
   };
   const category = categoryByTool[toolName];
   if (!category) return false;
@@ -2028,6 +2054,57 @@ async function applyGuardedPostPass(args: {
       snapshot: currentSnapshot,
       accepted: false,
     };
+  }
+  if (toolName === 'embed_local_font_substitutes') {
+    const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
+    const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
+    const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
+    const invalidRewrite =
+      analyzed.snapshot.pageCount !== currentSnapshot.pageCount ||
+      textDropped > textDropLimit ||
+      structureLost ||
+      !fontEvidenceImproved({
+        beforeAnalysis: currentAnalysis,
+        afterAnalysis: analyzed.result,
+        beforeSnapshot: currentSnapshot,
+        afterSnapshot: analyzed.snapshot,
+      });
+    if (invalidRewrite) {
+      appliedTools.push({
+        toolName,
+        stage,
+        round,
+        scoreBefore: currentAnalysis.score,
+        scoreAfter: currentAnalysis.score,
+        delta: 0,
+        outcome: 'rejected',
+        details: enrichDetailsWithReplayState(
+          `local_font_substitution_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost})`,
+          {
+            beforeAnalysis: currentAnalysis,
+            beforeSnapshot: currentSnapshot,
+            afterAnalysis: analyzed.result,
+            afterSnapshot: analyzed.snapshot,
+          },
+        ),
+        durationMs,
+        source: 'post_pass',
+      });
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'rejected',
+      });
+      return {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        accepted: false,
+      };
+    }
   }
   const strongAlt = protectedStrongAltPreservationViolation({
     baseline: protectedBaseline,
@@ -3096,6 +3173,34 @@ async function applyIcjiaDocumentFinalization(args: {
         currentSnapshot,
         nextBuffer: urw.buffer,
         appliedTools,
+        tempPrefix: 'pdfaf-fin',
+        protectedBaseline,
+      });
+      currentBuffer = accepted.buffer;
+      currentAnalysis = accepted.analysis;
+      currentSnapshot = accepted.snapshot;
+    }
+  }
+
+  if (shouldTryLocalFontSubstitution(currentSnapshot)) {
+    const localFonts = await runPythonMutationBatch(
+      currentBuffer,
+      [{ op: 'embed_local_font_substitutes', params: { maxWidthDrift: 0.12, heuristicMaxWidthDrift: 0.35 } }],
+      { signal },
+    );
+    if (localFonts.result.success && localFonts.result.applied.includes('embed_local_font_substitutes')) {
+      const accepted = await applyGuardedPostPass({
+        filename,
+        toolName: 'embed_local_font_substitutes',
+        stage: 11,
+        round,
+        details: 'stage75_local_font_substitution',
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        nextBuffer: localFonts.buffer,
+        appliedTools,
+        runtimeSummary,
         tempPrefix: 'pdfaf-fin',
         protectedBaseline,
       });

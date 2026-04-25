@@ -44,6 +44,21 @@ export function shouldTryUrwType1Embed(snapshot: DocumentSnapshot | null | undef
 }
 
 /**
+ * Structure-preserving local font substitution pass. Unlike Ghostscript, this does not rewrite
+ * the whole PDF; it only embeds installed open-font substitutes for analyzer-visible encoding risk.
+ * Set `PDFAF_LOCAL_FONT_SUBSTITUTION=0` to skip. Default on.
+ */
+export function shouldTryLocalFontSubstitution(snapshot: DocumentSnapshot | null | undefined): boolean {
+  if (process.env['PDFAF_LOCAL_FONT_SUBSTITUTION']?.trim() === '0') return false;
+  if (!snapshot || snapshot.pdfClass === 'scanned') return false;
+  if ((snapshot.textCharCount ?? 0) <= 0) return false;
+  return snapshot.fonts.some(font =>
+    Boolean(font.encodingRisk) &&
+    (!font.isEmbedded || !font.hasUnicode)
+  );
+}
+
+/**
  * Ghostscript rewrite to embed/subset fonts. Returns null if disabled by env / snapshot rules,
  * if `gs` fails, or on empty output. Install `gs` on PATH or set `PDFAF_GS_BIN`.
  */

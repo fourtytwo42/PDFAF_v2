@@ -47,6 +47,13 @@ except ImportError:
     }))
     sys.exit(0)
 
+try:
+    from fontTools.agl import AGL2UV
+    from fontTools.ttLib import TTFont
+except Exception:
+    AGL2UV = {}
+    TTFont = None
+
 MAX_ITEMS = 2000  # cap per collection to avoid runaway on malformed trees
 MAX_MCID_SPANS = 500  # Phase 3c-c: cap MCID scan results in analysis JSON
 PDFAF_3CC_GOLDEN_MARKER = "pdfaf-3cc-golden-v1"
@@ -2490,7 +2497,11 @@ _WINANSI_TO_UNICODE: dict[int, int] = {
 
 
 def _build_winansi_tounicode_cmap(font_name: str) -> str | None:
-    entries = sorted(_WINANSI_TO_UNICODE.items())
+    return _build_simple_tounicode_cmap(font_name, {code: chr(uc) for code, uc in _WINANSI_TO_UNICODE.items()})
+
+
+def _build_simple_tounicode_cmap(font_name: str, code_to_text: dict[int, str]) -> str | None:
+    entries = sorted((code, text) for code, text in code_to_text.items() if 0 <= int(code) <= 0xFFFF and text)
     if not entries:
         return None
     lines = [
@@ -2502,8 +2513,9 @@ def _build_winansi_tounicode_cmap(font_name: str) -> str | None:
         "/CMapType 2 def",
         f"{len(entries)} beginbfchar",
     ]
-    for cp, uc in entries:
-        lines.append(f"<{cp:02X}> <{uc:04X}>")
+    for cp, text in entries:
+        utf16 = text.encode("utf-16-be").hex().upper()
+        lines.append(f"<{cp:02X}> <{utf16}>")
     lines.extend([
         "endbfchar",
         "endcmap",
@@ -2622,6 +2634,437 @@ def _apply_urw_substitute_to_font(pdf: pikepdf.Pdf, font: pikepdf.Dictionary, ma
         return False
 
 
+_LOCAL_FONT_FILES: dict[str, str] = {
+    "/Arial": "LiberationSans-Regular.ttf",
+    "/ArialMT": "LiberationSans-Regular.ttf",
+    "/Arial-BoldMT": "LiberationSans-Bold.ttf",
+    "/Arial-ItalicMT": "LiberationSans-Italic.ttf",
+    "/Arial-BoldItalicMT": "LiberationSans-BoldItalic.ttf",
+    "/Helvetica": "LiberationSans-Regular.ttf",
+    "/Helvetica-Bold": "LiberationSans-Bold.ttf",
+    "/Helvetica-Oblique": "LiberationSans-Italic.ttf",
+    "/Helvetica-BoldOblique": "LiberationSans-BoldItalic.ttf",
+    "/Times-Roman": "LiberationSerif-Regular.ttf",
+    "/Times-Bold": "LiberationSerif-Bold.ttf",
+    "/Times-Italic": "LiberationSerif-Italic.ttf",
+    "/Times-BoldItalic": "LiberationSerif-BoldItalic.ttf",
+    "/TimesNewRoman": "LiberationSerif-Regular.ttf",
+    "/TimesNewRomanPSMT": "LiberationSerif-Regular.ttf",
+    "/TimesNewRomanPS-BoldMT": "LiberationSerif-Bold.ttf",
+    "/TimesNewRomanPS-ItalicMT": "LiberationSerif-Italic.ttf",
+    "/TimesNewRomanPS-BoldItalicMT": "LiberationSerif-BoldItalic.ttf",
+    "/Courier": "LiberationMono-Regular.ttf",
+    "/Courier-Bold": "LiberationMono-Bold.ttf",
+    "/Courier-Oblique": "LiberationMono-Italic.ttf",
+    "/Courier-BoldOblique": "LiberationMono-BoldItalic.ttf",
+    "/CourierNew": "LiberationMono-Regular.ttf",
+    "/CourierNewPSMT": "LiberationMono-Regular.ttf",
+    "/CourierNewPS-BoldMT": "LiberationMono-Bold.ttf",
+    "/CourierNewPS-ItalicMT": "LiberationMono-Italic.ttf",
+    "/CourierNewPS-BoldItalicMT": "LiberationMono-BoldItalic.ttf",
+    "/Calibri": "Carlito-Regular.ttf",
+    "/Calibri-Bold": "Carlito-Bold.ttf",
+    "/Calibri-Italic": "Carlito-Italic.ttf",
+    "/Calibri-BoldItalic": "Carlito-BoldItalic.ttf",
+    "/Verdana": "NotoSans-Regular.ttf",
+    "/Verdana-Bold": "NotoSans-Bold.ttf",
+    "/Verdana-Italic": "NotoSans-Italic.ttf",
+    "/NotoSans-Regular": "NotoSans-Regular.ttf",
+    "/NotoSans-Bold": "NotoSans-Bold.ttf",
+    "/NotoSans-Italic": "NotoSans-Italic.ttf",
+    "/NotoSerif-Regular": "NotoSerif-Regular.ttf",
+    "/NotoSerif-Bold": "NotoSerif-Bold.ttf",
+    "/NotoSerif-Italic": "NotoSerif-Italic.ttf",
+    "/OpenSans-Regular": "OpenSans-Regular.ttf",
+    "/OpenSans-Bold": "OpenSans-Bold.ttf",
+    "/OpenSans-Italic": "OpenSans-Italic.ttf",
+}
+
+_LOCAL_LEGACY_SUBSTITUTES: list[tuple[str, str]] = [
+    ("/Myriad", "/ArialMT"),
+    ("/Frutiger", "/NotoSans-Regular"),
+    ("/Univers", "/NotoSans-Regular"),
+    ("/Palatino", "/NotoSerif-Regular"),
+    ("/Garamond", "/NotoSerif-Regular"),
+    ("/Minion", "/TimesNewRomanPSMT"),
+    ("/CenturyGothic", "/ArialMT"),
+    ("/Century", "/TimesNewRomanPSMT"),
+    ("/Helvetica", "/ArialMT"),
+    ("/Calibri", "/Calibri"),
+    ("/Verdana", "/Verdana"),
+]
+
+_LOCAL_HEURISTIC_FALLBACKS = [
+    "/ArialMT",
+    "/TimesNewRomanPSMT",
+    "/CourierNewPSMT",
+    "/Calibri",
+    "/NotoSerif-Regular",
+    "/OpenSans-Regular",
+]
+
+_MAC_ROMAN_TO_UNICODE: dict[int, int] = {
+    **{i: i for i in range(32, 127)},
+    0x80: 0x00C4, 0x81: 0x00C5, 0x82: 0x00C7, 0x83: 0x00C9,
+    0x84: 0x00D1, 0x85: 0x00D6, 0x86: 0x00DC, 0x87: 0x00E1,
+    0x88: 0x00E0, 0x89: 0x00E2, 0x8A: 0x00E4, 0x8B: 0x00E3,
+    0x8C: 0x00E5, 0x8D: 0x00E7, 0x8E: 0x00E9, 0x8F: 0x00E8,
+    0x90: 0x00EA, 0x91: 0x00EB, 0x92: 0x00ED, 0x93: 0x00EC,
+    0x94: 0x00EE, 0x95: 0x00EF, 0x96: 0x00F1, 0x97: 0x00F3,
+    0x98: 0x00F2, 0x99: 0x00F4, 0x9A: 0x00F6, 0x9B: 0x00F5,
+    0x9C: 0x00FA, 0x9D: 0x00F9, 0x9E: 0x00FB, 0x9F: 0x00FC,
+    0xA0: 0x2020, 0xA1: 0x00B0, 0xA2: 0x00A2, 0xA3: 0x00A3,
+    0xA4: 0x00A7, 0xA5: 0x2022, 0xA6: 0x00B6, 0xA7: 0x00DF,
+    0xA8: 0x00AE, 0xA9: 0x00A9, 0xAA: 0x2122, 0xAB: 0x00B4,
+    0xAC: 0x00A8, 0xAD: 0x2260, 0xAE: 0x00C6, 0xAF: 0x00D8,
+    0xB0: 0x221E, 0xB1: 0x00B1, 0xB2: 0x2264, 0xB3: 0x2265,
+    0xB4: 0x00A5, 0xB5: 0x00B5, 0xB6: 0x2202, 0xB7: 0x2211,
+    0xB8: 0x220F, 0xB9: 0x03C0, 0xBA: 0x222B, 0xBB: 0x00AA,
+    0xBC: 0x00BA, 0xBD: 0x03A9, 0xBE: 0x00E6, 0xBF: 0x00F8,
+    0xC0: 0x00BF, 0xC1: 0x00A1, 0xC2: 0x00AC, 0xC3: 0x221A,
+    0xC4: 0x0192, 0xC5: 0x2248, 0xC6: 0x2206, 0xC7: 0x00AB,
+    0xC8: 0x00BB, 0xC9: 0x2026, 0xCA: 0x00A0, 0xCB: 0x00C0,
+    0xCC: 0x00C3, 0xCD: 0x00D5, 0xCE: 0x0152, 0xCF: 0x0153,
+    0xD0: 0x2013, 0xD1: 0x2014, 0xD2: 0x201C, 0xD3: 0x201D,
+    0xD4: 0x2018, 0xD5: 0x2019, 0xD6: 0x00F7, 0xD7: 0x25CA,
+    0xD8: 0x00FF, 0xD9: 0x0178, 0xDA: 0x2044, 0xDB: 0x20AC,
+    0xDC: 0x2039, 0xDD: 0x203A, 0xDE: 0xFB01, 0xDF: 0xFB02,
+    0xE0: 0x2021, 0xE1: 0x00B7, 0xE2: 0x201A, 0xE3: 0x201E,
+    0xE4: 0x2030, 0xE5: 0x00C2, 0xE6: 0x00CA, 0xE7: 0x00C1,
+    0xE8: 0x00CB, 0xE9: 0x00C8, 0xEA: 0x00CD, 0xEB: 0x00CE,
+    0xEC: 0x00CF, 0xED: 0x00CC, 0xEE: 0x00D3, 0xEF: 0x00D4,
+    0xF0: 0xF8FF, 0xF1: 0x00D2, 0xF2: 0x00DA, 0xF3: 0x00DB,
+    0xF4: 0x00D9, 0xF5: 0x0131, 0xF6: 0x02C6, 0xF7: 0x02DC,
+    0xF8: 0x00AF, 0xF9: 0x02D8, 0xFA: 0x02D9, 0xFB: 0x02DA,
+    0xFC: 0x00B8, 0xFD: 0x02DD, 0xFE: 0x02DB, 0xFF: 0x02C7,
+}
+
+
+def _local_font_search_roots() -> list[str]:
+    roots: list[str] = []
+    extra = (os.environ.get("PDFAF_LOCAL_FONT_DIRS") or "").strip()
+    if extra:
+        roots.extend([entry.strip() for entry in extra.split(os.pathsep) if entry.strip()])
+    roots.extend([
+        "/usr/share/fonts/truetype/liberation2",
+        "/usr/share/fonts/truetype/liberation",
+        "/usr/share/fonts/truetype/crosextra",
+        "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/truetype/open-sans",
+        "/usr/share/fonts/opentype/noto",
+        "/usr/share/fonts",
+    ])
+    return [root for root in roots if os.path.isdir(root)]
+
+
+def _resolve_local_font_file(font_pdf_name: str | None) -> str | None:
+    if not font_pdf_name:
+        return None
+    filename = _LOCAL_FONT_FILES.get(font_pdf_name)
+    if not filename:
+        return None
+    for root in _local_font_search_roots():
+        direct = os.path.join(root, filename)
+        if os.path.isfile(direct):
+            return direct
+        for dirpath, _dirnames, filenames in os.walk(root):
+            if filename in filenames:
+                return os.path.join(dirpath, filename)
+    return None
+
+
+def _local_legacy_substitute_name(base_font: str) -> str | None:
+    normalized = "/" + _strip_subset_prefix_from_base_font(base_font).lstrip("/")
+    if normalized in _LOCAL_FONT_FILES:
+        return normalized
+    compact = normalized.replace("-", "").replace("_", "").lower()
+    for prefix, substitute in _LOCAL_LEGACY_SUBSTITUTES:
+        if compact.startswith(prefix.replace("-", "").replace("_", "").lower()):
+            return substitute
+    return None
+
+
+def _font_descriptor_for(font: pikepdf.Dictionary) -> pikepdf.Dictionary | None:
+    try:
+        desc = font.get("/FontDescriptor")
+        return desc if isinstance(desc, pikepdf.Dictionary) else None
+    except Exception:
+        return None
+
+
+def _ensure_font_descriptor(pdf: pikepdf.Pdf, font: pikepdf.Dictionary, font_name: str, metrics: dict | None = None) -> pikepdf.Dictionary:
+    desc = _font_descriptor_for(font)
+    if desc is not None:
+        return desc
+    bbox = (metrics or {}).get("bbox") or [-200, -250, 1200, 950]
+    ascent = int((metrics or {}).get("ascent", 900))
+    descent = int((metrics or {}).get("descent", -250))
+    desc = pikepdf.Dictionary({
+        "/Type": pikepdf.Name("/FontDescriptor"),
+        "/FontName": pikepdf.Name("/" + font_name.lstrip("/")),
+        "/Flags": pikepdf.Integer(32),
+        "/FontBBox": pikepdf.Array([pikepdf.Integer(int(v)) for v in bbox]),
+        "/ItalicAngle": pikepdf.Integer(0),
+        "/Ascent": pikepdf.Integer(ascent),
+        "/Descent": pikepdf.Integer(descent),
+        "/CapHeight": pikepdf.Integer(min(900, max(500, ascent))),
+        "/StemV": pikepdf.Integer(80),
+    })
+    font["/FontDescriptor"] = desc
+    return desc
+
+
+def _parse_sfnt_metrics(font_path: str) -> dict | None:
+    if TTFont is None:
+        return None
+    try:
+        tt = TTFont(font_path, lazy=True)
+        units_per_em = int(tt["head"].unitsPerEm)
+        hmtx = tt["hmtx"].metrics
+        cmap = tt.getBestCmap() or {}
+        glyph_widths = {str(name): int(width) for name, (width, _lsb) in hmtx.items()}
+        unicode_widths: dict[int, int] = {}
+        for cp, glyph_name in cmap.items():
+            raw = glyph_widths.get(str(glyph_name))
+            if raw is not None and units_per_em:
+                unicode_widths[int(cp)] = int(round((raw / units_per_em) * 1000))
+        head = tt["head"]
+        hhea = tt["hhea"]
+        bbox = [
+            int(round(head.xMin / units_per_em * 1000)),
+            int(round(head.yMin / units_per_em * 1000)),
+            int(round(head.xMax / units_per_em * 1000)),
+            int(round(head.yMax / units_per_em * 1000)),
+        ]
+        ascent = int(round(hhea.ascent / units_per_em * 1000))
+        descent = int(round(hhea.descent / units_per_em * 1000))
+        tt.close()
+        return {
+            "unicode_widths": unicode_widths,
+            "glyph_widths": glyph_widths,
+            "units_per_em": units_per_em,
+            "bbox": bbox,
+            "ascent": ascent,
+            "descent": descent,
+        }
+    except Exception:
+        return None
+
+
+def _embed_local_font_program(pdf: pikepdf.Pdf, font: pikepdf.Dictionary, descriptor: pikepdf.Dictionary, font_path: str) -> bool:
+    try:
+        with open(font_path, "rb") as fh:
+            data = fh.read()
+        if len(data) < 100:
+            return False
+        ext = os.path.splitext(font_path)[1].lower()
+        stream = pikepdf.Stream(pdf, data)
+        if ext in (".ttf", ".ttc"):
+            stream["/Length1"] = pikepdf.Integer(len(data))
+            descriptor["/FontFile2"] = stream
+            font["/Subtype"] = pikepdf.Name("/TrueType")
+        elif ext == ".otf":
+            stream["/Subtype"] = pikepdf.Name("/OpenType")
+            descriptor["/FontFile3"] = stream
+        else:
+            stream["/Length1"] = pikepdf.Integer(len(data))
+            descriptor["/FontFile"] = stream
+        return True
+    except Exception:
+        return False
+
+
+def _glyph_name_to_text(name: str) -> str | None:
+    glyph = name.lstrip("/")
+    if glyph in AGL2UV:
+        try:
+            return chr(int(AGL2UV[glyph]))
+        except Exception:
+            return None
+    return None
+
+
+def _simple_font_encoding_map(font: pikepdf.Dictionary) -> tuple[dict[int, str], dict[int, str]]:
+    enc = font.get("/Encoding")
+    base_map: dict[int, int] = dict(_WINANSI_TO_UNICODE)
+    differences = None
+    if isinstance(enc, pikepdf.Name):
+        enc_name = safe_str(enc)
+        if enc_name == "/MacRomanEncoding":
+            base_map = dict(_MAC_ROMAN_TO_UNICODE)
+        elif enc_name in ("/WinAnsiEncoding", "/PDFDocEncoding", ""):
+            base_map = dict(_WINANSI_TO_UNICODE)
+    elif isinstance(enc, pikepdf.Dictionary):
+        base = safe_str(enc.get("/BaseEncoding", "/WinAnsiEncoding"))
+        base_map = dict(_MAC_ROMAN_TO_UNICODE if base == "/MacRomanEncoding" else _WINANSI_TO_UNICODE)
+        differences = enc.get("/Differences")
+    code_to_text = {code: chr(cp) for code, cp in base_map.items()}
+    code_to_glyph: dict[int, str] = {}
+    if isinstance(differences, pikepdf.Array):
+        current_code: int | None = None
+        for item in differences:
+            if isinstance(item, (int, pikepdf.Integer)):
+                current_code = int(item)
+                continue
+            if current_code is None:
+                continue
+            if isinstance(item, pikepdf.Name):
+                glyph = safe_str(item).lstrip("/")
+                text = _glyph_name_to_text(glyph)
+                if text:
+                    code_to_text[current_code] = text
+                    code_to_glyph[current_code] = glyph
+            current_code += 1
+    return code_to_text, code_to_glyph
+
+
+def _declared_font_codes(font: pikepdf.Dictionary, encoding_map: dict[int, str]) -> list[int]:
+    try:
+        first = font.get("/FirstChar")
+        last = font.get("/LastChar")
+        widths = font.get("/Widths")
+        if isinstance(first, (int, pikepdf.Integer)) and isinstance(last, (int, pikepdf.Integer)) and isinstance(widths, pikepdf.Array):
+            return [code for code in range(int(first), int(last) + 1) if code in encoding_map and 0 <= code - int(first) < len(widths)]
+    except Exception:
+        pass
+    return sorted(encoding_map.keys())
+
+
+def _derive_local_width_map(font: pikepdf.Dictionary, metrics: dict | None, encoding_map: dict[int, str]) -> dict[int, int]:
+    if not metrics:
+        return {}
+    widths = metrics.get("unicode_widths") or {}
+    out: dict[int, int] = {}
+    for code in _declared_font_codes(font, encoding_map):
+        text = encoding_map.get(code)
+        if not text:
+            continue
+        cp = ord(text[0])
+        width = widths.get(cp)
+        if width is not None:
+            out[code] = int(width)
+    return out
+
+
+def _max_local_width_drift(font: pikepdf.Dictionary, width_map: dict[int, int]) -> float | None:
+    try:
+        first = font.get("/FirstChar")
+        widths = font.get("/Widths")
+        if not isinstance(first, (int, pikepdf.Integer)) or not isinstance(widths, pikepdf.Array):
+            return None
+        drifts: list[float] = []
+        for code, width in width_map.items():
+            idx = code - int(first)
+            if idx < 0 or idx >= len(widths):
+                continue
+            existing = int(widths[idx])
+            if existing > 0:
+                drifts.append(abs(width - existing) / existing)
+        return max(drifts) if drifts else None
+    except Exception:
+        return None
+
+
+def _update_local_widths(font: pikepdf.Dictionary, width_map: dict[int, int]) -> bool:
+    if not width_map:
+        return False
+    try:
+        first = font.get("/FirstChar")
+        widths = font.get("/Widths")
+        if not isinstance(first, (int, pikepdf.Integer)) or not isinstance(widths, pikepdf.Array):
+            first_c = min(width_map.keys())
+            last_c = max(width_map.keys())
+            font["/FirstChar"] = pikepdf.Integer(first_c)
+            font["/LastChar"] = pikepdf.Integer(last_c)
+            font["/Widths"] = pikepdf.Array([pikepdf.Integer(width_map.get(code, 500)) for code in range(first_c, last_c + 1)])
+            return True
+        changed = False
+        for code, width in width_map.items():
+            idx = code - int(first)
+            if 0 <= idx < len(widths) and int(widths[idx]) != int(width):
+                widths[idx] = pikepdf.Integer(int(width))
+                changed = True
+        return changed
+    except Exception:
+        return False
+
+
+def _add_local_tounicode(pdf: pikepdf.Pdf, font: pikepdf.Dictionary, base_name: str, encoding_map: dict[int, str]) -> bool:
+    try:
+        cmap = _build_simple_tounicode_cmap(base_name.lstrip("/") or "LocalFont", encoding_map)
+        if not cmap:
+            return False
+        font["/ToUnicode"] = pikepdf.Stream(pdf, cmap.encode("utf-8"))
+        return True
+    except Exception:
+        return False
+
+
+def _select_heuristic_local_fallback(font: pikepdf.Dictionary, encoding_map: dict[int, str], max_width_drift: float) -> tuple[str | None, str | None, dict | None, dict[int, int]]:
+    best: tuple[str | None, str | None, dict | None, dict[int, int], float | None] = (None, None, None, {}, None)
+    for name in _LOCAL_HEURISTIC_FALLBACKS:
+        path = _resolve_local_font_file(name)
+        if not path:
+            continue
+        metrics = _parse_sfnt_metrics(path)
+        width_map = _derive_local_width_map(font, metrics, encoding_map)
+        if not width_map:
+            continue
+        drift = _max_local_width_drift(font, width_map)
+        if drift is not None and drift > max_width_drift:
+            continue
+        if best[4] is None or (drift is not None and drift < best[4]):
+            best = (name, path, metrics, width_map, drift)
+    return best[0], best[1], best[2], best[3]
+
+
+def _apply_local_font_substitute_to_font(pdf: pikepdf.Pdf, font: pikepdf.Dictionary, max_width_drift: float, heuristic_max_width_drift: float) -> bool:
+    try:
+        subtype = safe_str(font.get("/Subtype", "")).lstrip("/")
+        if subtype not in ("Type1", "TrueType"):
+            return False
+        if _font_is_embedded(font) and font.get("/ToUnicode") is not None:
+            return False
+        base = safe_str(font.get("/BaseFont", ""))
+        normalized_base = "/" + _strip_subset_prefix_from_base_font(base).lstrip("/")
+        exact_path = _resolve_local_font_file(normalized_base)
+        substitute_name = None if exact_path else _local_legacy_substitute_name(normalized_base)
+        font_path = exact_path or _resolve_local_font_file(substitute_name)
+        encoding_map, _glyphs = _simple_font_encoding_map(font)
+        width_map: dict[int, int] = {}
+        metrics = _parse_sfnt_metrics(font_path) if font_path else None
+        if font_path and not exact_path:
+            width_map = _derive_local_width_map(font, metrics, encoding_map)
+            drift = _max_local_width_drift(font, width_map)
+            if not width_map or (drift is not None and drift > max_width_drift):
+                return False
+        if not font_path:
+            substitute_name, font_path, metrics, width_map = _select_heuristic_local_fallback(font, encoding_map, heuristic_max_width_drift)
+            if not font_path:
+                return False
+        selected_name = normalized_base if exact_path else (substitute_name or normalized_base)
+        desc = _ensure_font_descriptor(pdf, font, selected_name or normalized_base, metrics)
+        changed = False
+        if not _font_is_embedded(font):
+            if _embed_local_font_program(pdf, font, desc, font_path):
+                changed = True
+        if not width_map:
+            width_map = _derive_local_width_map(font, metrics, encoding_map)
+        if width_map and _update_local_widths(font, width_map):
+            changed = True
+        if font.get("/ToUnicode") is None and _add_local_tounicode(pdf, font, selected_name or normalized_base, encoding_map):
+            changed = True
+        if selected_name:
+            try:
+                font["/BaseFont"] = pikepdf.Name("/" + selected_name.lstrip("/"))
+                desc["/FontName"] = pikepdf.Name("/" + selected_name.lstrip("/"))
+            except Exception:
+                pass
+        return changed
+    except Exception:
+        return False
+
+
 def _iter_font_dicts_from_resources(res: pikepdf.Dictionary, seen: set[int], out: list) -> None:
     try:
         fd = res.get("/Font")
@@ -2680,6 +3123,27 @@ def _op_embed_urw_type1_substitutes(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
     for font in _collect_all_page_fonts(pdf):
         if _apply_urw_substitute_to_font(pdf, font):
+            changed = True
+    return changed
+
+
+def _op_embed_local_font_substitutes(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Embed installed open-font substitutes for Acrobat Character Encoding risk.
+    This is intentionally bounded and structure-preserving: no pdfwrite rewrite, no OCR,
+    and fallback substitutions are rejected when declared glyph widths drift too far.
+    """
+    try:
+        max_width_drift = float(params.get("maxWidthDrift", 0.12))
+    except (TypeError, ValueError):
+        max_width_drift = 0.12
+    try:
+        heuristic_max_width_drift = float(params.get("heuristicMaxWidthDrift", 0.35))
+    except (TypeError, ValueError):
+        heuristic_max_width_drift = 0.35
+    changed = False
+    for font in _collect_all_page_fonts(pdf):
+        if _apply_local_font_substitute_to_font(pdf, font, max_width_drift, heuristic_max_width_drift):
             changed = True
     return changed
 
@@ -8178,6 +8642,7 @@ MUTATORS = {
     "normalize_annotation_tab_order": _op_normalize_annotation_tab_order,
     "repair_annotation_alt_text": _op_repair_annotation_alt_text,
     "embed_urw_type1_substitutes": _op_embed_urw_type1_substitutes,
+    "embed_local_font_substitutes": _op_embed_local_font_substitutes,
     "fill_form_field_tooltips": _op_fill_form_field_tooltips,
 }
 

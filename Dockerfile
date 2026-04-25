@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     ghostscript \
     fonts-urw-base35 \
+    fonts-liberation2 \
+    fonts-crosextra-carlito \
+    fonts-noto-core \
+    fonts-open-sans \
     tesseract-ocr \
     tesseract-ocr-eng \
   && rm -rf /var/lib/apt/lists/*
