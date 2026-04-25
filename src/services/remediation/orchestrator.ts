@@ -798,12 +798,24 @@ function protectedRunCategoryRegression(input: {
   return null;
 }
 
+export function protectedBaselineRunStateUnsafeReason(input: {
+  baseline?: ProtectedBaselineFloor;
+  analysis: AnalysisResult;
+}): string | null {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) return 'protected_baseline_missing';
+  const floorViolation = protectedBaselineFloorDetails({
+    baseline: input.baseline,
+    candidate: input.analysis,
+  });
+  if (floorViolation) return floorViolation.reason;
+  return protectedRunCategoryRegression({ baseline: input.baseline, after: input.analysis });
+}
+
 export function protectedBaselineRunStateIsSafe(input: {
   baseline?: ProtectedBaselineFloor;
   analysis: AnalysisResult;
 }): boolean {
-  if (!protectedBaselineStateIsSafe(input)) return false;
-  return protectedRunCategoryRegression({ baseline: input.baseline, after: input.analysis }) === null;
+  return protectedBaselineRunStateUnsafeReason(input) === null;
 }
 
 export function protectedBaselineRunCheckpointDecision(input: {
@@ -816,6 +828,24 @@ export function protectedBaselineRunCheckpointDecision(input: {
     return 'commit_final';
   }
   if (input.best && protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.best.analysis })) {
+    return 'commit_best';
+  }
+  return 'none';
+}
+
+export function protectedBaselineReanalysisDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  finalReanalysis: AnalysisResult;
+  bestReanalysis?: AnalysisResult | null;
+}): 'commit_final' | 'commit_best' | 'none' {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) return 'commit_final';
+  if (protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.finalReanalysis })) {
+    return 'commit_final';
+  }
+  if (
+    input.bestReanalysis &&
+    protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.bestReanalysis })
+  ) {
     return 'commit_best';
   }
   return 'none';
@@ -3576,6 +3606,104 @@ async function applyProtectedRecoveryPostPasses(args: {
   return { buffer: topup.buffer, analysis: topup.analysis, snapshot: topup.snapshot };
 }
 
+async function applyProtectedFinalReanalysisConfirmation(args: {
+  filename: string;
+  round: number;
+  state: RemediationState;
+  bestState?: (RemediationState & { appliedToolCount: number; reason: string }) | null;
+  appliedTools: AppliedRemediationTool[];
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, round, appliedTools, protectedBaseline } = args;
+  if (!protectedBaseline || !Number.isFinite(protectedBaseline.score)) {
+    return args.state;
+  }
+
+  const confirmProtectedState = async (
+    state: RemediationState,
+    prefix: string,
+  ): Promise<{ state: RemediationState; unsafeReason: string | null; passCount: number }> => {
+    let confirmedState: RemediationState = state;
+    for (let pass = 1; pass <= 2; pass++) {
+      const confirmed = await reanalyzeBufferForMutation(
+        state.buffer,
+        filename,
+        `${prefix}-${pass}`,
+      );
+      confirmedState = {
+        buffer: state.buffer,
+        analysis: confirmed.result,
+        snapshot: confirmed.snapshot,
+      };
+      const unsafeReason = protectedBaselineRunStateUnsafeReason({
+        baseline: protectedBaseline,
+        analysis: confirmedState.analysis,
+      });
+      if (unsafeReason) {
+        return { state: confirmedState, unsafeReason, passCount: pass };
+      }
+    }
+    return { state: confirmedState, unsafeReason: null, passCount: 2 };
+  };
+
+  const confirmedFinal = await confirmProtectedState(args.state, 'pdfaf-protected-final');
+  const confirmedState = confirmedFinal.state;
+  const finalUnsafeReason = confirmedFinal.unsafeReason;
+  if (!finalUnsafeReason) {
+    return confirmedState;
+  }
+
+  let restoredState: RemediationState | null = null;
+  let restoredReason: string | null = null;
+  let restoredPassCount: number | null = null;
+  const best = args.bestState ?? null;
+  if (best) {
+    const bestConfirmed = await confirmProtectedState(best, 'pdfaf-protected-best');
+    if (!bestConfirmed.unsafeReason) {
+      restoredState = bestConfirmed.state;
+      restoredState = { ...restoredState, buffer: Buffer.from(best.buffer) };
+      restoredReason = best.reason;
+      restoredPassCount = bestConfirmed.passCount;
+    }
+  }
+
+  if (!restoredState) {
+    return confirmedState;
+  }
+
+  appliedTools.push({
+    toolName: 'protected_reanalysis_restore',
+    stage: 14,
+    round,
+    scoreBefore: confirmedState.analysis.score,
+    scoreAfter: restoredState.analysis.score,
+    delta: restoredState.analysis.score - confirmedState.analysis.score,
+    outcome: 'applied',
+    details: enrichDetailsWithReplayState(JSON.stringify({
+      outcome: 'applied',
+      note: 'protected_reanalysis_restore',
+      protectedBaselineScore: protectedBaseline.score,
+      protectedFinalScore: args.state.analysis.score,
+      protectedFinalReanalyzedScore: confirmedState.analysis.score,
+      protectedFinalReanalysisPasses: confirmedFinal.passCount,
+      protectedRestoredScore: restoredState.analysis.score,
+      protectedRestoredReason: restoredReason,
+      protectedRestoredReanalysisPasses: restoredPassCount,
+      protectedRestoredAppliedToolCount: best?.appliedToolCount,
+      protectedFloorReason: finalUnsafeReason,
+    }), {
+      beforeAnalysis: confirmedState.analysis,
+      beforeSnapshot: confirmedState.snapshot,
+      afterAnalysis: restoredState.analysis,
+      afterSnapshot: restoredState.snapshot,
+    }),
+    durationMs: 0,
+    source: 'post_pass',
+  });
+
+  return restoredState;
+}
+
 /**
  * Replays a stored playbook using the same per-tool execution and stage reanalyze / regression rules as the main loop.
  */
@@ -4697,6 +4825,20 @@ export async function remediatePdf(
     currentBuffer = Buffer.from(restored.buffer);
     currentAnalysis = restored.analysis;
     currentSnapshot = restored.snapshot;
+  }
+
+  {
+    const confirmed = await applyProtectedFinalReanalysisConfirmation({
+      filename,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      bestState: protectedRunBestState.current ?? null,
+      appliedTools,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = confirmed.buffer;
+    currentAnalysis = confirmed.analysis;
+    currentSnapshot = confirmed.snapshot;
   }
 
   const scoreDelta = currentAnalysis.score - before.score;

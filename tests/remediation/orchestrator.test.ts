@@ -7,7 +7,9 @@ import {
   mergePlanningSummaries,
   parseMutationDetails,
   protectedBaselineFloorViolation,
+  protectedBaselineReanalysisDecision,
   protectedBaselineRunCheckpointDecision,
+  protectedBaselineRunStateUnsafeReason,
   protectedBaselineRunStateIsSafe,
   protectedBaselineStateIsSafe,
   protectedMetadataTopupDecision,
@@ -1629,6 +1631,66 @@ describe('protectedBaselineRunCheckpointDecision', () => {
       },
       analysis: makeAnalysis({ score: 91, confidence: 'medium', categories: { reading_order: 88, alt_text: 79 } }),
     })).toBe(false);
+  });
+});
+
+describe('protectedBaselineReanalysisDecision', () => {
+  it('commits final when protected final reanalysis is floor-safe', () => {
+    expect(protectedBaselineReanalysisDecision({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100 },
+      },
+      finalReanalysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 99 } }),
+      bestReanalysis: makeAnalysis({ score: 88, confidence: 'medium', categories: { reading_order: 99 } }),
+    })).toBe('commit_final');
+  });
+
+  it('restores the best checkpoint when final reanalysis is below the protected floor', () => {
+    expect(protectedBaselineReanalysisDecision({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100 },
+      },
+      finalReanalysis: makeAnalysis({ score: 70, confidence: 'medium', categories: { reading_order: 100 } }),
+      bestReanalysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100 } }),
+    })).toBe('commit_best');
+  });
+
+  it('restores the best checkpoint when final reanalysis preserves score but regresses a strong category', () => {
+    expect(protectedBaselineReanalysisDecision({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100 },
+      },
+      finalReanalysis: makeAnalysis({ score: 91, confidence: 'medium', categories: { reading_order: 67 } }),
+      bestReanalysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100 } }),
+    })).toBe('commit_best');
+    expect(protectedBaselineRunStateUnsafeReason({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100 },
+      },
+      analysis: makeAnalysis({ score: 91, confidence: 'medium', categories: { reading_order: 67 } }),
+    })).toBe('protected_run_category_regressed(reading_order:100->67)');
+  });
+
+  it('does nothing when no protected baseline is supplied', () => {
+    expect(protectedBaselineReanalysisDecision({
+      finalReanalysis: makeAnalysis({ score: 20, confidence: 'medium' }),
+      bestReanalysis: makeAnalysis({ score: 99, confidence: 'medium' }),
+    })).toBe('commit_final');
+  });
+
+  it('leaves the final reanalysis authoritative when no checkpoint is safe', () => {
+    expect(protectedBaselineReanalysisDecision({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100 },
+      },
+      finalReanalysis: makeAnalysis({ score: 70, confidence: 'medium', categories: { reading_order: 100 } }),
+      bestReanalysis: makeAnalysis({ score: 75, confidence: 'medium', categories: { reading_order: 100 } }),
+    })).toBe('none');
   });
 });
 
