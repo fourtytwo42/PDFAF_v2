@@ -5418,7 +5418,7 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = params.get("structRef")
     max_tables = 1
     try:
-        max_tables = max(1, min(2, int(params.get("maxTablesPerRun") or 1)))
+        max_tables = max(1, min(4, int(params.get("maxTablesPerRun") or 1)))
     except Exception:
         max_tables = 1
     changed = False

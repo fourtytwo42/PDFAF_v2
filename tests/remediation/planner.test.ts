@@ -2510,8 +2510,8 @@ describe('planForRemediation', () => {
     const analysis = withCategoryScores(score(snap, META), { table_markup: 35 });
     expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({
       dominantColumnCount: 0,
-      maxTablesPerRun: 2,
-      maxSyntheticCells: 80,
+      maxTablesPerRun: 4,
+      maxSyntheticCells: 160,
       tableFailureClass: 'strongly_irregular_rows',
     });
   });

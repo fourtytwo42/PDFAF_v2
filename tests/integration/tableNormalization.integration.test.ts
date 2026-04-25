@@ -67,6 +67,43 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildMultipleStronglyIrregularTablesPdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-multi-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+tables = []
+for table_index in range(5):
+    table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+    rows = []
+    for row_index, count in enumerate([2, 4, 4, 3, 4]):
+        tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+        cells = []
+        for _ in range(count):
+            role = Name('/TH') if row_index == 0 else Name('/TD')
+            cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+            cells.append(cell)
+        tr['/K'] = Array(cells)
+        rows.append(tr)
+    table['/K'] = Array(rows)
+    tables.append(table)
+doc['/K'] = Array(tables)
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
 describe('normalize_table_structure python mutation', () => {
   it('wraps direct table cells into rows and creates checker-valid headers', async () => {
     const buf = buildDirectCellTablePdf();
@@ -103,6 +140,27 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.irregularRowsBefore).toBeGreaterThan(0);
     expect(row?.invariants?.irregularRowsAfter).toBe(0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('normalizes up to four strongly irregular dense tables in one bounded pass', async () => {
+    const buf = buildMultipleStronglyIrregularTablesPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'strongly_irregular_rows',
+          maxTablesPerRun: 4,
+          maxSyntheticCells: 32,
+        },
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.stronglyIrregularTableCountBefore).toBe(5);
+    expect(row?.invariants?.stronglyIrregularTableCountAfter).toBe(1);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 });

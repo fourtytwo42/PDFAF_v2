@@ -1731,8 +1731,8 @@ export function buildDefaultParams(
       if (tableClass === 'strongly_irregular_rows') {
         return {
           dominantColumnCount: 0,
-          maxTablesPerRun: 2,
-          maxSyntheticCells: 80,
+          maxTablesPerRun: 4,
+          maxSyntheticCells: 160,
           tableFailureClass: tableClass,
         };
       }
