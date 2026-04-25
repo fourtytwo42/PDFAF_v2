@@ -39,6 +39,7 @@
     "benchmark:stable-residual-selection": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage67-stable-residual-selection.ts",
     "benchmark:table-residual": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage68-table-residual-diagnostic.ts",
     "benchmark:legacy-reconciliation": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage69-legacy-reconciliation.ts",
+    "benchmark:runtime-tail": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage70-runtime-tail-isolation.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
