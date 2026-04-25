@@ -301,6 +301,23 @@ function buildReplayState(input: ReplayStateInstrumentationInput, details: Recor
   return replayState;
 }
 
+function buildCurrentReplayStateSignature(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  params?: Record<string, unknown>;
+}): string {
+  const payload: Record<string, unknown> = {
+    score: input.analysis.score,
+    categories: replayCategoryScores(input.analysis),
+    signals: replayDetectionSignals(input.snapshot),
+  };
+  const params = input.params && Object.keys(input.params).length > 0
+    ? Object.fromEntries(Object.entries(input.params).filter(([, value]) => value !== undefined))
+    : undefined;
+  if (params) payload['params'] = params;
+  return buildReplayStateSignature(payload);
+}
+
 function parseDetailsObject(details: string | undefined): Record<string, unknown> | null {
   if (!details?.startsWith('{')) return null;
   try {
@@ -312,6 +329,16 @@ function parseDetailsObject(details: string | undefined): Record<string, unknown
     return null;
   }
   return null;
+}
+
+function replayStateSignatureBeforeFromDetails(details: string | undefined): string | null {
+  const parsed = parseDetailsObject(details);
+  const debug = parsed?.['debug'];
+  if (!debug || typeof debug !== 'object' || Array.isArray(debug)) return null;
+  const replayState = (debug as Record<string, unknown>)['replayState'];
+  if (!replayState || typeof replayState !== 'object' || Array.isArray(replayState)) return null;
+  const signature = (replayState as Record<string, unknown>)['stateSignatureBefore'];
+  return typeof signature === 'string' && signature.length > 0 ? signature : null;
 }
 
 export function enrichDetailsWithReplayState(
@@ -552,6 +579,7 @@ function stageHasExternalStructureDebt(stageApplied: AppliedRemediationTool[]): 
 
 const PROTECTED_STAGE_CATEGORY_REGRESSION_TOLERANCE = 2;
 const PROTECTED_BASELINE_FLOOR_TOLERANCE = 2;
+const PROTECTED_RUN_ALT_CATEGORY_FLOOR = 80;
 const STAGE_CATEGORY_REGRESSION_FLOORS: Partial<Record<CategoryKey, number>> = {
   title_language: 90,
   heading_structure: 70,
@@ -749,6 +777,48 @@ export function protectedBaselineStateIsSafe(input: {
     baselineCaps: input.baseline.scoreCapsApplied,
     candidateCaps: input.analysis.scoreCapsApplied,
   });
+}
+
+function protectedRunCategoryRegression(input: {
+  baseline?: ProtectedBaselineFloor;
+  after: AnalysisResult;
+}): string | null {
+  if (!input.baseline?.categories) return null;
+  for (const [key, baselineScore] of Object.entries(input.baseline.categories) as Array<[CategoryKey, number]>) {
+    if (baselineScore == null) continue;
+    const requiredBaseline = key === 'alt_text' ? PROTECTED_RUN_ALT_CATEGORY_FLOOR : 90;
+    if (baselineScore < requiredBaseline) continue;
+    const afterScore = categoryScore(input.after, key);
+    if (afterScore == null) continue;
+    const floor = baselineScore - PROTECTED_BASELINE_FLOOR_TOLERANCE;
+    if (afterScore < floor) {
+      return `protected_run_category_regressed(${key}:${baselineScore}->${afterScore})`;
+    }
+  }
+  return null;
+}
+
+export function protectedBaselineRunStateIsSafe(input: {
+  baseline?: ProtectedBaselineFloor;
+  analysis: AnalysisResult;
+}): boolean {
+  if (!protectedBaselineStateIsSafe(input)) return false;
+  return protectedRunCategoryRegression({ baseline: input.baseline, after: input.analysis }) === null;
+}
+
+export function protectedBaselineRunCheckpointDecision(input: {
+  baseline?: ProtectedBaselineFloor;
+  final: AnalysisResult;
+  best?: { analysis: AnalysisResult } | null;
+}): 'commit_final' | 'commit_best' | 'none' {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) return 'commit_final';
+  if (protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.final })) {
+    return 'commit_final';
+  }
+  if (input.best && protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.best.analysis })) {
+    return 'commit_best';
+  }
+  return 'none';
 }
 
 function protectedStrongCategoryRegression(input: {
@@ -1609,6 +1679,62 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
 
 export function isStage35StructuralTool(toolName: string): boolean {
   return STAGE35_STRUCTURAL_TOOLS.has(toolName);
+}
+
+const SAME_STATE_NO_GAIN_RUNTIME_CAP_TOOLS = new Set([
+  'remap_orphan_mcids_as_artifacts',
+  'mark_untagged_content_as_artifact',
+  'artifact_repeating_page_furniture',
+  'normalize_heading_hierarchy',
+  'normalize_annotation_tab_order',
+  'repair_structure_conformance',
+]);
+
+function sameStateNoGainRuntimeKey(toolName: string, stateSignatureBefore: string): string | null {
+  if (!SAME_STATE_NO_GAIN_RUNTIME_CAP_TOOLS.has(toolName)) return null;
+  if (!stateSignatureBefore) return null;
+  return `${toolName}:${stateSignatureBefore}`;
+}
+
+export function shouldSkipSameStateNoGainRuntimeAttempt(input: {
+  toolName: string;
+  stateSignatureBefore: string;
+  noGainAttempts: ReadonlySet<string>;
+}): boolean {
+  const key = sameStateNoGainRuntimeKey(input.toolName, input.stateSignatureBefore);
+  return key ? input.noGainAttempts.has(key) : false;
+}
+
+export function shouldRecordSameStateNoGainRuntimeAttempt(input: {
+  toolName: string;
+  stateSignatureBefore: string | null;
+  outcome: AppliedRemediationTool['outcome'];
+  scoreBefore: number;
+  scoreAfter: number;
+}): boolean {
+  if (!input.stateSignatureBefore) return false;
+  if (input.outcome !== 'rejected' && input.outcome !== 'no_effect') return false;
+  if (input.scoreAfter > input.scoreBefore) return false;
+  return sameStateNoGainRuntimeKey(input.toolName, input.stateSignatureBefore) !== null;
+}
+
+function recordSameStateNoGainRuntimeAttempt(
+  row: AppliedRemediationTool,
+  noGainAttempts: Set<string>,
+  fallbackStateSignatureBefore?: string,
+): void {
+  const stateSignatureBefore = replayStateSignatureBeforeFromDetails(row.details) ?? fallbackStateSignatureBefore ?? null;
+  if (!shouldRecordSameStateNoGainRuntimeAttempt({
+    toolName: row.toolName,
+    stateSignatureBefore,
+    outcome: row.outcome,
+    scoreBefore: row.scoreBefore,
+    scoreAfter: row.scoreAfter,
+  })) {
+    return;
+  }
+  const key = sameStateNoGainRuntimeKey(row.toolName, stateSignatureBefore!);
+  if (key) noGainAttempts.add(key);
 }
 
 async function reanalyzeBufferForMutation(
@@ -3758,6 +3884,20 @@ export async function remediatePdf(
   let currentSnapshot = initialSnapshot;
   const appliedTools: AppliedRemediationTool[] = [];
   const rounds: RemediationRoundSummary[] = [];
+  const sameStateNoGainRuntimeAttempts = new Set<string>();
+  const protectedRunBestState: { current?: RemediationState & { appliedToolCount: number; reason: string } } = {};
+  const rememberProtectedRunBestState = (reason: string): void => {
+    if (!protectedBaselineRunStateIsSafe({ baseline: options?.protectedBaseline, analysis: currentAnalysis })) return;
+    if (protectedRunBestState.current && currentAnalysis.score < protectedRunBestState.current.analysis.score) return;
+    protectedRunBestState.current = {
+      buffer: Buffer.from(currentBuffer),
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      appliedToolCount: appliedTools.length,
+      reason,
+    };
+  };
+  rememberProtectedRunBestState('initial_state');
   let planningSummary: PlanningSummary | undefined;
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
@@ -4224,6 +4364,19 @@ export async function remediatePdf(
         ) {
           continue;
         }
+        const sameStateRuntimeSignature = buildCurrentReplayStateSignature({
+          analysis: workingAnalysis,
+          snapshot: workingSnapshot,
+          params: liveTool.params,
+        });
+        if (shouldSkipSameStateNoGainRuntimeAttempt({
+          toolName: liveTool.toolName,
+          stateSignatureBefore: sameStateRuntimeSignature,
+          noGainAttempts: sameStateNoGainRuntimeAttempts,
+        })) {
+          noteEarlyExit(runtimeSummary, `same_state_no_gain_runtime_cap:${liveTool.toolName}`);
+          continue;
+        }
         if (liveTool.toolName === 'set_figure_alt_text') {
           let activeFigureTool: PlannedRemediationTool | null = liveTool;
           const attemptedRefs = new Set<string>();
@@ -4314,6 +4467,11 @@ export async function remediatePdf(
           durationMs,
           outcome: effectiveOutcome,
         });
+        recordSameStateNoGainRuntimeAttempt(
+          stageApplied[stageApplied.length - 1]!,
+          sameStateNoGainRuntimeAttempts,
+          sameStateRuntimeSignature,
+        );
         if (effectiveOutcome === 'applied' && FIGURE_OWNERSHIP_REFRESH_TOOLS.has(liveTool.toolName)) {
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
@@ -4366,6 +4524,10 @@ export async function remediatePdf(
       currentBuffer = finalizedState.buffer;
       currentAnalysis = finalizedState.analysis;
       currentSnapshot = finalizedState.snapshot;
+      for (const row of stageApplied) {
+        recordSameStateNoGainRuntimeAttempt(row, sameStateNoGainRuntimeAttempts);
+      }
+      rememberProtectedRunBestState(`stage_${stage.stageNumber}`);
       pushStageTiming(runtimeSummary, {
         stageNumber: stage.stageNumber,
         round,
@@ -4425,6 +4587,7 @@ export async function remediatePdf(
     currentBuffer = st.buffer;
     currentAnalysis = st.analysis;
     currentSnapshot = st.snapshot;
+    rememberProtectedRunBestState('ensure_accessibility_tagging');
   }
 
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
@@ -4443,6 +4606,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    rememberProtectedRunBestState('alt_cleanup_post_pass');
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
@@ -4461,6 +4625,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    rememberProtectedRunBestState('tagged_cleanup_post_pass');
   }
 
   {
@@ -4480,6 +4645,7 @@ export async function remediatePdf(
     currentBuffer = fin.buffer;
     currentAnalysis = fin.analysis;
     currentSnapshot = fin.snapshot;
+    rememberProtectedRunBestState('document_finalization');
   }
 
   if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
@@ -4496,6 +4662,41 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    rememberProtectedRunBestState('protected_recovery_post_pass');
+  }
+
+  const protectedRunDecision = protectedBaselineRunCheckpointDecision({
+    baseline: options?.protectedBaseline,
+    final: currentAnalysis,
+    best: protectedRunBestState.current,
+  });
+  if (protectedRunDecision === 'commit_best' && protectedRunBestState.current) {
+    const restored = protectedRunBestState.current;
+    appliedTools.push({
+      toolName: 'protected_best_state_restore',
+      stage: 14,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: restored.analysis.score,
+      delta: restored.analysis.score - currentAnalysis.score,
+      outcome: 'applied',
+      details: enrichDetailsWithReplayState(JSON.stringify({
+        outcome: 'applied',
+        note: 'protected_run_best_state_restore',
+        protectedRestoredReason: restored.reason,
+        protectedRestoredAppliedToolCount: restored.appliedToolCount,
+      }), {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: restored.analysis,
+        afterSnapshot: restored.snapshot,
+      }),
+      durationMs: 0,
+      source: 'post_pass',
+    });
+    currentBuffer = Buffer.from(restored.buffer);
+    currentAnalysis = restored.analysis;
+    currentSnapshot = restored.snapshot;
   }
 
   const scoreDelta = currentAnalysis.score - before.score;

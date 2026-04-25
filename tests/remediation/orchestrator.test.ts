@@ -7,14 +7,18 @@ import {
   mergePlanningSummaries,
   parseMutationDetails,
   protectedBaselineFloorViolation,
+  protectedBaselineRunCheckpointDecision,
+  protectedBaselineRunStateIsSafe,
   protectedBaselineStateIsSafe,
   protectedMetadataTopupDecision,
   protectedReadingOrderTopupDecision,
   protectedStrongAltPreservationViolation,
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
+  shouldRecordSameStateNoGainRuntimeAttempt,
   shouldRejectStageResult,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
+  shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
@@ -276,6 +280,55 @@ describe('replay state instrumentation', () => {
       outcome: 'applied',
       invariants: { targetReachable: true, targetIsFigureAfter: true },
     });
+  });
+});
+
+describe('same-state no-gain runtime cap', () => {
+  it('skips repeated same-tool same-state no-gain attempts', () => {
+    const stateSignatureBefore = 'state-a';
+    const attempts = new Set<string>();
+    expect(shouldRecordSameStateNoGainRuntimeAttempt({
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stateSignatureBefore,
+      outcome: 'no_effect',
+      scoreBefore: 80,
+      scoreAfter: 80,
+    })).toBe(true);
+    attempts.add(`remap_orphan_mcids_as_artifacts:${stateSignatureBefore}`);
+
+    expect(shouldSkipSameStateNoGainRuntimeAttempt({
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stateSignatureBefore,
+      noGainAttempts: attempts,
+    })).toBe(true);
+  });
+
+  it('allows the same expensive tool on a new replay state', () => {
+    const attempts = new Set(['repair_structure_conformance:state-a']);
+    expect(shouldSkipSameStateNoGainRuntimeAttempt({
+      toolName: 'repair_structure_conformance',
+      stateSignatureBefore: 'state-b',
+      noGainAttempts: attempts,
+    })).toBe(false);
+  });
+
+  it('does not record score-improving attempts for suppression', () => {
+    expect(shouldRecordSameStateNoGainRuntimeAttempt({
+      toolName: 'normalize_heading_hierarchy',
+      stateSignatureBefore: 'state-a',
+      outcome: 'applied',
+      scoreBefore: 80,
+      scoreAfter: 84,
+    })).toBe(false);
+  });
+
+  it('ignores tools outside the expensive structural cap list', () => {
+    const attempts = new Set(['set_document_title:state-a']);
+    expect(shouldSkipSameStateNoGainRuntimeAttempt({
+      toolName: 'set_document_title',
+      stateSignatureBefore: 'state-a',
+      noGainAttempts: attempts,
+    })).toBe(false);
   });
 });
 
@@ -1531,6 +1584,50 @@ describe('protectedBaselineStateIsSafe', () => {
         ...makeAnalysis({ score: 90, confidence: 'medium' }),
         scoreCapsApplied: [{ category: 'table_markup', cap: 69, rawScore: 100, finalScore: 69, reason: 'new strict cap' }],
       },
+    })).toBe(false);
+  });
+});
+
+describe('protectedBaselineRunCheckpointDecision', () => {
+  it('commits the final state when it reaches the protected floor and preserves strong categories', () => {
+    expect(protectedBaselineRunCheckpointDecision({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100, alt_text: 80 },
+      },
+      final: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 99, alt_text: 79 } }),
+    })).toBe('commit_final');
+  });
+
+  it('restores the best safe intermediate state when a later final state drops below the protected floor', () => {
+    expect(protectedBaselineRunCheckpointDecision({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100, alt_text: 80 },
+      },
+      final: makeAnalysis({ score: 76, confidence: 'medium', categories: { reading_order: 99, alt_text: 80 } }),
+      best: {
+        analysis: makeAnalysis({ score: 89, confidence: 'medium', categories: { reading_order: 100, alt_text: 80 } }),
+      },
+    })).toBe('commit_best');
+  });
+
+  it('does nothing when no protected baseline is supplied', () => {
+    expect(protectedBaselineRunCheckpointDecision({
+      final: makeAnalysis({ score: 70, confidence: 'medium' }),
+      best: {
+        analysis: makeAnalysis({ score: 95, confidence: 'medium' }),
+      },
+    })).toBe('commit_final');
+  });
+
+  it('does not treat a score-safe state as safe when protected categories regress', () => {
+    expect(protectedBaselineRunStateIsSafe({
+      baseline: {
+        score: 90,
+        categories: { reading_order: 100, alt_text: 80 },
+      },
+      analysis: makeAnalysis({ score: 91, confidence: 'medium', categories: { reading_order: 88, alt_text: 79 } }),
     })).toBe(false);
   });
 });
