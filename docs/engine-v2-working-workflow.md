@@ -15,11 +15,14 @@ The default rule is simple: evidence first, one narrow general change, target va
 - Edge mix 2 reference: `Output/from_sibling_pdfaf_v1_edge_mix_2/run-stage68-edge-mix2-2026-04-25-r1`
 - Stage 71 decision: `defer_acceptance_for_p95_project`
 - Stage 72 report: `Output/from_sibling_pdfaf_v1_edge_mix_2/stage72-edge-mix-ab-feasibility-2026-04-25-r1/stage72-edge-mix-ab-feasibility.md`
-- Stage 72 decision: `Stage 73: Single-Row Stable Cleanup plus End-Gate Target Revisit`
+- Stage 73 report: `Output/from_sibling_pdfaf_v1_edge_mix/stage73-figure-alt-cleanup-diagnostic-2026-04-25-r1/stage73-figure-alt-cleanup-diagnostic.md`
+- Stage 73 decision: `diagnostic_only_no_stable_ab_lift`
 
 Stage 71 did not accept the engine because combined edge-mix A/B is `21/28 = 75%`, below the `80%` target. Legacy quality is strong and protected regressions are gone, but p95 remains documented debt.
 
-Stage 72 found that the `80%` edge-mix A/B target is not reachable using only stable non-parked rows. Only `v1-4145` is a stable A/B lift candidate; fixing it would move edge mix from `21/28` to `22/28`, still below the `23/28` target.
+Stage 72 found that the `80%` edge-mix A/B target is not reachable using only stable non-parked rows. Only `v1-4145` was a stable A/B lift candidate; fixing it would have moved edge mix from `21/28` to `22/28`, still below the `23/28` target.
+
+Stage 73 tested that final stable candidate and did not find an accepted behavior change. The diagnostic confirmed safe role-map figure targets remain, but a bounded third-retag experiment left `v1-4145` at `78/C` with `alt_text=20`, so it was rejected/not kept. Under current deterministic structural guardrails, no stable non-parked edge-mix A/B lift remains.
 
 ## Workflow
 
@@ -134,13 +137,11 @@ Reports under `Output/...` can be referenced by docs, but they remain generated 
 
 ## Current Branch Options
 
-### Option A: `single_row_edge_mix_cleanup`
+### Option A: `end_gate_target_revisit`
 
-Goal: improve the one remaining stable edge-mix A/B lift candidate, `v1-4145`.
+Goal: update the acceptance decision now that the single-row stable A/B cleanup branch has been exhausted.
 
-Use Stage 72 feasibility evidence. This branch can improve quality but cannot meet the `80%` end-gate target alone.
-
-This is the recommended next implementation branch if we want one more low-risk structural improvement before revisiting acceptance.
+Use Stage 71, Stage 72, and Stage 73 evidence. The remaining blockers are policy/project decisions rather than an obvious next deterministic structural fixer.
 
 ### Option B: `p95_project`
 
@@ -163,15 +164,15 @@ This is a policy decision, not an engineering fix.
 
 ## Recommended Next Move
 
-Choose `single_row_edge_mix_cleanup`.
+Choose `end_gate_target_revisit`.
 
 Reason:
 
 - Legacy quality is already strong.
 - Protected regressions are gone.
 - False-positive applied is `0`.
-- Stage 72 proves only `v1-4145` is eligible under current guardrails.
-- A `v1-4145` cleanup is lower risk than another p95 suppression attempt or analyzer-volatility project.
-- The result should be followed by an explicit end-gate target revisit because `22/28` is still short of `80%`.
+- Stage 73 exhausted the only stable non-parked edge-mix A/B lift candidate without material score/category improvement.
+- The remaining acceptance blockers are p95 debt, parked analyzer volatility, manual/scanned policy debt, and the edge-mix A/B target itself.
+- Further structural fixer work should wait until we explicitly choose a p95 project, analyzer-volatility project, or acceptance waiver/rebaseline path.
 
 Do not pull a third v1 corpus until one of the current Stage 71 blockers is closed or explicitly waived.

@@ -234,6 +234,8 @@ Recommended branches:
 - `analyzer_or_policy_waiver`: decide whether parked analyzer-volatility and manual/scanned rows should be waived, rebaselined, or assigned a dedicated project.
 - `accept_with_waiver`: accept the Engine v2 general checkpoint with explicit waivers for p95 and the current `75%` edge-mix A/B result.
 
+Stage 73 follow-up: `single_row_edge_mix_cleanup` was attempted as diagnostic-first work. The Stage 73 report is `Output/from_sibling_pdfaf_v1_edge_mix/stage73-figure-alt-cleanup-diagnostic-2026-04-25-r1/stage73-figure-alt-cleanup-diagnostic.md`. A bounded role-map retag progression experiment did not lift `v1-4145` beyond `78/C`, so it was rejected/not kept. The active next branch is now `end_gate_target_revisit`: choose between an explicit waiver/rebaseline, a dedicated p95 project, or a dedicated analyzer-volatility project.
+
 Do not pull a third v1 corpus until one of those branches is selected. More PDFs would broaden evidence without resolving the explicit Stage 71 blockers.
 
 `stable structural gains -> repeatability -> analyzer-volatility decision -> legacy reconciliation -> final acceptance gate`
