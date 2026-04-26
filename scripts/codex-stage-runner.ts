@@ -19,6 +19,7 @@ interface RunnerArgs {
   allowDirty: boolean;
   continuous: boolean;
   autoEscalate: boolean;
+  xhighTaskClasses: string;
   rawEvents: boolean;
   showCodexWarnings: boolean;
   modelPolicy: ModelPolicy;
@@ -34,6 +35,8 @@ interface StageDecision {
 interface ContinuousStop {
   reason: string;
   canEscalate: boolean;
+  escalationRequested: boolean;
+  approvedTaskClass?: string;
 }
 
 type ModelPolicy = 'auto' | 'mini' | 'advanced' | 'xhigh';
@@ -51,6 +54,19 @@ const DEFAULT_SCHEMA = 'schemas/codex-stage-decision.schema.json';
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
 const DEFAULT_MINI_MODEL = 'gpt-5.4-mini';
 const DEFAULT_ADVANCED_MODEL = 'gpt-5.5';
+const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,acceptance,full-gate,protected,analyzer,determinism,architecture,release,boundary-policy';
+
+const XHIGH_TASK_PATTERNS: Record<string, RegExp> = {
+  'hard-planning': /(?:hard[-_ ]?planning|deep[-_ ]?planning|hard[-_ ]?work)/i,
+  acceptance: /(?:acceptance|acceptance[-_ ]?clean|end[-_ ]?gate)/i,
+  'full-gate': /(?:full[-_ ]?gate|benchmark[-_ ]?gate|stage[-_ ]?41|gate[-_ ]?run)/i,
+  protected: /(?:protected|protected[-_ ]?baseline|protected[-_ ]?parity|protected[-_ ]?regression)/i,
+  analyzer: /(?:analyzer|analysis[-_ ]?determinism|python[-_ ]?structural|raw[-_ ]?python)/i,
+  determinism: /(?:determinism|deterministic|repeat[-_ ]?preserving|same[-_ ]?buffer|volatility)/i,
+  architecture: /(?:architecture|architectural|cross[-_ ]?module|broad[-_ ]?design)/i,
+  release: /(?:release|tag|docker[-_ ]?push|checkpoint)/i,
+  'boundary-policy': /(?:boundary[-_ ]?policy|boundary[-_ ]?handling|boundary[-_ ]?subtype)/i,
+};
 
 function usage(): string {
   return [
@@ -63,6 +79,7 @@ function usage(): string {
     '  --max-iterations <n>     Default: 1. Capped at 5.',
     '  --continuous             Run consecutive stage numbers until a stop classification is returned.',
     '  --no-auto-escalate       Disable one-time xhigh reruns when a worker explicitly requests them.',
+    `  --xhigh-task-classes <csv> Approved task classes for auto-escalation. Default: ${DEFAULT_XHIGH_TASK_CLASSES}`,
     '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
     '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
     '  --objective <text>       Extra objective appended to the coordinator prompt.',
@@ -95,6 +112,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     allowDirty: false,
     continuous: false,
     autoEscalate: true,
+    xhighTaskClasses: DEFAULT_XHIGH_TASK_CLASSES,
     rawEvents: false,
     showCodexWarnings: false,
     modelPolicy: 'auto',
@@ -145,6 +163,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     else if (arg === '--model') args.model = next;
     else if (arg === '--model-policy') args.modelPolicy = parseModelPolicy(next);
     else if (arg === '--reasoning-effort') args.reasoningEffort = parseReasoningEffort(next);
+    else if (arg === '--xhigh-task-classes') args.xhighTaskClasses = parseXhighTaskClasses(next).join(',');
     else throw new Error(`Unknown argument: ${arg}`);
     i += 1;
   }
@@ -160,6 +179,32 @@ function parseModelPolicy(value: string): ModelPolicy {
 function parseReasoningEffort(value: string): ReasoningEffort {
   if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
   throw new Error(`Invalid --reasoning-effort ${value}. Use low, medium, high, or xhigh.`);
+}
+
+function parseXhighTaskClasses(value: string): string[] {
+  const classes = value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+  if (!classes.length) throw new Error('--xhigh-task-classes must include at least one class.');
+  const unknown = classes.filter(item => !XHIGH_TASK_PATTERNS[item]);
+  if (unknown.length) {
+    throw new Error(`Unknown --xhigh-task-classes value(s): ${unknown.join(', ')}. Known: ${Object.keys(XHIGH_TASK_PATTERNS).join(', ')}`);
+  }
+  return classes;
+}
+
+function approvedXhighTaskClass(args: RunnerArgs, decision: StageDecision | null): string | undefined {
+  const haystack = [
+    args.mode,
+    args.objective,
+    decision?.next_action ?? '',
+    decision?.classification ?? '',
+  ].join('\n');
+  for (const taskClass of parseXhighTaskClasses(args.xhighTaskClasses)) {
+    if (XHIGH_TASK_PATTERNS[taskClass]?.test(haystack)) return taskClass;
+  }
+  return undefined;
 }
 
 function modeNeedsAdvancedModel(mode: string): boolean {
@@ -512,17 +557,31 @@ async function readDecision(summaryPath: string): Promise<StageDecision | null> 
   }
 }
 
-function shouldStopContinuous(decision: StageDecision | null): ContinuousStop | null {
-  if (!decision?.classification) return { reason: 'missing_or_unparseable_summary', canEscalate: false };
+function shouldStopContinuous(args: RunnerArgs, decision: StageDecision | null): ContinuousStop | null {
+  if (!decision?.classification) {
+    return {
+      reason: 'missing_or_unparseable_summary',
+      canEscalate: false,
+      escalationRequested: false,
+    };
+  }
   if (decision.classification === 'blocked' || decision.classification === 'safe_to_implement') {
     const text = `${decision.next_action ?? ''}`;
+    const escalationRequested = /(?:--model-policy\s+xhigh|xhigh|extra[- ]?high|gpt-5\.5)/i.test(text);
+    const approvedTaskClass = escalationRequested ? approvedXhighTaskClass(args, decision) : undefined;
     return {
       reason: decision.classification,
-      canEscalate: /(?:--model-policy\s+xhigh|xhigh|extra[- ]?high|gpt-5\.5)/i.test(text),
+      canEscalate: Boolean(escalationRequested && approvedTaskClass),
+      escalationRequested,
+      approvedTaskClass,
     };
   }
   if (decision.classification === 'rejected' || decision.classification === 'acceptance_ready') {
-    return { reason: decision.classification, canEscalate: false };
+    return {
+      reason: decision.classification,
+      canEscalate: false,
+      escalationRequested: false,
+    };
   }
   return null;
 }
@@ -588,17 +647,20 @@ async function main(): Promise<void> {
     let stageArgs = { ...args, stage: args.stage + offset };
     let alreadyEscalated = false;
     let { decision } = await runStage(stageArgs);
-    let stop = shouldStopContinuous(decision);
+    let stop = shouldStopContinuous(stageArgs, decision);
     if (stop && canAutoEscalate(stageArgs, stop, alreadyEscalated)) {
       const nextAction = decision?.next_action ? ` Next action was: ${decision.next_action}` : '';
-      console.log(`Auto-escalating stage ${stageArgs.stage} once with --model-policy xhigh after ${stop.reason}.${nextAction}`);
+      console.log(`Auto-escalating stage ${stageArgs.stage} once with --model-policy xhigh for ${stop.approvedTaskClass} after ${stop.reason}.${nextAction}`);
       stageArgs = escalationArgs(stageArgs);
       alreadyEscalated = true;
       ({ decision } = await runStage(stageArgs));
-      stop = shouldStopContinuous(decision);
+      stop = shouldStopContinuous(stageArgs, decision);
     }
     if (!args.continuous) break;
     if (stop) {
+      if (stop.escalationRequested && !stop.approvedTaskClass) {
+        console.log(`Xhigh was requested, but auto-escalation was not approved by --xhigh-task-classes (${stageArgs.xhighTaskClasses}).`);
+      }
       console.log(`Stopping continuous run after stage ${stageArgs.stage}: ${stop.reason}`);
       if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
       break;

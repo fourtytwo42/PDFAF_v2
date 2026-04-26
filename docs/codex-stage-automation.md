@@ -34,7 +34,7 @@ Use this when you want the coordinator to run the next stage automatically after
   --poll-seconds 30
 ```
 
-Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement` and explicitly asks for xhigh, the runner reruns that same stage once with `--model-policy xhigh` and then continues from the escalated decision. Use `--no-auto-escalate` to disable that behavior. It still stops on `rejected`, `acceptance_ready`, repeated `blocked`/`safe_to_implement`, or missing/unparseable summaries.
+Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. It still stops on unapproved xhigh requests, `rejected`, `acceptance_ready`, repeated `blocked`/`safe_to_implement`, or missing/unparseable summaries.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
 ## Model Policy
@@ -45,9 +45,24 @@ Default `--model-policy auto` behavior:
 
 - normal diagnostic and implementation stages use `gpt-5.4-mini` with medium reasoning;
 - hard modes such as `hard-planning`, `acceptance`, `full-gate`, `protected`, `analyzer`, or `determinism` use `gpt-5.5` with xhigh reasoning;
-- continuous mode can auto-escalate one stage rerun to `gpt-5.5`/xhigh when the mini worker explicitly asks for it;
+- continuous mode can auto-escalate one stage rerun to `gpt-5.5`/xhigh when the mini worker explicitly asks for it and the task matches an approved xhigh class;
 - `--model <name>` overrides the model directly;
 - `--reasoning-effort low|medium|high|xhigh` overrides the selected reasoning effort.
+
+Default approved xhigh task classes:
+
+```text
+hard-planning,acceptance,full-gate,protected,analyzer,determinism,architecture,release,boundary-policy
+```
+
+Override the allowlist when needed:
+
+```bash
+./scripts/codex-stage.sh --continuous \
+  --stage 92 \
+  --max-stages 10 \
+  --xhigh-task-classes hard-planning,acceptance,full-gate,analyzer,determinism
+```
 
 Conservative default:
 
@@ -103,7 +118,7 @@ The runner:
 - records local LLM/listener status before launching Codex;
 - calls `codex exec` with `--dangerously-bypass-approvals-and-sandbox` so stage workers can run non-interactively in this already-trusted workspace;
 - passes an explicit Codex model and reasoning effort based on `--model-policy`;
-- reruns a blocked/safe-to-implement continuous stage once at xhigh only when the worker explicitly asks for xhigh;
+- reruns a blocked/safe-to-implement continuous stage once at xhigh only when the worker explicitly asks for xhigh and the task matches `--xhigh-task-classes`;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
 - prints readable live progress and heartbeat status while a Codex worker is still running;
