@@ -73,6 +73,7 @@ function parseArgs(argv: string[]): RunnerArgs {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+    if (arg === '--') continue;
     if (arg === '--help' || arg === '-h') {
       console.log(usage());
       process.exit(0);
