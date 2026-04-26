@@ -18,6 +18,7 @@ import { mergeSequentialSemanticSummaries } from '../src/routes/remediate.js';
 import {
   applyPostRemediationAltRepair,
   remediatePdf,
+  type ProtectedDebugStateCapture,
 } from '../src/services/remediation/orchestrator.js';
 import { buildRemediationOutcomeSummary } from '../src/services/remediation/outcomeSummary.js';
 import { applySemanticHeadingRepairs } from '../src/services/semantic/headingSemantic.js';
@@ -70,6 +71,7 @@ interface ParsedArgs {
   fileIds: string[];
   semanticEnabled: boolean;
   writePdfs: boolean;
+  writeProtectedDebugStates: boolean;
   validateManifestOnly: boolean;
   validateRunDir?: string;
   validateVisual: boolean;
@@ -80,6 +82,20 @@ interface ProtectedBaselineRow {
   score: number;
   scoreCapsApplied: AnalysisResult['scoreCapsApplied'];
   categories: Record<string, number>;
+}
+
+interface ProtectedDebugStateArtifact {
+  sequence: number;
+  reason: string;
+  path: string;
+  metadataPath: string;
+  bufferSha256: string;
+  score: number;
+  grade: string;
+  floorScore: number | null;
+  floorReached: boolean;
+  protectedRunSafe: boolean;
+  appliedToolCount: number;
 }
 
 interface ReanalysisAttempt extends ProtectedReanalysisCandidate {
@@ -138,6 +154,7 @@ Options:
   --semantic                      Enable semantic passes
   --no-semantic                   Disable semantic passes (default)
   --write-pdfs                    Write remediated PDFs into the run directory
+  --write-protected-debug-states  Write protected checkpoint PDFs/metadata for diagnostics
   --protected-baseline-run <dir>   Internal benchmark-only protected row floor baseline
   --validate-manifest             Validate Input/experiment-corpus/manifest.json and exit
   --validate-run <dir>            Validate an existing benchmark run directory and exit
@@ -153,6 +170,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   const fileIds: string[] = [];
   let semanticEnabled = false;
   let writePdfs = false;
+  let writeProtectedDebugStates = false;
   let validateManifestOnly = false;
   let validateRunDir: string | undefined;
   let validateVisual = false;
@@ -203,6 +221,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--write-pdfs':
         writePdfs = true;
         break;
+      case '--write-protected-debug-states':
+        writeProtectedDebugStates = true;
+        break;
       case '--protected-baseline-run': {
         const value = argv[++i];
         if (!value) throw new Error('Missing value for --protected-baseline-run.');
@@ -238,6 +259,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     fileIds,
     semanticEnabled,
     writePdfs,
+    writeProtectedDebugStates,
     validateManifestOnly,
     validateRunDir,
     validateVisual,
@@ -248,6 +270,18 @@ function parseArgs(argv: string[]): ParsedArgs {
 function makeRunId(): string {
   const iso = new Date().toISOString().replace(/[:.]/g, '-');
   return `run-${iso}`;
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'state';
+}
+
+function categoryScores(result: AnalysisResult): Record<string, number> {
+  return Object.fromEntries(result.categories.map(category => [category.key, category.score]));
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -587,6 +621,7 @@ async function runRemediationStep(
   semanticEnabled: boolean,
   mode: BenchmarkMode,
   writePdfs: boolean,
+  writeProtectedDebugStates: boolean,
   runDir: string,
   protectedReanalysisCache: Map<string, Promise<SelectedReanalysis>>,
   protectedBaseline?: ProtectedBaselineRow,
@@ -600,6 +635,49 @@ async function runRemediationStep(
   try {
     const playbookStore = createPlaybookStore(db);
     const toolOutcomeStore = createToolOutcomeStore(db);
+    const protectedDebugStateCaptures: ProtectedDebugStateArtifact[] = [];
+    let protectedDebugStateSequence = 0;
+    const writeProtectedDebugState = async (state: ProtectedDebugStateCapture): Promise<void> => {
+      if (!writeProtectedDebugStates || !protectedBaseline) return;
+      protectedDebugStateSequence += 1;
+      const sequence = protectedDebugStateSequence;
+      const dir = join(runDir, 'protected-states', entry.id);
+      const base = `${String(sequence).padStart(3, '0')}-${slugify(state.reason)}`;
+      const pdfPath = join(dir, `${base}.pdf`);
+      const metadataPath = join(dir, `${base}.json`);
+      await mkdir(dir, { recursive: true });
+      await writeFile(pdfPath, state.buffer);
+      const metadata = {
+        rowId: entry.id,
+        file: entry.file,
+        reason: state.reason,
+        sequence,
+        bufferSha256: state.bufferSha256,
+        score: state.analysis.score,
+        grade: state.analysis.grade,
+        floorScore: state.floorScore,
+        floorReached: state.floorReached,
+        protectedRunSafe: state.protectedRunSafe,
+        appliedToolCount: state.appliedToolCount,
+        categories: categoryScores(state.analysis),
+        pdfClass: state.analysis.pdfClass,
+        analysisDurationMs: state.analysis.analysisDurationMs,
+      };
+      await writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+      protectedDebugStateCaptures.push({
+        sequence,
+        reason: state.reason,
+        path: pdfPath,
+        metadataPath,
+        bufferSha256: state.bufferSha256,
+        score: state.analysis.score,
+        grade: state.analysis.grade,
+        floorScore: state.floorScore,
+        floorReached: state.floorReached,
+        protectedRunSafe: state.protectedRunSafe,
+        appliedToolCount: state.appliedToolCount,
+      });
+    };
 
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
       buffer,
@@ -610,6 +688,7 @@ async function runRemediationStep(
         maxRounds: 10,
         playbookStore,
         toolOutcomeStore,
+        ...(writeProtectedDebugStates && protectedBaseline ? { onProtectedDebugState: writeProtectedDebugState } : {}),
         ...(protectedBaseline
           ? {
               protectedBaseline: {
@@ -735,6 +814,7 @@ async function runRemediationStep(
       reanalyzedDetectionProfile: reanalyzed?.detectionProfile ?? null,
       reanalyzedIcjiaParity: reanalyzedSnapshot ? reanalyzedParity : null,
       ...(protectedReanalysisSelection ? { protectedReanalysisSelection } : {}),
+      ...(protectedDebugStateCaptures.length > 0 ? { protectedDebugStateCaptures } : {}),
       planningSummary: remediation.planningSummary ?? null,
       delta: effectiveAfter.score - remediation.before.score,
       appliedTools: remediation.appliedTools,
@@ -865,6 +945,7 @@ async function main(): Promise<void> {
           args.semanticEnabled,
           args.mode,
           args.writePdfs,
+          args.writeProtectedDebugStates,
           runDir,
           protectedReanalysisCache,
           protectedBaselineRows.get(entry.id),

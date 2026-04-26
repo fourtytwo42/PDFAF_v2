@@ -4144,6 +4144,29 @@ export interface RemediatePdfOptions {
   playbookStore?: PlaybookStore;
   toolOutcomeStore?: ToolOutcomeStore;
   onProgress?: (update: { percent: number; stage: string; detail?: string }) => void | Promise<void>;
+  onProtectedDebugState?: (state: ProtectedDebugStateCapture) => void | Promise<void>;
+}
+
+export interface ProtectedDebugStateCapture {
+  reason: string;
+  buffer: Buffer;
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  appliedToolCount: number;
+  bufferSha256: string;
+  floorScore: number | null;
+  floorReached: boolean;
+  protectedRunSafe: boolean;
+}
+
+export function shouldCaptureProtectedDebugState(input: {
+  baseline?: ProtectedBaselineFloor;
+  analysis: AnalysisResult;
+  reason: string;
+}): boolean {
+  if (!input.baseline || !Number.isFinite(input.baseline.score)) return false;
+  const isCheckpointDecision = input.reason.startsWith('checkpoint_decision');
+  return isCheckpointDecision || input.analysis.score >= protectedBaselineFloorScore(input.baseline);
 }
 
 export async function remediatePdf(
@@ -4173,7 +4196,34 @@ export async function remediatePdf(
   const rounds: RemediationRoundSummary[] = [];
   const sameStateNoGainRuntimeAttempts = new Set<string>();
   const protectedRunBestState: { current?: RemediationState & { appliedToolCount: number; reason: string } } = {};
-  const rememberProtectedRunBestState = (reason: string): void => {
+  const captureProtectedDebugState = async (
+    reason: string,
+    state: RemediationState & { appliedToolCount: number },
+  ): Promise<void> => {
+    if (!options?.onProtectedDebugState || !shouldCaptureProtectedDebugState({
+      baseline: options.protectedBaseline,
+      analysis: state.analysis,
+      reason,
+    })) {
+      return;
+    }
+    const floorScore = options.protectedBaseline ? protectedBaselineFloorScore(options.protectedBaseline) : null;
+    await options.onProtectedDebugState({
+      reason,
+      buffer: Buffer.from(state.buffer),
+      analysis: state.analysis,
+      snapshot: state.snapshot,
+      appliedToolCount: state.appliedToolCount,
+      bufferSha256: createHash('sha256').update(state.buffer).digest('hex'),
+      floorScore,
+      floorReached: floorScore != null && state.analysis.score >= floorScore,
+      protectedRunSafe: protectedBaselineRunStateIsSafe({
+        baseline: options.protectedBaseline,
+        analysis: state.analysis,
+      }),
+    });
+  };
+  const rememberProtectedRunBestState = async (reason: string): Promise<void> => {
     const candidate = {
       buffer: Buffer.from(currentBuffer),
       analysis: currentAnalysis,
@@ -4181,6 +4231,7 @@ export async function remediatePdf(
       appliedToolCount: appliedTools.length,
       reason,
     };
+    await captureProtectedDebugState(reason, candidate);
     if (!shouldReplaceProtectedSafeCheckpoint({
       baseline: options?.protectedBaseline,
       current: protectedRunBestState.current,
@@ -4188,7 +4239,7 @@ export async function remediatePdf(
     })) return;
     protectedRunBestState.current = candidate;
   };
-  rememberProtectedRunBestState('initial_state');
+  await rememberProtectedRunBestState('initial_state');
   let planningSummary: PlanningSummary | undefined;
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
@@ -4818,7 +4869,7 @@ export async function remediatePdf(
       for (const row of stageApplied) {
         recordSameStateNoGainRuntimeAttempt(row, sameStateNoGainRuntimeAttempts);
       }
-      rememberProtectedRunBestState(`stage_${stage.stageNumber}`);
+      await rememberProtectedRunBestState(`stage_${stage.stageNumber}`);
       pushStageTiming(runtimeSummary, {
         stageNumber: stage.stageNumber,
         round,
@@ -4878,7 +4929,7 @@ export async function remediatePdf(
     currentBuffer = st.buffer;
     currentAnalysis = st.analysis;
     currentSnapshot = st.snapshot;
-    rememberProtectedRunBestState('ensure_accessibility_tagging');
+    await rememberProtectedRunBestState('ensure_accessibility_tagging');
   }
 
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
@@ -4897,7 +4948,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
-    rememberProtectedRunBestState('alt_cleanup_post_pass');
+    await rememberProtectedRunBestState('alt_cleanup_post_pass');
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
@@ -4916,7 +4967,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
-    rememberProtectedRunBestState('tagged_cleanup_post_pass');
+    await rememberProtectedRunBestState('tagged_cleanup_post_pass');
   }
 
   {
@@ -4936,7 +4987,7 @@ export async function remediatePdf(
     currentBuffer = fin.buffer;
     currentAnalysis = fin.analysis;
     currentSnapshot = fin.snapshot;
-    rememberProtectedRunBestState('document_finalization');
+    await rememberProtectedRunBestState('document_finalization');
   }
 
   if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
@@ -4953,7 +5004,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
-    rememberProtectedRunBestState('protected_recovery_post_pass');
+    await rememberProtectedRunBestState('protected_recovery_post_pass');
   }
 
   const protectedRunDecision = protectedBaselineRunCheckpointDecision({
@@ -4961,6 +5012,15 @@ export async function remediatePdf(
     final: currentAnalysis,
     best: protectedRunBestState.current,
   });
+  await captureProtectedDebugState('checkpoint_decision_final', {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    appliedToolCount: appliedTools.length,
+  });
+  if (protectedRunBestState.current) {
+    await captureProtectedDebugState('checkpoint_decision_best', protectedRunBestState.current);
+  }
   if (protectedRunDecision === 'commit_best' && protectedRunBestState.current) {
     const restored = protectedRunBestState.current;
     appliedTools.push({

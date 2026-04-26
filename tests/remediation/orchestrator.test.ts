@@ -22,6 +22,7 @@ import {
   shouldReplaceProtectedSafeCheckpoint,
   shouldRecordSameStateNoGainRuntimeAttempt,
   shouldRejectStageResult,
+  shouldCaptureProtectedDebugState,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
   shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
@@ -1561,6 +1562,39 @@ describe('protectedBaselineFloorViolation', () => {
     });
 
     expect(result).toEqual({ reject: false, reason: null });
+  });
+});
+
+describe('shouldCaptureProtectedDebugState', () => {
+  it('is disabled when no protected baseline is supplied', () => {
+    expect(shouldCaptureProtectedDebugState({
+      analysis: makeAnalysis({ score: 99 }),
+      reason: 'stage_1',
+    })).toBe(false);
+  });
+
+  it('captures floor-reaching protected states', () => {
+    expect(shouldCaptureProtectedDebugState({
+      baseline: { score: 90 },
+      analysis: makeAnalysis({ score: 88 }),
+      reason: 'stage_2',
+    })).toBe(true);
+  });
+
+  it('captures checkpoint decisions even when the state is below floor', () => {
+    expect(shouldCaptureProtectedDebugState({
+      baseline: { score: 90 },
+      analysis: makeAnalysis({ score: 70 }),
+      reason: 'checkpoint_decision_final',
+    })).toBe(true);
+  });
+
+  it('does not capture below-floor ordinary states', () => {
+    expect(shouldCaptureProtectedDebugState({
+      baseline: { score: 90 },
+      analysis: makeAnalysis({ score: 70 }),
+      reason: 'stage_3',
+    })).toBe(false);
   });
 });
 

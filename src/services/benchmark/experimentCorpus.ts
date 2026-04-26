@@ -116,6 +116,19 @@ export interface RemediateBenchmarkRow {
   reanalyzedDetectionProfile?: DetectionProfile | null;
   reanalyzedIcjiaParity?: IcjiaParityResult | null;
   protectedReanalysisSelection?: ProtectedReanalysisSelectionSummary;
+  protectedDebugStateCaptures?: Array<{
+    sequence: number;
+    reason: string;
+    path: string;
+    metadataPath: string;
+    bufferSha256: string;
+    score: number;
+    grade: string;
+    floorScore: number | null;
+    floorReached: boolean;
+    protectedRunSafe: boolean;
+    appliedToolCount: number;
+  }>;
   planningSummary?: PlanningSummary | null;
   delta: number | null;
   appliedTools: AppliedRemediationTool[];
