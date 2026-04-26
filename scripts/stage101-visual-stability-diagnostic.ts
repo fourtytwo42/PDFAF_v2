@@ -1,13 +1,15 @@
 #!/usr/bin/env tsx
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { comparePdfPages } from '../src/services/benchmark/visualStability.js';
+import { getPdfPageCount } from '../src/services/semantic/pdfPageRender.js';
 
 interface ParsedArgs {
   before: string;
   after: string;
   outDir: string;
   pages: number[];
+  allPages: boolean;
 }
 
 const DEFAULT_OUT = 'Output/experiment-corpus-baseline/stage101-visual-stability-diagnostic-2026-04-26-r1';
@@ -18,6 +20,7 @@ function usage(): string {
     '  --before <pdf>   Before PDF path',
     '  --after <pdf>    After PDF path',
     '  --page <n>       Page number to compare (repeatable, default: 1)',
+    '  --all-pages      Compare every page present in either PDF',
     `  --out <dir>      Default: ${DEFAULT_OUT}`,
   ].join('\n');
 }
@@ -27,11 +30,16 @@ function parseArgs(argv: string[]): ParsedArgs {
   let after = '';
   let outDir = DEFAULT_OUT;
   const pages: number[] = [];
+  let allPages = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (arg === '--help' || arg === '-h') {
       console.log(usage());
       process.exit(0);
+    }
+    if (arg === '--all-pages') {
+      allPages = true;
+      continue;
     }
     const next = argv[i + 1];
     if (!next) throw new Error(`Missing value for ${arg}`);
@@ -43,7 +51,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     i += 1;
   }
   if (!before || !after) throw new Error('Both --before and --after are required.');
-  return { before, after, outDir, pages: pages.length > 0 ? [...new Set(pages)] : [1] };
+  return {
+    before,
+    after,
+    outDir,
+    allPages,
+    pages: pages.length > 0 ? [...new Set(pages)] : [1],
+  };
 }
 
 function renderMarkdown(report: {
@@ -94,10 +108,13 @@ function renderMarkdown(report: {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  const pageNumbers = args.allPages
+    ? await resolveAllPages(args.before, args.after)
+    : args.pages;
   const report = await comparePdfPages({
     beforePath: resolve(args.before),
     afterPath: resolve(args.after),
-    pageNumbers: args.pages,
+    pageNumbers,
   });
   const outDir = resolve(args.outDir);
   await mkdir(outDir, { recursive: true });
@@ -113,6 +130,18 @@ async function main(): Promise<void> {
   await writeFile(join(outDir, 'stage101-visual-stability-diagnostic.json'), JSON.stringify(serializable, null, 2), 'utf8');
   await writeFile(join(outDir, 'stage101-visual-stability-diagnostic.md'), renderMarkdown(serializable), 'utf8');
   console.log(`Wrote ${outDir}`);
+}
+
+async function resolveAllPages(beforePath: string, afterPath: string): Promise<number[]> {
+  const [beforeCount, afterCount] = await Promise.all([
+    getPdfPageCount(await readFile(resolve(beforePath))),
+    getPdfPageCount(await readFile(resolve(afterPath))),
+  ]);
+  if (!beforeCount || !afterCount) {
+    throw new Error('Unable to determine page count for --all-pages comparison.');
+  }
+  const maxPages = Math.max(beforeCount, afterCount);
+  return Array.from({ length: maxPages }, (_, i) => i + 1);
 }
 
 main().catch(error => {

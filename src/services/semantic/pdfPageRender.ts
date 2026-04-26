@@ -9,6 +9,12 @@ import {
   SEMANTIC_PAGE_RENDER_MAX_PX,
 } from '../../config.js';
 
+interface OpenPdfDocument {
+  numPages: number;
+  getPage(pageNumber1Based: number): Promise<any>;
+  destroy(): Promise<void>;
+}
+
 export interface RenderedPdfPageCanvas {
   canvas: {
     width: number;
@@ -31,14 +37,7 @@ export async function renderPageToCanvas(
 ): Promise<RenderedPdfPageCanvas | null> {
   if (pageNumber1Based < 1) return null;
 
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
-  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-
-  // Copy bytes: pdf.js may detach the ArrayBuffer; layout/semantic may open the same PDF buffer sequentially.
-  const data = Uint8Array.from(buffer);
-  const loadingTask = pdfjs.getDocument({ data, disableFontFace: true, verbosity: 0 });
-  const pdf = await loadingTask.promise;
+  const pdf = await openPdf(buffer);
 
   try {
     if (pageNumber1Based > pdf.numPages) return null;
@@ -65,6 +64,29 @@ export async function renderPageToCanvas(
     return null;
   } finally {
     await pdf.destroy().catch(() => {});
+  }
+}
+
+async function openPdf(buffer: Buffer): Promise<OpenPdfDocument> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+
+  // Copy bytes: pdf.js may detach the ArrayBuffer; layout/semantic may open the same PDF buffer sequentially.
+  const data = Uint8Array.from(buffer);
+  const loadingTask = pdfjs.getDocument({ data, disableFontFace: true, verbosity: 0 });
+  return loadingTask.promise as Promise<OpenPdfDocument>;
+}
+
+export async function getPdfPageCount(buffer: Buffer): Promise<number | null> {
+  let pdf: OpenPdfDocument | null = null;
+  try {
+    pdf = await openPdf(buffer);
+    return pdf.numPages;
+  } catch {
+    return null;
+  } finally {
+    await pdf?.destroy().catch(() => {});
   }
 }
 

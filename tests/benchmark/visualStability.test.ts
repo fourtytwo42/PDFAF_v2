@@ -1,5 +1,8 @@
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { compareRenderedPages } from '../../src/services/benchmark/visualStability.js';
+import { getPdfPageCount } from '../../src/services/semantic/pdfPageRender.js';
 
 function page(width: number, height: number, pixels: number[]): {
   width: number;
@@ -49,5 +52,15 @@ describe('compareRenderedPages', () => {
     expect(diff.differentPixelRatio).toBe(1);
     expect(diff.meanAbsoluteChannelDelta).toBe(255);
     expect(diff.maxChannelDelta).toBe(255);
+  });
+});
+
+describe('getPdfPageCount', () => {
+  it('returns the page count for a real fixture PDF', async () => {
+    const pdf = await readFile(resolve('Input/experiment-corpus/00-fixtures/pdfaf_fixture_inaccessible.pdf'));
+
+    const count = await getPdfPageCount(pdf);
+
+    expect(count).toBe(30);
   });
 });
