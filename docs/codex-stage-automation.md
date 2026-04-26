@@ -72,6 +72,22 @@ Run indefinitely in bounded batches:
   --protected-baseline-run Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7
 ```
 
+Run a watched batch in tmux:
+
+```bash
+./scripts/codex-evolve-tmux.sh --session pdfaf-evolve-111 -- \
+  --stage 111 \
+  --batch-size 10 \
+  --max-batches 1 \
+  --parked-pivot-after 2 \
+  --parked-repeat-limit 4 \
+  --topic-cooldown-stages 8 \
+  --pull-v1-when-needed \
+  --visual-gate
+```
+
+Attach with `tmux attach -t pdfaf-evolve-111`, and detach without stopping the run with `Ctrl-b` then `d`. The tmux wrapper mirrors output to a timestamped log under `Output/agent-runs/`.
+
 The evolve runner:
 
 - defaults the starting stage to the latest `Output/agent-runs/stage*` directory plus one, unless `--stage` is supplied;
