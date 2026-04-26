@@ -9,6 +9,10 @@ You are the Codex CLI worker for PDFAF Engine v2 stage automation. Work as a bou
 - Iteration: `{{ITERATION}}` of `{{MAX_ITERATIONS}}`
 - Corpora: `{{CORPORA}}`
 - Extra user objective: `{{OBJECTIVE}}`
+- Model: `{{MODEL}}`
+- Model policy: `{{MODEL_POLICY}}`
+- Reasoning effort: `{{REASONING_EFFORT}}`
+- Model selection reason: `{{MODEL_SELECTION_REASON}}`
 
 ## Required Context
 
@@ -27,6 +31,7 @@ Read these first:
 - Do not commit generated benchmark artifacts, PDFs, Base64, local HTML reports, or copied corpora.
 - Before benchmark paths, check for an existing local LLM/listener such as `llama-server`; run deterministic validations with `--no-semantic` unless semantic behavior is explicitly under test.
 - Commit and push only when source/docs/tests are clean and the stage is complete.
+- If the current model is a mini/conservative model and the work requires deep planning, broad architecture, or high-risk acceptance judgment, stop with a `safe_to_implement` or `blocked` decision and ask to rerun with `--model-policy xhigh` instead of making broad risky changes.
 
 ## Stage Loop
 

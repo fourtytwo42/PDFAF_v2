@@ -37,6 +37,45 @@ Use this when you want the coordinator to run the next stage automatically after
 Continuous mode increments the stage number after a completed worker run. It stops when a worker reports `blocked`, `rejected`, `acceptance_ready`, or `safe_to_implement`, or when the final summary is missing/unparseable. That keeps the loop from running past a point that needs a deliberate decision.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
+## Model Policy
+
+The runner chooses a model explicitly so it does not accidentally inherit a more expensive global Codex default.
+
+Default `--model-policy auto` behavior:
+
+- normal diagnostic and implementation stages use `gpt-5.4-mini` with medium reasoning;
+- hard modes such as `hard-planning`, `acceptance`, `full-gate`, `protected`, `analyzer`, or `determinism` use `gpt-5.5` with xhigh reasoning;
+- `--model <name>` overrides the model directly;
+- `--reasoning-effort low|medium|high|xhigh` overrides the selected reasoning effort.
+
+Conservative default:
+
+```bash
+./scripts/codex-stage.sh --continuous \
+  --stage 85 \
+  --max-stages 3 \
+  --max-iterations 1
+```
+
+Deliberate hard-planning run:
+
+```bash
+./scripts/codex-stage.sh --continuous \
+  --stage 85 \
+  --mode hard-planning \
+  --model-policy xhigh \
+  --max-stages 1
+```
+
+Manual override:
+
+```bash
+./scripts/codex-stage.sh \
+  --stage 85 \
+  --model gpt-5.5 \
+  --reasoning-effort xhigh
+```
+
 ## Watching Progress
 
 By default the runner converts Codex JSONL events into readable terminal lines while still saving the raw stream:
@@ -44,6 +83,7 @@ By default the runner converts Codex JSONL events into readable terminal lines w
 ```text
 === Stage 82 (diagnostic-first) ===
 Agent run dir: Output/agent-runs/stage82-...
+Model: gpt-5.4-mini (medium, auto conservative default)
 --- Iteration 1/1 ---
 Prompt: Output/agent-runs/stage82-.../iteration-1-prompt.md
 [codex:turn.started]
@@ -61,6 +101,7 @@ The runner:
 - checks for tracked dirty files unless `--allow-dirty` is passed;
 - records local LLM/listener status before launching Codex;
 - calls `codex exec` with `--dangerously-bypass-approvals-and-sandbox` so stage workers can run non-interactively in this already-trusted workspace;
+- passes an explicit Codex model and reasoning effort based on `--model-policy`;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
 - prints readable live progress and heartbeat status while a Codex worker is still running;

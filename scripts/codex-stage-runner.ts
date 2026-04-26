@@ -20,6 +20,8 @@ interface RunnerArgs {
   continuous: boolean;
   rawEvents: boolean;
   showCodexWarnings: boolean;
+  modelPolicy: ModelPolicy;
+  reasoningEffort?: ReasoningEffort;
   model?: string;
 }
 
@@ -28,9 +30,21 @@ interface StageDecision {
   next_action?: string;
 }
 
+type ModelPolicy = 'auto' | 'mini' | 'advanced' | 'xhigh';
+type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+interface ModelSelection {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  policy: ModelPolicy;
+  reason: string;
+}
+
 const DEFAULT_PROMPT = 'docs/agent-prompts/coordinator-stage.md';
 const DEFAULT_SCHEMA = 'schemas/codex-stage-decision.schema.json';
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
+const DEFAULT_MINI_MODEL = 'gpt-5.4-mini';
+const DEFAULT_ADVANCED_MODEL = 'gpt-5.5';
 
 function usage(): string {
   return [
@@ -48,7 +62,9 @@ function usage(): string {
     `  --prompt <path>          Default: ${DEFAULT_PROMPT}`,
     `  --schema <path>          Default: ${DEFAULT_SCHEMA}`,
     `  --out-root <path>        Default: ${DEFAULT_OUT_ROOT}`,
-    '  --model <name>           Optional Codex model override.',
+    '  --model-policy <policy>  auto|mini|advanced|xhigh. Default: auto.',
+    '  --model <name>           Optional Codex model override. Bypasses model policy model choice.',
+    '  --reasoning-effort <e>   Optional low|medium|high|xhigh override.',
     '  --dry-run                Write prompt/run metadata but do not launch Codex.',
     '  --allow-dirty            Allow existing tracked changes before launching Codex.',
     '  --raw-events             Stream raw Codex JSONL events instead of readable progress lines.',
@@ -73,6 +89,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     continuous: false,
     rawEvents: false,
     showCodexWarnings: false,
+    modelPolicy: 'auto',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -114,11 +131,84 @@ function parseArgs(argv: string[]): RunnerArgs {
     else if (arg === '--schema') args.schema = next;
     else if (arg === '--out-root') args.outRoot = next;
     else if (arg === '--model') args.model = next;
+    else if (arg === '--model-policy') args.modelPolicy = parseModelPolicy(next);
+    else if (arg === '--reasoning-effort') args.reasoningEffort = parseReasoningEffort(next);
     else throw new Error(`Unknown argument: ${arg}`);
     i += 1;
   }
   if (!Number.isInteger(args.stage) || args.stage <= 0) throw new Error('--stage <n> is required.');
   return args;
+}
+
+function parseModelPolicy(value: string): ModelPolicy {
+  if (value === 'auto' || value === 'mini' || value === 'advanced' || value === 'xhigh') return value;
+  throw new Error(`Invalid --model-policy ${value}. Use auto, mini, advanced, or xhigh.`);
+}
+
+function parseReasoningEffort(value: string): ReasoningEffort {
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
+  throw new Error(`Invalid --reasoning-effort ${value}. Use low, medium, high, or xhigh.`);
+}
+
+function modeNeedsAdvancedModel(mode: string): boolean {
+  return /(?:hard|xhigh|deep|planning|architecture|acceptance|full[-_ ]?gate|benchmark[-_ ]?gate|release|determinism|analyzer|protected)/i
+    .test(mode);
+}
+
+function selectModel(args: RunnerArgs): ModelSelection {
+  if (args.model) {
+    return {
+      model: args.model,
+      reasoningEffort: args.reasoningEffort ?? 'medium',
+      policy: args.modelPolicy,
+      reason: args.reasoningEffort
+        ? 'explicit model and reasoning override'
+        : 'explicit model override with medium reasoning',
+    };
+  }
+
+  if (args.modelPolicy === 'mini') {
+    return {
+      model: DEFAULT_MINI_MODEL,
+      reasoningEffort: args.reasoningEffort ?? 'medium',
+      policy: args.modelPolicy,
+      reason: 'forced conservative mini policy',
+    };
+  }
+
+  if (args.modelPolicy === 'advanced') {
+    return {
+      model: DEFAULT_ADVANCED_MODEL,
+      reasoningEffort: args.reasoningEffort ?? 'high',
+      policy: args.modelPolicy,
+      reason: 'forced advanced policy',
+    };
+  }
+
+  if (args.modelPolicy === 'xhigh') {
+    return {
+      model: DEFAULT_ADVANCED_MODEL,
+      reasoningEffort: args.reasoningEffort ?? 'xhigh',
+      policy: args.modelPolicy,
+      reason: 'forced frontier extra-high policy',
+    };
+  }
+
+  if (modeNeedsAdvancedModel(args.mode)) {
+    return {
+      model: DEFAULT_ADVANCED_MODEL,
+      reasoningEffort: args.reasoningEffort ?? 'xhigh',
+      policy: args.modelPolicy,
+      reason: `auto escalation for mode "${args.mode}"`,
+    };
+  }
+
+  return {
+    model: DEFAULT_MINI_MODEL,
+    reasoningEffort: args.reasoningEffort ?? 'medium',
+    policy: args.modelPolicy,
+    reason: 'auto conservative default',
+  };
 }
 
 function stamp(): string {
@@ -311,7 +401,7 @@ function flushCodexStderrChunk(
   lineBuffer.value = '';
 }
 
-async function runIteration(args: RunnerArgs, iteration: number, runDir: string): Promise<void> {
+async function runIteration(args: RunnerArgs, iteration: number, runDir: string, modelSelection: ModelSelection): Promise<void> {
   const template = await readFile(args.promptTemplate, 'utf8');
   const prompt = renderTemplate(template, {
     STAGE: String(args.stage),
@@ -320,6 +410,10 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     MAX_ITERATIONS: String(args.maxIterations),
     CORPORA: args.corpora,
     OBJECTIVE: args.objective,
+    MODEL: modelSelection.model,
+    MODEL_POLICY: modelSelection.policy,
+    REASONING_EFFORT: modelSelection.reasoningEffort,
+    MODEL_SELECTION_REASON: modelSelection.reason,
   });
   const promptPath = join(runDir, `iteration-${iteration}-prompt.md`);
   const eventsPath = join(runDir, `iteration-${iteration}-events.jsonl`);
@@ -333,6 +427,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
       classification: 'diagnostic_only',
       next_action: 'Dry run only; inspect the generated prompt before launching Codex.',
       promptPath,
+      modelSelection,
     }, null, 2), 'utf8');
     console.log(`Dry run wrote ${promptPath}`);
     return;
@@ -346,8 +441,9 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     '--output-schema', resolve(args.schema),
     '--output-last-message', summaryPath,
     '--json',
+    '--model', modelSelection.model,
+    '-c', `model_reasoning_effort="${modelSelection.reasoningEffort}"`,
   ];
-  if (args.model) codexArgs.push('--model', args.model);
   codexArgs.push('-');
 
   await new Promise<void>((resolveRun, reject) => {
@@ -411,6 +507,7 @@ function shouldStopContinuous(decision: StageDecision | null): string | null {
 async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: StageDecision | null }> {
   const runDir = resolve(args.outRoot, `stage${args.stage}-${stamp()}-${sha1(JSON.stringify(args)).slice(0, 8)}`);
   await mkdir(runDir, { recursive: true });
+  const modelSelection = selectModel(args);
 
   const dirty = await trackedDirty();
   if (dirty && !args.allowDirty) {
@@ -420,6 +517,7 @@ async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: S
   const metadata = {
     generatedAt: new Date().toISOString(),
     args,
+    modelSelection,
     cwd: process.cwd(),
     codex: args.dryRun ? null : await codexPath(),
     llmStatus: await llmStatus(),
@@ -430,9 +528,10 @@ async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: S
   console.log(`=== Stage ${args.stage} (${args.mode}) ===`);
   console.log(`Agent run dir: ${runDir}`);
   console.log(`Corpora: ${args.corpora}`);
+  console.log(`Model: ${modelSelection.model} (${modelSelection.reasoningEffort}, ${modelSelection.reason})`);
   for (let i = 1; i <= args.maxIterations; i += 1) {
     console.log(`--- Iteration ${i}/${args.maxIterations} ---`);
-    await runIteration(args, i, runDir);
+    await runIteration(args, i, runDir, modelSelection);
   }
   const decision = await readDecision(join(runDir, `iteration-${args.maxIterations}-summary.json`));
   console.log(`Completed stage ${args.stage}. Output: ${runDir}`);
