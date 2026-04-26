@@ -1,0 +1,523 @@
+{
+  "name": "from_sibling_pdfaf_v1_holdout_3",
+  "createdAt": "2026-04-26",
+  "sourceRepository": "/home/hendo420/pdfaf",
+  "sourcePolicy": "Original cached v1 PDFs selected from sibling v1 manifests for v2 generalization validation. v1 scores are selection context only.",
+  "purpose": "Stage 126 third v1-derived holdout batch for external efficacy and repeatability measurement.",
+  "selectionNotes": [
+    "This is a validation corpus, not a protected baseline replacement.",
+    "PDF files are local test inputs and ignored by git.",
+    "Rows exclude legacy corpus, prior v1 edge-mix/evolve manifests, and recent protected-debug targets where publication ids were discoverable."
+  ],
+  "rows": [
+    {
+      "publicationId": "3423",
+      "title": "New Federal Justice Aid Coming to Illinois",
+      "localFile": "manual_scanned/3423-new-federal-justice-aid-coming-to-illinois.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/compiler/New Federal Justice Aid Coming to Illinois.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 8,
+      "v1Grade": "F",
+      "pageCount": 12,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "manual_or_scanned",
+        "manual_scanned"
+      ],
+      "selectionNote": "manual_scanned quota; source=remediation-remaining-all-candidates.json; v1=8/F; pages=12"
+    },
+    {
+      "publicationId": "3429",
+      "title": "Authority Awards $12 Million to Aid State Crime Victims",
+      "localFile": "manual_scanned/3429-authority-awards-12-million-to-aid-state-crime-victims.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/compiler/Compiler Spring 1986.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 8,
+      "v1Grade": "F",
+      "pageCount": 12,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "manual_or_scanned",
+        "manual_scanned"
+      ],
+      "selectionNote": "manual_scanned quota; source=remediation-remaining-all-candidates.json; v1=8/F; pages=12"
+    },
+    {
+      "publicationId": "3433",
+      "title": "Half of Former Inmates Arrested Within 1 12 Years",
+      "localFile": "manual_scanned/3433-half-of-former-inmates-arrested-within-1-12-years.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/compiler/Compiler Fall 1985.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 8,
+      "v1Grade": "F",
+      "pageCount": 12,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "manual_or_scanned",
+        "manual_scanned"
+      ],
+      "selectionNote": "manual_scanned quota; source=remediation-remaining-all-candidates.json; v1=8/F; pages=12"
+    },
+    {
+      "publicationId": "3763",
+      "title": "Trends in violent crime and the justice systems response",
+      "localFile": "control/3763-trends-in-violent-crime-and-the-justice-systems-response.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/violent.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 99,
+      "v1Grade": "B",
+      "pageCount": 4,
+      "problemMix": [
+        "control",
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "holdout_control"
+      ],
+      "selectionNote": "control quota; source=all-remaining-automated.json; v1=99/B; pages=4"
+    },
+    {
+      "publicationId": "3864",
+      "title": "Examining Restorative Justice",
+      "localFile": "control/3864-examining-restorative-justice.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/restorative.pdf",
+      "sourceManifest": "all-remaining-automated.json",
+      "v1Score": 99,
+      "v1Grade": "B",
+      "pageCount": 4,
+      "problemMix": [
+        "control",
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "holdout_control"
+      ],
+      "selectionNote": "control quota; source=all-remaining-automated.json; v1=99/B; pages=4"
+    },
+    {
+      "publicationId": "4531",
+      "title": "S.T.O.P. Violence Against Women In Illinois A Multi-Year Plan: FFY14-16",
+      "localFile": "long_mixed/4531-s-t-o-p-violence-against-women-in-illinois-a-multi-year-plan-ffy14-16.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/192.241.146.85/Implementation_Plan_d063c59a59.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 63,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "long_mixed",
+        "long_report"
+      ],
+      "selectionNote": "long_mixed quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=63"
+    },
+    {
+      "publicationId": "3566",
+      "title": "A Study of the Drug Use Forecasting Gun Addendum for Chicago Adult Male Arrestees",
+      "localFile": "long_mixed/3566-a-study-of-the-drug-use-forecasting-gun-addendum-for-chicago-adult-male-.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/A Study Gun Addendum .pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 52,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "long_mixed",
+        "long_report"
+      ],
+      "selectionNote": "long_mixed quota; source=remediation-remaining-all-candidates.json; v1=19/F; pages=52"
+    },
+    {
+      "publicationId": "3579",
+      "title": "An Interim Report on the Illinois Department of Corrections Juvenile Sex Offender Treatment Program",
+      "localFile": "long_mixed/3579-an-interim-report-on-the-illinois-department-of-corrections-juvenile-sex.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/An Evaluation of the IDOC Juvenile Sex Offender Treatment Program.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 166,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "long_mixed",
+        "long_report"
+      ],
+      "selectionNote": "long_mixed quota; source=remediation-remaining-all-candidates.json; v1=19/F; pages=166"
+    },
+    {
+      "publicationId": "3615",
+      "title": "The Illinois Department of Corrections Juvenile Sex Offender Treatment Program The Final Report of the Program Evaluation",
+      "localFile": "long_mixed/3615-the-illinois-department-of-corrections-juvenile-sex-offender-treatment-p.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/An Evaluation of the IDOC.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 166,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "long_mixed",
+        "long_report"
+      ],
+      "selectionNote": "long_mixed quota; source=remediation-remaining-all-candidates.json; v1=19/F; pages=166"
+    },
+    {
+      "publicationId": "3857",
+      "title": "An Evaluation of the Illinois Department of Corrections Juvenile Sex Offender Treatment Program",
+      "localFile": "long_mixed/3857-an-evaluation-of-the-illinois-department-of-corrections-juvenile-sex-off.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/ResearchReports/An Evaluation of the IDOC Juvenile Sex Offender Treatment Program.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 166,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "long_mixed",
+        "long_report"
+      ],
+      "selectionNote": "long_mixed quota; source=remediation-remaining-all-candidates.json; v1=19/F; pages=166"
+    },
+    {
+      "publicationId": "3635",
+      "title": "Victims Rights",
+      "localFile": "figure_alt/3635-victims-rights.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/GetTheFacts/victim2.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 16,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure"
+      ],
+      "selectionNote": "figure_alt quota; source=from_sibling_pdfaf_edgecase_corpus; v1=16/F; pages=2"
+    },
+    {
+      "publicationId": "3567",
+      "title": "McGruff Rural Residents Protect Yourself from Crime!",
+      "localFile": "figure_alt/3567-mcgruff-rural-residents-protect-yourself-from-crime.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/mcgruff/mgrural.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure"
+      ],
+      "selectionNote": "figure_alt quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=2"
+    },
+    {
+      "publicationId": "3643",
+      "title": "Law Enforcement",
+      "localFile": "figure_alt/3643-law-enforcement.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/GetTheFacts/cops2.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure"
+      ],
+      "selectionNote": "figure_alt quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=2"
+    },
+    {
+      "publicationId": "3654",
+      "title": "Trends in Illinois Drug Arrests",
+      "localFile": "figure_alt/3654-trends-in-illinois-drug-arrests.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/drugsent.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure"
+      ],
+      "selectionNote": "figure_alt quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "3657",
+      "title": "Sentencing Felony Offenders in Illinois",
+      "localFile": "figure_alt/3657-sentencing-felony-offenders-in-illinois.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/sentencing.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure"
+      ],
+      "selectionNote": "figure_alt quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "4068",
+      "title": "Examining incarceration trends among minority youth in Illinois",
+      "localFile": "table_link_annotation/4068-examining-incarceration-trends-among-minority-youth-in-illinois.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/juveniles to IDOC - race.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "link_annotation",
+        "table_link_annotation"
+      ],
+      "selectionNote": "table_link_annotation quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "4002",
+      "title": "Driving under the influence DUI laws andenforcement in Illinois and the US",
+      "localFile": "table_link_annotation/4002-driving-under-the-influence-dui-laws-andenforcement-in-illinois-and-the-.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/duifinal.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 16,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "link_annotation",
+        "table_link_annotation"
+      ],
+      "selectionNote": "table_link_annotation quota; source=from_sibling_pdfaf_edgecase_corpus; v1=19/F; pages=16"
+    },
+    {
+      "publicationId": "4066",
+      "title": "Technological innovation fuels identity theft fraud epidemic",
+      "localFile": "table_link_annotation/4066-technological-innovation-fuels-identity-theft-fraud-epidemic.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/identitytheft.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 20,
+      "v1Grade": "F",
+      "pageCount": 8,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "link_annotation",
+        "table_link_annotation"
+      ],
+      "selectionNote": "table_link_annotation quota; source=from_sibling_pdfaf_edgecase_corpus; v1=20/F; pages=8"
+    },
+    {
+      "publicationId": "4071",
+      "title": "Examining trends and data on incarcerated youth in Illinois",
+      "localFile": "table_link_annotation/4071-examining-trends-and-data-on-incarcerated-youth-in-illinois.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/Bulletins/juveniles to IDOC.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 20,
+      "v1Grade": "F",
+      "pageCount": 8,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "link_annotation",
+        "table_link_annotation"
+      ],
+      "selectionNote": "table_link_annotation quota; source=from_sibling_pdfaf_edgecase_corpus; v1=20/F; pages=8"
+    },
+    {
+      "publicationId": "4097",
+      "title": "Communities take on youth violence",
+      "localFile": "table_link_annotation/4097-communities-take-on-youth-violence.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/compiler/Summer Compiler 2008.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 20,
+      "v1Grade": "F",
+      "pageCount": 8,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "heading_structure",
+        "link_annotation",
+        "table_link_annotation"
+      ],
+      "selectionNote": "table_link_annotation quota; source=from_sibling_pdfaf_edgecase_corpus; v1=20/F; pages=8"
+    },
+    {
+      "publicationId": "3662",
+      "title": "Measuring Hate Crime in Illinois",
+      "localFile": "font_text/3662-measuring-hate-crime-in-illinois.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/hate.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "font_text",
+        "heading_structure"
+      ],
+      "selectionNote": "font_text quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "3772",
+      "title": "Trends in Illinois Crime; 19951999",
+      "localFile": "font_text/3772-trends-in-illinois-crime-19951999.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/crime99.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "font_text",
+        "heading_structure"
+      ],
+      "selectionNote": "font_text quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "3876",
+      "title": "College campus crime data in Illinois",
+      "localFile": "font_text/3876-college-campus-crime-data-in-illinois.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/campus.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "font_text",
+        "heading_structure"
+      ],
+      "selectionNote": "font_text quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "3917",
+      "title": "Measuring a Felons Likelihood of Receiving a Prison Sentence",
+      "localFile": "font_text/3917-measuring-a-felons-likelihood-of-receiving-a-prison-sentence.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/TIUpdate/felony.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 18,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "figure_alt",
+        "font",
+        "font_text",
+        "heading_structure"
+      ],
+      "selectionNote": "font_text quota; source=from_sibling_pdfaf_edgecase_corpus; v1=18/F; pages=4"
+    },
+    {
+      "publicationId": "4046",
+      "title": "Chicago Homicide Dataset Series Childrens risk of homicide victimization records 31year increase",
+      "localFile": "font_text/4046-chicago-homicide-dataset-series-childrens-risk-of-homicide-victimization.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/AtAGlance/Child homicide final.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 2,
+      "problemMix": [
+        "font",
+        "font_text",
+        "heading_structure"
+      ],
+      "selectionNote": "font_text quota; source=from_sibling_pdfaf_edgecase_corpus; v1=19/F; pages=2"
+    },
+    {
+      "publicationId": "3601",
+      "title": "The Juvenile Justice Reform Act of 1998",
+      "localFile": "structure_heading_reading_order/3601-the-juvenile-justice-reform-act-of-1998.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/compwin99.pdf",
+      "sourceManifest": "remediation-next-relaxed-batch-candidates.json",
+      "v1Score": 19,
+      "v1Grade": "F",
+      "pageCount": 20,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "structure_heading_reading_order"
+      ],
+      "selectionNote": "structure_heading_reading_order quota; source=remediation-next-relaxed-batch-candidates.json; v1=19/F; pages=20"
+    },
+    {
+      "publicationId": "4737",
+      "title": "Evaluation of Youth Mental Health First Aid Trainings for Illinois Schools, 2022-2023",
+      "localFile": "structure_heading_reading_order/4737-evaluation-of-youth-mental-health-first-aid-trainings-for-illinois-schoo.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/157.230.3.215/Evaluation of Youth Mental Health First Aid Trainings for Illinois Schools 2022 2023-241017T14563868.pdf",
+      "sourceManifest": "from_sibling_pdfaf_edgecase_corpus",
+      "v1Score": 20,
+      "v1Grade": "F",
+      "pageCount": 18,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "link_annotation",
+        "structure_heading_reading_order"
+      ],
+      "selectionNote": "structure_heading_reading_order quota; source=from_sibling_pdfaf_edgecase_corpus; v1=20/F; pages=18"
+    },
+    {
+      "publicationId": "3597",
+      "title": "Evaluation of the Cook County Juvenile Sheriffs Work Alternative Program",
+      "localFile": "structure_heading_reading_order/3597-evaluation-of-the-cook-county-juvenile-sheriffs-work-alternative-program.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/oga/ogav3n1.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 21,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "structure_heading_reading_order"
+      ],
+      "selectionNote": "structure_heading_reading_order quota; source=remediation-remaining-all-candidates.json; v1=21/F; pages=4"
+    },
+    {
+      "publicationId": "3608",
+      "title": "Champaign County Enhanced Domestic Violence Probation Program Evaluated",
+      "localFile": "structure_heading_reading_order/3608-champaign-county-enhanced-domestic-violence-probation-program-evaluated.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/oga/chdv.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 21,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "structure_heading_reading_order"
+      ],
+      "selectionNote": "structure_heading_reading_order quota; source=remediation-remaining-all-candidates.json; v1=21/F; pages=4"
+    },
+    {
+      "publicationId": "3660",
+      "title": "Kankakee MEG unit employs problem solving approach to combat drug crime",
+      "localFile": "structure_heading_reading_order/3660-kankakee-meg-unit-employs-problem-solving-approach-to-combat-drug-crime.pdf",
+      "sourcePath": "/home/hendo420/pdfaf/ICJIA-PDFs/backups/server-cache/143.244.146.43/icjia/pdf/oga/kmeg-oga.pdf",
+      "sourceManifest": "remediation-remaining-all-candidates.json",
+      "v1Score": 21,
+      "v1Grade": "F",
+      "pageCount": 4,
+      "problemMix": [
+        "font",
+        "heading_structure",
+        "structure_heading_reading_order"
+      ],
+      "selectionNote": "structure_heading_reading_order quota; source=remediation-remaining-all-candidates.json; v1=21/F; pages=4"
+    }
+  ]
+}

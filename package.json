@@ -47,6 +47,8 @@
     "benchmark:ab-feasibility": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage72-edge-mix-ab-feasibility.ts",
     "benchmark:stage73-figure-cleanup": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage73-figure-alt-cleanup-diagnostic.ts",
     "benchmark:end-gate-revisit": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage74-end-gate-revisit.ts",
+    "benchmark:stage126-build-holdout": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage126-v1-holdout-builder.ts",
+    "benchmark:stage126-report": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage126-holdout-generalization-report.ts",
     "agent:improve-accessibility": "tsx scripts/codex-stage-runner.ts",
     "agent:continuous": "tsx scripts/codex-stage-runner.ts --continuous",
     "agent:dry-run": "tsx scripts/codex-stage-runner.ts --dry-run",
