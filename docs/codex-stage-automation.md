@@ -27,7 +27,7 @@ pnpm run agent:improve-accessibility -- \
 Use this when you want the coordinator to run the next stage automatically after the previous one completes:
 
 ```bash
-pnpm run agent:continuous -- \
+./scripts/codex-stage.sh --continuous \
   --stage 82 \
   --max-stages 3 \
   --max-iterations 1 \
@@ -35,6 +35,7 @@ pnpm run agent:continuous -- \
 ```
 
 Continuous mode increments the stage number after a completed worker run. It stops when a worker reports `blocked`, `rejected`, `acceptance_ready`, or `safe_to_implement`, or when the final summary is missing/unparseable. That keeps the loop from running past a point that needs a deliberate decision.
+The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
 ## Watching Progress
 
@@ -53,6 +54,7 @@ Next action: ...
 ```
 
 Use `--raw-events` if you want the original Codex JSONL printed directly to the terminal.
+Known Codex plugin/analytics warnings are hidden from the live terminal by default and kept in the per-iteration stderr log. Use `--show-codex-warnings` when debugging Codex CLI startup itself.
 
 The runner:
 
@@ -62,6 +64,7 @@ The runner:
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
 - prints readable live progress and heartbeat status while a Codex worker is still running;
+- suppresses known Codex plugin/analytics warning noise from live output while preserving raw stderr logs;
 - fails if generated artifact paths are staged after the Codex run.
 
 ## Guardrails

@@ -19,6 +19,7 @@ interface RunnerArgs {
   allowDirty: boolean;
   continuous: boolean;
   rawEvents: boolean;
+  showCodexWarnings: boolean;
   model?: string;
 }
 
@@ -51,6 +52,7 @@ function usage(): string {
     '  --dry-run                Write prompt/run metadata but do not launch Codex.',
     '  --allow-dirty            Allow existing tracked changes before launching Codex.',
     '  --raw-events             Stream raw Codex JSONL events instead of readable progress lines.',
+    '  --show-codex-warnings    Show noisy Codex plugin/analytics warnings in terminal output.',
   ].join('\n');
 }
 
@@ -70,6 +72,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     allowDirty: false,
     continuous: false,
     rawEvents: false,
+    showCodexWarnings: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -92,6 +95,10 @@ function parseArgs(argv: string[]): RunnerArgs {
     }
     if (arg === '--raw-events') {
       args.rawEvents = true;
+      continue;
+    }
+    if (arg === '--show-codex-warnings') {
+      args.showCodexWarnings = true;
       continue;
     }
     const next = argv[i + 1];
@@ -259,6 +266,51 @@ function flushCodexChunk(lineBuffer: { value: string }, rawEvents: boolean): voi
   lineBuffer.value = '';
 }
 
+function shouldSuppressCodexStderrLine(line: string, state: { suppressAnalyticsHtml: boolean }): boolean {
+  if (state.suppressAnalyticsHtml) {
+    if (line.includes('</html>')) state.suppressAnalyticsHtml = false;
+    return true;
+  }
+  if (/WARN codex_core_plugins::manifest: ignoring interface\.defaultPrompt:/.test(line)) return true;
+  if (/WARN codex_core::file_watcher: failed to unwatch/.test(line)) return true;
+  if (/WARN codex_analytics::client: events failed with status/.test(line)) {
+    state.suppressAnalyticsHtml = true;
+    return true;
+  }
+  return false;
+}
+
+function streamCodexStderrChunk(
+  text: string,
+  lineBuffer: { value: string },
+  rawEvents: boolean,
+  showCodexWarnings: boolean,
+  state: { suppressAnalyticsHtml: boolean },
+): void {
+  if (rawEvents || showCodexWarnings) {
+    process.stderr.write(text);
+    return;
+  }
+  lineBuffer.value += text;
+  const lines = lineBuffer.value.split(/\r?\n/);
+  lineBuffer.value = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!shouldSuppressCodexStderrLine(line, state)) process.stderr.write(`${line}\n`);
+  }
+}
+
+function flushCodexStderrChunk(
+  lineBuffer: { value: string },
+  rawEvents: boolean,
+  showCodexWarnings: boolean,
+  state: { suppressAnalyticsHtml: boolean },
+): void {
+  if (rawEvents || showCodexWarnings) return;
+  const line = lineBuffer.value;
+  if (line && !shouldSuppressCodexStderrLine(line, state)) process.stderr.write(line);
+  lineBuffer.value = '';
+}
+
 async function runIteration(args: RunnerArgs, iteration: number, runDir: string): Promise<void> {
   const template = await readFile(args.promptTemplate, 'utf8');
   const prompt = renderTemplate(template, {
@@ -303,6 +355,8 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     let stderr = '';
     const chunks: string[] = [];
     const lineBuffer = { value: '' };
+    const stderrLineBuffer = { value: '' };
+    const stderrState = { suppressAnalyticsHtml: false };
     const started = Date.now();
     const heartbeat = setInterval(() => {
       const elapsedSeconds = Math.round((Date.now() - started) / 1000);
@@ -316,12 +370,13 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     proc.stderr.on('data', chunk => {
       const text = String(chunk);
       stderr += text;
-      process.stderr.write(text);
+      streamCodexStderrChunk(text, stderrLineBuffer, args.rawEvents, args.showCodexWarnings, stderrState);
     });
     proc.on('error', reject);
     proc.on('close', async code => {
       clearInterval(heartbeat);
       flushCodexChunk(lineBuffer, args.rawEvents);
+      flushCodexStderrChunk(stderrLineBuffer, args.rawEvents, args.showCodexWarnings, stderrState);
       await writeFile(eventsPath, chunks.join(''), 'utf8');
       if (stderr.trim()) await writeFile(join(runDir, `iteration-${iteration}-stderr.log`), stderr, 'utf8');
       if (code === 0) resolveRun();
