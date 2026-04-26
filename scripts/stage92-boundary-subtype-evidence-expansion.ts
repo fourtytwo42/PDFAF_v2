@@ -69,7 +69,7 @@ interface Stage92Report {
     policyBoundarySources: number;
   };
   decision: {
-    classification: 'blocked';
+    classification: 'diagnostic_only';
     recommendedNextStage: string;
     reasons: string[];
   };
@@ -400,13 +400,13 @@ async function main(): Promise<void> {
     boundaryGroups,
     counts,
     decision: {
-      classification: 'blocked',
-      recommendedNextStage: 'Rerun Stage 92 with --model-policy xhigh if a repeat-preserving boundary policy needs to be designed',
+      classification: 'diagnostic_only',
+      recommendedNextStage: 'Stage 93 should either gather fresh subtype-policy evidence or keep both boundary subtypes parked',
       reasons: [
-        'the stable contentless-reachable boundary candidate is now corroborated by raw stage85/stage86 evidence, repeat stage87-stage89 evidence, and policy stage90-stage91 evidence, but it remains parked',
-        'the unreachable-but-content-bearing boundary candidate remains intermittent and repeat-sensitive, so it is still not safe for acceptance reuse',
+        'the stable contentless-reachable boundary candidate is corroborated by raw stage85/stage86 evidence, repeat stage87-stage89 evidence, and policy stage90-stage91 evidence, but it remains contentless and parked',
+        'the unreachable-but-content-bearing boundary candidate remains intermittent and repeat-sensitive, so it is not safe for acceptance reuse',
         'no wrapper/path groups were introduced by the expanded sample, so the remaining work is still subtype-aware policy design rather than a routing shortcut',
-        'do not add boundary handling, route guards, scorer changes, or any accept/reuse collapse from this evidence alone',
+        'do not add boundary handling, route guards, scorer changes, or any accept/reuse collapse from this evidence',
       ],
     },
   };
