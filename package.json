@@ -50,6 +50,7 @@
     "benchmark:stage126-build-holdout": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage126-v1-holdout-builder.ts",
     "benchmark:stage126-report": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage126-holdout-generalization-report.ts",
     "benchmark:stage127-zero-heading-anchor": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage127-zero-heading-anchor-diagnostic.ts",
+    "benchmark:stage128-protected-closeout": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage128-protected-reanalysis-closeout.ts",
     "agent:improve-accessibility": "tsx scripts/codex-stage-runner.ts",
     "agent:continuous": "tsx scripts/codex-stage-runner.ts --continuous",
     "agent:dry-run": "tsx scripts/codex-stage-runner.ts --dry-run",

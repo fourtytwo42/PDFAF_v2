@@ -43,8 +43,8 @@ export function sha256Buffer(buffer: Buffer): string {
 
 export function protectedReanalysisRepeatCount(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env['PDFAF_PROTECTED_REANALYSIS_REPEATS']?.trim();
-  const parsed = raw ? Number.parseInt(raw, 10) : 3;
-  if (!Number.isFinite(parsed)) return 3;
+  const parsed = raw ? Number.parseInt(raw, 10) : 5;
+  if (!Number.isFinite(parsed)) return 5;
   return Math.max(1, Math.min(5, parsed));
 }
 

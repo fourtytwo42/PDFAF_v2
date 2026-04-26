@@ -91,10 +91,10 @@ describe('protected reanalysis selection', () => {
   });
 
   it('parses repeat count with default and cap', () => {
-    expect(protectedReanalysisRepeatCount({} as NodeJS.ProcessEnv)).toBe(3);
+    expect(protectedReanalysisRepeatCount({} as NodeJS.ProcessEnv)).toBe(5);
     expect(protectedReanalysisRepeatCount({ PDFAF_PROTECTED_REANALYSIS_REPEATS: '9' } as NodeJS.ProcessEnv)).toBe(5);
     expect(protectedReanalysisRepeatCount({ PDFAF_PROTECTED_REANALYSIS_REPEATS: '0' } as NodeJS.ProcessEnv)).toBe(1);
-    expect(protectedReanalysisRepeatCount({ PDFAF_PROTECTED_REANALYSIS_REPEATS: 'abc' } as NodeJS.ProcessEnv)).toBe(3);
+    expect(protectedReanalysisRepeatCount({ PDFAF_PROTECTED_REANALYSIS_REPEATS: 'abc' } as NodeJS.ProcessEnv)).toBe(5);
   });
 
   it('uses a process-local cache for identical reanalysis keys', async () => {
