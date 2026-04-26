@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 interface EvolveArgs {
@@ -44,6 +44,13 @@ interface TargetSelection {
   selectedObjective: string;
   cooledTopics: string[];
   recentCooldownTopics: string[];
+}
+
+interface ProtectedBaselinePreflight {
+  requestedPath?: string;
+  effectivePath?: string;
+  status: 'not_requested' | 'ready' | 'missing';
+  detail: string;
 }
 
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
@@ -210,6 +217,62 @@ function parseTargetFamilies(value: string): string[] {
     throw new Error(`Unknown --target-families value(s): ${unknown.join(', ')}. Known: ${Object.keys(TARGET_FAMILIES).join(', ')}`);
   }
   return families;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function protectedBaselineReady(path: string): Promise<boolean> {
+  const resolved = resolve(path);
+  const requiredFiles = [
+    'manifest.snapshot.json',
+    'analyze.results.json',
+    'remediate.results.json',
+    'summary.json',
+  ];
+  for (const file of requiredFiles) {
+    if (!await pathExists(join(resolved, file))) return false;
+  }
+  return true;
+}
+
+async function applyProtectedBaselinePreflight(args: EvolveArgs): Promise<ProtectedBaselinePreflight> {
+  if (!args.protectedBaselineRun) {
+    return {
+      status: 'not_requested',
+      detail: 'No protected baseline run was requested.',
+    };
+  }
+
+  const requestedPath = args.protectedBaselineRun;
+  if (await protectedBaselineReady(requestedPath)) {
+    args.protectedBaselineRun = resolve(requestedPath);
+    return {
+      requestedPath,
+      effectivePath: args.protectedBaselineRun,
+      status: 'ready',
+      detail: `Protected baseline run is available at ${args.protectedBaselineRun}.`,
+    };
+  }
+
+  args.protectedBaselineRun = undefined;
+  const warning = [
+    `Protected baseline run was requested but is missing or incomplete: ${requestedPath}.`,
+    'Do not attempt protected/full-gate acceptance work in this batch.',
+    'Rebuild or restore the baseline before protected-baseline comparisons.',
+  ].join(' ');
+  args.extraObjective = [args.extraObjective.trim(), warning].filter(Boolean).join(' ');
+  return {
+    requestedPath,
+    status: 'missing',
+    detail: warning,
+  };
 }
 
 async function latestAgentStage(outRoot: string): Promise<number | undefined> {
@@ -425,6 +488,7 @@ async function main(): Promise<void> {
   if (dirty && !args.allowDirty) {
     throw new Error(`Tracked worktree changes exist. Commit/stash them or pass --allow-dirty.\n${dirty}`);
   }
+  const protectedBaselinePreflight = await applyProtectedBaselinePreflight(args);
 
   let stage = args.stage ?? ((await latestAgentStage(args.outRoot)) ?? 0) + 1;
   if (!Number.isInteger(stage) || stage <= 0) throw new Error('Could not determine start stage; pass --stage <n>.');
@@ -439,6 +503,7 @@ async function main(): Promise<void> {
   console.log(`Batch size: ${args.batchSize}`);
   console.log(`Forever: ${args.forever}`);
   console.log(`Max batches: ${Number.isFinite(maxBatches) ? maxBatches : 'unbounded'}`);
+  console.log(`Protected baseline: ${protectedBaselinePreflight.status} - ${protectedBaselinePreflight.detail}`);
   console.log(`Disk:\n${await diskStatus()}`);
   console.log(`LLM status:\n${await llmStatus()}`);
 
@@ -455,6 +520,7 @@ async function main(): Promise<void> {
       previousStage: stage,
       nextStage,
       args,
+      protectedBaselinePreflight,
       targetSelection,
       latestSummaries: summaries,
     });

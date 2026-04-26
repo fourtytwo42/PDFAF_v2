@@ -92,6 +92,7 @@ The evolve runner:
 
 - defaults the starting stage to the latest `Output/agent-runs/stage*` directory plus one, unless `--stage` is supplied;
 - checks for tracked dirty files unless `--allow-dirty` is passed;
+- preflights `--protected-baseline-run`; if the requested run is missing or incomplete, it removes that baseline from the batch objective and tells the worker not to attempt protected/full-gate acceptance work until the baseline is rebuilt or restored;
 - prints disk and local LLM/listener status before starting;
 - reads recent stage summaries, puts recently parked topics on cooldown, and injects a target-family directive into each batch objective;
 - tells workers to preserve speed, avoid regressions, keep PDFs visually stable, and reject/revert unsafe candidates;
