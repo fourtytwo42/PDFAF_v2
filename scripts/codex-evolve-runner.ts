@@ -14,6 +14,8 @@ interface EvolveArgs {
   pollSeconds: number;
   parkedPivotAfter: number;
   parkedRepeatLimit: number;
+  topicCooldownStages: number;
+  targetFamilies: string;
   corpora: string;
   outRoot: string;
   dryRun: boolean;
@@ -28,11 +30,64 @@ interface EvolveArgs {
 interface StageSummary {
   stage?: number;
   classification?: string;
+  summary?: string;
   next_action?: string;
+}
+
+interface StageSummaryWithSource extends StageSummary {
+  runDir: string;
+}
+
+interface TargetSelection {
+  selectedFamily: string;
+  selectedLabel: string;
+  selectedObjective: string;
+  cooledTopics: string[];
+  recentParkedTopics: string[];
 }
 
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
 const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,boundary-policy,full-gate,protected,analyzer,determinism,architecture,release,acceptance';
+const DEFAULT_TARGET_FAMILIES = 'runtime-tail,protected-parity,visual-stability,font-text-extractability,figure-alt,table,heading,analyzer-volatility,boundary';
+
+const TARGET_FAMILIES: Record<string, { label: string; objective: string }> = {
+  'runtime-tail': {
+    label: 'runtime tail',
+    objective: 'Prioritize runtime-tail evidence and speed-preserving remediation. Inspect p95/runtime artifacts and repeated no-gain expensive paths first; do not trade quality or protected-floor preservation for speed.',
+  },
+  'protected-parity': {
+    label: 'protected parity',
+    objective: 'Prioritize protected-baseline parity and protected regression evidence. Focus on deterministic protected-floor preservation, not new broad route guards.',
+  },
+  'visual-stability': {
+    label: 'visual stability',
+    objective: 'Prioritize reusable visual stability validation for remediation changes. Build or improve before/after render comparison checks before changing PDF mutation behavior.',
+  },
+  'font-text-extractability': {
+    label: 'font/text extractability',
+    objective: 'Prioritize font and text-extractability residuals. Preserve Stage 75 font gains, text count, embedded font evidence, ToUnicode coverage, and archival safety.',
+  },
+  'figure-alt': {
+    label: 'figure/alt recovery',
+    objective: 'Prioritize stable figure/alt residuals with checker-visible evidence. Avoid parked analyzer-volatility rows and do not introduce broad figure route guards.',
+  },
+  table: {
+    label: 'table recovery',
+    objective: 'Prioritize stable table residuals with invariant-backed table markup evidence. Avoid retries without checker-facing table improvement.',
+  },
+  heading: {
+    label: 'heading recovery',
+    objective: 'Prioritize stable heading residuals only when candidate evidence exists. Avoid broad heading scheduler expansion without root-reachable evidence.',
+  },
+  'analyzer-volatility': {
+    label: 'analyzer volatility',
+    objective: 'Prioritize analyzer determinism only when raw-repeat evidence proves a quality-preserving deterministic rule. Do not stabilize by dropping valid structural evidence.',
+  },
+  boundary: {
+    label: 'boundary policy',
+    objective: 'Prioritize boundary subtype work only with fresh repeat-preserving evidence. Do not reaffirm parked boundary decisions or promote contentless boundary evidence.',
+  },
+};
 
 function usage(): string {
   return [
@@ -50,6 +105,8 @@ function usage(): string {
     '  --poll-seconds <n>             Default: 30.',
     '  --parked-pivot-after <n>       Default: 2. Encourages a pivot after repeated parked diagnostics for one topic.',
     '  --parked-repeat-limit <n>      Default: 4. Stops a batch if pivoting still repeats parked diagnostics.',
+    '  --topic-cooldown-stages <n>    Default: 8. Avoids recently parked topics for this many stages.',
+    `  --target-families <csv>         Default: ${DEFAULT_TARGET_FAMILIES}`,
     '  --pull-v1-when-needed          Tell workers to select small v1 PDF batches when evidence needs them.',
     '  --visual-gate                  Tell workers to include before/after visual stability validation for behavior changes.',
     '  --protected-baseline-run <dir> Protected baseline for acceptance/full-gate work.',
@@ -71,6 +128,8 @@ function parseArgs(argv: string[]): EvolveArgs {
     pollSeconds: 30,
     parkedPivotAfter: 2,
     parkedRepeatLimit: 4,
+    topicCooldownStages: 8,
+    targetFamilies: DEFAULT_TARGET_FAMILIES,
     corpora: 'legacy,v1-edge',
     outRoot: DEFAULT_OUT_ROOT,
     dryRun: false,
@@ -118,6 +177,8 @@ function parseArgs(argv: string[]): EvolveArgs {
     else if (arg === '--poll-seconds') args.pollSeconds = Math.max(5, positiveInt(next, arg));
     else if (arg === '--parked-pivot-after') args.parkedPivotAfter = Math.max(0, Number.parseInt(next, 10) || 0);
     else if (arg === '--parked-repeat-limit') args.parkedRepeatLimit = Math.max(0, Number.parseInt(next, 10) || 0);
+    else if (arg === '--topic-cooldown-stages') args.topicCooldownStages = Math.max(0, Number.parseInt(next, 10) || 0);
+    else if (arg === '--target-families') args.targetFamilies = parseTargetFamilies(next).join(',');
     else if (arg === '--mode') args.mode = next;
     else if (arg === '--corpora') args.corpora = next;
     else if (arg === '--out-root') args.outRoot = next;
@@ -136,6 +197,19 @@ function positiveInt(value: string, name: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer.`);
   return parsed;
+}
+
+function parseTargetFamilies(value: string): string[] {
+  const families = value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+  if (!families.length) throw new Error('--target-families must include at least one family.');
+  const unknown = families.filter(item => !TARGET_FAMILIES[item]);
+  if (unknown.length) {
+    throw new Error(`Unknown --target-families value(s): ${unknown.join(', ')}. Known: ${Object.keys(TARGET_FAMILIES).join(', ')}`);
+  }
+  return families;
 }
 
 async function latestAgentStage(outRoot: string): Promise<number | undefined> {
@@ -181,13 +255,17 @@ async function llmStatus(): Promise<string> {
   return [`Processes:\n${proc.stdout.trim() || 'none'}`, `Listeners:\n${ports.stdout.trim() || 'none'}`].join('\n\n');
 }
 
-function buildObjective(args: EvolveArgs, stage: number): string {
+function buildObjective(args: EvolveArgs, stage: number, target: TargetSelection): string {
   const parts = [
     'Evolve PDFAF Engine v2 over bounded stages. Improve general PDF accessibility remediation while preserving processing speed, avoiding regressions, and keeping rendered PDFs visually unchanged.',
     'Prefer evidence-first diagnostics, then narrow general implementation only when a safe rule is proven.',
     'Every accepted behavior change must protect false-positive applied = 0, protected rows, F count, runtime p95, text extraction, structure/tag state, page count, and visual stability.',
     'Reject or revert candidates that overfit, broaden route guards without evidence, change scorer/gate semantics, or alter visible rendering.',
     'Do not spend repeated stages reaffirming one parked topic. If a family is parked with no implementation justified, pivot to a different residual family or stop with a clear blocked decision.',
+    `Target-family directive: prioritize ${target.selectedLabel}. ${target.selectedObjective}`,
+    target.cooledTopics.length
+      ? `Cooldown directive: avoid these recently parked topics unless genuinely new evidence appears: ${target.cooledTopics.join(', ')}.`
+      : 'Cooldown directive: no recently parked topics are currently excluded.',
     `This batch starts at Stage ${stage} and may run up to ${args.batchSize} stage(s).`,
   ];
   if (args.protectedBaselineRun) {
@@ -203,7 +281,7 @@ function buildObjective(args: EvolveArgs, stage: number): string {
   return parts.join(' ');
 }
 
-function stageArgs(args: EvolveArgs, stage: number): string[] {
+function stageArgs(args: EvolveArgs, stage: number, target: TargetSelection): string[] {
   const out = [
     '--continuous',
     '--stage', String(stage),
@@ -216,17 +294,19 @@ function stageArgs(args: EvolveArgs, stage: number): string[] {
     '--corpora', args.corpora,
     '--out-root', args.outRoot,
     '--xhigh-task-classes', args.xhighTaskClasses,
-    '--objective', buildObjective(args, stage),
+    '--objective', buildObjective(args, stage, target),
   ];
   if (args.allowDirty) out.push('--allow-dirty');
   if (args.dryRun) out.push('--dry-run');
   return out;
 }
 
-async function runStageBatch(args: EvolveArgs, stage: number): Promise<number> {
-  const childArgs = stageArgs(args, stage);
+async function runStageBatch(args: EvolveArgs, stage: number, target: TargetSelection): Promise<number> {
+  const childArgs = stageArgs(args, stage, target);
   console.log('');
   console.log(`=== Evolve batch starting at Stage ${stage}; batch size ${args.batchSize} ===`);
+  console.log(`Target family: ${target.selectedFamily} (${target.selectedLabel})`);
+  if (target.cooledTopics.length) console.log(`Cooldown topics: ${target.cooledTopics.join(', ')}`);
   console.log(`Command: ./scripts/codex-stage.sh ${childArgs.map(quoteArg).join(' ')}`);
   if (args.dryRun) {
     console.log('Dry run: launching stage runner in dry-run mode.');
@@ -257,29 +337,70 @@ async function writeState(path: string, state: unknown): Promise<void> {
   await writeFile(path, JSON.stringify(state, null, 2), 'utf8');
 }
 
-async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSummary[]> {
-  let dirs: string[] = [];
+async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSummaryWithSource[]> {
+  let dirs: Array<{ name: string; stage: number }> = [];
   try {
     dirs = (await readdir(outRoot))
-      .filter(name => /^stage\d+-/.test(name))
-      .sort()
+      .map(name => {
+        const stage = /^stage(\d+)-/.exec(name)?.[1];
+        return stage ? { name, stage: Number.parseInt(stage, 10) } : null;
+      })
+      .filter((entry): entry is { name: string; stage: number } => Boolean(entry) && Number.isInteger(entry.stage))
+      .sort((a, b) => a.stage - b.stage || a.name.localeCompare(b.name))
       .slice(-limit);
   } catch {
     return [];
   }
 
-  const summaries: StageSummary[] = [];
+  const summaries: StageSummaryWithSource[] = [];
   for (const dir of dirs) {
     try {
-      const files = (await readdir(join(outRoot, dir))).filter(name => /^iteration-\d+-summary\.json$/.test(name)).sort();
+      const files = (await readdir(join(outRoot, dir.name))).filter(name => /^iteration-\d+-summary\.json$/.test(name)).sort();
       const file = files.at(-1);
       if (!file) continue;
-      summaries.push(JSON.parse(await readFile(join(outRoot, dir, file), 'utf8')) as StageSummary);
+      summaries.push({
+        ...(JSON.parse(await readFile(join(outRoot, dir.name, file), 'utf8')) as StageSummary),
+        runDir: dir.name,
+      });
     } catch {
       // Keep evolve status best-effort; worker artifacts remain on disk.
     }
   }
   return summaries;
+}
+
+function parkedTopic(summary: StageSummary): string | null {
+  if (summary.classification !== 'diagnostic_only') return null;
+  const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
+  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) return null;
+  if (/boundary/i.test(text)) return 'boundary';
+  if (/font|text extract/i.test(text)) return 'font-text-extractability';
+  if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
+  if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
+  if (/protected|parity/i.test(text)) return 'protected-parity';
+  if (/figure|alt/i.test(text)) return 'figure-alt';
+  if (/table/i.test(text)) return 'table';
+  if (/heading/i.test(text)) return 'heading';
+  return 'unspecified';
+}
+
+function selectTargetFamily(args: EvolveArgs, summaries: StageSummary[]): TargetSelection {
+  const latestStage = Math.max(0, ...summaries.map(summary => summary.stage ?? 0));
+  const recentParkedTopics = summaries
+    .filter(summary => args.topicCooldownStages === 0 || (summary.stage ?? 0) >= latestStage - args.topicCooldownStages)
+    .map(parkedTopic)
+    .filter((topic): topic is string => Boolean(topic));
+  const cooledTopics = [...new Set(recentParkedTopics)];
+  const families = parseTargetFamilies(args.targetFamilies);
+  const selectedFamily = families.find(family => !cooledTopics.includes(family)) ?? families[0]!;
+  const target = TARGET_FAMILIES[selectedFamily]!;
+  return {
+    selectedFamily,
+    selectedLabel: target.label,
+    selectedObjective: target.objective,
+    cooledTopics,
+    recentParkedTopics,
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -311,7 +432,9 @@ async function main(): Promise<void> {
 
   for (let batch = 1; batch <= maxBatches; batch += 1) {
     const startedAt = new Date().toISOString();
-    const nextStage = await runStageBatch(args, stage);
+    const previousSummaries = await readLatestSummaries(args.outRoot, 16);
+    const targetSelection = selectTargetFamily(args, previousSummaries);
+    const nextStage = await runStageBatch(args, stage, targetSelection);
     const summaries = await readLatestSummaries(args.outRoot);
     await writeState(statePath, {
       updatedAt: new Date().toISOString(),
@@ -320,6 +443,7 @@ async function main(): Promise<void> {
       previousStage: stage,
       nextStage,
       args,
+      targetSelection,
       latestSummaries: summaries,
     });
     stage = nextStage;

@@ -51,6 +51,7 @@ Start one 10-stage evolution batch:
   --batch-size 10 \
   --parked-pivot-after 2 \
   --parked-repeat-limit 4 \
+  --topic-cooldown-stages 8 \
   --pull-v1-when-needed \
   --visual-gate \
   --protected-baseline-run Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7
@@ -64,6 +65,7 @@ Run indefinitely in bounded batches:
   --batch-size 10 \
   --parked-pivot-after 2 \
   --parked-repeat-limit 4 \
+  --topic-cooldown-stages 8 \
   --sleep-seconds 300 \
   --pull-v1-when-needed \
   --visual-gate \
@@ -75,11 +77,26 @@ The evolve runner:
 - defaults the starting stage to the latest `Output/agent-runs/stage*` directory plus one, unless `--stage` is supplied;
 - checks for tracked dirty files unless `--allow-dirty` is passed;
 - prints disk and local LLM/listener status before starting;
+- reads recent stage summaries, puts recently parked topics on cooldown, and injects a target-family directive into each batch objective;
 - tells workers to preserve speed, avoid regressions, keep PDFs visually stable, and reject/revert unsafe candidates;
 - tells workers to pivot away from a family after it is parked, while the stage runner injects a pivot directive before stopping a batch for repeated parked diagnostics;
 - tells workers to pull only small justified v1/sibling PDF batches into ignored local input folders when current evidence needs more coverage;
 - writes current loop state to `Output/agent-runs/evolve/latest-state.json`;
 - never commits generated `Output/` artifacts or PDF payloads.
+
+Default target-family order:
+
+```text
+runtime-tail,protected-parity,visual-stability,font-text-extractability,figure-alt,table,heading,analyzer-volatility,boundary
+```
+
+Override it when you want a different evolution priority:
+
+```bash
+./scripts/codex-evolve.sh \
+  --batch-size 10 \
+  --target-families visual-stability,runtime-tail,protected-parity,font-text-extractability
+```
 
 ## Model Policy
 
