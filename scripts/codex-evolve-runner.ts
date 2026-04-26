@@ -371,11 +371,11 @@ async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSum
 }
 
 function topicFromText(text: string): string {
-  if (/boundary/i.test(text)) return 'boundary';
   if (/font|text extract/i.test(text)) return 'font-text-extractability';
   if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
   if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
   if (/protected|parity/i.test(text)) return 'protected-parity';
+  if (/boundary/i.test(text)) return 'boundary';
   if (/figure|alt/i.test(text)) return 'figure-alt';
   if (/table/i.test(text)) return 'table';
   if (/heading/i.test(text)) return 'heading';
@@ -389,7 +389,7 @@ function cooldownTopic(summary: StageSummary): string | null {
     return topicFromText(text);
   }
   if (summary.classification === 'blocked'
-    && /pivot to a different residual family|pivot to another target family|select a different residual family/i.test(text)) {
+    && /(?:pivot to a different residual family|pivot to another target family|select a different residual family|parked|leave .* parked|no safe .* behavior change|no safe .* change)/i.test(text)) {
     return topicFromText(text);
   }
   return null;
