@@ -58,7 +58,7 @@ The runner:
 
 - checks for tracked dirty files unless `--allow-dirty` is passed;
 - records local LLM/listener status before launching Codex;
-- calls `codex exec` with `--sandbox danger-full-access` and `--ask-for-approval never`;
+- calls `codex exec` with `--dangerously-bypass-approvals-and-sandbox` so stage workers can run non-interactively in this already-trusted workspace;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
 - prints readable live progress and heartbeat status while a Codex worker is still running;

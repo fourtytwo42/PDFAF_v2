@@ -11,7 +11,9 @@
     "tests_run",
     "benchmark_artifacts",
     "commit",
-    "next_action"
+    "next_action",
+    "risks",
+    "stop_reason"
   ],
   "properties": {
     "stage": { "type": "integer", "minimum": 1 },

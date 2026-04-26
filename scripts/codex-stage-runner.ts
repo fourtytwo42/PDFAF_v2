@@ -290,8 +290,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
   const codexArgs = [
     'exec',
     '--cd', process.cwd(),
-    '--sandbox', 'danger-full-access',
-    '--ask-for-approval', 'never',
+    '--dangerously-bypass-approvals-and-sandbox',
     '--output-schema', resolve(args.schema),
     '--output-last-message', summaryPath,
     '--json',
