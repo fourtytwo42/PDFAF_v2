@@ -19,6 +19,7 @@ interface RunnerArgs {
   allowDirty: boolean;
   continuous: boolean;
   autoEscalate: boolean;
+  parkedPivotAfter: number;
   parkedRepeatLimit: number;
   xhighTaskClasses: string;
   rawEvents: boolean;
@@ -81,7 +82,8 @@ function usage(): string {
     '  --max-iterations <n>     Default: 1. Capped at 5.',
     '  --continuous             Run consecutive stage numbers until a stop classification is returned.',
     '  --no-auto-escalate       Disable one-time xhigh reruns when a worker explicitly requests them.',
-    '  --parked-repeat-limit <n> Stop after N consecutive diagnostic-only parked decisions for one topic. Default: 3; 0 disables.',
+    '  --parked-pivot-after <n> Encourage pivot after N consecutive diagnostic-only parked decisions. Default: 2; 0 disables.',
+    '  --parked-repeat-limit <n> Stop after N consecutive diagnostic-only parked decisions for one topic. Default: 4; 0 disables.',
     `  --xhigh-task-classes <csv> Approved task classes for auto-escalation. Default: ${DEFAULT_XHIGH_TASK_CLASSES}`,
     '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
     '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
@@ -115,7 +117,8 @@ function parseArgs(argv: string[]): RunnerArgs {
     allowDirty: false,
     continuous: false,
     autoEscalate: true,
-    parkedRepeatLimit: 3,
+    parkedPivotAfter: 2,
+    parkedRepeatLimit: 4,
     xhighTaskClasses: DEFAULT_XHIGH_TASK_CLASSES,
     rawEvents: false,
     showCodexWarnings: false,
@@ -159,6 +162,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     else if (arg === '--corpora') args.corpora = next;
     else if (arg === '--max-iterations') args.maxIterations = Math.max(1, Math.min(5, Number.parseInt(next, 10) || 1));
     else if (arg === '--max-stages') args.maxStages = Math.max(1, Math.min(20, Number.parseInt(next, 10) || 1));
+    else if (arg === '--parked-pivot-after') args.parkedPivotAfter = Math.max(0, Number.parseInt(next, 10) || 0);
     else if (arg === '--parked-repeat-limit') args.parkedRepeatLimit = Math.max(0, Number.parseInt(next, 10) || 0);
     else if (arg === '--poll-seconds') args.pollSeconds = Math.max(5, Number.parseInt(next, 10) || 30);
     else if (arg === '--objective') args.objective = next;
@@ -621,6 +625,16 @@ function parkedTopic(decision: StageDecision | null): string | null {
   return 'unspecified';
 }
 
+function pivotObjective(baseObjective: string, topic: string, count: number): string {
+  return [
+    baseObjective,
+    `Pivot directive: the last ${count} diagnostic-only stage(s) kept the ${topic} topic parked.`,
+    `Do not spend this stage reaffirming ${topic} unless genuinely new evidence is available.`,
+    'Select a different residual family or benchmark/acceptance risk from the latest artifacts, such as runtime tail, protected parity, font/text extractability, figure/alt, table, heading, analyzer determinism, or visual stability.',
+    'If no safe alternate target exists, return blocked with a concise reason instead of writing another parking note.',
+  ].join(' ');
+}
+
 async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: StageDecision | null }> {
   const runDir = resolve(args.outRoot, `stage${args.stage}-${stamp()}-${sha1(JSON.stringify(args)).slice(0, 8)}`);
   await mkdir(runDir, { recursive: true });
@@ -665,8 +679,17 @@ async function main(): Promise<void> {
   const stageCount = args.continuous ? args.maxStages : 1;
   let consecutiveParkedTopic: string | null = null;
   let consecutiveParkedCount = 0;
+  let pivotTopicForNext: { topic: string; count: number } | null = null;
   for (let offset = 0; offset < stageCount; offset += 1) {
     let stageArgs = { ...args, stage: args.stage + offset };
+    if (pivotTopicForNext) {
+      stageArgs = {
+        ...stageArgs,
+        objective: pivotObjective(stageArgs.objective, pivotTopicForNext.topic, pivotTopicForNext.count),
+      };
+      console.log(`Applying pivot directive for stage ${stageArgs.stage}: avoid repeating parked ${pivotTopicForNext.topic} diagnostics.`);
+      pivotTopicForNext = null;
+    }
     let alreadyEscalated = false;
     let { decision } = await runStage(stageArgs);
     let stop = shouldStopContinuous(stageArgs, decision);
@@ -687,6 +710,10 @@ async function main(): Promise<void> {
         console.log(`Stopping continuous run after stage ${stageArgs.stage}: parked_repeat:${topic}`);
         console.log(`The last ${consecutiveParkedCount} diagnostic-only stage(s) kept ${topic} parked. Pivot to another target family or gather new evidence before resuming this topic.`);
         break;
+      }
+      if (args.parkedPivotAfter > 0 && consecutiveParkedCount >= args.parkedPivotAfter) {
+        pivotTopicForNext = { topic, count: consecutiveParkedCount };
+        console.log(`Next stage will receive a pivot directive away from parked ${topic} diagnostics.`);
       }
     } else {
       consecutiveParkedTopic = null;
