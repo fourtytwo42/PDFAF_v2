@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { renderPageToCanvas } from '../semantic/pdfPageRender.js';
+import { getPdfPageCount, renderPageToCanvas } from '../semantic/pdfPageRender.js';
 
 export interface VisualPageImage {
   width: number;
@@ -32,6 +32,35 @@ export interface VisualComparisonReport {
   pages: VisualPageComparison[];
   stable: boolean;
   worstPage: VisualPageComparison | null;
+}
+
+export interface VisualComparisonInput {
+  beforePath: string;
+  afterPath: string;
+  pageNumbers?: number[];
+  allPages?: boolean;
+}
+
+function normalizePageNumbers(pageNumbers: number[]): number[] {
+  return [...new Set(pageNumbers.map(pageNumber => Math.max(1, Math.trunc(pageNumber))).filter(pageNumber => pageNumber > 0))]
+    .sort((a, b) => a - b);
+}
+
+export async function resolveComparisonPageNumbers(input: VisualComparisonInput): Promise<number[]> {
+  if (input.allPages) {
+    const [beforeCount, afterCount] = await Promise.all([
+      getPdfPageCount(await readFile(input.beforePath)),
+      getPdfPageCount(await readFile(input.afterPath)),
+    ]);
+    if (!beforeCount || !afterCount) {
+      throw new Error('Unable to determine page count for all-pages comparison.');
+    }
+    const maxPages = Math.max(beforeCount, afterCount);
+    return Array.from({ length: maxPages }, (_, index) => index + 1);
+  }
+
+  const pageNumbers = normalizePageNumbers(input.pageNumbers ?? [1]);
+  return pageNumbers.length > 0 ? pageNumbers : [1];
 }
 
 export function compareRenderedPages(
@@ -142,4 +171,12 @@ export async function comparePdfPages(input: {
     stable: pages.every(page => page.stable),
     worstPage,
   };
+}
+
+export async function comparePdfFiles(input: VisualComparisonInput): Promise<VisualComparisonReport> {
+  return comparePdfPages({
+    beforePath: input.beforePath,
+    afterPath: input.afterPath,
+    pageNumbers: await resolveComparisonPageNumbers(input),
+  });
 }

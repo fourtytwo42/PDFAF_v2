@@ -1,8 +1,7 @@
 #!/usr/bin/env tsx
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { comparePdfPages } from '../src/services/benchmark/visualStability.js';
-import { getPdfPageCount } from '../src/services/semantic/pdfPageRender.js';
+import { comparePdfFiles } from '../src/services/benchmark/visualStability.js';
 
 interface ParsedArgs {
   before: string;
@@ -108,13 +107,11 @@ function renderMarkdown(report: {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const pageNumbers = args.allPages
-    ? await resolveAllPages(args.before, args.after)
-    : args.pages;
-  const report = await comparePdfPages({
+  const report = await comparePdfFiles({
     beforePath: resolve(args.before),
     afterPath: resolve(args.after),
-    pageNumbers,
+    pageNumbers: args.pages,
+    allPages: args.allPages,
   });
   const outDir = resolve(args.outDir);
   await mkdir(outDir, { recursive: true });
@@ -130,18 +127,6 @@ async function main(): Promise<void> {
   await writeFile(join(outDir, 'stage101-visual-stability-diagnostic.json'), JSON.stringify(serializable, null, 2), 'utf8');
   await writeFile(join(outDir, 'stage101-visual-stability-diagnostic.md'), renderMarkdown(serializable), 'utf8');
   console.log(`Wrote ${outDir}`);
-}
-
-async function resolveAllPages(beforePath: string, afterPath: string): Promise<number[]> {
-  const [beforeCount, afterCount] = await Promise.all([
-    getPdfPageCount(await readFile(resolve(beforePath))),
-    getPdfPageCount(await readFile(resolve(afterPath))),
-  ]);
-  if (!beforeCount || !afterCount) {
-    throw new Error('Unable to determine page count for --all-pages comparison.');
-  }
-  const maxPages = Math.max(beforeCount, afterCount);
-  return Array.from({ length: maxPages }, (_, i) => i + 1);
 }
 
 main().catch(error => {

@@ -42,6 +42,7 @@
     "benchmark:legacy-reconciliation": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage69-legacy-reconciliation.ts",
     "benchmark:runtime-tail": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage70-runtime-tail-isolation.ts",
     "benchmark:visual-stability": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage101-visual-stability-diagnostic.ts",
+    "benchmark:visual-stability-run": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage103-visual-stability-run.ts",
     "benchmark:end-gate": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage71-end-gate-report.ts",
     "benchmark:ab-feasibility": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage72-edge-mix-ab-feasibility.ts",
     "benchmark:stage73-figure-cleanup": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage73-figure-alt-cleanup-diagnostic.ts",

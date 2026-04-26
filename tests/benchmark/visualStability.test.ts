@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { compareRenderedPages } from '../../src/services/benchmark/visualStability.js';
+import { comparePdfFiles, compareRenderedPages } from '../../src/services/benchmark/visualStability.js';
 import { getPdfPageCount } from '../../src/services/semantic/pdfPageRender.js';
 
 function page(width: number, height: number, pixels: number[]): {
@@ -62,5 +62,21 @@ describe('getPdfPageCount', () => {
     const count = await getPdfPageCount(pdf);
 
     expect(count).toBe(30);
+  });
+});
+
+describe('comparePdfFiles', () => {
+  it('compares every page when requested', async () => {
+    const pdfPath = resolve('Input/experiment-corpus/00-fixtures/pdfaf_fixture_inaccessible.pdf');
+
+    const report = await comparePdfFiles({
+      beforePath: pdfPath,
+      afterPath: pdfPath,
+      allPages: true,
+    });
+
+    expect(report.stable).toBe(true);
+    expect(report.pages).toHaveLength(30);
+    expect(report.worstPage?.pageNumber1Based).toBe(1);
   });
 });
