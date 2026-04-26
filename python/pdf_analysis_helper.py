@@ -56,6 +56,8 @@ except Exception:
 
 MAX_ITEMS = 2000  # cap per collection to avoid runaway on malformed trees
 MAX_MCID_SPANS = 500  # Phase 3c-c: cap MCID scan results in analysis JSON
+STRUCT_TRACE_SAMPLE_LIMIT = 80
+STRUCT_TRACE_EXCEPTION_LIMIT = 80
 PDFAF_3CC_GOLDEN_MARKER = "pdfaf-3cc-golden-v1"
 PDFAF_3CC_ORPHAN_MARKER = "pdfaf-3cc-orphan-v1"
 PDFAF_ENGINE_OCR_MARKER = "/PDFAFEngineOcr"
@@ -1757,7 +1759,161 @@ def write_3cc_orphan_fixture(path: str) -> None:
 
 # ─── Structure tree traversal ─────────────────────────────────────────────────
 
-def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
+def _trace_safe_ref(obj) -> str | None:
+    try:
+        return object_ref_str(obj)
+    except Exception:
+        return None
+
+
+def _trace_k_type(k) -> str:
+    try:
+        if k is None:
+            return "none"
+        if isinstance(k, pikepdf.Array):
+            return "array"
+        if isinstance(k, pikepdf.Dictionary):
+            try:
+                t = k.get("/Type")
+                if t is not None:
+                    return f"dict:{safe_str(t)}"
+            except Exception:
+                pass
+            return "dict"
+        if isinstance(k, int):
+            return "int"
+        return type(k).__name__
+    except Exception:
+        return "unreadable"
+
+
+def _trace_k_child_count(k) -> int:
+    try:
+        if isinstance(k, pikepdf.Array):
+            return len(k)
+        if isinstance(k, pikepdf.Dictionary):
+            return 1
+        if k is None:
+            return 0
+        return 1
+    except Exception:
+        return -1
+
+
+def _new_structure_trace() -> dict:
+    return {
+        "root": {
+            "hasStructTreeRoot": False,
+            "structTreeRootRef": None,
+            "rootKType": "unknown",
+            "rootChildCount": 0,
+            "roleMapSize": 0,
+            "initialQueueSize": 0,
+        },
+        "counters": {
+            "enqueueCalls": 0,
+            "enqueuedChildren": 0,
+            "skippedNullKids": 0,
+            "skippedNonDictionaryKids": 0,
+            "mcrObjrChildren": 0,
+            "queuePops": 0,
+            "visitedCount": 0,
+            "duplicateVisitedIdCount": 0,
+            "duplicateObjectRefCount": 0,
+            "rootReachableKeyCount": 0,
+            "checkerFigureTargetScans": 0,
+        },
+        "caps": {
+            "headings": False,
+            "figures": False,
+            "tables": False,
+            "paragraphStructElems": False,
+            "checkerFigureTargets": False,
+        },
+        "exceptions": [],
+        "visitedSamples": [],
+        "duplicateSamples": [],
+        "enqueueSamples": [],
+        "finalFamilyCounts": {},
+        "firstLastRefs": {},
+    }
+
+
+def _trace_inc(trace: dict | None, key: str, amount: int = 1) -> None:
+    if trace is None:
+        return
+    counters = trace.setdefault("counters", {})
+    counters[key] = int(counters.get(key, 0) or 0) + amount
+
+
+def _trace_sample(trace: dict | None, key: str, row: dict, limit: int = STRUCT_TRACE_SAMPLE_LIMIT) -> None:
+    if trace is None:
+        return
+    values = trace.setdefault(key, [])
+    if len(values) < limit:
+        values.append(row)
+
+
+def _trace_exception(trace: dict | None, phase: str, exc: Exception, elem=None) -> None:
+    if trace is None:
+        return
+    values = trace.setdefault("exceptions", [])
+    if len(values) >= STRUCT_TRACE_EXCEPTION_LIMIT:
+        return
+    row = {"phase": phase, "error": str(exc)[:300]}
+    ref = _trace_safe_ref(elem)
+    if ref:
+        row["structRef"] = ref
+    values.append(row)
+
+
+def _trace_cap(trace: dict | None, family: str) -> None:
+    if trace is None:
+        return
+    caps = trace.setdefault("caps", {})
+    caps[family] = True
+
+
+def _trace_refs(rows: list) -> dict:
+    refs = []
+    for row in rows:
+        if isinstance(row, dict) and row.get("structRef"):
+            refs.append(row.get("structRef"))
+    return {
+        "first": refs[:5],
+        "last": refs[-5:] if refs else [],
+    }
+
+
+def _finalize_structure_trace(
+    trace: dict | None,
+    headings: list,
+    figures: list,
+    checker_figure_targets: list,
+    tables_out: list,
+    form_fields: list,
+    paragraph_struct_elems: list,
+) -> None:
+    if trace is None:
+        return
+    trace["finalFamilyCounts"] = {
+        "headings": len(headings),
+        "figures": len(figures),
+        "checkerFigureTargets": len(checker_figure_targets),
+        "tables": len(tables_out),
+        "formFields": len(form_fields),
+        "paragraphStructElems": len(paragraph_struct_elems),
+    }
+    trace["firstLastRefs"] = {
+        "headings": _trace_refs(headings),
+        "figures": _trace_refs(figures),
+        "checkerFigureTargets": _trace_refs(checker_figure_targets),
+        "tables": _trace_refs(tables_out),
+        "paragraphStructElems": _trace_refs(paragraph_struct_elems),
+    }
+
+
+def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = None) -> dict:
     """
     Walk the structure tree iteratively, collecting headings, figures, tables,
     and form fields. Returns counts/lists suitable for JSON serialisation.
@@ -1773,7 +1929,19 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
     try:
         root = pdf.Root
         str_root = root.get("/StructTreeRoot")
+        if trace is not None:
+            root_trace = trace.setdefault("root", {})
+            root_trace["hasStructTreeRoot"] = isinstance(str_root, pikepdf.Dictionary)
+            root_trace["structTreeRootRef"] = _trace_safe_ref(str_root)
+            try:
+                root_k = str_root.get("/K") if isinstance(str_root, pikepdf.Dictionary) else None
+                root_trace["rootKType"] = _trace_k_type(root_k)
+                root_trace["rootChildCount"] = _trace_k_child_count(root_k)
+            except Exception as e:
+                root_trace["rootKType"] = "unreadable"
+                _trace_exception(trace, "root_k", e, str_root)
         if str_root is None:
+            _finalize_structure_trace(trace, headings, figures, checker_figure_targets, tables_out, form_fields, paragraph_struct_elems)
             return {"headings": headings, "figures": figures,
                     "checkerFigureTargets": checker_figure_targets,
                     "tables": tables_out, "formFields": form_fields,
@@ -1798,6 +1966,8 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                         continue
         except Exception:
             pass
+        if trace is not None:
+            trace.setdefault("root", {})["roleMapSize"] = len(role_map_resolved)
 
         def _resolved_tag(elem) -> str:
             raw = get_name(elem)
@@ -1816,14 +1986,18 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
 
         try:
             mcid_lookup = _build_mcid_resolved_lookup(pdf)
-        except Exception:
+        except Exception as e:
+            _trace_exception(trace, "mcid_lookup", e, str_root)
             mcid_lookup = {}
         try:
             root_reachable_keys = {
                 _struct_elem_visit_key(root_elem)
                 for root_elem in _iter_root_reachable_struct_elems(str_root)
             }
-        except Exception:
+            if trace is not None:
+                trace.setdefault("counters", {})["rootReachableKeyCount"] = len(root_reachable_keys)
+        except Exception as e:
+            _trace_exception(trace, "root_reachable_keys", e, str_root)
             root_reachable_keys = set()
 
         def _root_reachable(elem) -> bool:
@@ -1837,148 +2011,201 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
         queue = deque()
         try:
             k = str_root.get("/K")
-            _enqueue_children(queue, k)
-        except Exception:
+            _enqueue_children(queue, k, trace=trace, phase="root_k")
+            if trace is not None:
+                trace.setdefault("root", {})["initialQueueSize"] = len(queue)
+        except Exception as e:
+            _trace_exception(trace, "root_enqueue", e, str_root)
             pass
 
         visited = set()
+        seen_refs_for_trace = set()
         item_count = 0
 
         while queue and item_count < MAX_ITEMS * 4:
             item_count += 1
+            phase = "queue_pop"
+            elem = None
             try:
                 elem = queue.popleft()
+                _trace_inc(trace, "queuePops")
 
                 # Avoid infinite loops on circular refs
                 try:
                     oid = id(elem)
                     if oid in visited:
+                        _trace_inc(trace, "duplicateVisitedIdCount")
+                        _trace_sample(trace, "duplicateSamples", {
+                            "reason": "duplicate_id",
+                            "structRef": _trace_safe_ref(elem),
+                        })
                         continue
                     visited.add(oid)
+                    _trace_inc(trace, "visitedCount")
                 except Exception:
                     pass
 
+                ref_for_trace = _trace_safe_ref(elem)
+                if ref_for_trace:
+                    if ref_for_trace in seen_refs_for_trace:
+                        _trace_inc(trace, "duplicateObjectRefCount")
+                        _trace_sample(trace, "duplicateSamples", {
+                            "reason": "duplicate_object_ref",
+                            "structRef": ref_for_trace,
+                        })
+                    seen_refs_for_trace.add(ref_for_trace)
+
+                phase = "tag_page"
                 tag = _resolved_tag(elem)
                 page = get_page_number(elem, page_map)
+                _trace_sample(trace, "visitedSamples", {
+                    "structRef": ref_for_trace,
+                    "role": tag,
+                    "page": page,
+                    "queueRemaining": len(queue),
+                })
 
                 # Headings
+                phase = "heading_collector"
                 level = normalize_heading_level(tag)
-                if level is not None and len(headings) < MAX_ITEMS:
-                    text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
-                    ref = object_ref_str(elem)
-                    row = {"level": level, "text": text, "page": page}
-                    if ref:
-                        row["structRef"] = ref
-                    headings.append(row)
+                if level is not None:
+                    if len(headings) >= MAX_ITEMS:
+                        _trace_cap(trace, "headings")
+                    else:
+                        text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
+                        ref = object_ref_str(elem)
+                        row = {"level": level, "text": text, "page": page}
+                        if ref:
+                            row["structRef"] = ref
+                        headings.append(row)
 
                 # Figures (includes Word InlineShape / Shape — Acrobat FigAltText)
-                elif _struct_role_requires_figure_style_alt(tag) and len(figures) < MAX_ITEMS:
-                    alt = get_alt(elem)
-                    is_artifact = _is_artifact(elem)
-                    ref = object_ref_str(elem)
-                    raw_tag = (get_name(elem) or "").lstrip("/")
-                    row = {
-                        "hasAlt": alt is not None and len(alt) > 0,
-                        "altText": alt,
-                        "isArtifact": is_artifact,
-                        "page": page,
-                        "rawRole": raw_tag,
-                        "role": tag,
-                        "reachable": _root_reachable(elem),
-                        "directContent": _elem_has_direct_mcid_content(elem),
-                        "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
-                        "parentPath": _struct_parent_chain(elem),
-                        "evidenceState": _checker_facing_evidence_state(
-                            _root_reachable(elem),
-                            _elem_has_direct_mcid_content(elem),
-                            len(_collect_subtree_mcids(elem)),
-                        ),
-                    }
-                    if ref:
-                        row["structRef"] = ref
-                    try:
-                        fbb = try_struct_elem_bbox(elem)
-                        if fbb:
-                            row["bbox"] = fbb
-                    except Exception:
-                        pass
-                    figures.append(row)
+                elif _struct_role_requires_figure_style_alt(tag):
+                    phase = "figure_collector"
+                    if len(figures) >= MAX_ITEMS:
+                        _trace_cap(trace, "figures")
+                    else:
+                        alt = get_alt(elem)
+                        is_artifact = _is_artifact(elem)
+                        ref = object_ref_str(elem)
+                        raw_tag = (get_name(elem) or "").lstrip("/")
+                        row = {
+                            "hasAlt": alt is not None and len(alt) > 0,
+                            "altText": alt,
+                            "isArtifact": is_artifact,
+                            "page": page,
+                            "rawRole": raw_tag,
+                            "role": tag,
+                            "reachable": _root_reachable(elem),
+                            "directContent": _elem_has_direct_mcid_content(elem),
+                            "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                            "parentPath": _struct_parent_chain(elem),
+                            "evidenceState": _checker_facing_evidence_state(
+                                _root_reachable(elem),
+                                _elem_has_direct_mcid_content(elem),
+                                len(_collect_subtree_mcids(elem)),
+                            ),
+                        }
+                        if ref:
+                            row["structRef"] = ref
+                        try:
+                            fbb = try_struct_elem_bbox(elem)
+                            if fbb:
+                                row["bbox"] = fbb
+                        except Exception as e:
+                            _trace_exception(trace, "figure_bbox", e, elem)
+                        figures.append(row)
 
                 # Tables
-                elif tag == "Table" and len(tables_out) < MAX_ITEMS:
-                    th_count, td_count = _count_table_cells(elem)
-                    audit = _audit_table_structure(elem)
-                    ref = object_ref_str(elem)
-                    row = {
-                        "hasHeaders": th_count > 0,
-                        "headerCount": th_count,
-                        "totalCells": th_count + td_count,
-                        "rowCount": audit["rowCount"],
-                        "cellsMisplacedCount": audit["cellsMisplacedCount"],
-                        "irregularRows": audit["irregularRows"],
-                        "rowCellCounts": audit.get("rowCellCounts") or [],
-                        "dominantColumnCount": audit.get("dominantColumnCount") or 0,
-                        "maxRowSpan": audit.get("maxRowSpan") or 1,
-                        "maxColSpan": audit.get("maxColSpan") or 1,
-                        "page": page,
-                        "reachable": _root_reachable(elem),
-                        "directContent": _elem_has_direct_mcid_content(elem),
-                        "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
-                        "parentPath": _struct_parent_chain(elem),
-                    }
-                    if ref:
-                        row["structRef"] = ref
-                    tables_out.append(row)
+                elif tag == "Table":
+                    phase = "table_collector"
+                    if len(tables_out) >= MAX_ITEMS:
+                        _trace_cap(trace, "tables")
+                    else:
+                        th_count, td_count = _count_table_cells(elem)
+                        audit = _audit_table_structure(elem)
+                        ref = object_ref_str(elem)
+                        row = {
+                            "hasHeaders": th_count > 0,
+                            "headerCount": th_count,
+                            "totalCells": th_count + td_count,
+                            "rowCount": audit["rowCount"],
+                            "cellsMisplacedCount": audit["cellsMisplacedCount"],
+                            "irregularRows": audit["irregularRows"],
+                            "rowCellCounts": audit.get("rowCellCounts") or [],
+                            "dominantColumnCount": audit.get("dominantColumnCount") or 0,
+                            "maxRowSpan": audit.get("maxRowSpan") or 1,
+                            "maxColSpan": audit.get("maxColSpan") or 1,
+                            "page": page,
+                            "reachable": _root_reachable(elem),
+                            "directContent": _elem_has_direct_mcid_content(elem),
+                            "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                            "parentPath": _struct_parent_chain(elem),
+                        }
+                        if ref:
+                            row["structRef"] = ref
+                        tables_out.append(row)
 
                 # Paragraph-like struct elems (Phase 3c analysis; promote mutator may allow /P only)
-                elif len(paragraph_struct_elems) < MAX_ITEMS:
-                    tnorm = (tag or "").lstrip("/").upper()
-                    if tnorm in ("P", "SPAN", "DIV") and normalize_heading_level(tag) is None:
-                        ref = object_ref_str(elem)
-                        if ref:
-                            text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
-                            prow = {
-                                "tag": tnorm,
-                                "text": (text or "")[:500],
-                                "page": page,
-                                "structRef": ref,
-                                "reachable": _root_reachable(elem),
-                                "directContent": _elem_has_direct_mcid_content(elem),
-                                "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
-                                "parentPath": _struct_parent_chain(elem),
-                                "evidenceState": _checker_facing_evidence_state(
-                                    _root_reachable(elem),
-                                    _elem_has_direct_mcid_content(elem),
-                                    len(_collect_subtree_mcids(elem)),
-                                ),
-                            }
-                            try:
-                                bb = try_struct_elem_bbox(elem)
-                                if bb:
-                                    prow["bbox"] = bb
-                            except Exception:
-                                pass
-                            paragraph_struct_elems.append(prow)
-
-                # Form fields (tagged)
-                elif tag in ("Form", "Widget") and len(form_fields) < MAX_ITEMS:
-                    name = safe_str(elem.get("/T", ""))
-                    tooltip = safe_str(elem.get("/TU", "")) or None
-                    form_fields.append({"name": name, "tooltip": tooltip, "page": page})
+                else:
+                    phase = "paragraph_collector"
+                    if len(paragraph_struct_elems) < MAX_ITEMS:
+                        tnorm = (tag or "").lstrip("/").upper()
+                        if tnorm in ("P", "SPAN", "DIV") and normalize_heading_level(tag) is None:
+                            ref = object_ref_str(elem)
+                            if ref:
+                                text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
+                                prow = {
+                                    "tag": tnorm,
+                                    "text": (text or "")[:500],
+                                    "page": page,
+                                    "structRef": ref,
+                                    "reachable": _root_reachable(elem),
+                                    "directContent": _elem_has_direct_mcid_content(elem),
+                                    "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                                    "parentPath": _struct_parent_chain(elem),
+                                    "evidenceState": _checker_facing_evidence_state(
+                                        _root_reachable(elem),
+                                        _elem_has_direct_mcid_content(elem),
+                                        len(_collect_subtree_mcids(elem)),
+                                    ),
+                                }
+                                try:
+                                    bb = try_struct_elem_bbox(elem)
+                                    if bb:
+                                        prow["bbox"] = bb
+                                except Exception as e:
+                                    _trace_exception(trace, "paragraph_bbox", e, elem)
+                                paragraph_struct_elems.append(prow)
+                    else:
+                        _trace_cap(trace, "paragraphStructElems")
+                        # Form fields (tagged)
+                        if tag in ("Form", "Widget") and len(form_fields) < MAX_ITEMS:
+                            phase = "form_collector"
+                            name = safe_str(elem.get("/T", ""))
+                            tooltip = safe_str(elem.get("/TU", "")) or None
+                            form_fields.append({"name": name, "tooltip": tooltip, "page": page})
 
                 # Recurse into children
+                phase = "child_enqueue"
                 k = elem.get("/K")
                 if k is not None:
-                    _enqueue_children(queue, k)
+                    _enqueue_children(queue, k, trace=trace, phase="child_k")
 
             except Exception as e:
+                _trace_exception(trace, phase, e, elem)
                 print(f"[warn] struct element error: {e}", file=sys.stderr)
                 continue
+
+        if item_count >= MAX_ITEMS * 4:
+            _trace_cap(trace, "traversalItems")
 
         try:
             seen_checker_targets = set()
             for elem in _iter_struct_elems(pdf):
+                _trace_inc(trace, "checkerFigureTargetScans")
                 if len(checker_figure_targets) >= MAX_ITEMS:
+                    _trace_cap(trace, "checkerFigureTargets")
                     break
                 if not isinstance(elem, pikepdf.Dictionary):
                     continue
@@ -2003,11 +2230,14 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                     "directContent": _elem_has_direct_mcid_content(elem),
                     "parentPath": _struct_parent_chain(elem),
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            _trace_exception(trace, "checker_figure_targets", e)
 
     except Exception as e:
+        _trace_exception(trace, "struct_tree_traversal", e)
         print(f"[warn] struct tree traversal failed: {e}", file=sys.stderr)
+
+    _finalize_structure_trace(trace, headings, figures, checker_figure_targets, tables_out, form_fields, paragraph_struct_elems)
 
     return {
         "headings": headings,
@@ -2020,20 +2250,52 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
     }
 
 
-def _enqueue_children(queue: deque, k) -> None:
+def _enqueue_children(queue: deque, k, trace: dict | None = None, phase: str = "enqueue") -> None:
+    _trace_inc(trace, "enqueueCalls")
     if k is None:
+        _trace_inc(trace, "skippedNullKids")
         return
     try:
         if isinstance(k, pikepdf.Array):
             for child in k:
                 try:
                     if isinstance(child, pikepdf.Dictionary):
+                        try:
+                            child_type = child.get("/Type")
+                            if child_type in (pikepdf.Name("/MCR"), pikepdf.Name("/OBJR")):
+                                _trace_inc(trace, "mcrObjrChildren")
+                        except Exception:
+                            child_type = None
                         queue.append(child)
-                except Exception:
+                        _trace_inc(trace, "enqueuedChildren")
+                        _trace_sample(trace, "enqueueSamples", {
+                            "phase": phase,
+                            "structRef": _trace_safe_ref(child),
+                            "type": safe_str(child_type) if child_type is not None else None,
+                        })
+                    else:
+                        _trace_inc(trace, "skippedNonDictionaryKids")
+                except Exception as e:
+                    _trace_exception(trace, f"{phase}_child", e)
                     pass
         elif isinstance(k, pikepdf.Dictionary):
+            try:
+                child_type = k.get("/Type")
+                if child_type in (pikepdf.Name("/MCR"), pikepdf.Name("/OBJR")):
+                    _trace_inc(trace, "mcrObjrChildren")
+            except Exception:
+                child_type = None
             queue.append(k)
-    except Exception:
+            _trace_inc(trace, "enqueuedChildren")
+            _trace_sample(trace, "enqueueSamples", {
+                "phase": phase,
+                "structRef": _trace_safe_ref(k),
+                "type": safe_str(child_type) if child_type is not None else None,
+            })
+        else:
+            _trace_inc(trace, "skippedNonDictionaryKids")
+    except Exception as e:
+        _trace_exception(trace, phase, e)
         pass
 
 
@@ -4601,6 +4863,38 @@ def _op_repair_annotation_alt_text(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
+
+def trace_structure_main(pdf_path: str) -> int:
+    trace = _new_structure_trace()
+    out = {
+        "ok": False,
+        "pdfPath": pdf_path,
+        "trace": trace,
+        "error": None,
+    }
+    try:
+        pdf = pikepdf.open(pdf_path, suppress_warnings=True)
+        page_map = build_page_map(pdf)
+        struct = traverse_struct_tree(pdf, page_map, trace=trace)
+        out["ok"] = True
+        out["finalCounts"] = {
+            "headings": len(struct.get("headings") or []),
+            "figures": len(struct.get("figures") or []),
+            "checkerFigureTargets": len(struct.get("checkerFigureTargets") or []),
+            "tables": len(struct.get("tables") or []),
+            "formFields": len(struct.get("formFields") or []),
+            "paragraphStructElems": len(struct.get("paragraphStructElems") or []),
+        }
+        try:
+            pdf.close()
+        except Exception:
+            pass
+    except Exception as e:
+        out["error"] = str(e)
+        _trace_exception(trace, "trace_open_or_parse", e)
+    print(json.dumps(out, ensure_ascii=False))
+    return 0
+
 
 def main():
     if len(sys.argv) < 2:
@@ -8928,6 +9222,8 @@ if __name__ == "__main__":
     argv = sys.argv[1:]
     if len(argv) >= 2 and argv[0] == "--mutate":
         raise SystemExit(mutate_main(argv[1]))
+    if len(argv) >= 2 and argv[0] == "--trace-structure":
+        raise SystemExit(trace_structure_main(argv[1]))
     if len(argv) >= 3 and argv[0] == "--dump-structure-page":
         page_i = int(argv[1])
         path = argv[2]
