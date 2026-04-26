@@ -610,10 +610,7 @@ function canAutoEscalate(args: RunnerArgs, stop: ContinuousStop, alreadyEscalate
   return true;
 }
 
-function parkedTopic(decision: StageDecision | null): string | null {
-  if (decision?.classification !== 'diagnostic_only') return null;
-  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
-  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) return null;
+function topicFromText(text: string): string {
   if (/boundary/i.test(text)) return 'boundary';
   if (/font|text extract/i.test(text)) return 'font-text-extractability';
   if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
@@ -623,6 +620,20 @@ function parkedTopic(decision: StageDecision | null): string | null {
   if (/table/i.test(text)) return 'table';
   if (/heading/i.test(text)) return 'heading';
   return 'unspecified';
+}
+
+function parkedTopic(decision: StageDecision | null): string | null {
+  if (decision?.classification !== 'diagnostic_only') return null;
+  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
+  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) return null;
+  return topicFromText(text);
+}
+
+function softPivotBlockedTopic(decision: StageDecision | null): string | null {
+  if (decision?.classification !== 'blocked') return null;
+  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
+  if (!/pivot to a different residual family|pivot to another target family|select a different residual family/i.test(text)) return null;
+  return topicFromText(text);
 }
 
 function pivotObjective(baseObjective: string, topic: string, count: number): string {
@@ -702,6 +713,12 @@ async function main(): Promise<void> {
       stop = shouldStopContinuous(stageArgs, decision);
     }
     if (!args.continuous) break;
+    const softPivotTopic = softPivotBlockedTopic(decision);
+    if (stop?.reason === 'blocked' && softPivotTopic) {
+      pivotTopicForNext = { topic: softPivotTopic, count: 1 };
+      console.log(`Continuing after soft blocked stage ${stageArgs.stage}; next stage will pivot away from ${softPivotTopic}.`);
+      stop = null;
+    }
     const topic = parkedTopic(decision);
     if (topic) {
       consecutiveParkedCount = topic === consecutiveParkedTopic ? consecutiveParkedCount + 1 : 1;
