@@ -655,7 +655,7 @@ function parkedTopic(decision: StageDecision | null): string | null {
 function softPivotBlockedTopic(decision: StageDecision | null): string | null {
   if (decision?.classification !== 'blocked') return null;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
-  if (!/(?:pivot to a different residual (?:family|branch)|pivot to another target family|select a different residual family|\bpark(?:ed)?\b|leave .* parked|no safe .* behavior change|no safe .* change)/i.test(text)) return null;
+  if (!/(?:pivot to a different residual (?:family|branch)|pivot to another target family|select a different residual family|\bpark(?:ed)?\b|leave .* parked|wait for a fresh row|no repeatable .* rule was proven|no .* evidence-backed .* rule|did not justify (?:changing|a code change|any code change)|no safe .* behavior change|no safe .* change)/i.test(text)) return null;
   return topicFromText(text);
 }
 

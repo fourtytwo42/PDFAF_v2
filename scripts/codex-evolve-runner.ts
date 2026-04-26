@@ -475,7 +475,7 @@ function cooldownTopic(summary: StageSummary): string | null {
     return topicFromText(text);
   }
   if (summary.classification === 'blocked'
-    && /(?:pivot to a different residual (?:family|branch)|pivot to another target family|select a different residual family|\bpark(?:ed)?\b|leave .* parked|no safe .* behavior change|no safe .* change)/i.test(text)) {
+    && /(?:pivot to a different residual (?:family|branch)|pivot to another target family|select a different residual family|\bpark(?:ed)?\b|leave .* parked|wait for a fresh row|no repeatable .* rule was proven|no .* evidence-backed .* rule|did not justify (?:changing|a code change|any code change)|no safe .* behavior change|no safe .* change)/i.test(text)) {
     return topicFromText(text);
   }
   return null;
