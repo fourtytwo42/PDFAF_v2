@@ -18,6 +18,7 @@ interface RunnerArgs {
   dryRun: boolean;
   allowDirty: boolean;
   continuous: boolean;
+  rawEvents: boolean;
   model?: string;
 }
 
@@ -49,6 +50,7 @@ function usage(): string {
     '  --model <name>           Optional Codex model override.',
     '  --dry-run                Write prompt/run metadata but do not launch Codex.',
     '  --allow-dirty            Allow existing tracked changes before launching Codex.',
+    '  --raw-events             Stream raw Codex JSONL events instead of readable progress lines.',
   ].join('\n');
 }
 
@@ -67,6 +69,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     dryRun: false,
     allowDirty: false,
     continuous: false,
+    rawEvents: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -84,6 +87,10 @@ function parseArgs(argv: string[]): RunnerArgs {
     }
     if (arg === '--continuous') {
       args.continuous = true;
+      continue;
+    }
+    if (arg === '--raw-events') {
+      args.rawEvents = true;
       continue;
     }
     const next = argv[i + 1];
@@ -175,6 +182,82 @@ function forbiddenStaged(paths: string): string[] {
     );
 }
 
+function compact(input: unknown, limit = 220): string {
+  if (input === null || input === undefined) return '';
+  const text = typeof input === 'string' ? input : JSON.stringify(input);
+  const singleLine = text.replace(/\s+/g, ' ').trim();
+  return singleLine.length > limit ? `${singleLine.slice(0, limit - 1)}...` : singleLine;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringField(source: Record<string, unknown> | null, ...keys: string[]): string {
+  if (!source) return '';
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '';
+}
+
+function formatCodexEvent(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let event: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const parsedRecord = record(parsed);
+    if (!parsedRecord) return `[codex] ${compact(trimmed)}`;
+    event = parsedRecord;
+  } catch {
+    return `[codex] ${compact(trimmed)}`;
+  }
+
+  const type = stringField(event, 'type', 'event', 'status') || 'event';
+  const item = record(event.item);
+  const toolCall = record(event.tool_call) ?? record(event.toolCall) ?? record(event.call);
+  const result = record(event.result);
+  const message = stringField(event, 'message', 'msg', 'text', 'delta', 'summary')
+    || stringField(item, 'message', 'text', 'name', 'type')
+    || stringField(toolCall, 'name', 'type')
+    || stringField(result, 'message', 'status');
+  const commandText = stringField(event, 'cmd', 'command')
+    || stringField(toolCall, 'cmd', 'command')
+    || stringField(record(event.arguments), 'cmd', 'command');
+
+  const lowerType = type.toLowerCase();
+  if (lowerType.includes('delta') && message.length < 2) return null;
+  if (commandText) return `[codex:${type}] ${compact(commandText)}`;
+  if (message) return `[codex:${type}] ${compact(message)}`;
+
+  const important = ['start', 'finish', 'complete', 'error', 'tool', 'command', 'exec', 'turn', 'task', 'agent', 'thread'];
+  if (important.some(token => lowerType.includes(token))) return `[codex:${type}]`;
+  return null;
+}
+
+function streamCodexChunk(text: string, lineBuffer: { value: string }, rawEvents: boolean): void {
+  if (rawEvents) {
+    process.stdout.write(text);
+    return;
+  }
+  lineBuffer.value += text;
+  const lines = lineBuffer.value.split(/\r?\n/);
+  lineBuffer.value = lines.pop() ?? '';
+  for (const line of lines) {
+    const formatted = formatCodexEvent(line);
+    if (formatted) console.log(formatted);
+  }
+}
+
+function flushCodexChunk(lineBuffer: { value: string }, rawEvents: boolean): void {
+  if (rawEvents) return;
+  const formatted = formatCodexEvent(lineBuffer.value);
+  if (formatted) console.log(formatted);
+  lineBuffer.value = '';
+}
+
 async function runIteration(args: RunnerArgs, iteration: number, runDir: string): Promise<void> {
   const template = await readFile(args.promptTemplate, 'utf8');
   const prompt = renderTemplate(template, {
@@ -189,6 +272,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
   const eventsPath = join(runDir, `iteration-${iteration}-events.jsonl`);
   const summaryPath = join(runDir, `iteration-${iteration}-summary.json`);
   await writeFile(promptPath, prompt, 'utf8');
+  console.log(`Prompt: ${promptPath}`);
 
   if (args.dryRun) {
     await writeFile(summaryPath, JSON.stringify({
@@ -218,6 +302,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     const proc = spawn(codex, codexArgs, { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
     let stderr = '';
     const chunks: string[] = [];
+    const lineBuffer = { value: '' };
     const started = Date.now();
     const heartbeat = setInterval(() => {
       const elapsedSeconds = Math.round((Date.now() - started) / 1000);
@@ -226,7 +311,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     proc.stdout.on('data', chunk => {
       const text = String(chunk);
       chunks.push(text);
-      process.stdout.write(text);
+      streamCodexChunk(text, lineBuffer, args.rawEvents);
     });
     proc.stderr.on('data', chunk => {
       const text = String(chunk);
@@ -236,6 +321,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     proc.on('error', reject);
     proc.on('close', async code => {
       clearInterval(heartbeat);
+      flushCodexChunk(lineBuffer, args.rawEvents);
       await writeFile(eventsPath, chunks.join(''), 'utf8');
       if (stderr.trim()) await writeFile(join(runDir, `iteration-${iteration}-stderr.log`), stderr, 'utf8');
       if (code === 0) resolveRun();
@@ -285,14 +371,21 @@ async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: S
   };
   await writeFile(join(runDir, 'run-metadata.json'), JSON.stringify(metadata, null, 2), 'utf8');
 
+  console.log('');
+  console.log(`=== Stage ${args.stage} (${args.mode}) ===`);
   console.log(`Agent run dir: ${runDir}`);
+  console.log(`Corpora: ${args.corpora}`);
   for (let i = 1; i <= args.maxIterations; i += 1) {
+    console.log(`--- Iteration ${i}/${args.maxIterations} ---`);
     await runIteration(args, i, runDir);
   }
-  console.log(`Completed agent stage runner. Output: ${runDir}`);
+  const decision = await readDecision(join(runDir, `iteration-${args.maxIterations}-summary.json`));
+  console.log(`Completed stage ${args.stage}. Output: ${runDir}`);
+  if (decision?.classification) console.log(`Decision: ${decision.classification}`);
+  if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
   return {
     runDir,
-    decision: await readDecision(join(runDir, `iteration-${args.maxIterations}-summary.json`)),
+    decision,
   };
 }
 

@@ -36,6 +36,24 @@ pnpm run agent:continuous -- \
 
 Continuous mode increments the stage number after a completed worker run. It stops when a worker reports `blocked`, `rejected`, `acceptance_ready`, or `safe_to_implement`, or when the final summary is missing/unparseable. That keeps the loop from running past a point that needs a deliberate decision.
 
+## Watching Progress
+
+By default the runner converts Codex JSONL events into readable terminal lines while still saving the raw stream:
+
+```text
+=== Stage 82 (diagnostic-first) ===
+Agent run dir: Output/agent-runs/stage82-...
+--- Iteration 1/1 ---
+Prompt: Output/agent-runs/stage82-.../iteration-1-prompt.md
+[codex:turn.started]
+[codex:exec_command] pnpm exec tsc --noEmit
+[codex-stage-runner] stage 82 iteration 1 still running after 30s
+Decision: diagnostic_only
+Next action: ...
+```
+
+Use `--raw-events` if you want the original Codex JSONL printed directly to the terminal.
+
 The runner:
 
 - checks for tracked dirty files unless `--allow-dirty` is passed;
@@ -43,7 +61,7 @@ The runner:
 - calls `codex exec` with `--sandbox danger-full-access` and `--ask-for-approval never`;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
-- prints heartbeat status while a Codex worker is still running;
+- prints readable live progress and heartbeat status while a Codex worker is still running;
 - fails if generated artifact paths are staged after the Codex run.
 
 ## Guardrails
