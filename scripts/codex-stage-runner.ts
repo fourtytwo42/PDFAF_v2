@@ -648,14 +648,14 @@ function earliestTopic(text: string, patterns: Array<[string, RegExp]>): string 
 function parkedTopic(decision: StageDecision | null): string | null {
   if (decision?.classification !== 'diagnostic_only') return null;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
-  if (!/(?:\bpark(?:ed)?\b|no further implementation|no implementation (?:is )?justified|no (?:remediation )?behavior change (?:was )?justified|no remediation change was kept|do not promote .*acceptance-ready|stop rather than reiterat|keep .* parked)/i.test(text)) return null;
+  if (!/(?:\bpark(?:ed)?\b|pivot away from|select a different (?:stable )?residual family|no material improvement|no further implementation|no implementation (?:is )?justified|no (?:remediation )?behavior change (?:was )?justified|no remediation change was kept|do not promote .*acceptance-ready|stop rather than reiterat|keep .* parked)/i.test(text)) return null;
   return topicFromText(text);
 }
 
 function softPivotBlockedTopic(decision: StageDecision | null): string | null {
   if (decision?.classification !== 'blocked') return null;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
-  if (!/(?:pivot to a different residual (?:family|branch)|pivot to another target family|select a different residual family|\bpark(?:ed)?\b|leave .* parked|wait for a fresh row|no repeatable .* rule was proven|no .* evidence-backed .* rule|did not justify (?:changing|a code change|any code change)|no safe .* behavior change|no safe .* change)/i.test(text)) return null;
+  if (!/(?:pivot to a different residual (?:family|branch)|pivot to another (?:target|residual) family|select a different (?:stable )?residual family|pivot away from|\bpark(?:ed)?\b|leave .* parked|wait for a fresh row|no repeatable .* rule was proven|no .* evidence-backed .* rule|did not justify (?:changing|a code change|any code change)|no safe .* behavior change|no safe .* change)/i.test(text)) return null;
   return topicFromText(text);
 }
 
