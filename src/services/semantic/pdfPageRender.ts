@@ -9,13 +9,26 @@ import {
   SEMANTIC_PAGE_RENDER_MAX_PX,
 } from '../../config.js';
 
+export interface RenderedPdfPageCanvas {
+  canvas: {
+    width: number;
+    height: number;
+    getContext(type: '2d'): {
+      getImageData(sx: number, sy: number, sw: number, sh: number): { data: Uint8ClampedArray };
+    };
+    toBuffer(mimeType?: string, quality?: number): Buffer;
+  };
+  width: number;
+  height: number;
+}
+
 /**
- * Render a single PDF page to a JPEG data URL for vision APIs.
+ * Render a single PDF page to a canvas for reuse by vision and visual-diff checks.
  */
-export async function renderPageToJpegDataUrl(
+export async function renderPageToCanvas(
   buffer: Buffer,
   pageNumber1Based: number,
-): Promise<string | null> {
+): Promise<RenderedPdfPageCanvas | null> {
   if (pageNumber1Based < 1) return null;
 
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -43,11 +56,34 @@ export async function renderPageToJpegDataUrl(
     });
     await renderTask.promise;
 
+    return {
+      canvas,
+      width: canvas.width,
+      height: canvas.height,
+    };
+  } catch {
+    return null;
+  } finally {
+    await pdf.destroy().catch(() => {});
+  }
+}
+
+/**
+ * Render a single PDF page to a JPEG data URL for vision APIs.
+ */
+export async function renderPageToJpegDataUrl(
+  buffer: Buffer,
+  pageNumber1Based: number,
+): Promise<string | null> {
+  const rendered = await renderPageToCanvas(buffer, pageNumber1Based);
+  if (!rendered) return null;
+
+  try {
     let quality = SEMANTIC_PAGE_JPEG_QUALITY;
-    let jpeg = canvas.toBuffer('image/jpeg', quality);
+    let jpeg = rendered.canvas.toBuffer('image/jpeg', quality);
     while (jpeg.length > SEMANTIC_MAX_IMAGE_BYTES && quality > 40) {
       quality -= 8;
-      jpeg = canvas.toBuffer('image/jpeg', quality);
+      jpeg = rendered.canvas.toBuffer('image/jpeg', quality);
     }
     if (jpeg.length > SEMANTIC_MAX_IMAGE_BYTES) {
       return null;
@@ -56,7 +92,5 @@ export async function renderPageToJpegDataUrl(
     return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
   } catch {
     return null;
-  } finally {
-    await pdf.destroy().catch(() => {});
   }
 }
