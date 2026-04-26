@@ -12,6 +12,7 @@ interface EvolveArgs {
   sleepSeconds: number;
   maxIterations: number;
   pollSeconds: number;
+  parkedRepeatLimit: number;
   corpora: string;
   outRoot: string;
   dryRun: boolean;
@@ -30,7 +31,7 @@ interface StageSummary {
 }
 
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
-const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,acceptance,full-gate,protected,analyzer,determinism,architecture,release,boundary-policy';
+const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,boundary-policy,full-gate,protected,analyzer,determinism,architecture,release,acceptance';
 
 function usage(): string {
   return [
@@ -46,6 +47,7 @@ function usage(): string {
     '  --corpora <csv>                Default: legacy,v1-edge.',
     '  --max-iterations <n>           Default: 1.',
     '  --poll-seconds <n>             Default: 30.',
+    '  --parked-repeat-limit <n>      Default: 3. Stops a batch after repeated parked diagnostics for one topic.',
     '  --pull-v1-when-needed          Tell workers to select small v1 PDF batches when evidence needs them.',
     '  --visual-gate                  Tell workers to include before/after visual stability validation for behavior changes.',
     '  --protected-baseline-run <dir> Protected baseline for acceptance/full-gate work.',
@@ -65,6 +67,7 @@ function parseArgs(argv: string[]): EvolveArgs {
     sleepSeconds: 300,
     maxIterations: 1,
     pollSeconds: 30,
+    parkedRepeatLimit: 3,
     corpora: 'legacy,v1-edge',
     outRoot: DEFAULT_OUT_ROOT,
     dryRun: false,
@@ -110,6 +113,7 @@ function parseArgs(argv: string[]): EvolveArgs {
     else if (arg === '--sleep-seconds') args.sleepSeconds = Math.max(0, positiveInt(next, arg));
     else if (arg === '--max-iterations') args.maxIterations = Math.max(1, Math.min(5, positiveInt(next, arg)));
     else if (arg === '--poll-seconds') args.pollSeconds = Math.max(5, positiveInt(next, arg));
+    else if (arg === '--parked-repeat-limit') args.parkedRepeatLimit = Math.max(0, Number.parseInt(next, 10) || 0);
     else if (arg === '--mode') args.mode = next;
     else if (arg === '--corpora') args.corpora = next;
     else if (arg === '--out-root') args.outRoot = next;
@@ -179,6 +183,7 @@ function buildObjective(args: EvolveArgs, stage: number): string {
     'Prefer evidence-first diagnostics, then narrow general implementation only when a safe rule is proven.',
     'Every accepted behavior change must protect false-positive applied = 0, protected rows, F count, runtime p95, text extraction, structure/tag state, page count, and visual stability.',
     'Reject or revert candidates that overfit, broaden route guards without evidence, change scorer/gate semantics, or alter visible rendering.',
+    'Do not spend repeated stages reaffirming one parked topic. If a family is parked with no implementation justified, pivot to a different residual family or stop with a clear blocked decision.',
     `This batch starts at Stage ${stage} and may run up to ${args.batchSize} stage(s).`,
   ];
   if (args.protectedBaselineRun) {
@@ -201,6 +206,7 @@ function stageArgs(args: EvolveArgs, stage: number): string[] {
     '--max-stages', String(args.batchSize),
     '--max-iterations', String(args.maxIterations),
     '--poll-seconds', String(args.pollSeconds),
+    '--parked-repeat-limit', String(args.parkedRepeatLimit),
     '--mode', args.mode,
     '--corpora', args.corpora,
     '--out-root', args.outRoot,

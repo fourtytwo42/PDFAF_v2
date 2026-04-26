@@ -31,10 +31,11 @@ Use this when you want the coordinator to run the next stage automatically after
   --stage 82 \
   --max-stages 3 \
   --max-iterations 1 \
+  --parked-repeat-limit 3 \
   --poll-seconds 30
 ```
 
-Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. It still stops on unapproved xhigh requests, `rejected`, `acceptance_ready`, repeated `blocked`/`safe_to_implement`, or missing/unparseable summaries.
+Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. It still stops on unapproved xhigh requests, `rejected`, `acceptance_ready`, repeated `blocked`/`safe_to_implement`, repeated parked-topic diagnostics, or missing/unparseable summaries.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
 ## Evolve Run
@@ -47,6 +48,7 @@ Start one 10-stage evolution batch:
 ./scripts/codex-evolve.sh \
   --stage 92 \
   --batch-size 10 \
+  --parked-repeat-limit 3 \
   --pull-v1-when-needed \
   --visual-gate \
   --protected-baseline-run Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7
@@ -58,6 +60,7 @@ Run indefinitely in bounded batches:
 ./scripts/codex-evolve.sh \
   --forever \
   --batch-size 10 \
+  --parked-repeat-limit 3 \
   --sleep-seconds 300 \
   --pull-v1-when-needed \
   --visual-gate \
@@ -70,6 +73,7 @@ The evolve runner:
 - checks for tracked dirty files unless `--allow-dirty` is passed;
 - prints disk and local LLM/listener status before starting;
 - tells workers to preserve speed, avoid regressions, keep PDFs visually stable, and reject/revert unsafe candidates;
+- tells workers to pivot away from a family after it is parked, while the stage runner also stops a batch after repeated parked diagnostics;
 - tells workers to pull only small justified v1/sibling PDF batches into ignored local input folders when current evidence needs more coverage;
 - writes current loop state to `Output/agent-runs/evolve/latest-state.json`;
 - never commits generated `Output/` artifacts or PDF payloads.
@@ -83,6 +87,7 @@ Default `--model-policy auto` behavior:
 - normal diagnostic and implementation stages use `gpt-5.4-mini` with medium reasoning;
 - hard modes such as `hard-planning`, `acceptance`, `full-gate`, `protected`, `analyzer`, or `determinism` use `gpt-5.5` with xhigh reasoning;
 - continuous mode can auto-escalate one stage rerun to `gpt-5.5`/xhigh when the mini worker explicitly asks for it and the task matches an approved xhigh class;
+- continuous mode stops after repeated diagnostic-only parked decisions for one topic, controlled by `--parked-repeat-limit`;
 - `--model <name>` overrides the model directly;
 - `--reasoning-effort low|medium|high|xhigh` overrides the selected reasoning effort.
 
@@ -156,6 +161,7 @@ The runner:
 - calls `codex exec` with `--dangerously-bypass-approvals-and-sandbox` so stage workers can run non-interactively in this already-trusted workspace;
 - passes an explicit Codex model and reasoning effort based on `--model-policy`;
 - reruns a blocked/safe-to-implement continuous stage once at xhigh only when the worker explicitly asks for xhigh and the task matches `--xhigh-task-classes`;
+- stops after repeated diagnostic-only parked decisions for one topic, controlled by `--parked-repeat-limit`;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
 - prints readable live progress and heartbeat status while a Codex worker is still running;

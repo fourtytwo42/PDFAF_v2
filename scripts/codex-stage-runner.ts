@@ -19,6 +19,7 @@ interface RunnerArgs {
   allowDirty: boolean;
   continuous: boolean;
   autoEscalate: boolean;
+  parkedRepeatLimit: number;
   xhighTaskClasses: string;
   rawEvents: boolean;
   showCodexWarnings: boolean;
@@ -29,6 +30,7 @@ interface RunnerArgs {
 
 interface StageDecision {
   classification?: string;
+  summary?: string;
   next_action?: string;
 }
 
@@ -54,7 +56,7 @@ const DEFAULT_SCHEMA = 'schemas/codex-stage-decision.schema.json';
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
 const DEFAULT_MINI_MODEL = 'gpt-5.4-mini';
 const DEFAULT_ADVANCED_MODEL = 'gpt-5.5';
-const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,acceptance,full-gate,protected,analyzer,determinism,architecture,release,boundary-policy';
+const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,boundary-policy,full-gate,protected,analyzer,determinism,architecture,release,acceptance';
 
 const XHIGH_TASK_PATTERNS: Record<string, RegExp> = {
   'hard-planning': /(?:hard[-_ ]?planning|deep[-_ ]?planning|hard[-_ ]?work)/i,
@@ -79,6 +81,7 @@ function usage(): string {
     '  --max-iterations <n>     Default: 1. Capped at 5.',
     '  --continuous             Run consecutive stage numbers until a stop classification is returned.',
     '  --no-auto-escalate       Disable one-time xhigh reruns when a worker explicitly requests them.',
+    '  --parked-repeat-limit <n> Stop after N consecutive diagnostic-only parked decisions for one topic. Default: 3; 0 disables.',
     `  --xhigh-task-classes <csv> Approved task classes for auto-escalation. Default: ${DEFAULT_XHIGH_TASK_CLASSES}`,
     '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
     '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
@@ -112,6 +115,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     allowDirty: false,
     continuous: false,
     autoEscalate: true,
+    parkedRepeatLimit: 3,
     xhighTaskClasses: DEFAULT_XHIGH_TASK_CLASSES,
     rawEvents: false,
     showCodexWarnings: false,
@@ -155,6 +159,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     else if (arg === '--corpora') args.corpora = next;
     else if (arg === '--max-iterations') args.maxIterations = Math.max(1, Math.min(5, Number.parseInt(next, 10) || 1));
     else if (arg === '--max-stages') args.maxStages = Math.max(1, Math.min(20, Number.parseInt(next, 10) || 1));
+    else if (arg === '--parked-repeat-limit') args.parkedRepeatLimit = Math.max(0, Number.parseInt(next, 10) || 0);
     else if (arg === '--poll-seconds') args.pollSeconds = Math.max(5, Number.parseInt(next, 10) || 30);
     else if (arg === '--objective') args.objective = next;
     else if (arg === '--prompt') args.promptTemplate = next;
@@ -601,6 +606,21 @@ function canAutoEscalate(args: RunnerArgs, stop: ContinuousStop, alreadyEscalate
   return true;
 }
 
+function parkedTopic(decision: StageDecision | null): string | null {
+  if (decision?.classification !== 'diagnostic_only') return null;
+  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
+  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) return null;
+  if (/boundary/i.test(text)) return 'boundary';
+  if (/font|text extract/i.test(text)) return 'font-text-extractability';
+  if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
+  if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
+  if (/protected|parity/i.test(text)) return 'protected-parity';
+  if (/figure|alt/i.test(text)) return 'figure-alt';
+  if (/table/i.test(text)) return 'table';
+  if (/heading/i.test(text)) return 'heading';
+  return 'unspecified';
+}
+
 async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: StageDecision | null }> {
   const runDir = resolve(args.outRoot, `stage${args.stage}-${stamp()}-${sha1(JSON.stringify(args)).slice(0, 8)}`);
   await mkdir(runDir, { recursive: true });
@@ -643,6 +663,8 @@ async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: S
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const stageCount = args.continuous ? args.maxStages : 1;
+  let consecutiveParkedTopic: string | null = null;
+  let consecutiveParkedCount = 0;
   for (let offset = 0; offset < stageCount; offset += 1) {
     let stageArgs = { ...args, stage: args.stage + offset };
     let alreadyEscalated = false;
@@ -657,6 +679,19 @@ async function main(): Promise<void> {
       stop = shouldStopContinuous(stageArgs, decision);
     }
     if (!args.continuous) break;
+    const topic = parkedTopic(decision);
+    if (topic) {
+      consecutiveParkedCount = topic === consecutiveParkedTopic ? consecutiveParkedCount + 1 : 1;
+      consecutiveParkedTopic = topic;
+      if (args.parkedRepeatLimit > 0 && consecutiveParkedCount >= args.parkedRepeatLimit) {
+        console.log(`Stopping continuous run after stage ${stageArgs.stage}: parked_repeat:${topic}`);
+        console.log(`The last ${consecutiveParkedCount} diagnostic-only stage(s) kept ${topic} parked. Pivot to another target family or gather new evidence before resuming this topic.`);
+        break;
+      }
+    } else {
+      consecutiveParkedTopic = null;
+      consecutiveParkedCount = 0;
+    }
     if (stop) {
       if (stop.escalationRequested && !stop.approvedTaskClass) {
         console.log(`Xhigh was requested, but auto-escalation was not approved by --xhigh-task-classes (${stageArgs.xhighTaskClasses}).`);
