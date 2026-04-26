@@ -44,6 +44,7 @@ import type {
   PythonMutationDetailPayload,
 } from '../../types.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
+import { protectedReanalysisRepeatCount } from '../benchmark/protectedReanalysisSelection.js';
 import {
   buildDefaultParams,
   deriveFallbackDocumentTitle,
@@ -887,11 +888,15 @@ export function protectedFinalReanalysisPolicyDecision(input: {
   if (configured === '1') return 'run';
 
   const best = input.best ?? null;
-  if (!best || !protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: best.analysis })) {
-    return 'skip_no_restore_candidate';
-  }
-
   const finalSafe = protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: input.final });
+  const finalReachedFloor = input.final.score >= protectedBaselineFloorScore(input.baseline);
+  const bestRunSafe = best ? protectedBaselineRunStateIsSafe({ baseline: input.baseline, analysis: best.analysis }) : false;
+  const bestReachedFloor = best ? best.analysis.score >= protectedBaselineFloorScore(input.baseline) : false;
+  if (!bestRunSafe && !bestReachedFloor) {
+    return !finalSafe && finalReachedFloor ? 'run' : 'skip_no_restore_candidate';
+  }
+  if (!best) return !finalSafe && finalReachedFloor ? 'run' : 'skip_no_restore_candidate';
+
   const bestIsEarlierState =
     best.appliedToolCount != null &&
     input.appliedToolCount != null &&
@@ -3785,27 +3790,39 @@ async function applyProtectedFinalReanalysisConfirmation(args: {
     state: RemediationState,
     prefix: string,
   ): Promise<{ state: RemediationState; unsafeReason: string | null; passCount: number }> => {
-    let confirmedState: RemediationState = state;
-    for (let pass = 1; pass <= 2; pass++) {
+    const repeatCount = protectedReanalysisRepeatCount();
+    let bestUnsafeState: RemediationState | null = null;
+    let bestUnsafeReason: string | null = null;
+    let bestUnsafePassCount = 0;
+    for (let pass = 1; pass <= repeatCount; pass++) {
       const confirmed = await reanalyzeBufferForMutation(
         state.buffer,
         filename,
         `${prefix}-${pass}`,
       );
-      confirmedState = {
+      const candidateState: RemediationState = {
         buffer: state.buffer,
         analysis: confirmed.result,
         snapshot: confirmed.snapshot,
       };
       const unsafeReason = protectedBaselineRunStateUnsafeReason({
         baseline: protectedBaseline,
-        analysis: confirmedState.analysis,
+        analysis: candidateState.analysis,
       });
-      if (unsafeReason) {
-        return { state: confirmedState, unsafeReason, passCount: pass };
+      if (!unsafeReason) {
+        return { state: candidateState, unsafeReason: null, passCount: pass };
+      }
+      if (!bestUnsafeState || candidateState.analysis.score > bestUnsafeState.analysis.score) {
+        bestUnsafeState = candidateState;
+        bestUnsafeReason = unsafeReason;
+        bestUnsafePassCount = pass;
       }
     }
-    return { state: confirmedState, unsafeReason: null, passCount: 2 };
+    return {
+      state: bestUnsafeState ?? state,
+      unsafeReason: bestUnsafeReason ?? 'protected_reanalysis_no_safe_repeat',
+      passCount: bestUnsafePassCount || repeatCount,
+    };
   };
 
   const confirmedFinal = await confirmProtectedState(args.state, 'pdfaf-protected-final');
@@ -4239,7 +4256,19 @@ export async function remediatePdf(
       baseline: options?.protectedBaseline,
       current: protectedRunBestState.current,
       candidate,
-    })) return;
+    })) {
+      const baseline = options?.protectedBaseline;
+      const floorReached = baseline != null && Number.isFinite(baseline.score) && candidate.analysis.score >= protectedBaselineFloorScore(baseline);
+      const current = protectedRunBestState.current;
+      const currentRunSafe = current ? protectedBaselineRunStateIsSafe({ baseline, analysis: current.analysis }) : false;
+      if (!floorReached || currentRunSafe) return;
+      if (current && current.analysis.score > candidate.analysis.score) return;
+      if (
+        current &&
+        current.analysis.score === candidate.analysis.score &&
+        current.appliedToolCount <= candidate.appliedToolCount
+      ) return;
+    }
     protectedRunBestState.current = candidate;
   };
   await rememberProtectedRunBestState('initial_state');

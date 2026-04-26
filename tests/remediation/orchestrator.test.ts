@@ -1876,6 +1876,15 @@ describe('protectedFinalReanalysisPolicyDecision', () => {
       env: {},
     })).toBe('run');
   });
+
+  it('runs for a floor-reaching final state with protected category volatility and no checkpoint', () => {
+    expect(protectedFinalReanalysisPolicyDecision({
+      baseline: { score: 90, categories: { heading_structure: 100 } },
+      final: makeAnalysis({ score: 91, confidence: 'medium', categories: { heading_structure: 80 } }),
+      appliedToolCount: 5,
+      env: {},
+    })).toBe('run');
+  });
 });
 
 describe('protectedTransactionDecision', () => {
