@@ -22,6 +22,20 @@ pnpm run agent:improve-accessibility -- \
   --max-iterations 1
 ```
 
+## Continuous Run
+
+Use this when you want the coordinator to run the next stage automatically after the previous one completes:
+
+```bash
+pnpm run agent:continuous -- \
+  --stage 82 \
+  --max-stages 3 \
+  --max-iterations 1 \
+  --poll-seconds 30
+```
+
+Continuous mode increments the stage number after a completed worker run. It stops when a worker reports `blocked`, `rejected`, `acceptance_ready`, or `safe_to_implement`, or when the final summary is missing/unparseable. That keeps the loop from running past a point that needs a deliberate decision.
+
 The runner:
 
 - checks for tracked dirty files unless `--allow-dirty` is passed;
@@ -29,6 +43,7 @@ The runner:
 - calls `codex exec` with `--sandbox danger-full-access` and `--ask-for-approval never`;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
+- prints heartbeat status while a Codex worker is still running;
 - fails if generated artifact paths are staged after the Codex run.
 
 ## Guardrails

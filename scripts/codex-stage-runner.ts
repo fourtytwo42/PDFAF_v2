@@ -9,13 +9,21 @@ interface RunnerArgs {
   mode: string;
   corpora: string;
   maxIterations: number;
+  maxStages: number;
+  pollSeconds: number;
   objective: string;
   promptTemplate: string;
   schema: string;
   outRoot: string;
   dryRun: boolean;
   allowDirty: boolean;
+  continuous: boolean;
   model?: string;
+}
+
+interface StageDecision {
+  classification?: string;
+  next_action?: string;
 }
 
 const DEFAULT_PROMPT = 'docs/agent-prompts/coordinator-stage.md';
@@ -31,6 +39,9 @@ function usage(): string {
     '  --mode <name>            Default: diagnostic-first.',
     '  --corpora <csv>          Default: legacy,v1-edge.',
     '  --max-iterations <n>     Default: 1. Capped at 5.',
+    '  --continuous             Run consecutive stage numbers until a stop classification is returned.',
+    '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
+    '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
     '  --objective <text>       Extra objective appended to the coordinator prompt.',
     `  --prompt <path>          Default: ${DEFAULT_PROMPT}`,
     `  --schema <path>          Default: ${DEFAULT_SCHEMA}`,
@@ -47,12 +58,15 @@ function parseArgs(argv: string[]): RunnerArgs {
     mode: 'diagnostic-first',
     corpora: 'legacy,v1-edge',
     maxIterations: 1,
+    maxStages: 1,
+    pollSeconds: 30,
     objective: 'Continue improving general PDF accessibility remediation with evidence-first staged work.',
     promptTemplate: DEFAULT_PROMPT,
     schema: DEFAULT_SCHEMA,
     outRoot: DEFAULT_OUT_ROOT,
     dryRun: false,
     allowDirty: false,
+    continuous: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -68,12 +82,18 @@ function parseArgs(argv: string[]): RunnerArgs {
       args.allowDirty = true;
       continue;
     }
+    if (arg === '--continuous') {
+      args.continuous = true;
+      continue;
+    }
     const next = argv[i + 1];
     if (!next) throw new Error(`Missing value for ${arg}`);
     if (arg === '--stage') args.stage = Number.parseInt(next, 10);
     else if (arg === '--mode') args.mode = next;
     else if (arg === '--corpora') args.corpora = next;
     else if (arg === '--max-iterations') args.maxIterations = Math.max(1, Math.min(5, Number.parseInt(next, 10) || 1));
+    else if (arg === '--max-stages') args.maxStages = Math.max(1, Math.min(20, Number.parseInt(next, 10) || 1));
+    else if (arg === '--poll-seconds') args.pollSeconds = Math.max(5, Number.parseInt(next, 10) || 30);
     else if (arg === '--objective') args.objective = next;
     else if (arg === '--prompt') args.promptTemplate = next;
     else if (arg === '--schema') args.schema = next;
@@ -171,7 +191,12 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
   await writeFile(promptPath, prompt, 'utf8');
 
   if (args.dryRun) {
-    await writeFile(summaryPath, JSON.stringify({ dryRun: true, promptPath }, null, 2), 'utf8');
+    await writeFile(summaryPath, JSON.stringify({
+      dryRun: true,
+      classification: 'diagnostic_only',
+      next_action: 'Dry run only; inspect the generated prompt before launching Codex.',
+      promptPath,
+    }, null, 2), 'utf8');
     console.log(`Dry run wrote ${promptPath}`);
     return;
   }
@@ -193,6 +218,11 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     const proc = spawn(codex, codexArgs, { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
     let stderr = '';
     const chunks: string[] = [];
+    const started = Date.now();
+    const heartbeat = setInterval(() => {
+      const elapsedSeconds = Math.round((Date.now() - started) / 1000);
+      console.log(`[codex-stage-runner] stage ${args.stage} iteration ${iteration} still running after ${elapsedSeconds}s`);
+    }, args.pollSeconds * 1000);
     proc.stdout.on('data', chunk => {
       const text = String(chunk);
       chunks.push(text);
@@ -205,6 +235,7 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
     });
     proc.on('error', reject);
     proc.on('close', async code => {
+      clearInterval(heartbeat);
       await writeFile(eventsPath, chunks.join(''), 'utf8');
       if (stderr.trim()) await writeFile(join(runDir, `iteration-${iteration}-stderr.log`), stderr, 'utf8');
       if (code === 0) resolveRun();
@@ -220,8 +251,23 @@ async function runIteration(args: RunnerArgs, iteration: number, runDir: string)
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+async function readDecision(summaryPath: string): Promise<StageDecision | null> {
+  try {
+    return JSON.parse(await readFile(summaryPath, 'utf8')) as StageDecision;
+  } catch {
+    return null;
+  }
+}
+
+function shouldStopContinuous(decision: StageDecision | null): string | null {
+  if (!decision?.classification) return 'missing_or_unparseable_summary';
+  if (['blocked', 'rejected', 'acceptance_ready', 'safe_to_implement'].includes(decision.classification)) {
+    return decision.classification;
+  }
+  return null;
+}
+
+async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: StageDecision | null }> {
   const runDir = resolve(args.outRoot, `stage${args.stage}-${stamp()}-${sha1(JSON.stringify(args)).slice(0, 8)}`);
   await mkdir(runDir, { recursive: true });
 
@@ -244,6 +290,29 @@ async function main(): Promise<void> {
     await runIteration(args, i, runDir);
   }
   console.log(`Completed agent stage runner. Output: ${runDir}`);
+  return {
+    runDir,
+    decision: await readDecision(join(runDir, `iteration-${args.maxIterations}-summary.json`)),
+  };
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const stageCount = args.continuous ? args.maxStages : 1;
+  for (let offset = 0; offset < stageCount; offset += 1) {
+    const stageArgs = { ...args, stage: args.stage + offset };
+    const { decision } = await runStage(stageArgs);
+    if (!args.continuous) break;
+    const stopReason = shouldStopContinuous(decision);
+    if (stopReason) {
+      console.log(`Stopping continuous run after stage ${stageArgs.stage}: ${stopReason}`);
+      if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
+      break;
+    }
+    if (offset + 1 < stageCount) {
+      console.log(`Continuing to stage ${stageArgs.stage + 1}`);
+    }
+  }
 }
 
 main().catch(error => {
