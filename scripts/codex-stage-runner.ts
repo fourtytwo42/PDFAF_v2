@@ -18,6 +18,7 @@ interface RunnerArgs {
   dryRun: boolean;
   allowDirty: boolean;
   continuous: boolean;
+  autoEscalate: boolean;
   rawEvents: boolean;
   showCodexWarnings: boolean;
   modelPolicy: ModelPolicy;
@@ -28,6 +29,11 @@ interface RunnerArgs {
 interface StageDecision {
   classification?: string;
   next_action?: string;
+}
+
+interface ContinuousStop {
+  reason: string;
+  canEscalate: boolean;
 }
 
 type ModelPolicy = 'auto' | 'mini' | 'advanced' | 'xhigh';
@@ -56,6 +62,7 @@ function usage(): string {
     '  --corpora <csv>          Default: legacy,v1-edge.',
     '  --max-iterations <n>     Default: 1. Capped at 5.',
     '  --continuous             Run consecutive stage numbers until a stop classification is returned.',
+    '  --no-auto-escalate       Disable one-time xhigh reruns when a worker explicitly requests them.',
     '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
     '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
     '  --objective <text>       Extra objective appended to the coordinator prompt.',
@@ -87,6 +94,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     dryRun: false,
     allowDirty: false,
     continuous: false,
+    autoEscalate: true,
     rawEvents: false,
     showCodexWarnings: false,
     modelPolicy: 'auto',
@@ -108,6 +116,10 @@ function parseArgs(argv: string[]): RunnerArgs {
     }
     if (arg === '--continuous') {
       args.continuous = true;
+      continue;
+    }
+    if (arg === '--no-auto-escalate') {
+      args.autoEscalate = false;
       continue;
     }
     if (arg === '--raw-events') {
@@ -363,6 +375,10 @@ function shouldSuppressCodexStderrLine(line: string, state: { suppressAnalyticsH
   }
   if (/WARN codex_core_plugins::manifest: ignoring interface\.defaultPrompt:/.test(line)) return true;
   if (/WARN codex_core::file_watcher: failed to unwatch/.test(line)) return true;
+  if (/WARN codex_core::plugins::manager: failed to warm featured plugin ids cache/.test(line)) {
+    state.suppressAnalyticsHtml = true;
+    return true;
+  }
   if (/WARN codex_analytics::client: events failed with status/.test(line)) {
     state.suppressAnalyticsHtml = true;
     return true;
@@ -496,12 +512,34 @@ async function readDecision(summaryPath: string): Promise<StageDecision | null> 
   }
 }
 
-function shouldStopContinuous(decision: StageDecision | null): string | null {
-  if (!decision?.classification) return 'missing_or_unparseable_summary';
-  if (['blocked', 'rejected', 'acceptance_ready', 'safe_to_implement'].includes(decision.classification)) {
-    return decision.classification;
+function shouldStopContinuous(decision: StageDecision | null): ContinuousStop | null {
+  if (!decision?.classification) return { reason: 'missing_or_unparseable_summary', canEscalate: false };
+  if (decision.classification === 'blocked' || decision.classification === 'safe_to_implement') {
+    const text = `${decision.next_action ?? ''}`;
+    return {
+      reason: decision.classification,
+      canEscalate: /(?:--model-policy\s+xhigh|xhigh|extra[- ]?high|gpt-5\.5)/i.test(text),
+    };
+  }
+  if (decision.classification === 'rejected' || decision.classification === 'acceptance_ready') {
+    return { reason: decision.classification, canEscalate: false };
   }
   return null;
+}
+
+function escalationArgs(args: RunnerArgs): RunnerArgs {
+  return {
+    ...args,
+    mode: modeNeedsAdvancedModel(args.mode) ? args.mode : `${args.mode}-xhigh`,
+    modelPolicy: 'xhigh',
+    reasoningEffort: 'xhigh',
+  };
+}
+
+function canAutoEscalate(args: RunnerArgs, stop: ContinuousStop, alreadyEscalated: boolean): boolean {
+  if (!args.continuous || !args.autoEscalate || alreadyEscalated || !stop.canEscalate) return false;
+  if (args.modelPolicy === 'xhigh' || args.reasoningEffort === 'xhigh') return false;
+  return true;
 }
 
 async function runStage(args: RunnerArgs): Promise<{ runDir: string; decision: StageDecision | null }> {
@@ -547,12 +585,21 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const stageCount = args.continuous ? args.maxStages : 1;
   for (let offset = 0; offset < stageCount; offset += 1) {
-    const stageArgs = { ...args, stage: args.stage + offset };
-    const { decision } = await runStage(stageArgs);
+    let stageArgs = { ...args, stage: args.stage + offset };
+    let alreadyEscalated = false;
+    let { decision } = await runStage(stageArgs);
+    let stop = shouldStopContinuous(decision);
+    if (stop && canAutoEscalate(stageArgs, stop, alreadyEscalated)) {
+      const nextAction = decision?.next_action ? ` Next action was: ${decision.next_action}` : '';
+      console.log(`Auto-escalating stage ${stageArgs.stage} once with --model-policy xhigh after ${stop.reason}.${nextAction}`);
+      stageArgs = escalationArgs(stageArgs);
+      alreadyEscalated = true;
+      ({ decision } = await runStage(stageArgs));
+      stop = shouldStopContinuous(decision);
+    }
     if (!args.continuous) break;
-    const stopReason = shouldStopContinuous(decision);
-    if (stopReason) {
-      console.log(`Stopping continuous run after stage ${stageArgs.stage}: ${stopReason}`);
+    if (stop) {
+      console.log(`Stopping continuous run after stage ${stageArgs.stage}: ${stop.reason}`);
       if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
       break;
     }
