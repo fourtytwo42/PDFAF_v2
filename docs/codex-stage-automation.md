@@ -37,6 +37,43 @@ Use this when you want the coordinator to run the next stage automatically after
 Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. It still stops on unapproved xhigh requests, `rejected`, `acceptance_ready`, repeated `blocked`/`safe_to_implement`, or missing/unparseable summaries.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
+## Evolve Run
+
+Use the evolve runner when you want the system to keep improving the engine over repeated bounded stage batches. It wraps `codex-stage.sh`; each batch still uses the same stage guardrails, model policy, xhigh task allowlist, commit rules, and artifact protections.
+
+Start one 10-stage evolution batch:
+
+```bash
+./scripts/codex-evolve.sh \
+  --stage 92 \
+  --batch-size 10 \
+  --pull-v1-when-needed \
+  --visual-gate \
+  --protected-baseline-run Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7
+```
+
+Run indefinitely in bounded batches:
+
+```bash
+./scripts/codex-evolve.sh \
+  --forever \
+  --batch-size 10 \
+  --sleep-seconds 300 \
+  --pull-v1-when-needed \
+  --visual-gate \
+  --protected-baseline-run Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7
+```
+
+The evolve runner:
+
+- defaults the starting stage to the latest `Output/agent-runs/stage*` directory plus one, unless `--stage` is supplied;
+- checks for tracked dirty files unless `--allow-dirty` is passed;
+- prints disk and local LLM/listener status before starting;
+- tells workers to preserve speed, avoid regressions, keep PDFs visually stable, and reject/revert unsafe candidates;
+- tells workers to pull only small justified v1/sibling PDF batches into ignored local input folders when current evidence needs more coverage;
+- writes current loop state to `Output/agent-runs/evolve/latest-state.json`;
+- never commits generated `Output/` artifacts or PDF payloads.
+
 ## Model Policy
 
 The runner chooses a model explicitly so it does not accidentally inherit a more expensive global Codex default.

@@ -48,6 +48,7 @@
     "agent:improve-accessibility": "tsx scripts/codex-stage-runner.ts",
     "agent:continuous": "tsx scripts/codex-stage-runner.ts --continuous",
     "agent:dry-run": "tsx scripts/codex-stage-runner.ts --dry-run",
+    "agent:evolve": "tsx scripts/codex-evolve-runner.ts",
     "adobe:ingest-reports": "tsx scripts/adobe-accreport-ingest.ts",
     "adobe:assert-thresholds": "tsx scripts/adobe-accreport-assert-thresholds.ts",
     "adobe:assert-pdfaf-signals": "tsx scripts/adobe-accreport-assert-pdfaf-signals.ts",
