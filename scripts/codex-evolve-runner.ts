@@ -434,19 +434,38 @@ async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSum
 }
 
 function topicFromText(text: string): string {
-  if (/runtime[-_ ]tail/i.test(text)) return 'runtime-tail';
-  if (/protected[-_ ](?:parity|baseline)/i.test(text)) return 'protected-parity';
-  if (/visual[-_ ]stability|visual gate|pixel drift|render comparison/i.test(text)) return 'visual-stability';
-  if (/font[-/ ]text|font|text extract/i.test(text)) return 'font-text-extractability';
-  if (/analyzer[-_ ]volatility|same-buffer|analyzer|analysis|volatility/i.test(text)) return 'analyzer-volatility';
-  if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
-  if (/protected|parity/i.test(text)) return 'protected-parity';
-  if (/visual|render|pixel|drift/i.test(text)) return 'visual-stability';
-  if (/boundary/i.test(text)) return 'boundary';
-  if (/figure|alt/i.test(text)) return 'figure-alt';
-  if (/table/i.test(text)) return 'table';
-  if (/heading/i.test(text)) return 'heading';
+  const explicitTopic = earliestTopic(text, [
+    ['runtime-tail', /runtime[-_ ]tail/i],
+    ['protected-parity', /protected[-_ ](?:parity|baseline)/i],
+    ['visual-stability', /visual[-_ ]stability|visual gate|pixel drift|render comparison/i],
+    ['font-text-extractability', /font[-/ ]text|text[-_ ]extractability/i],
+    ['analyzer-volatility', /analyzer[-_ ]volatility|same-buffer/i],
+  ]);
+  if (explicitTopic) return explicitTopic;
+
+  const genericTopic = earliestTopic(text, [
+    ['runtime-tail', /runtime|p95|tail/i],
+    ['protected-parity', /protected|parity/i],
+    ['visual-stability', /visual|render|pixel|drift/i],
+    ['font-text-extractability', /font|text extract/i],
+    ['analyzer-volatility', /analyzer|analysis|volatility/i],
+    ['boundary', /boundary/i],
+    ['figure-alt', /figure|alt/i],
+    ['table', /table/i],
+    ['heading', /heading/i],
+  ]);
+  if (genericTopic) return genericTopic;
   return 'unspecified';
+}
+
+function earliestTopic(text: string, patterns: Array<[string, RegExp]>): string | null {
+  let best: { topic: string; index: number } | null = null;
+  for (const [topic, pattern] of patterns) {
+    const match = pattern.exec(text);
+    if (!match || match.index < 0) continue;
+    if (!best || match.index < best.index) best = { topic, index: match.index };
+  }
+  return best?.topic ?? null;
 }
 
 function cooldownTopic(summary: StageSummary): string | null {
