@@ -43,7 +43,7 @@ interface TargetSelection {
   selectedLabel: string;
   selectedObjective: string;
   cooledTopics: string[];
-  recentParkedTopics: string[];
+  recentCooldownTopics: string[];
 }
 
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
@@ -370,10 +370,7 @@ async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSum
   return summaries;
 }
 
-function parkedTopic(summary: StageSummary): string | null {
-  if (summary.classification !== 'diagnostic_only') return null;
-  const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
-  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) return null;
+function topicFromText(text: string): string {
   if (/boundary/i.test(text)) return 'boundary';
   if (/font|text extract/i.test(text)) return 'font-text-extractability';
   if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
@@ -385,13 +382,26 @@ function parkedTopic(summary: StageSummary): string | null {
   return 'unspecified';
 }
 
+function cooldownTopic(summary: StageSummary): string | null {
+  const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
+  if (summary.classification === 'diagnostic_only'
+    && /(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) {
+    return topicFromText(text);
+  }
+  if (summary.classification === 'blocked'
+    && /pivot to a different residual family|pivot to another target family|select a different residual family/i.test(text)) {
+    return topicFromText(text);
+  }
+  return null;
+}
+
 function selectTargetFamily(args: EvolveArgs, summaries: StageSummary[]): TargetSelection {
   const latestStage = Math.max(0, ...summaries.map(summary => summary.stage ?? 0));
-  const recentParkedTopics = summaries
+  const recentCooldownTopics = summaries
     .filter(summary => args.topicCooldownStages === 0 || (summary.stage ?? 0) >= latestStage - args.topicCooldownStages)
-    .map(parkedTopic)
+    .map(cooldownTopic)
     .filter((topic): topic is string => Boolean(topic));
-  const cooledTopics = [...new Set(recentParkedTopics)];
+  const cooledTopics = [...new Set(recentCooldownTopics)];
   const families = parseTargetFamilies(args.targetFamilies);
   const selectedFamily = families.find(family => !cooledTopics.includes(family)) ?? families[0]!;
   const target = TARGET_FAMILIES[selectedFamily]!;
@@ -400,7 +410,7 @@ function selectTargetFamily(args: EvolveArgs, summaries: StageSummary[]): Target
     selectedLabel: target.label,
     selectedObjective: target.objective,
     cooledTopics,
-    recentParkedTopics,
+    recentCooldownTopics,
   };
 }
 
