@@ -53,7 +53,7 @@ const DEFAULT_TARGET_FAMILIES = 'runtime-tail,protected-parity,visual-stability,
 const TARGET_FAMILIES: Record<string, { label: string; objective: string }> = {
   'runtime-tail': {
     label: 'runtime tail',
-    objective: 'Prioritize runtime-tail evidence and speed-preserving remediation. Inspect p95/runtime artifacts and repeated no-gain expensive paths first; do not trade quality or protected-floor preservation for speed.',
+    objective: 'Prioritize runtime-tail evidence and speed-preserving remediation. Inspect p95/runtime artifacts and repeated no-gain expensive paths first; if fresh artifacts are missing, generate a small no-semantic target runtime sample on known tail rows before blocking. Do not trade quality or protected-floor preservation for speed.',
   },
   'protected-parity': {
     label: 'protected parity',
@@ -262,6 +262,7 @@ function buildObjective(args: EvolveArgs, stage: number, target: TargetSelection
     'Every accepted behavior change must protect false-positive applied = 0, protected rows, F count, runtime p95, text extraction, structure/tag state, page count, and visual stability.',
     'Reject or revert candidates that overfit, broaden route guards without evidence, change scorer/gate semantics, or alter visible rendering.',
     'Do not spend repeated stages reaffirming one parked topic. If a family is parked with no implementation justified, pivot to a different residual family or stop with a clear blocked decision.',
+    'If the selected target family lacks fresh artifacts, create the smallest focused diagnostic or benchmark sample needed for that family before returning blocked. Do not block solely because old artifacts were cleaned up.',
     `Target-family directive: prioritize ${target.selectedLabel}. ${target.selectedObjective}`,
     target.cooledTopics.length
       ? `Cooldown directive: avoid these recently parked topics unless genuinely new evidence appears: ${target.cooledTopics.join(', ')}.`

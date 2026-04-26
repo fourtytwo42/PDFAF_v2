@@ -79,6 +79,7 @@ The evolve runner:
 - prints disk and local LLM/listener status before starting;
 - reads recent stage summaries, puts recently parked topics on cooldown, and injects a target-family directive into each batch objective;
 - tells workers to preserve speed, avoid regressions, keep PDFs visually stable, and reject/revert unsafe candidates;
+- tells workers to generate the smallest focused diagnostic sample when selected-family artifacts are missing, instead of blocking solely because old generated artifacts were cleaned up;
 - tells workers to pivot away from a family after it is parked, while the stage runner injects a pivot directive before stopping a batch for repeated parked diagnostics;
 - tells workers to pull only small justified v1/sibling PDF batches into ignored local input folders when current evidence needs more coverage;
 - writes current loop state to `Output/agent-runs/evolve/latest-state.json`;
