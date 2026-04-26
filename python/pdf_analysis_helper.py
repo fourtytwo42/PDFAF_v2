@@ -1803,6 +1803,19 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
             mcid_lookup = _build_mcid_resolved_lookup(pdf)
         except Exception:
             mcid_lookup = {}
+        try:
+            root_reachable_keys = {
+                _struct_elem_visit_key(root_elem)
+                for root_elem in _iter_root_reachable_struct_elems(str_root)
+            }
+        except Exception:
+            root_reachable_keys = set()
+
+        def _root_reachable(elem) -> bool:
+            try:
+                return _struct_elem_visit_key(elem) in root_reachable_keys
+            except Exception:
+                return False
 
         # BFS across the full tree
         # Each queue item: the element object
@@ -1856,7 +1869,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                         "page": page,
                         "rawRole": raw_tag,
                         "role": tag,
-                        "reachable": _is_root_reachable_elem(str_root, elem),
+                        "reachable": _root_reachable(elem),
                         "directContent": _elem_has_direct_mcid_content(elem),
                         "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
                         "parentPath": _struct_parent_chain(elem),
@@ -1888,6 +1901,10 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                         "maxRowSpan": audit.get("maxRowSpan") or 1,
                         "maxColSpan": audit.get("maxColSpan") or 1,
                         "page": page,
+                        "reachable": _root_reachable(elem),
+                        "directContent": _elem_has_direct_mcid_content(elem),
+                        "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                        "parentPath": _struct_parent_chain(elem),
                     }
                     if ref:
                         row["structRef"] = ref
@@ -1905,6 +1922,10 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                                 "text": (text or "")[:500],
                                 "page": page,
                                 "structRef": ref,
+                                "reachable": _root_reachable(elem),
+                                "directContent": _elem_has_direct_mcid_content(elem),
+                                "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                                "parentPath": _struct_parent_chain(elem),
                             }
                             try:
                                 bb = try_struct_elem_bbox(elem)
@@ -1953,7 +1974,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                     "hasAlt": alt is not None and len(alt) > 0,
                     "altText": alt,
                     "isArtifact": _is_artifact(elem),
-                    "reachable": _is_root_reachable_elem(str_root, elem),
+                    "reachable": _root_reachable(elem),
                     "directContent": _elem_has_direct_mcid_content(elem),
                     "parentPath": _struct_parent_chain(elem),
                 })

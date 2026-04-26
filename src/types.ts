@@ -257,6 +257,10 @@ export interface DocumentSnapshot {
     dominantColumnCount?: number;
     maxRowSpan?: number;
     maxColSpan?: number;
+    reachable?: boolean;
+    directContent?: boolean;
+    subtreeMcidCount?: number;
+    parentPath?: string[];
   }>;
   /** Tagged paragraph-like structure elements (Phase 3c analysis). */
   paragraphStructElems?: Array<{
@@ -264,6 +268,10 @@ export interface DocumentSnapshot {
     text: string;
     page: number;
     structRef: string;
+    reachable?: boolean;
+    directContent?: boolean;
+    subtreeMcidCount?: number;
+    parentPath?: string[];
     /** Page-space quad when derivable from structure attributes (optional). */
     bbox?: [number, number, number, number];
   }>;
