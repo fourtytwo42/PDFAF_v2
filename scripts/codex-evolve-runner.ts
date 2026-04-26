@@ -434,27 +434,22 @@ async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSum
 }
 
 function topicFromText(text: string): string {
-  const explicitTopic = earliestTopic(text, [
-    ['runtime-tail', /runtime[-_ ]tail/i],
+  const topic = earliestTopic(text, [
+    ['runtime-tail', /runtime[-_ ]tail|runtime|p95|wall[-_ ]?time/i],
     ['protected-parity', /protected[-_ ](?:parity|baseline)/i],
     ['visual-stability', /visual[-_ ]stability|visual gate|pixel drift|render comparison/i],
     ['font-text-extractability', /font[-/ ]text|text[-_ ]extractability/i],
     ['analyzer-volatility', /analyzer[-_ ]volatility|same-buffer/i],
-  ]);
-  if (explicitTopic) return explicitTopic;
-
-  const genericTopic = earliestTopic(text, [
-    ['runtime-tail', /runtime|p95|tail/i],
     ['protected-parity', /protected|parity/i],
     ['visual-stability', /visual|render|pixel|drift/i],
     ['font-text-extractability', /font|text extract/i],
     ['analyzer-volatility', /analyzer|analysis|volatility/i],
     ['boundary', /boundary/i],
-    ['figure-alt', /figure|alt/i],
+    ['figure-alt', /figure[-_\/ ]?alt|figure|alt/i],
     ['table', /table/i],
     ['heading', /heading/i],
   ]);
-  if (genericTopic) return genericTopic;
+  if (topic) return topic;
   return 'unspecified';
 }
 
