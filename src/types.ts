@@ -60,6 +60,7 @@ export type PlanningSkipReason =
   | 'bootstrap_below_commit_floor'
   | 'ocr_skipped_native_text_present';
 export type DetectionConfidence = 'high' | 'medium' | 'low';
+export type CheckerFacingEvidenceState = 'checker_facing' | 'wrapper_path_artifact' | 'boundary_candidate';
 
 export interface ReadingOrderSignals {
   missingStructureTree: boolean;
@@ -261,6 +262,7 @@ export interface DocumentSnapshot {
     directContent?: boolean;
     subtreeMcidCount?: number;
     parentPath?: string[];
+    evidenceState?: CheckerFacingEvidenceState;
   }>;
   /** Tagged paragraph-like structure elements (Phase 3c analysis). */
   paragraphStructElems?: Array<{
@@ -272,6 +274,7 @@ export interface DocumentSnapshot {
     directContent?: boolean;
     subtreeMcidCount?: number;
     parentPath?: string[];
+    evidenceState?: CheckerFacingEvidenceState;
     /** Page-space quad when derivable from structure attributes (optional). */
     bbox?: [number, number, number, number];
   }>;

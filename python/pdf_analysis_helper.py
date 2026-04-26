@@ -147,6 +147,21 @@ def _struct_role_requires_figure_style_alt(tag: str) -> bool:
     return tu in {"FIGURE", "FORMULA", "INLINESHAPE", "SHAPE"}
 
 
+def _checker_facing_evidence_state(reachable: bool, direct_content: bool, subtree_mcid_count: int) -> str:
+    """
+    Narrow checker-facing classifier for table/paragraph records.
+
+    The classifier intentionally keeps reachable-but-contentless records separate from
+    wrapper/path artifacts so later stages can park them explicitly instead of folding
+    them into deterministic aggregation.
+    """
+    if reachable and (direct_content or subtree_mcid_count > 0):
+        return "checker_facing"
+    if not reachable and not direct_content and subtree_mcid_count == 0:
+        return "wrapper_path_artifact"
+    return "boundary_candidate"
+
+
 def _under_figure_like_ancestor_with_meaningful_alt(elem) -> bool:
     """True if a figure-like ancestor already has non-empty /Alt (nested figure chain)."""
     try:
@@ -1873,6 +1888,11 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                         "directContent": _elem_has_direct_mcid_content(elem),
                         "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
                         "parentPath": _struct_parent_chain(elem),
+                        "evidenceState": _checker_facing_evidence_state(
+                            _root_reachable(elem),
+                            _elem_has_direct_mcid_content(elem),
+                            len(_collect_subtree_mcids(elem)),
+                        ),
                     }
                     if ref:
                         row["structRef"] = ref
@@ -1926,6 +1946,11 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict) -> dict:
                                 "directContent": _elem_has_direct_mcid_content(elem),
                                 "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
                                 "parentPath": _struct_parent_chain(elem),
+                                "evidenceState": _checker_facing_evidence_state(
+                                    _root_reachable(elem),
+                                    _elem_has_direct_mcid_content(elem),
+                                    len(_collect_subtree_mcids(elem)),
+                                ),
                             }
                             try:
                                 bb = try_struct_elem_bbox(elem)
