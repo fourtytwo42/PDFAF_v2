@@ -434,11 +434,14 @@ async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSum
 }
 
 function topicFromText(text: string): string {
-  if (/visual|render|pixel|drift/i.test(text)) return 'visual-stability';
-  if (/font|text extract/i.test(text)) return 'font-text-extractability';
-  if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
+  if (/runtime[-_ ]tail/i.test(text)) return 'runtime-tail';
+  if (/protected[-_ ](?:parity|baseline)/i.test(text)) return 'protected-parity';
+  if (/visual[-_ ]stability|visual gate|pixel drift|render comparison/i.test(text)) return 'visual-stability';
+  if (/font[-/ ]text|font|text extract/i.test(text)) return 'font-text-extractability';
+  if (/analyzer[-_ ]volatility|same-buffer|analyzer|analysis|volatility/i.test(text)) return 'analyzer-volatility';
   if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
   if (/protected|parity/i.test(text)) return 'protected-parity';
+  if (/visual|render|pixel|drift/i.test(text)) return 'visual-stability';
   if (/boundary/i.test(text)) return 'boundary';
   if (/figure|alt/i.test(text)) return 'figure-alt';
   if (/table/i.test(text)) return 'table';
@@ -449,11 +452,11 @@ function topicFromText(text: string): string {
 function cooldownTopic(summary: StageSummary): string | null {
   const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
   if (summary.classification === 'diagnostic_only'
-    && /(?:parked|no further implementation|no implementation (?:is )?justified|no (?:remediation )?behavior change (?:was )?justified|no remediation change was kept|do not promote .*acceptance-ready|stop rather than reiterat|keep .* parked)/i.test(text)) {
+    && /(?:\bpark(?:ed)?\b|no further implementation|no implementation (?:is )?justified|no (?:remediation )?behavior change (?:was )?justified|no remediation change was kept|do not promote .*acceptance-ready|stop rather than reiterat|keep .* parked)/i.test(text)) {
     return topicFromText(text);
   }
   if (summary.classification === 'blocked'
-    && /(?:pivot to a different residual family|pivot to another target family|select a different residual family|parked|leave .* parked|no safe .* behavior change|no safe .* change)/i.test(text)) {
+    && /(?:pivot to a different residual (?:family|branch)|pivot to another target family|select a different residual family|\bpark(?:ed)?\b|leave .* parked|no safe .* behavior change|no safe .* change)/i.test(text)) {
     return topicFromText(text);
   }
   return null;
