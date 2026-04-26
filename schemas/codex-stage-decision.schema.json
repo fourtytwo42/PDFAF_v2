@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PDFAF Codex Stage Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stage",
+    "classification",
+    "summary",
+    "source_changes",
+    "tests_run",
+    "benchmark_artifacts",
+    "commit",
+    "next_action"
+  ],
+  "properties": {
+    "stage": { "type": "integer", "minimum": 1 },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "diagnostic_only",
+        "safe_to_implement",
+        "implemented",
+        "rejected",
+        "acceptance_ready",
+        "blocked"
+      ]
+    },
+    "summary": { "type": "string" },
+    "source_changes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "tests_run": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "benchmark_artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created", "hash", "pushed"],
+      "properties": {
+        "created": { "type": "boolean" },
+        "hash": { "type": ["string", "null"] },
+        "pushed": { "type": "boolean" }
+      }
+    },
+    "next_action": { "type": "string" },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "stop_reason": { "type": ["string", "null"] }
+  }
+}
