@@ -611,6 +611,7 @@ function canAutoEscalate(args: RunnerArgs, stop: ContinuousStop, alreadyEscalate
 }
 
 function topicFromText(text: string): string {
+  if (/visual|render|pixel|drift/i.test(text)) return 'visual-stability';
   if (/font|text extract/i.test(text)) return 'font-text-extractability';
   if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
   if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
@@ -625,7 +626,7 @@ function topicFromText(text: string): string {
 function parkedTopic(decision: StageDecision | null): string | null {
   if (decision?.classification !== 'diagnostic_only') return null;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}`;
-  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) return null;
+  if (!/(?:parked|no further implementation|no implementation (?:is )?justified|no (?:remediation )?behavior change (?:was )?justified|no remediation change was kept|do not promote .*acceptance-ready|stop rather than reiterat|keep .* parked)/i.test(text)) return null;
   return topicFromText(text);
 }
 

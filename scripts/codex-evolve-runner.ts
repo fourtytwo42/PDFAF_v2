@@ -371,6 +371,7 @@ async function readLatestSummaries(outRoot: string, limit = 8): Promise<StageSum
 }
 
 function topicFromText(text: string): string {
+  if (/visual|render|pixel|drift/i.test(text)) return 'visual-stability';
   if (/font|text extract/i.test(text)) return 'font-text-extractability';
   if (/analyzer|analysis|same-buffer|volatility/i.test(text)) return 'analyzer-volatility';
   if (/runtime|p95|tail/i.test(text)) return 'runtime-tail';
@@ -385,7 +386,7 @@ function topicFromText(text: string): string {
 function cooldownTopic(summary: StageSummary): string | null {
   const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
   if (summary.classification === 'diagnostic_only'
-    && /(?:parked|no further implementation|no implementation (?:is )?justified|keep .* parked)/i.test(text)) {
+    && /(?:parked|no further implementation|no implementation (?:is )?justified|no (?:remediation )?behavior change (?:was )?justified|no remediation change was kept|do not promote .*acceptance-ready|stop rather than reiterat|keep .* parked)/i.test(text)) {
     return topicFromText(text);
   }
   if (summary.classification === 'blocked'
