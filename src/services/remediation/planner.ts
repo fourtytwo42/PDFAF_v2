@@ -36,6 +36,10 @@ import {
 } from '../headingBootstrapCandidates.js';
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 import { classifyZeroHeadingRecovery } from './headingRecovery.js';
+import {
+  selectVisibleHeadingAnchorCandidate,
+  shouldTryVisibleHeadingAnchorRecovery,
+} from './visibleHeadingAnchor.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -103,6 +107,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   ],
   post_bootstrap_heading_convergence: [
     'artifact_repeating_page_furniture',
+    'create_heading_from_visible_text_anchor',
     'create_heading_from_candidate',
     'normalize_heading_hierarchy',
     'normalize_nested_figure_containers',
@@ -772,6 +777,10 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return snapshot.structureTree !== null && (snapshot.paragraphStructElems?.length ?? 0) > 0;
   }
+  if (toolName === 'create_heading_from_visible_text_anchor') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.textCharCount > 0 && (snapshot.mcidTextSpans?.length ?? 0) > 0;
+  }
   if (toolName === 'normalize_nested_figure_containers') {
     return pdfClass !== 'scanned' && snapshot.structureTree !== null && snapshot.figures.length > 0;
   }
@@ -1027,6 +1036,7 @@ export function planForRemediation(
     ? buildEligibleHeadingBootstrapCandidates(snapshot)
     : [];
   const zeroHeadingRecovery = classifyZeroHeadingRecovery(analysis, snapshot);
+  const visibleHeadingAnchorRecoveryActive = shouldTryVisibleHeadingAnchorRecovery(analysis, snapshot);
   const headingCreateRecoveryActive =
     zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
     zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
@@ -1120,6 +1130,12 @@ export function planForRemediation(
           )
         )
       )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'create_heading_from_visible_text_anchor' &&
+      !(visibleHeadingAnchorRecoveryActive && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1348,6 +1364,32 @@ export function planForRemediation(
         rationale: 'Protected zero-heading convergence fallback when heading bootstrap candidate selection remains eligible.',
         route: 'post_bootstrap_heading_convergence',
       });
+    }
+  }
+
+  {
+    const toolName = 'create_heading_from_visible_text_anchor';
+    if (
+      visibleHeadingAnchorRecoveryActive &&
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        typeof params['text'] === 'string' &&
+        params['text'].length > 0 &&
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 127 visible-anchor zero-heading recovery from a proven first-page content anchor.',
+          route: 'post_bootstrap_heading_convergence',
+        });
+      }
     }
   }
 
@@ -1616,6 +1658,19 @@ export function buildDefaultParams(
         targetRef: candidate.structRef,
         level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
         text: candidate.text.slice(0, 200),
+      };
+    }
+    case 'create_heading_from_visible_text_anchor': {
+      const candidate = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
+      if (!candidate) return {};
+      return {
+        page: candidate.page,
+        ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
+        ...(candidate.targetRef ? { targetRef: candidate.targetRef } : {}),
+        level: 1,
+        text: candidate.text.slice(0, 200),
+        source: candidate.source,
+        confidenceScore: candidate.score,
       };
     }
     case 'substitute_legacy_fonts_in_place':

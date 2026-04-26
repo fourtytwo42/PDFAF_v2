@@ -394,6 +394,7 @@ export function withHeadingTargetRef(
 const HEADING_STRUCTURE_TOOLS = new Set([
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
+  'create_heading_from_visible_text_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
 ]);
@@ -1784,6 +1785,7 @@ interface RemediationState {
 }
 
 const STAGE35_STRUCTURAL_TOOLS = new Set([
+  'create_heading_from_visible_text_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
   'repair_structure_conformance',
@@ -3213,6 +3215,7 @@ export async function runSingleTool(
       case 'set_link_annotation_contents':
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
+      case 'create_heading_from_visible_text_anchor':
       case 'create_heading_from_candidate':
       case 'normalize_heading_hierarchy':
       case 'normalize_nested_figure_containers':
