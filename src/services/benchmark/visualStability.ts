@@ -1,5 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { getPdfPageCount, renderPageToCanvas } from '../semantic/pdfPageRender.js';
+import type { ExperimentCorpusManifestEntry, ManifestSnapshot } from './experimentCorpus.js';
 
 export interface VisualPageImage {
   width: number;
@@ -32,6 +34,40 @@ export interface VisualComparisonReport {
   pages: VisualPageComparison[];
   stable: boolean;
   worstPage: VisualPageComparison | null;
+}
+
+export interface VisualRunRow {
+  id: string;
+  file: string;
+  cohort: ExperimentCorpusManifestEntry['cohort'];
+  beforePath: string;
+  afterPath: string;
+  pageCount: number | null;
+  status: 'stable' | 'drift' | 'missing' | 'error';
+  stable: boolean;
+  reason: string | null;
+  worstPage: number | null;
+  differentPixelCount: number | null;
+  totalPixelCount: number | null;
+  differentPixelRatio: number | null;
+  meanAbsoluteChannelDelta: number | null;
+  maxChannelDelta: number | null;
+}
+
+export interface VisualRunReport {
+  generatedAt: string;
+  runDir: string;
+  manifestPath: string;
+  corpusRoot: string;
+  writePdfs: boolean;
+  strict: boolean;
+  selectedCount: number;
+  comparedCount: number;
+  stableCount: number;
+  driftCount: number;
+  missingCount: number;
+  worstRowId: string | null;
+  rows: VisualRunRow[];
 }
 
 export interface VisualComparisonInput {
@@ -117,6 +153,158 @@ async function renderPage(buffer: Buffer, pageNumber1Based: number): Promise<Vis
     height: rendered.height,
     data: ctx.getImageData(0, 0, rendered.width, rendered.height).data,
   };
+}
+
+async function loadSnapshot(runDir: string): Promise<ManifestSnapshot> {
+  const snapshotPath = join(resolve(runDir), 'manifest.snapshot.json');
+  return JSON.parse(await readFile(snapshotPath, 'utf8')) as ManifestSnapshot;
+}
+
+function summarizeRunRow(
+  entry: ExperimentCorpusManifestEntry,
+  beforePath: string,
+  afterPath: string,
+  comparison: Awaited<ReturnType<typeof comparePdfFiles>>,
+): VisualRunRow {
+  const worstPage = comparison.worstPage?.pageNumber1Based ?? null;
+  const diff = comparison.worstPage?.diff ?? null;
+  const reason = comparison.pages.find(page => page.reason)?.reason ?? null;
+  const status: VisualRunRow['status'] = reason === 'missing_page_or_render_failure'
+    ? 'missing'
+    : comparison.stable
+      ? 'stable'
+      : 'drift';
+  return {
+    id: entry.id,
+    file: entry.file,
+    cohort: entry.cohort,
+    beforePath,
+    afterPath,
+    pageCount: comparison.pages.length,
+    status,
+    stable: comparison.stable,
+    reason,
+    worstPage,
+    differentPixelCount: diff?.differentPixelCount ?? null,
+    totalPixelCount: diff?.totalPixelCount ?? null,
+    differentPixelRatio: diff?.differentPixelRatio ?? null,
+    meanAbsoluteChannelDelta: diff?.meanAbsoluteChannelDelta ?? null,
+    maxChannelDelta: diff?.maxChannelDelta ?? null,
+  };
+}
+
+async function compareRunRow(
+  runDir: string,
+  corpusRoot: string,
+  entry: ExperimentCorpusManifestEntry,
+): Promise<VisualRunRow> {
+  const beforePath = resolve(corpusRoot, entry.file);
+  const afterPath = resolve(runDir, 'pdfs', `${entry.id}.pdf`);
+  try {
+    const comparison = await comparePdfFiles({
+      beforePath,
+      afterPath,
+      allPages: true,
+    });
+    return summarizeRunRow(entry, beforePath, afterPath, comparison);
+  } catch (error) {
+    return {
+      id: entry.id,
+      file: entry.file,
+      cohort: entry.cohort,
+      beforePath,
+      afterPath,
+      pageCount: null,
+      status: 'error',
+      stable: false,
+      reason: error instanceof Error ? error.message : String(error),
+      worstPage: null,
+      differentPixelCount: null,
+      totalPixelCount: null,
+      differentPixelRatio: null,
+      meanAbsoluteChannelDelta: null,
+      maxChannelDelta: null,
+    };
+  }
+}
+
+export async function compareVisualStabilityRun(input: {
+  runDir: string;
+  strict?: boolean;
+}): Promise<VisualRunReport> {
+  const snapshot = await loadSnapshot(input.runDir);
+  const rows: VisualRunRow[] = [];
+  for (const entry of snapshot.selectedEntries) {
+    rows.push(await compareRunRow(input.runDir, snapshot.corpusRoot, entry));
+  }
+
+  const comparedCount = rows.filter(row => row.status !== 'error').length;
+  const stableCount = rows.filter(row => row.status === 'stable').length;
+  const driftCount = rows.filter(row => row.status === 'drift').length;
+  const missingCount = rows.filter(row => row.status === 'missing').length;
+  const worstRow = rows
+    .map(row => ({
+      row,
+      rank: row.status === 'missing'
+        ? 2 + (row.differentPixelRatio ?? 0)
+        : row.status === 'drift'
+          ? 1 + (row.differentPixelRatio ?? 0)
+          : 0,
+    }))
+    .sort((a, b) => b.rank - a.rank)[0]?.row ?? null;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    runDir: resolve(input.runDir),
+    manifestPath: snapshot.manifestPath,
+    corpusRoot: snapshot.corpusRoot,
+    writePdfs: snapshot.writePdfs,
+    strict: input.strict ?? false,
+    selectedCount: snapshot.selectedEntries.length,
+    comparedCount,
+    stableCount,
+    driftCount,
+    missingCount,
+    worstRowId: worstRow?.id ?? null,
+    rows,
+  };
+}
+
+export function renderVisualStabilityRunMarkdown(report: VisualRunReport): string {
+  const lines = [
+    '# Stage 103 Visual Stability Run Validation',
+    '',
+    `Generated: \`${report.generatedAt}\``,
+    `Run dir: \`${report.runDir}\``,
+    `Manifest: \`${report.manifestPath}\``,
+    `Decision: \`${report.driftCount === 0 && report.missingCount === 0 ? 'visual_stable' : 'visual_drift_detected'}\``,
+    `Strict: ${report.strict ? 'yes' : 'no'}`,
+    `Rows compared: ${report.comparedCount}/${report.selectedCount}`,
+    `Stable rows: ${report.stableCount}`,
+    `Drift rows: ${report.driftCount}`,
+    `Missing rows: ${report.missingCount}`,
+    `Worst row: ${report.worstRowId ?? 'n/a'}`,
+    '',
+    '## Rows',
+    '',
+    '| ID | Cohort | Status | Reason | Pages | Worst page | Diff pixels | Diff ratio | Mean abs delta | Max delta |',
+    '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+  ];
+
+  for (const row of report.rows) {
+    lines.push(
+      `| ${row.id} | ${row.cohort} | ${row.status} | ${row.reason ?? 'none'} | ${row.pageCount ?? 'n/a'} | ${row.worstPage ?? 'n/a'} | ${row.differentPixelCount ?? 'n/a'} / ${row.totalPixelCount ?? 'n/a'} | ${row.differentPixelRatio != null ? row.differentPixelRatio.toFixed(6) : 'n/a'} | ${row.meanAbsoluteChannelDelta != null ? row.meanAbsoluteChannelDelta.toFixed(6) : 'n/a'} | ${row.maxChannelDelta ?? 'n/a'} |`,
+    );
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+export async function writeVisualStabilityRunReport(report: VisualRunReport, outDir: string): Promise<void> {
+  const resolvedOutDir = resolve(outDir);
+  await mkdir(resolvedOutDir, { recursive: true });
+  await writeFile(join(resolvedOutDir, 'stage103-visual-stability-run.json'), JSON.stringify(report, null, 2), 'utf8');
+  await writeFile(join(resolvedOutDir, 'stage103-visual-stability-run.md'), renderVisualStabilityRunMarkdown(report), 'utf8');
 }
 
 export async function comparePdfPages(input: {

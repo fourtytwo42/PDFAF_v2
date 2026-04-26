@@ -25,6 +25,7 @@ import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } 
 import { applySemanticPromoteHeadingRepairs } from '../src/services/semantic/promoteHeadingSemantic.js';
 import { applySemanticRepairs } from '../src/services/semantic/semanticService.js';
 import { applySemanticUntaggedHeadingRepairs } from '../src/services/semantic/untaggedHeadingSemantic.js';
+import { compareVisualStabilityRun, writeVisualStabilityRunReport } from '../src/services/benchmark/visualStability.js';
 import { buildIcjiaParity } from '../src/services/compliance/icjiaParity.js';
 import {
   buildBenchmarkSummary,
@@ -71,6 +72,7 @@ interface ParsedArgs {
   writePdfs: boolean;
   validateManifestOnly: boolean;
   validateRunDir?: string;
+  validateVisual: boolean;
   protectedBaselineRunDir?: string;
 }
 
@@ -139,6 +141,7 @@ Options:
   --protected-baseline-run <dir>   Internal benchmark-only protected row floor baseline
   --validate-manifest             Validate Input/experiment-corpus/manifest.json and exit
   --validate-run <dir>            Validate an existing benchmark run directory and exit
+  --validate-visual               When used with --validate-run, also compare rendered PDFs
   --help                          Show this help`);
 }
 
@@ -152,6 +155,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let writePdfs = false;
   let validateManifestOnly = false;
   let validateRunDir: string | undefined;
+  let validateVisual = false;
   let protectedBaselineRunDir: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
@@ -208,6 +212,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--validate-manifest':
         validateManifestOnly = true;
         break;
+      case '--validate-visual':
+        validateVisual = true;
+        break;
       case '--validate-run': {
         const value = argv[++i];
         if (!value) throw new Error('Missing value for --validate-run.');
@@ -233,6 +240,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     writePdfs,
     validateManifestOnly,
     validateRunDir,
+    validateVisual,
     protectedBaselineRunDir,
   };
 }
@@ -762,7 +770,7 @@ async function validateManifest(manifestPath: string): Promise<void> {
   console.log(`Manifest OK: ${entries.length} entries in ${manifestPath}`);
 }
 
-async function validateRun(runDir: string): Promise<void> {
+async function validateRun(runDir: string, validateVisual: boolean): Promise<void> {
   const base = resolve(runDir);
   const manifest = JSON.parse(await readFile(join(base, 'manifest.snapshot.json'), 'utf8')) as BenchmarkArtifactBundle['manifest'];
   const analyzeResults = JSON.parse(await readFile(join(base, 'analyze.results.json'), 'utf8')) as AnalyzeBenchmarkRow[];
@@ -771,6 +779,16 @@ async function validateRun(runDir: string): Promise<void> {
   const validation = validateBenchmarkArtifacts({ manifest, analyzeResults, remediateResults, summary });
   if (!validation.ok) {
     throw new Error(`Run validation failed:\n- ${validation.errors.join('\n- ')}`);
+  }
+  if (validateVisual) {
+    if (!manifest.writePdfs) {
+      throw new Error('Visual validation requested, but the run snapshot does not include writePdfs=true.');
+    }
+    const report = await compareVisualStabilityRun({ runDir: base, strict: true });
+    if (report.driftCount > 0 || report.missingCount > 0) {
+      throw new Error(`Visual validation failed:\n- drift rows: ${report.driftCount}\n- missing rows: ${report.missingCount}`);
+    }
+    await writeVisualStabilityRunReport(report, join(base, 'visual-stability-validation'));
   }
   console.log(`Run OK: ${base}`);
 }
@@ -800,7 +818,7 @@ async function main(): Promise<void> {
     return;
   }
   if (args.validateRunDir) {
-    await validateRun(args.validateRunDir);
+    await validateRun(args.validateRunDir, args.validateVisual);
     return;
   }
 

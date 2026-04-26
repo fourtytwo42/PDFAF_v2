@@ -1,7 +1,8 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { comparePdfFiles, compareRenderedPages } from '../../src/services/benchmark/visualStability.js';
+import { comparePdfFiles, compareRenderedPages, compareVisualStabilityRun } from '../../src/services/benchmark/visualStability.js';
 import { getPdfPageCount } from '../../src/services/semantic/pdfPageRender.js';
 
 function page(width: number, height: number, pixels: number[]): {
@@ -78,5 +79,46 @@ describe('comparePdfFiles', () => {
     expect(report.stable).toBe(true);
     expect(report.pages).toHaveLength(30);
     expect(report.worstPage?.pageNumber1Based).toBe(1);
+  });
+});
+
+describe('compareVisualStabilityRun', () => {
+  it('reports a stable run using the shared run-level validator', async () => {
+    const runDir = await mkdtemp(resolve(tmpdir(), 'pdfaf-visual-run-'));
+    try {
+      await mkdir(resolve(runDir, 'pdfs'), { recursive: true });
+      const fixturePath = resolve('Input/experiment-corpus/00-fixtures/pdfaf_fixture_inaccessible.pdf');
+      const fixture = await readFile(fixturePath);
+      await writeFile(resolve(runDir, 'pdfs', 'fixture-inaccessible.pdf'), fixture);
+      await writeFile(resolve(runDir, 'manifest.snapshot.json'), JSON.stringify({
+        runId: 'run-test',
+        generatedAt: '2026-04-26T00:00:00.000Z',
+        manifestPath: resolve('Input/experiment-corpus/manifest.json'),
+        corpusRoot: resolve('Input/experiment-corpus'),
+        mode: 'remediate',
+        semanticEnabled: false,
+        writePdfs: true,
+        selectedEntries: [{
+          id: 'fixture-inaccessible',
+          file: '00-fixtures/pdfaf_fixture_inaccessible.pdf',
+          cohort: '00-fixtures',
+          sourceType: 'fixture',
+          intent: 'fixture',
+        }],
+      }, null, 2));
+
+      const report = await compareVisualStabilityRun({ runDir, strict: true });
+
+      expect(report.strict).toBe(true);
+      expect(report.selectedCount).toBe(1);
+      expect(report.comparedCount).toBe(1);
+      expect(report.stableCount).toBe(1);
+      expect(report.driftCount).toBe(0);
+      expect(report.missingCount).toBe(0);
+      expect(report.worstRowId).toBe('fixture-inaccessible');
+      expect(report.rows[0]?.pageCount).toBe(30);
+    } finally {
+      await rm(runDir, { recursive: true, force: true });
+    }
   });
 });
