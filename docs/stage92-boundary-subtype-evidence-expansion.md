@@ -5,20 +5,22 @@ scorer semantics, or gate behavior.
 
 ## Decision
 
-Keep the boundary subtypes parked. The current evidence is still not strong
+Keep the boundary subtypes parked. The expanded evidence is still not strong
 enough to justify a repeat-preserving implementation on the mini model, so the
 stage is blocked from policy changes until a higher-confidence design pass is
 run.
 
 ## Evidence
 
-- Stage 91 already isolated the two repeat-relevant subtypes:
+- Expanded evidence lives at
+  `Output/experiment-corpus-baseline/stage92-boundary-subtype-evidence-expansion-2026-04-26-r1`.
+- The combined stage85 through stage91 evidence keeps the two repeat-relevant
+  subtypes distinct:
   - `contentless_reachable_boundary` on `4699`
   - `unreachable_content_bearing_boundary` on `structure-4076`
-- The stable contentless-reachable candidate remains parked across the sampled
-  reports and should not be promoted into acceptance reuse.
-- The unreachable-but-content-bearing candidate still appears intermittently
-  rather than as a repeat-stable reuse target.
+- `4699` is corroborated by raw, repeat, and policy evidence and stays parked.
+- `structure-4076` still only appears intermittently in the repeat/policy
+  samples and remains parked.
 - No wrapper/path groups were introduced, so the remaining work is still
   boundary subtype policy design rather than an implementation signal.
 
