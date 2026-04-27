@@ -29,7 +29,9 @@ flowchart TD
   T -- rejected with agent-only source edits --> X[Auto-restore tracked/source edits]
   T -- unsafe dirty rejected/acceptance_ready/safe_to_implement/hard blocked --> U[Stop for human decision]
   T -- implemented or non-plateau diagnostic_only --> Y[Continue same stage attempt]
-  T -- plateaued diagnostic_only --> V[Increment stage number]
+  T -- candidate space exhausted --> V[Increment stage number]
+  T -- no-movement below 3 attempts --> Y
+  T -- no-movement at 3+ attempts --> V
   X --> W
   W --> Y
   Y --> B
@@ -130,7 +132,12 @@ If a stage is interrupted during a holdout pivot, the next launch should reuse t
 
 ## Plateau Definition
 
-A stage may declare plateau only when all of these are true:
+A stage may declare plateau only through one of two paths:
+
+- exhaustive candidate-space proof: all criteria below are true;
+- repeated no-movement: at least three same-stage attempts pivoted among available stable residual families without a safe source change or measurable holdout/legacy movement.
+
+The exhaustive criteria are:
 
 1. Active holdout and legacy protected baseline metrics are known or intentionally refreshed/inspected.
 2. Every non-manual residual row is classified.
@@ -139,7 +146,7 @@ A stage may declare plateau only when all of these are true:
 5. Prior named wins are checked or explicitly scoped as unaffected: font gains, visible/OCR/degenerate heading gains, false-positive applied `0`, protected rows, runtime p95, page/text/tag/link stability, and visual stability.
 6. The next action is a real pivot to another family, a fresh v1 holdout, analyzer/runtime project, or human acceptance decision.
 
-If the needed evidence is locally bounded, the worker should keep going inside the same stage instead of returning `diagnostic_only`.
+If the needed evidence is locally bounded, the worker should keep going inside the same stage instead of returning `diagnostic_only`. One no-progress attempt is not a plateau unless it proves candidate-space exhaustion.
 
 ## Safety Gates
 

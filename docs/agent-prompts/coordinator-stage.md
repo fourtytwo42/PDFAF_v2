@@ -52,7 +52,12 @@ Read these first:
 
 ## Plateau Definition
 
-A stage may declare plateau only when all of these are true:
+A stage may declare plateau only through one of two paths:
+
+- **Exhaustive candidate-space proof:** all criteria below are true.
+- **Repeated no-movement:** at least three same-stage attempts have pivoted among available stable residual families without a safe source change or measurable holdout/legacy movement.
+
+The exhaustive criteria are:
 
 - Active holdout and legacy protected baseline metrics are known or were intentionally refreshed/inspected.
 - Every non-manual residual row is classified as stable fixer candidate, analyzer volatility, protected parity debt, runtime tail, manual/OCR policy debt, already-good control, no-safe-candidate, or stable-engine-gain-below-target.
@@ -61,7 +66,7 @@ A stage may declare plateau only when all of these are true:
 - Prior named wins remain checked or explicitly scoped as unaffected: Stage 75 font gains, Stage 127/129/131 holdout gains, false-positive applied `0`, protected rows, runtime p95, page/text/tag/link stability, and visual stability for changed PDFs.
 - The next action is a real pivot: a different residual family, a fresh v1 holdout, analyzer-determinism project, runtime project, or a human acceptance decision.
 
-If any criterion is missing and the needed evidence is locally bounded, continue the stage work instead of returning `diagnostic_only`.
+If any exhaustive criterion is missing and the needed evidence is locally bounded, continue the stage work instead of returning `diagnostic_only`. One no-progress diagnostic is not a plateau unless it proves candidate-space exhaustion.
 
 ## Output Contract
 

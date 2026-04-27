@@ -21,6 +21,7 @@ interface RunnerArgs {
   autoEscalate: boolean;
   parkedPivotAfter: number;
   parkedRepeatLimit: number;
+  plateauAttemptLimit: number;
   xhighTaskClasses: string;
   rawEvents: boolean;
   showCodexWarnings: boolean;
@@ -92,6 +93,7 @@ function usage(): string {
     '  --no-auto-escalate       Disable one-time xhigh reruns when a worker explicitly requests them.',
     '  --parked-pivot-after <n> Encourage pivot after N consecutive diagnostic-only parked decisions. Default: 2; 0 disables.',
     '  --parked-repeat-limit <n> Stop after N consecutive diagnostic-only parked decisions for one topic. Default: 4; 0 disables.',
+    '  --plateau-attempt-limit <n> With --same-stage, require N plateau/no-progress attempts before stopping. Default: 3.',
     `  --xhigh-task-classes <csv> Approved task classes for auto-escalation. Default: ${DEFAULT_XHIGH_TASK_CLASSES}`,
     '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
     '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
@@ -127,6 +129,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     autoEscalate: true,
     parkedPivotAfter: 2,
     parkedRepeatLimit: 4,
+    plateauAttemptLimit: 3,
     xhighTaskClasses: DEFAULT_XHIGH_TASK_CLASSES,
     rawEvents: false,
     showCodexWarnings: false,
@@ -177,6 +180,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     else if (arg === '--max-stages') args.maxStages = Math.max(1, Math.min(20, Number.parseInt(next, 10) || 1));
     else if (arg === '--parked-pivot-after') args.parkedPivotAfter = Math.max(0, Number.parseInt(next, 10) || 0);
     else if (arg === '--parked-repeat-limit') args.parkedRepeatLimit = Math.max(0, Number.parseInt(next, 10) || 0);
+    else if (arg === '--plateau-attempt-limit') args.plateauAttemptLimit = Math.max(1, Number.parseInt(next, 10) || 1);
     else if (arg === '--poll-seconds') args.pollSeconds = Math.max(5, Number.parseInt(next, 10) || 30);
     else if (arg === '--objective') args.objective = next;
     else if (arg === '--prompt') args.promptTemplate = next;
@@ -766,11 +770,18 @@ function rejectedPivotTopic(decision: StageDecision | null): string | null {
   return topicFromText(text);
 }
 
-function plateauDecision(decision: StageDecision | null): boolean {
+function exhaustedPlateauDecision(decision: StageDecision | null): boolean {
   if (decision?.classification !== 'diagnostic_only') return false;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
-  return /(?:plateau(?:d|ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic)/i.test(text)
-    && /(?:fresh|new v1|holdout|select|build|pivot|satisfied|met|complete|no bounded next diagnostic)/i.test(text);
+  return /(?:candidate space exhausted|all (?:stable |bounded |safe )?(?:candidate|fixer|residual)s? (?:are )?(?:exhausted|classified|parked)|no bounded next diagnostic remains|no stable (?:safe )?(?:candidate|fixer) remains|every non-manual residual row is classified)/i.test(text)
+    && /(?:fresh|new v1|holdout|select|build|pivot|plateau|complete|no bounded next diagnostic)/i.test(text);
+}
+
+function noMovementPlateauDecision(decision: StageDecision | null): boolean {
+  if (decision?.classification !== 'diagnostic_only') return false;
+  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
+  return /(?:plateau(?:d|ed)?|no[- ]material[- ]progress|no movement|no safe general improvement|no source code was changed|no source changes)/i.test(text)
+    && /(?:fresh|new v1|holdout|select|build|pivot|cooled|parked|no safe|no movement|no[- ]material)/i.test(text);
 }
 
 function pivotObjective(baseObjective: string, topic: string, count: number): string {
@@ -827,6 +838,7 @@ async function main(): Promise<void> {
   const stageCount = args.continuous ? args.maxStages : 1;
   let consecutiveParkedTopic: string | null = null;
   let consecutiveParkedCount = 0;
+  let plateauAttemptCount = 0;
   let pivotTopicForNext: { topic: string; count: number } | null = null;
   for (let offset = 0; offset < stageCount; offset += 1) {
     const currentStage = args.sameStage ? args.stage : args.stage + offset;
@@ -852,10 +864,24 @@ async function main(): Promise<void> {
       stop = shouldStopContinuous(stageArgs, decision);
     }
     if (!args.continuous) break;
-    if (args.sameStage && plateauDecision(decision)) {
-      console.log(`Stopping same-stage run after stage ${stageArgs.stage}: plateau`);
+    if (args.sameStage && exhaustedPlateauDecision(decision)) {
+      console.log(`Stopping same-stage run after stage ${stageArgs.stage}: candidate space exhausted.`);
       if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
       break;
+    }
+    if (args.sameStage && noMovementPlateauDecision(decision)) {
+      plateauAttemptCount += 1;
+      if (plateauAttemptCount >= args.plateauAttemptLimit) {
+        console.log(`Stopping same-stage run after stage ${stageArgs.stage}: plateau after ${plateauAttemptCount} no-progress attempt(s).`);
+        if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
+        break;
+      }
+      const topic = topicFromText(`${decision?.summary ?? ''}\n${decision?.next_action ?? ''}`) || 'current-holdout';
+      pivotTopicForNext = { topic, count: plateauAttemptCount };
+      console.log(`Plateau/no-progress attempt ${plateauAttemptCount}/${args.plateauAttemptLimit}; continuing Stage ${stageArgs.stage} with a pivot directive before accepting plateau.`);
+      stop = null;
+    } else if (decision?.classification === 'implemented' || decision?.classification === 'rejected') {
+      plateauAttemptCount = 0;
     }
     const softPivotTopic = softPivotBlockedTopic(decision);
     if (stop?.reason === 'blocked' && softPivotTopic) {

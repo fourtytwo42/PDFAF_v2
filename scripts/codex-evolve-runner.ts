@@ -137,7 +137,7 @@ function usage(): string {
     '  --no-corpus-loop               Disable the default v1 holdout discovery -> fix -> legacy validation policy.',
     '  --advance-stage-per-batch      Legacy behavior: advance stage numbers after each batch instead of staying in one stage until plateau.',
     '  --discovery-holdout-size <n>   Default: 30. Target row count for newly selected v1 holdout batches.',
-    '  --plateau-after-batches <n>    Default: 2. Pull/select a new holdout after this many no-material-progress batches.',
+    '  --plateau-after-batches <n>    Default: 3. Pull/select a new holdout after this many same-stage no-material-progress attempts.',
     '  --v1-source-root <dir>         Default: /home/hendo420/pdfaf.',
     '  --discovery-holdout-root <dir> Default: Input/from_sibling_pdfaf_v1_evolve.',
     '  --max-iterations <n>           Default: 1.',
@@ -180,7 +180,7 @@ function parseArgs(argv: string[]): EvolveArgs {
     corpusLoop: true,
     sameStageUntilPlateau: true,
     discoveryHoldoutSize: 30,
-    plateauAfterBatches: 2,
+    plateauAfterBatches: 3,
     v1SourceRoot: '/home/hendo420/pdfaf',
     discoveryHoldoutRoot: 'Input/from_sibling_pdfaf_v1_evolve',
   };
@@ -518,14 +518,16 @@ async function discoverCorpusEvolutionState(args: EvolveArgs, protectedBaseline:
 function renderPlateauDefinition(): string {
   return [
     'Plateau definition:',
-    'A stage may declare plateau only when all of these are true:',
+    'A stage may declare plateau only through one of two paths: exhaustive candidate-space proof, or repeated no-movement attempts.',
+    'Exhaustive plateau requires all of these to be true:',
     'A. Active holdout and legacy protected baseline metrics are known or were intentionally refreshed/inspected.',
     'B. Every non-manual residual row is classified as stable fixer candidate, analyzer volatility, protected parity debt, runtime tail, manual/OCR policy debt, already-good control, no-safe-candidate, or stable-engine-gain-below-target.',
     'C. All stable fixer candidates in the selected family have either produced a safe implemented rule, or have bounded repeat/target evidence proving no safe general rule right now.',
     'D. No bounded next diagnostic remains that could decide an implementation/rejection inside the current stage.',
     'E. Prior named wins remain checked or explicitly scoped as unaffected: Stage 75 font gains, Stage 127/129/131 holdout gains, false-positive applied = 0, protected rows, runtime p95, page/text/tag/link stability, and visual stability for changed PDFs.',
     'F. The next action is a real pivot: a different residual family, a fresh v1 holdout, analyzer-determinism project, runtime project, or a human acceptance decision.',
-    'If any criterion is missing and the needed evidence is locally bounded, continue the stage work instead of returning diagnostic_only.',
+    'Repeated no-movement plateau requires at least three same-stage attempts with no safe source change and no measurable holdout/legacy movement after pivoting among available stable residual families.',
+    'If any exhaustive criterion is missing and the needed evidence is locally bounded, continue the stage work instead of returning diagnostic_only.',
   ].join(' ');
 }
 
@@ -617,6 +619,7 @@ function stageArgs(args: EvolveArgs, stage: number, target: TargetSelection, cor
     '--poll-seconds', String(args.pollSeconds),
     '--parked-pivot-after', String(args.parkedPivotAfter),
     '--parked-repeat-limit', String(args.parkedRepeatLimit),
+    '--plateau-attempt-limit', String(args.plateauAfterBatches),
     '--mode', args.mode,
     '--corpora', args.corpora,
     '--out-root', args.outRoot,
@@ -671,20 +674,39 @@ function quoteArg(arg: string): string {
 async function nextStageAfterBatch(args: EvolveArgs, fallbackStage: number): Promise<number> {
   const latest = await latestAgentStage(args.outRoot);
   if (args.sameStageUntilPlateau) {
-    const summaries = await readLatestSummaries(args.outRoot, 1);
+    const summaries = await readLatestSummaries(args.outRoot, Math.max(args.plateauAfterBatches, 8));
     const latestSummary = summaries.at(-1);
-    if (!stageCompleteSummary(latestSummary)) return fallbackStage;
+    if (!stageCompleteSummary(latestSummary, summaries, args.plateauAfterBatches)) return fallbackStage;
   }
   return latest && latest >= fallbackStage ? latest + 1 : fallbackStage + 1;
 }
 
-function stageCompleteSummary(summary: StageSummary | undefined): boolean {
+function exhaustedPlateauSummary(summary: StageSummary | undefined): boolean {
   if (!summary?.classification) return false;
   if (summary.classification === 'acceptance_ready') return true;
   if (summary.classification !== 'diagnostic_only') return false;
   const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
-  return /(?:plateau(?:d|ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic)/i.test(text)
-    && /(?:fresh|new v1|holdout|select|build|pivot|satisfied|met|complete|no bounded next diagnostic)/i.test(text);
+  return /(?:candidate space exhausted|all (?:stable |bounded |safe )?(?:candidate|fixer|residual)s? (?:are )?(?:exhausted|classified|parked)|no bounded next diagnostic remains|no stable (?:safe )?(?:candidate|fixer) remains|every non-manual residual row is classified)/i.test(text)
+    && /(?:fresh|new v1|holdout|select|build|pivot|plateau|complete|no bounded next diagnostic)/i.test(text);
+}
+
+function noMovementPlateauSummary(summary: StageSummary | undefined): boolean {
+  if (summary?.classification !== 'diagnostic_only') return false;
+  const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
+  return /(?:plateau(?:d|ed)?|no[- ]material[- ]progress|no movement|no safe general improvement|no source code was changed|no source changes)/i.test(text)
+    && /(?:fresh|new v1|holdout|select|build|pivot|cooled|parked|no safe|no movement|no[- ]material)/i.test(text);
+}
+
+function stageCompleteSummary(summary: StageSummaryWithSource | undefined, summaries: StageSummaryWithSource[], noMovementLimit: number): boolean {
+  if (!summary?.classification) return false;
+  if (summary.classification === 'acceptance_ready') return true;
+  if (exhaustedPlateauSummary(summary)) return true;
+  if (!noMovementPlateauSummary(summary)) return false;
+  const sameStageNoMovement = summaries
+    .filter(item => item.stage === summary.stage)
+    .filter(noMovementPlateauSummary)
+    .length;
+  return sameStageNoMovement >= noMovementLimit;
 }
 
 async function writeState(path: string, state: unknown): Promise<void> {
