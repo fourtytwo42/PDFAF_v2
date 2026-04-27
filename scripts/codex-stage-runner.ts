@@ -96,7 +96,7 @@ function usage(): string {
     '  --parked-repeat-limit <n> Stop after N consecutive diagnostic-only parked decisions for one topic. Default: 4; 0 disables.',
     '  --plateau-attempt-limit <n> With --same-stage, require N plateau/no-progress attempts before stopping. Default: 3.',
     `  --xhigh-task-classes <csv> Approved task classes for auto-escalation. Default: ${DEFAULT_XHIGH_TASK_CLASSES}`,
-    '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous.',
+    '  --max-stages <n>         Default: 1. Capped at 20. Used with --continuous. In --same-stage mode, source-clean diagnostic passes do not consume this limit.',
     '  --poll-seconds <n>       Default: 30. Heartbeat interval while Codex is running.',
     '  --objective <text>       Extra objective appended to the coordinator prompt.',
     `  --prompt <path>          Default: ${DEFAULT_PROMPT}`,
@@ -842,8 +842,10 @@ async function main(): Promise<void> {
   let consecutiveParkedCount = 0;
   let plateauAttemptCount = 0;
   let pivotTopicForNext: { topic: string; count: number } | null = null;
-  for (let offset = 0; offset < stageCount; offset += 1) {
-    const currentStage = args.sameStage ? args.stage : args.stage + offset;
+  let chargedAttemptCount = 0;
+  let sourceCleanDiagnosticPassCount = 0;
+  while (chargedAttemptCount < stageCount) {
+    const currentStage = args.sameStage ? args.stage : args.stage + chargedAttemptCount;
     let stageArgs = { ...args, stage: currentStage };
     if (pivotTopicForNext) {
       stageArgs = {
@@ -871,6 +873,11 @@ async function main(): Promise<void> {
       if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
       break;
     }
+    const sourceCleanDiagnosticPass = args.sameStage
+      && decision?.classification === 'diagnostic_only'
+      && !decision.source_changes?.length
+      && !exhaustedPlateauDecision(decision)
+      && !noMovementPlateauDecision(decision);
     if (args.sameStage && noMovementPlateauDecision(decision)) {
       plateauAttemptCount += 1;
       if (plateauAttemptCount >= args.plateauAttemptLimit) {
@@ -882,7 +889,7 @@ async function main(): Promise<void> {
       pivotTopicForNext = { topic, count: plateauAttemptCount };
       console.log(`Plateau/no-progress attempt ${plateauAttemptCount}/${args.plateauAttemptLimit}; continuing Stage ${stageArgs.stage} with a pivot directive before accepting plateau.`);
       stop = null;
-    } else if (args.sameStage && decision?.classification === 'diagnostic_only' && !decision.source_changes?.length) {
+    } else if (sourceCleanDiagnosticPass) {
       console.log(`Diagnostic-only evidence pass did not modify source; not counting it toward the ${args.plateauAttemptLimit}-attempt plateau threshold.`);
     } else if (decision?.classification === 'implemented' || decision?.classification === 'rejected') {
       plateauAttemptCount = 0;
@@ -940,9 +947,15 @@ async function main(): Promise<void> {
       if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
       break;
     }
-    if (offset + 1 < stageCount) {
+    if (sourceCleanDiagnosticPass) {
+      sourceCleanDiagnosticPassCount += 1;
+      console.log(`Continuing Stage ${args.stage} after source-clean diagnostic pass ${sourceCleanDiagnosticPassCount}; chargeable attempt slots used ${chargedAttemptCount}/${stageCount}.`);
+      continue;
+    }
+    chargedAttemptCount += 1;
+    if (chargedAttemptCount < stageCount) {
       console.log(args.sameStage
-        ? `Continuing Stage ${args.stage} attempt ${offset + 2}/${stageCount}`
+        ? `Continuing Stage ${args.stage} chargeable attempt ${chargedAttemptCount + 1}/${stageCount}`
         : `Continuing to stage ${stageArgs.stage + 1}`);
     }
   }

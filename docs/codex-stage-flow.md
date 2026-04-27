@@ -28,12 +28,14 @@ flowchart TD
   T -- clean rejected or soft blocked --> W[Inject pivot directive]
   T -- rejected with agent-only source edits --> X[Auto-restore tracked/source edits]
   T -- unsafe dirty rejected/acceptance_ready/safe_to_implement/hard blocked --> U[Stop for human decision]
-  T -- implemented or non-plateau diagnostic_only --> Y[Continue same stage attempt]
+  T -- implemented or chargeable non-plateau attempt --> Y[Continue same stage attempt]
+  T -- source-clean diagnostic_only --> Z[Continue same stage without consuming attempt slot]
   T -- candidate space exhausted --> V[Increment stage number]
   T -- no-movement below 3 attempts --> Y
   T -- no-movement at 3+ attempts --> V
   X --> W
   W --> Y
+  Z --> B
   Y --> B
   V --> B
 ```
@@ -147,6 +149,8 @@ The exhaustive criteria are:
 6. The next action is a real pivot to another family, a fresh v1 holdout, analyzer/runtime project, or human acceptance decision.
 
 If the needed evidence is locally bounded, the worker should keep going inside the same stage instead of returning `diagnostic_only`. One no-progress attempt is not a plateau unless it proves candidate-space exhaustion.
+
+In same-stage automation, source-clean `diagnostic_only` passes are not chargeable attempts. They can run repeatedly to gather bounded evidence, classify rows, or pick the next residual family. The stage attempt counter advances only when the worker makes or attempts a source/behavior change, reaches a true no-movement candidate result, proves exhaustive plateau, reaches acceptance-ready, or hits a hard blocker.
 
 ## Safety Gates
 
