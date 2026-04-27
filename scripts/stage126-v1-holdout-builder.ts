@@ -79,6 +79,7 @@ interface BuilderArgs {
   maxRows: number;
   maxFileBytes: number;
   dryRun: boolean;
+  excludeManifests: string[];
 }
 
 const DEFAULT_OUT = 'Input/from_sibling_pdfaf_v1_holdout_3';
@@ -121,10 +122,6 @@ const SOURCE_MANIFESTS = [
 
 const EXISTING_MANIFESTS = [
   'Input/experiment-corpus/manifest.json',
-  'Input/from_sibling_pdfaf_v1_edge_mix/manifest.json',
-  'Input/from_sibling_pdfaf_v1_edge_mix_2/manifest.json',
-  'Input/from_sibling_pdfaf_v1_evolve/manifest.json',
-  'Input/from_sibling_pdfaf_v1_evolve_font/manifest.json',
 ];
 
 const RECENT_PROTECTED_DEBUG_IDS = new Set([
@@ -146,6 +143,7 @@ Options:
   --out <dir>              Holdout corpus output dir (default: ${DEFAULT_OUT})
   --max-rows <n>           Maximum selected rows (default: 30)
   --max-file-mb <n>        Skip PDFs larger than this except one long stress file (default: 75)
+  --exclude-manifest <p>   Extra manifest whose publication ids should be excluded; repeatable
   --dry-run                Select and write no files
   --help                   Show this help`;
 }
@@ -316,13 +314,31 @@ function collectIds(value: unknown, ids: Set<string>): void {
   }
 }
 
-async function loadExcludedIds(): Promise<Set<string>> {
+async function loadExcludedIds(extraManifestPaths: string[] = []): Promise<Set<string>> {
   const ids = new Set<string>(RECENT_PROTECTED_DEBUG_IDS);
-  for (const path of EXISTING_MANIFESTS) {
+  for (const path of await discoverExistingManifestPaths(extraManifestPaths)) {
     const raw = await loadJson(path);
     collectIds(raw, ids);
   }
   return ids;
+}
+
+export function shouldAutoExcludeManifestDir(name: string): boolean {
+  return /^from_sibling_pdfaf_v1/.test(name);
+}
+
+async function discoverExistingManifestPaths(extraPaths: string[] = []): Promise<string[]> {
+  const paths = new Set<string>([...EXISTING_MANIFESTS, ...extraPaths.filter(Boolean)]);
+  try {
+    for (const entry of await readdir('Input', { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!shouldAutoExcludeManifestDir(entry.name)) continue;
+      paths.add(join('Input', entry.name, 'manifest.json'));
+    }
+  } catch {
+    // Keep selection usable in smaller checkouts.
+  }
+  return [...paths].sort();
 }
 
 function candidateText(candidate: HoldoutCandidate): string {
@@ -567,6 +583,7 @@ function parseArgs(argv: string[]): BuilderArgs {
     maxRows: 30,
     maxFileBytes: 75 * 1024 * 1024,
     dryRun: false,
+    excludeManifests: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -574,6 +591,7 @@ function parseArgs(argv: string[]): BuilderArgs {
     else if (arg === '--out') args.outDir = argv[++i] ?? args.outDir;
     else if (arg === '--max-rows') args.maxRows = Number(argv[++i] ?? args.maxRows);
     else if (arg === '--max-file-mb') args.maxFileBytes = Number(argv[++i] ?? 75) * 1024 * 1024;
+    else if (arg === '--exclude-manifest') args.excludeManifests.push(argv[++i] ?? '');
     else if (arg === '--dry-run') args.dryRun = true;
     else if (arg === '--help' || arg === '-h') {
       console.log(usage());
@@ -588,7 +606,7 @@ function parseArgs(argv: string[]): BuilderArgs {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const candidates = await loadCandidates(args.pdfafRoot);
-  const excludedIds = await loadExcludedIds();
+  const excludedIds = await loadExcludedIds(args.excludeManifests);
   const rows = await selectHoldoutRows({
     candidates,
     excludedIds,

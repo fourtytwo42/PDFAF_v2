@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { selectHoldoutRows, type HoldoutCandidate } from '../../scripts/stage126-v1-holdout-builder.js';
+import {
+  selectHoldoutRows,
+  shouldAutoExcludeManifestDir,
+  type HoldoutCandidate,
+} from '../../scripts/stage126-v1-holdout-builder.js';
 import {
   buildStage126Report,
   classifyStage126HoldoutRow,
@@ -62,6 +66,14 @@ function row(input: Partial<EdgeMixBenchmarkRow> & { id?: string } = {}): EdgeMi
 }
 
 describe('Stage 126 holdout selection and reporting', () => {
+  it('auto-excludes every local v1-derived holdout/evolve manifest family', () => {
+    expect(shouldAutoExcludeManifestDir('from_sibling_pdfaf_v1_holdout_3')).toBe(true);
+    expect(shouldAutoExcludeManifestDir('from_sibling_pdfaf_v1_evolve')).toBe(true);
+    expect(shouldAutoExcludeManifestDir('from_sibling_pdfaf_v1_edge_mix_2')).toBe(true);
+    expect(shouldAutoExcludeManifestDir('from_sibling_pdfaf_edgecase_corpus')).toBe(false);
+    expect(shouldAutoExcludeManifestDir('experiment-corpus')).toBe(false);
+  });
+
   it('selects balanced buckets while respecting excluded ids', async () => {
     const sourcePath = new URL('../fixtures/adobe_anchor_thresholds.json', import.meta.url).pathname;
     const candidates = [
