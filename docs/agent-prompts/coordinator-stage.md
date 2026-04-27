@@ -35,13 +35,18 @@ Read these first:
 
 ## Stage Loop
 
-1. Inspect repo state and current evidence.
-2. Pick the narrow next action for this stage.
-3. Prefer diagnostics before implementation.
-4. If implementation is justified, make the smallest general change.
-5. Run focused tests and target validation.
-6. Reject and revert any candidate that loses known wins or broadens behavior without evidence.
-7. Write or update a concise stage note if the result is diagnostic-only or rejected.
+1. **Preflight:** inspect git state, disk, existing LLM/listeners, protected baseline availability, active holdout manifest, and latest legacy/holdout artifacts.
+2. **Baseline:** run or inspect current legacy 50 and active v1 holdout results; record mean, median, F count, A/B rate, p95 runtime, attempts, false-positive applied, protected regressions, and named prior wins.
+3. **Classify:** bucket residual rows as stable fixer candidate, analyzer volatility, manual/OCR policy debt, runtime tail, protected parity debt, or already-good control.
+4. **Select:** pick one stable general target family; if no stable family remains, declare plateau and select/build a fresh v1 holdout rather than forcing a fixer.
+5. **Diagnose:** run the smallest target sample with controls and collect tool timelines, category deltas, analyzer evidence, link/font/text/page/tag signals, and visual-risk indicators.
+6. **Decide:** implement only when the diagnostic proves a safe general rule; otherwise write a diagnostic report, park the debt, and pivot/stop.
+7. **Implement:** make one narrow criterion-driven engine change with focused tests; never use publication-id, filename, corpus-label, scorer/gate semantic changes, or broad route guards unless explicitly authorized by evidence.
+8. **Focused validate:** run static/unit tests, target rows, controls, and visual diff for changed PDFs or visual-risk mutations.
+9. **Holdout validate:** run the active v1 holdout or the justified target subset; require target improvement or clear debt classification, false-positive applied `0`, bounded runtime, and preservation of previous holdout wins.
+10. **Legacy validate:** for behavior changes, run legacy protected validation and Stage 41 gate when feasible; require protected non-regression, F count/runtime/mean/median within envelope, and preservation of Stage 75/127/129/131 wins.
+11. **Commit or reject:** commit and push source/docs/tests only when clean; otherwise tighten or revert. Generated PDFs, benchmark artifacts, copied corpora, and Base64 stay local.
+12. **Summarize:** record what changed, evidence, commands, artifacts, pass/fail gates, remaining debt, and the next stage recommendation.
 
 ## Output Contract
 
