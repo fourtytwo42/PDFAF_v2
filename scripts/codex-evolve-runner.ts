@@ -697,7 +697,7 @@ function exhaustedPlateauSummary(summary: StageSummary | undefined): boolean {
   if (summary.classification === 'acceptance_ready') return true;
   if (summary.classification !== 'diagnostic_only') return false;
   const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
-  return /(?:candidate space exhausted|plateau_reached_for_current_holdout|current holdout (?:has )?plateau(?:d|ed)?|all (?:stable |bounded |safe )?(?:candidate|fixer|residual)s? (?:are )?(?:exhausted|classified|parked)|no bounded next diagnostic remain(?:s|ed)?|no stable (?:safe )?(?:candidate|fixer) remain(?:s|ed)?|every non-manual residual row is classified)/i.test(text)
+  return /(?:candidate space exhausted|exhaustive candidate[- ]space plateau|plateau_reached_for_current_holdout|current holdout (?:has )?plateau(?:d|ed)?|all (?:stable |bounded |safe )?(?:candidate|fixer|residual)s? (?:are )?(?:exhausted|classified|parked)|no bounded next diagnostic remain(?:s|ed)?|no stable (?:safe )?(?:candidate|fixer|general rule) remain(?:s|ed)?|no safe stable general rule remain(?:s|ed)?|every non-manual residual row is classified)/i.test(text)
     && /(?:fresh|new v1|holdout|select|build|pivot|plateau|complete|no bounded next diagnostic)/i.test(text);
 }
 
