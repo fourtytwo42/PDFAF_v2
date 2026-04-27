@@ -683,7 +683,8 @@ function stageCompleteSummary(summary: StageSummary | undefined): boolean {
   if (summary.classification === 'acceptance_ready') return true;
   if (summary.classification !== 'diagnostic_only') return false;
   const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
-  return /(?:plateau(?:ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic|fresh v1|new v1[- ]derived holdout|select\/build|select or build).*?(?:satisfied|met|next|pivot|holdout|fresh|complete)/i.test(text);
+  return /(?:plateau(?:d|ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic)/i.test(text)
+    && /(?:fresh|new v1|holdout|select|build|pivot|satisfied|met|complete|no bounded next diagnostic)/i.test(text);
 }
 
 async function writeState(path: string, state: unknown): Promise<void> {

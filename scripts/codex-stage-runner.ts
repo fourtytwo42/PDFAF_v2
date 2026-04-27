@@ -769,7 +769,8 @@ function rejectedPivotTopic(decision: StageDecision | null): string | null {
 function plateauDecision(decision: StageDecision | null): boolean {
   if (decision?.classification !== 'diagnostic_only') return false;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
-  return /(?:plateau(?:ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic|fresh v1|new v1[- ]derived holdout|select\/build|select or build).*?(?:satisfied|met|next|pivot|holdout|fresh|complete)/i.test(text);
+  return /(?:plateau(?:d|ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic)/i.test(text)
+    && /(?:fresh|new v1|holdout|select|build|pivot|satisfied|met|complete|no bounded next diagnostic)/i.test(text);
 }
 
 function pivotObjective(baseObjective: string, topic: string, count: number): string {
