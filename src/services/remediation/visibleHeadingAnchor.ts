@@ -9,6 +9,7 @@ import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCand
 
 export type Stage127ZeroHeadingClass =
   | 'visible_anchor_candidate'
+  | 'tagged_zero_heading_anchor_candidate'
   | 'degenerate_marked_content_no_candidate'
   | 'link_only_no_heading_candidate'
   | 'ocr_page_shell_defer'
@@ -17,6 +18,7 @@ export type Stage127ZeroHeadingClass =
 export type VisibleHeadingAnchorSource =
   | 'paragraph_candidate'
   | 'role_tagged_mcid_first_page'
+  | 'tagged_visible_line_mcid_first_page'
   | 'metadata_visible_match'
   | 'bookmark_visible_match'
   | 'first_page_visible_line';
@@ -153,7 +155,7 @@ function metadataTitleMatches(snapshot: DocumentSnapshot, visibleTitle: string):
 }
 
 function roleFromMcidSnippet(snippet: string | undefined): string | null {
-  const match = /\/([A-Za-z][A-Za-z0-9]*)\s*<<\s*\/MCID\b/i.exec(snippet ?? '');
+  const match = /\/([A-Za-z][A-Za-z0-9]*)\s*<<[^>]*\/MCID\b/i.exec(snippet ?? '');
   return match?.[1]?.toUpperCase() ?? null;
 }
 
@@ -161,6 +163,37 @@ function roleScore(role: string | null): number {
   if (role === 'H' || role === 'H1') return 45;
   if (role === 'H2') return 34;
   if (role === 'H3') return 26;
+  return 0;
+}
+
+function taggedTextRoleScore(role: string | null): number {
+  if (role === 'P') return 18;
+  if (role === 'SPAN') return 16;
+  if (role === 'DIV') return 12;
+  return 0;
+}
+
+function snippetFontScore(snippet: string | undefined): number {
+  const text = snippet ?? '';
+  const tfValues = [...text.matchAll(/(?:^|\s)(\d+(?:\.\d+)?)\s+Tf\b/g)]
+    .map(match => Number(match[1]))
+    .filter(value => Number.isFinite(value));
+  const tmValues = [...text.matchAll(
+    /(?:^|\s)(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Tm\b/g,
+  )]
+    .flatMap(match => [Number(match[1]), Number(match[4])])
+    .map(value => Math.abs(value))
+    .filter(value => Number.isFinite(value));
+  const inlineMatrixValues = [...text.matchAll(
+    /Tf\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)(?:\s|$)/g,
+  )]
+    .flatMap(match => [Number(match[1]), Number(match[4])])
+    .map(value => Math.abs(value))
+    .filter(value => Number.isFinite(value));
+  const max = Math.max(0, ...tfValues, ...tmValues, ...inlineMatrixValues);
+  if (max >= 24) return 28;
+  if (max >= 16) return 18;
+  if (max >= 12) return 8;
   return 0;
 }
 
@@ -250,6 +283,44 @@ export function selectVisibleHeadingAnchorCandidate(
   return null;
 }
 
+export function selectTaggedVisibleHeadingAnchorCandidate(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): VisibleHeadingAnchorCandidate | null {
+  const normal = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
+  if (normal?.page === 0) return normal;
+  const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
+  if (!visibleTitle) return null;
+  const shape = titleShapeScore(visibleTitle);
+  const candidates = (snapshot.mcidTextSpans ?? [])
+    .filter(row => row.page === 0 && Number.isInteger(row.mcid))
+    .map(row => ({
+      page: row.page,
+      mcid: row.mcid,
+      role: roleFromMcidSnippet(row.snippet),
+      snippet: row.snippet,
+      fontScore: snippetFontScore(row.snippet),
+    }))
+    .filter(row => taggedTextRoleScore(row.role) > 0 && row.fontScore > 0)
+    .sort((a, b) => b.fontScore - a.fontScore || taggedTextRoleScore(b.role) - taggedTextRoleScore(a.role) || a.mcid - b.mcid);
+  const best = candidates[0];
+  if (!best) return normal;
+  const score = 32 + taggedTextRoleScore(best.role) + best.fontScore + shape.score;
+  return {
+    page: best.page,
+    mcid: best.mcid,
+    text: visibleTitle,
+    source: 'tagged_visible_line_mcid_first_page',
+    score,
+    reasons: [
+      'page0',
+      `content_role:${best.role}`,
+      'large_visible_text_mcid',
+      ...shape.reasons,
+    ],
+  };
+}
+
 export function isOcrPageShell(snapshot: DocumentSnapshot, analysis: AnalysisResult): boolean {
   const creator = `${snapshot.metadata.creator ?? ''} ${snapshot.metadata.producer ?? ''}`;
   return analysis.pdfClass === 'scanned' ||
@@ -272,7 +343,7 @@ export function classifyStage127ZeroHeadingAnchor(
     return { classification: 'ocr_page_shell_defer', candidate: null, reasons: ['ocr_or_scanned_shell'] };
   }
 
-  const candidate = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
+  const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
   if (candidate && candidate.score >= HEADING_BOOTSTRAP_MIN_SCORE) {
     return { classification: 'visible_anchor_candidate', candidate, reasons: ['high_confidence_visible_anchor', ...candidate.reasons] };
   }
@@ -310,4 +381,64 @@ export function shouldTryVisibleHeadingAnchorRecovery(
     typeof disposition.candidate.mcid === 'number' &&
     disposition.candidate.reasons.some(reason => reason === 'content_role:H' || reason === 'content_role:H1') &&
     disposition.candidate.score >= HEADING_BOOTSTRAP_MIN_SCORE;
+}
+
+export function classifyTaggedZeroHeadingAnchor(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): Stage127ZeroHeadingDisposition {
+  const score = headingScore(analysis);
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  const treeHeadingCount = headingSignals?.treeHeadingCount ?? snapshot.headings.length;
+  const readingOrder = analysis.categories.find(row => row.key === 'reading_order');
+  const tableMarkup = analysis.categories.find(row => row.key === 'table_markup');
+  const linkQuality = analysis.categories.find(row => row.key === 'link_quality');
+  const altText = analysis.categories.find(row => row.key === 'alt_text');
+  if (score == null || score !== 0 || treeHeadingCount > 0 || snapshot.headings.length > 0) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['not_tagged_zero_heading_tail'] };
+  }
+  if (analysis.pdfClass !== 'native_tagged' || snapshot.structureTree === null || snapshot.isTagged !== true) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['not_tagged_native_pdf'] };
+  }
+  if (isOcrPageShell(snapshot, analysis)) {
+    return { classification: 'ocr_page_shell_defer', candidate: null, reasons: ['ocr_or_scanned_shell'] };
+  }
+  if ((textExtractabilityScore(analysis) ?? 0) < 90) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['text_extractability_not_strong'] };
+  }
+  const figureSignals = snapshot.detectionProfile?.figureSignals;
+  if ((figureSignals?.treeFigureCount ?? 0) > 0 && (altText?.score ?? 100) < 90) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['mixed_figure_alt_debt_not_tagged_zero_heading_tail'] };
+  }
+  const readingScore = readingOrder?.score ?? 0;
+  const readingOrderRepairableByTabs = readingScore < 90 && (snapshot.annotationAccessibility?.pagesMissingTabsS ?? 0) > 0;
+  if (
+    ((readingScore < 80 && !readingOrderRepairableByTabs) || (tableMarkup?.score ?? 0) < 90 || (linkQuality?.score ?? 0) < 90)
+  ) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['supporting_structure_not_strong'] };
+  }
+  const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
+  if (!candidate || candidate.score < HEADING_BOOTSTRAP_MIN_SCORE) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['no_high_confidence_visible_content_anchor'] };
+  }
+  if (candidate.source !== 'paragraph_candidate' && typeof candidate.mcid !== 'number') {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['candidate_not_tied_to_content'] };
+  }
+  return {
+    classification: 'tagged_zero_heading_anchor_candidate',
+    candidate,
+    reasons: ['high_confidence_tagged_visible_anchor', ...candidate.reasons],
+  };
+}
+
+export function shouldTryTaggedVisibleHeadingAnchorRecovery(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  const disposition = classifyTaggedZeroHeadingAnchor(analysis, snapshot);
+  return disposition.classification === 'tagged_zero_heading_anchor_candidate' &&
+    disposition.candidate !== null &&
+    disposition.candidate.page === 0 &&
+    disposition.candidate.source === 'tagged_visible_line_mcid_first_page' &&
+    typeof disposition.candidate.mcid === 'number';
 }

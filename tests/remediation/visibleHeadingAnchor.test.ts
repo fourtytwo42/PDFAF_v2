@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { score } from '../../src/services/scorer/scorer.js';
 import {
+  classifyTaggedZeroHeadingAnchor,
   classifyStage127ZeroHeadingAnchor,
   extractFirstPageVisibleHeadingText,
+  selectTaggedVisibleHeadingAnchorCandidate,
   selectVisibleHeadingAnchorCandidate,
+  shouldTryTaggedVisibleHeadingAnchorRecovery,
   shouldTryVisibleHeadingAnchorRecovery,
 } from '../../src/services/remediation/visibleHeadingAnchor.js';
 import { buildDefaultParams, planForRemediation } from '../../src/services/remediation/planner.js';
@@ -198,5 +201,81 @@ describe('Stage 127 visible heading anchor recovery', () => {
     expect(shouldTryVisibleHeadingAnchorRecovery(analysis, snap)).toBe(false);
     const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
     expect(names).not.toContain('create_heading_from_visible_text_anchor');
+  });
+
+  it('schedules tagged visible-anchor recovery for strong tagged zero-heading rows', () => {
+    const snap = snapshot({
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 12,
+        snippet: '/Span <</Lang (en-US)/MCID 12 >>BDC BT 28 0 0 28 72 710 Tm [(EXECUTIVE SUMMARY)]TJ ET EMC',
+      }],
+      detectionProfile: detection({
+        readingOrderSignals: {
+          ...detection().readingOrderSignals,
+          structureTreeDepth: 3,
+        },
+      }),
+    });
+    const analysis = analysisFor(snap);
+    expect(classifyTaggedZeroHeadingAnchor(analysis, snap).classification).toBe('tagged_zero_heading_anchor_candidate');
+    expect(shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snap)).toBe(true);
+    expect(buildDefaultParams('create_heading_from_tagged_visible_anchor', analysis, snap)).toMatchObject({
+      mcid: 12,
+      level: 1,
+      source: 'tagged_visible_line_mcid_first_page',
+    });
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('create_heading_from_tagged_visible_anchor');
+    expect(names).not.toContain('create_heading_from_visible_text_anchor');
+  });
+
+  it('skips tagged visible-anchor recovery for volatile weak-structure rows', () => {
+    const snap = snapshot({
+      paragraphStructElems: [{
+        tag: 'P',
+        page: 0,
+        structRef: '12_0',
+        text: 'Executive Summary',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document'],
+        bbox: [72, 710, 260, 734],
+      }],
+    });
+    const analysis = {
+      ...analysisFor(snap),
+      categories: analysisFor(snap).categories.map(category =>
+        category.key === 'reading_order' ? { ...category, score: 0 } : category,
+      ),
+    };
+    expect(classifyTaggedZeroHeadingAnchor(analysis, snap).classification).toBe('no_safe_candidate');
+    expect(shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snap)).toBe(false);
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).not.toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('uses a large first-page tagged span when paragraph and heading-role anchors are absent', () => {
+    const snap = snapshot({
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 4,
+        snippet: '/Span <</MCID 4 >>BDC BT /F1 28 Tf 15 650 Tm [(REPORT TITLE)]TJ ET EMC',
+      }],
+    });
+    const analysis = analysisFor(snap);
+    const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snap);
+    expect(candidate).toMatchObject({
+      page: 0,
+      mcid: 4,
+      source: 'tagged_visible_line_mcid_first_page',
+    });
+    expect(classifyTaggedZeroHeadingAnchor(analysis, snap).classification).toBe('tagged_zero_heading_anchor_candidate');
+    expect(buildDefaultParams('create_heading_from_tagged_visible_anchor', analysis, snap)).toMatchObject({
+      page: 0,
+      mcid: 4,
+      level: 1,
+      source: 'tagged_visible_line_mcid_first_page',
+    });
   });
 });

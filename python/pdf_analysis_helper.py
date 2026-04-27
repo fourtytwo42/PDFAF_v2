@@ -7504,6 +7504,59 @@ def _op_create_heading_from_visible_text_anchor(pdf: pikepdf.Pdf, params: dict) 
     return new_elem is not None
 
 
+def _op_create_heading_from_tagged_visible_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Promote one existing tagged visible anchor to /H1 without rebuilding structure."""
+    if _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("ocr_pdf_deferred")
+        return False
+    if _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0:
+        _set_last_mutation_note("heading_already_present")
+        return False
+    target_ref = params.get("targetRef") or params.get("structRef")
+    if isinstance(target_ref, str) and target_ref.strip():
+        changed = _op_retag_struct_as_heading(pdf, {
+            "structRef": target_ref,
+            "level": params.get("level", 1),
+            "text": params.get("text"),
+        })
+        if changed:
+            _set_last_mutation_note("tagged_visible_anchor_promoted")
+            return True
+        return changed
+    try:
+        level = int(params.get("level", 1))
+    except (TypeError, ValueError):
+        level = 1
+    level = max(1, min(level, 6))
+    try:
+        page_idx = int(params.get("page", 0))
+    except (TypeError, ValueError):
+        page_idx = 0
+    try:
+        mcid_param = params.get("mcid")
+        mcid = int(mcid_param) if mcid_param is not None else None
+    except (TypeError, ValueError):
+        mcid = None
+    if page_idx != 0 or mcid is None:
+        _set_last_mutation_note("missing_tagged_visible_mcid_anchor")
+        return False
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+    new_elem, note = _synthesize_heading_from_ocr_page_shell_mcids(
+        pdf,
+        sr,
+        doc_elem,
+        page_idx,
+        [mcid],
+        level,
+        str(params.get("text") or "").strip(),
+    )
+    _set_last_mutation_note("tagged_visible_anchor_promoted" if new_elem is not None else note)
+    return new_elem is not None
+
+
 def _is_artifact_bdc_instruction(inst) -> bool:
     try:
         if str(inst.operator) != "BDC":
@@ -8703,6 +8756,7 @@ def _stage35_annotation_snapshot(pdf: pikepdf.Pdf, _params: dict) -> dict:
 _STAGE35_HEADING_OPS = {
     "create_structure_from_degenerate_native_anchor",
     "create_heading_from_visible_text_anchor",
+    "create_heading_from_tagged_visible_anchor",
     "create_heading_from_ocr_page_shell_anchor",
     "create_heading_from_candidate",
     "normalize_heading_hierarchy",
@@ -9557,6 +9611,7 @@ MUTATORS = {
     "create_structure_from_degenerate_native_anchor": _op_create_structure_from_degenerate_native_anchor,
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_visible_text_anchor": _op_create_heading_from_visible_text_anchor,
+    "create_heading_from_tagged_visible_anchor": _op_create_heading_from_tagged_visible_anchor,
     "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,
     "create_heading_from_candidate": _op_create_heading_from_candidate,
     "set_figure_alt_text": _op_set_figure_alt_text,

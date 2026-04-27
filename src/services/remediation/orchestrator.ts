@@ -398,6 +398,7 @@ const HEADING_STRUCTURE_TOOLS = new Set([
   'synthesize_basic_structure_from_layout',
   'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
+  'create_heading_from_tagged_visible_anchor',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
@@ -637,6 +638,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
     return tools.has('create_heading_from_candidate') ||
       tools.has('create_structure_from_degenerate_native_anchor') ||
       tools.has('create_heading_from_visible_text_anchor') ||
+      tools.has('create_heading_from_tagged_visible_anchor') ||
       tools.has('create_heading_from_ocr_page_shell_anchor') ||
       tools.has('normalize_heading_hierarchy') ||
       tools.has('repair_structure_conformance') ||
@@ -1267,6 +1269,14 @@ export function shouldSkipProtectedFigureAlt(input: {
   return false;
 }
 
+function shouldSkipProtectedTaggedVisibleHeading(input: {
+  baseline?: ProtectedBaselineFloor;
+}): boolean {
+  const baseline = input.baseline;
+  if (!baseline || !Number.isFinite(baseline.score)) return false;
+  return (baseline.categories?.heading_structure ?? 0) >= 80;
+}
+
 export function protectedTransactionDecision(input: {
   baseline?: ProtectedBaselineFloor;
   final: AnalysisResult;
@@ -1799,6 +1809,7 @@ interface RemediationState {
 const STAGE35_STRUCTURAL_TOOLS = new Set([
   'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
+  'create_heading_from_tagged_visible_anchor',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
@@ -2421,7 +2432,7 @@ async function applyGuardedPostPass(args: {
       };
     }
   }
-  if (toolName === 'create_heading_from_ocr_page_shell_anchor') {
+  if (toolName === 'create_heading_from_ocr_page_shell_anchor' || toolName === 'create_heading_from_tagged_visible_anchor') {
     const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
     const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
     const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
@@ -2447,7 +2458,7 @@ async function applyGuardedPostPass(args: {
         delta: 0,
         outcome: 'rejected',
         details: enrichDetailsWithReplayState(
-          `ocr_page_shell_heading_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},taggedLost:${taggedLost},links:${currentSnapshot.links.length}->${analyzed.snapshot.links.length},heading:${beforeHeading}->${afterHeading},score:${currentAnalysis.score}->${analyzed.result.score})`,
+          `${toolName}_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},taggedLost:${taggedLost},links:${currentSnapshot.links.length}->${analyzed.snapshot.links.length},heading:${beforeHeading}->${afterHeading},score:${currentAnalysis.score}->${analyzed.result.score})`,
           {
             beforeAnalysis: currentAnalysis,
             beforeSnapshot: currentSnapshot,
@@ -3284,6 +3295,7 @@ export async function runSingleTool(
       case 'normalize_annotation_tab_order':
       case 'create_structure_from_degenerate_native_anchor':
       case 'create_heading_from_visible_text_anchor':
+      case 'create_heading_from_tagged_visible_anchor':
       case 'create_heading_from_ocr_page_shell_anchor':
       case 'create_heading_from_candidate':
       case 'normalize_heading_hierarchy':
@@ -4867,6 +4879,12 @@ export async function remediatePdf(
             baseline: options?.protectedBaseline,
             currentAltScore: categoryScore(workingAnalysis, 'alt_text'),
           })
+        ) {
+          continue;
+        }
+        if (
+          liveTool.toolName === 'create_heading_from_tagged_visible_anchor' &&
+          shouldSkipProtectedTaggedVisibleHeading({ baseline: options?.protectedBaseline })
         ) {
           continue;
         }

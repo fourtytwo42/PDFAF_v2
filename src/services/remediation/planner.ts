@@ -37,7 +37,9 @@ import {
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 import { classifyZeroHeadingRecovery } from './headingRecovery.js';
 import {
+  selectTaggedVisibleHeadingAnchorCandidate,
   selectVisibleHeadingAnchorCandidate,
+  shouldTryTaggedVisibleHeadingAnchorRecovery,
   shouldTryVisibleHeadingAnchorRecovery,
 } from './visibleHeadingAnchor.js';
 import {
@@ -117,6 +119,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'artifact_repeating_page_furniture',
     'create_structure_from_degenerate_native_anchor',
     'create_heading_from_visible_text_anchor',
+    'create_heading_from_tagged_visible_anchor',
     'create_heading_from_candidate',
     'normalize_heading_hierarchy',
     'normalize_nested_figure_containers',
@@ -218,6 +221,7 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
     failureTools: [
       'create_structure_from_degenerate_native_anchor',
       'create_heading_from_visible_text_anchor',
+      'create_heading_from_tagged_visible_anchor',
       'create_heading_from_candidate',
       'normalize_heading_hierarchy',
       'repair_structure_conformance',
@@ -225,6 +229,7 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
     requiredFailureTools: [
       'create_structure_from_degenerate_native_anchor',
       'create_heading_from_visible_text_anchor',
+      'create_heading_from_tagged_visible_anchor',
       'create_heading_from_candidate',
     ],
   },
@@ -802,6 +807,10 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && (snapshot.mcidTextSpans?.length ?? 0) > 0;
   }
+  if (toolName === 'create_heading_from_tagged_visible_anchor') {
+    if (pdfClass !== 'native_tagged') return false;
+    return snapshot.textCharCount > 0 && snapshot.structureTree !== null;
+  }
   if (toolName === 'create_heading_from_ocr_page_shell_anchor') {
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
@@ -1176,6 +1185,12 @@ export function planForRemediation(
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (
+      toolName === 'create_heading_from_tagged_visible_anchor' &&
+      !(shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
       toolName === 'create_heading_from_ocr_page_shell_anchor' &&
       !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
     ) {
@@ -1461,6 +1476,32 @@ export function planForRemediation(
           toolName,
           params,
           rationale: 'Stage 127 visible-anchor zero-heading recovery from a proven first-page content anchor.',
+          route: 'post_bootstrap_heading_convergence',
+        });
+      }
+    }
+  }
+
+  {
+    const toolName = 'create_heading_from_tagged_visible_anchor';
+    if (
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        typeof params['text'] === 'string' &&
+        params['text'].length > 0 &&
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
           route: 'post_bootstrap_heading_convergence',
         });
       }
@@ -1763,6 +1804,20 @@ export function buildDefaultParams(
     }
     case 'create_heading_from_visible_text_anchor': {
       const candidate = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
+      if (!candidate) return {};
+      return {
+        page: candidate.page,
+        ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
+        ...(candidate.targetRef ? { targetRef: candidate.targetRef } : {}),
+        level: 1,
+        text: candidate.text.slice(0, 200),
+        source: candidate.source,
+        confidenceScore: candidate.score,
+      };
+    }
+    case 'create_heading_from_tagged_visible_anchor': {
+      if (!shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot)) return {};
+      const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
       if (!candidate) return {};
       return {
         page: candidate.page,
