@@ -36,14 +36,16 @@ Use this when you want the coordinator to run the next stage automatically after
   --poll-seconds 30
 ```
 
-Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. When a blocked stage recommends pivoting, parks a topic, or finds no safe behavior change for that family, the runner continues and injects a pivot directive into the next stage objective. Rejected stages also continue with a pivot directive when they leave no source changes, or when the runner can safely auto-restore source changes made after a clean stage-start snapshot. When diagnostic stages keep parking the same topic, the runner also injects a pivot directive. It stops only if the topic keeps repeating past `--parked-repeat-limit`, or on unapproved xhigh requests, unsafe dirty `rejected`, `acceptance_ready`, hard `blocked`, repeated `safe_to_implement`, or missing/unparseable summaries.
+By default, continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. When a blocked stage recommends pivoting, parks a topic, or finds no safe behavior change for that family, the runner continues and injects a pivot directive into the next stage objective. Rejected stages also continue with a pivot directive when they leave no source changes, or when the runner can safely auto-restore source changes made after a clean stage-start snapshot. When diagnostic stages keep parking the same topic, the runner also injects a pivot directive. It stops only if the topic keeps repeating past `--parked-repeat-limit`, or on unapproved xhigh requests, unsafe dirty `rejected`, `acceptance_ready`, hard `blocked`, repeated `safe_to_implement`, or missing/unparseable summaries.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
+
+Add `--same-stage` to continuous mode when the attempts are part of one stage. In that mode the runner keeps the same stage number across rejected/parked/implemented attempts and stops only when a plateau-style `diagnostic_only` summary, acceptance-ready checkpoint, hard blocker, or repeat limit appears.
 
 ## Evolve Run
 
-Use the evolve runner when you want the system to keep improving the engine over repeated bounded stage batches. It wraps `codex-stage.sh`; each batch still uses the same stage guardrails, model policy, xhigh task allowlist, commit rules, and artifact protections.
+Use the evolve runner when you want the system to keep improving the engine over repeated bounded stage batches. It wraps `codex-stage.sh`; each batch still uses the same stage guardrails, model policy, xhigh task allowlist, commit rules, and artifact protections. By default, evolve batches stay on the same stage number until the active holdout plateaus or reaches an acceptance-ready checkpoint; pass `--advance-stage-per-batch` only for the old behavior.
 
-Start one 10-stage evolution batch:
+Start one 10-attempt evolution batch inside one stage:
 
 ```bash
 ./scripts/codex-evolve.sh \
@@ -91,6 +93,7 @@ Attach with `tmux attach -t pdfaf-evolve-111`, and detach without stopping the r
 The evolve runner:
 
 - defaults the starting stage to the latest `Output/agent-runs/stage*` directory plus one, unless `--stage` is supplied;
+- keeps the same stage number across the batch until plateau/acceptance by passing `--same-stage` to the stage runner;
 - checks for tracked dirty files unless `--allow-dirty` is passed;
 - preflights `--protected-baseline-run`; if the requested run is missing or incomplete, it removes that baseline from the batch objective and tells the worker not to attempt protected/full-gate acceptance work until the baseline is rebuilt or restored;
 - prints disk and local LLM/listener status before starting;

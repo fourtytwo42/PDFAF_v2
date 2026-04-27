@@ -24,6 +24,7 @@ interface RunnerArgs {
   xhighTaskClasses: string;
   rawEvents: boolean;
   showCodexWarnings: boolean;
+  sameStage: boolean;
   modelPolicy: ModelPolicy;
   reasoningEffort?: ReasoningEffort;
   model?: string;
@@ -87,6 +88,7 @@ function usage(): string {
     '  --corpora <csv>          Default: legacy,v1-edge.',
     '  --max-iterations <n>     Default: 1. Capped at 5.',
     '  --continuous             Run consecutive stage numbers until a stop classification is returned.',
+    '  --same-stage             With --continuous, rerun the same stage number for each attempt until plateau or hard stop.',
     '  --no-auto-escalate       Disable one-time xhigh reruns when a worker explicitly requests them.',
     '  --parked-pivot-after <n> Encourage pivot after N consecutive diagnostic-only parked decisions. Default: 2; 0 disables.',
     '  --parked-repeat-limit <n> Stop after N consecutive diagnostic-only parked decisions for one topic. Default: 4; 0 disables.',
@@ -128,6 +130,7 @@ function parseArgs(argv: string[]): RunnerArgs {
     xhighTaskClasses: DEFAULT_XHIGH_TASK_CLASSES,
     rawEvents: false,
     showCodexWarnings: false,
+    sameStage: false,
     modelPolicy: 'auto',
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -159,6 +162,10 @@ function parseArgs(argv: string[]): RunnerArgs {
     }
     if (arg === '--show-codex-warnings') {
       args.showCodexWarnings = true;
+      continue;
+    }
+    if (arg === '--same-stage') {
+      args.sameStage = true;
       continue;
     }
     const next = argv[i + 1];
@@ -286,7 +293,8 @@ function selectModel(args: RunnerArgs): ModelSelection {
 function stamp(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+  const ms = String(d.getUTCMilliseconds()).padStart(3, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}${ms}`;
 }
 
 function sha1(input: string): string {
@@ -758,6 +766,12 @@ function rejectedPivotTopic(decision: StageDecision | null): string | null {
   return topicFromText(text);
 }
 
+function plateauDecision(decision: StageDecision | null): boolean {
+  if (decision?.classification !== 'diagnostic_only') return false;
+  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
+  return /(?:plateau(?:ed)?|plateau definition|no stable (?:safe )?(?:candidate|fixer)|no bounded next diagnostic|fresh v1|new v1[- ]derived holdout|select\/build|select or build).*?(?:satisfied|met|next|pivot|holdout|fresh|complete)/i.test(text);
+}
+
 function pivotObjective(baseObjective: string, topic: string, count: number): string {
   return [
     baseObjective,
@@ -814,7 +828,8 @@ async function main(): Promise<void> {
   let consecutiveParkedCount = 0;
   let pivotTopicForNext: { topic: string; count: number } | null = null;
   for (let offset = 0; offset < stageCount; offset += 1) {
-    let stageArgs = { ...args, stage: args.stage + offset };
+    const currentStage = args.sameStage ? args.stage : args.stage + offset;
+    let stageArgs = { ...args, stage: currentStage };
     if (pivotTopicForNext) {
       stageArgs = {
         ...stageArgs,
@@ -836,6 +851,11 @@ async function main(): Promise<void> {
       stop = shouldStopContinuous(stageArgs, decision);
     }
     if (!args.continuous) break;
+    if (args.sameStage && plateauDecision(decision)) {
+      console.log(`Stopping same-stage run after stage ${stageArgs.stage}: plateau`);
+      if (decision?.next_action) console.log(`Next action: ${decision.next_action}`);
+      break;
+    }
     const softPivotTopic = softPivotBlockedTopic(decision);
     if (stop?.reason === 'blocked' && softPivotTopic) {
       pivotTopicForNext = { topic: softPivotTopic, count: 1 };
@@ -890,7 +910,9 @@ async function main(): Promise<void> {
       break;
     }
     if (offset + 1 < stageCount) {
-      console.log(`Continuing to stage ${stageArgs.stage + 1}`);
+      console.log(args.sameStage
+        ? `Continuing Stage ${args.stage} attempt ${offset + 2}/${stageCount}`
+        : `Continuing to stage ${stageArgs.stage + 1}`);
     }
   }
 }

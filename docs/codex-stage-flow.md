@@ -28,9 +28,11 @@ flowchart TD
   T -- clean rejected or soft blocked --> W[Inject pivot directive]
   T -- rejected with agent-only source edits --> X[Auto-restore tracked/source edits]
   T -- unsafe dirty rejected/acceptance_ready/safe_to_implement/hard blocked --> U[Stop for human decision]
-  T -- implemented or plateaued diagnostic_only --> V[Increment stage number]
+  T -- implemented or non-plateau diagnostic_only --> Y[Continue same stage attempt]
+  T -- plateaued diagnostic_only --> V[Increment stage number]
   X --> W
-  W --> V
+  W --> Y
+  Y --> B
   V --> B
 ```
 
