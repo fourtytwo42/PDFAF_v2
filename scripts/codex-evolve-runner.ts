@@ -38,6 +38,7 @@ interface StageSummary {
   classification?: string;
   summary?: string;
   next_action?: string;
+  source_changes?: string[];
 }
 
 interface StageSummaryWithSource extends StageSummary {
@@ -137,7 +138,7 @@ function usage(): string {
     '  --no-corpus-loop               Disable the default v1 holdout discovery -> fix -> legacy validation policy.',
     '  --advance-stage-per-batch      Legacy behavior: advance stage numbers after each batch instead of staying in one stage until plateau.',
     '  --discovery-holdout-size <n>   Default: 30. Target row count for newly selected v1 holdout batches.',
-    '  --plateau-after-batches <n>    Default: 3. Pull/select a new holdout after this many same-stage no-material-progress attempts.',
+    '  --plateau-after-batches <n>    Default: 3. Pull/select a new holdout after this many same-stage implementation/candidate no-material-progress attempts. Diagnostic-only source-clean passes do not count.',
     '  --v1-source-root <dir>         Default: /home/hendo420/pdfaf.',
     '  --discovery-holdout-root <dir> Default: Input/from_sibling_pdfaf_v1_evolve.',
     '  --max-iterations <n>           Default: 1.',
@@ -536,7 +537,7 @@ function renderPlateauDefinition(): string {
     'D. No bounded next diagnostic remains that could decide an implementation/rejection inside the current stage.',
     'E. Prior named wins remain checked or explicitly scoped as unaffected: Stage 75 font gains, Stage 127/129/131 holdout gains, false-positive applied = 0, protected rows, runtime p95, page/text/tag/link stability, and visual stability for changed PDFs.',
     'F. The next action is a real pivot: a different residual family, a fresh v1 holdout, analyzer-determinism project, runtime project, or a human acceptance decision.',
-    'Repeated no-movement plateau requires at least three same-stage attempts with no safe source change and no measurable holdout/legacy movement after pivoting among available stable residual families.',
+    'Repeated no-movement plateau requires at least three same-stage implementation/candidate attempts with source changes but no safe kept change and no measurable holdout/legacy movement after pivoting among available stable residual families. Pure evidence-gathering or diagnostic-only passes with no source changes do not consume a no-movement attempt.',
     'If any exhaustive criterion is missing and the needed evidence is locally bounded, continue the stage work instead of returning diagnostic_only.',
   ].join(' ');
 }
@@ -557,7 +558,7 @@ function renderCorpusEvolutionState(state: CorpusEvolutionState): string {
       ? 'Interruption recovery policy: reuse completed manifests/runs; rerun only incomplete benchmark dirs to a new output dir before rebuilding or discarding a holdout.'
       : 'Interruption recovery policy: no incomplete local stage or holdout benchmark artifacts detected.',
     `New holdout target: ${state.discoveryHoldoutSize} rows under ${state.discoveryHoldoutRoot} from ${state.v1SourceRoot}.`,
-    `Plateau policy: after ${state.plateauAfterBatches} no-material-progress batch(es), pivot to selecting a fresh v1 holdout or a different stable residual family.`,
+    `Plateau policy: after ${state.plateauAfterBatches} implementation/candidate no-material-progress batch(es), pivot to selecting a fresh v1 holdout or a different stable residual family. Source-clean diagnostic evidence passes do not count toward that threshold.`,
   ].join(' ');
 }
 
@@ -702,6 +703,7 @@ function exhaustedPlateauSummary(summary: StageSummary | undefined): boolean {
 
 function noMovementPlateauSummary(summary: StageSummary | undefined): boolean {
   if (summary?.classification !== 'diagnostic_only') return false;
+  if (!summary.source_changes?.length) return false;
   const text = `${summary.summary ?? ''}\n${summary.next_action ?? ''}`;
   return /(?:plateau(?:d|ed)?|no[- ]material[- ]progress|no movement|no safe general improvement|no source code was changed|no source changes)/i.test(text)
     && /(?:fresh|new v1|holdout|select|build|pivot|cooled|parked|no safe|no movement|no[- ]material)/i.test(text);

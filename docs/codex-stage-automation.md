@@ -39,7 +39,7 @@ Use this when you want the coordinator to run the next stage automatically after
 By default, continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. When a blocked stage recommends pivoting, parks a topic, or finds no safe behavior change for that family, the runner continues and injects a pivot directive into the next stage objective. Rejected stages also continue with a pivot directive when they leave no source changes, or when the runner can safely auto-restore source changes made after a clean stage-start snapshot. When diagnostic stages keep parking the same topic, the runner also injects a pivot directive. It stops only if the topic keeps repeating past `--parked-repeat-limit`, or on unapproved xhigh requests, unsafe dirty `rejected`, `acceptance_ready`, hard `blocked`, repeated `safe_to_implement`, or missing/unparseable summaries.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
-Add `--same-stage` to continuous mode when the attempts are part of one stage. In that mode the runner keeps the same stage number across rejected/parked/implemented attempts. It stops for plateau only when candidate space is explicitly exhausted, or after three same-stage no-progress attempts with no safe source change or measurable movement. One diagnostic summary is not enough to declare plateau unless it proves exhaustion.
+Add `--same-stage` to continuous mode when the attempts are part of one stage. In that mode the runner keeps the same stage number across rejected/parked/implemented attempts. It stops for plateau only when candidate space is explicitly exhausted, or after three same-stage implementation/candidate no-progress attempts with no safe kept source change or measurable movement. Pure evidence-gathering or diagnostic-only passes with no source changes do not count toward the three-attempt threshold. One diagnostic summary is not enough to declare plateau unless it proves exhaustion.
 
 ## Evolve Run
 
@@ -94,7 +94,7 @@ The evolve runner:
 
 - defaults the starting stage to the latest `Output/agent-runs/stage*` directory plus one, unless `--stage` is supplied;
 - keeps the same stage number across the batch until plateau/acceptance by passing `--same-stage` to the stage runner;
-- requires candidate-space exhaustion or three same-stage no-progress attempts before accepting plateau and moving to a fresh holdout;
+- requires candidate-space exhaustion or three same-stage implementation/candidate no-progress attempts before accepting plateau and moving to a fresh holdout;
 - checks for tracked dirty files unless `--allow-dirty` is passed;
 - preflights `--protected-baseline-run`; if the requested run is missing or incomplete, it removes that baseline from the batch objective and tells the worker not to attempt protected/full-gate acceptance work until the baseline is rebuilt or restored;
 - prints disk and local LLM/listener status before starting;

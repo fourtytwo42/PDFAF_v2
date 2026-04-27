@@ -135,7 +135,7 @@ If a stage is interrupted during a holdout pivot, the next launch should reuse t
 A stage may declare plateau only through one of two paths:
 
 - exhaustive candidate-space proof: all criteria below are true;
-- repeated no-movement: at least three same-stage attempts pivoted among available stable residual families without a safe source change or measurable holdout/legacy movement.
+- repeated no-movement: at least three same-stage implementation/candidate attempts pivoted among available stable residual families with source changes or attempted behavior, but without a safe kept source change or measurable holdout/legacy movement. Pure evidence-gathering or diagnostic-only passes with no source changes do not count.
 
 The exhaustive criteria are:
 

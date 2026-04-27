@@ -36,6 +36,7 @@ interface StageDecision {
   summary?: string;
   next_action?: string;
   stop_reason?: string;
+  source_changes?: string[];
 }
 
 interface WorktreeSnapshot {
@@ -779,6 +780,7 @@ function exhaustedPlateauDecision(decision: StageDecision | null): boolean {
 
 function noMovementPlateauDecision(decision: StageDecision | null): boolean {
   if (decision?.classification !== 'diagnostic_only') return false;
+  if (!decision.source_changes?.length) return false;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
   return /(?:plateau(?:d|ed)?|no[- ]material[- ]progress|no movement|no safe general improvement|no source code was changed|no source changes)/i.test(text)
     && /(?:fresh|new v1|holdout|select|build|pivot|cooled|parked|no safe|no movement|no[- ]material)/i.test(text);
@@ -880,6 +882,8 @@ async function main(): Promise<void> {
       pivotTopicForNext = { topic, count: plateauAttemptCount };
       console.log(`Plateau/no-progress attempt ${plateauAttemptCount}/${args.plateauAttemptLimit}; continuing Stage ${stageArgs.stage} with a pivot directive before accepting plateau.`);
       stop = null;
+    } else if (args.sameStage && decision?.classification === 'diagnostic_only' && !decision.source_changes?.length) {
+      console.log(`Diagnostic-only evidence pass did not modify source; not counting it toward the ${args.plateauAttemptLimit}-attempt plateau threshold.`);
     } else if (decision?.classification === 'implemented' || decision?.classification === 'rejected') {
       plateauAttemptCount = 0;
     }

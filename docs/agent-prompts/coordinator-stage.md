@@ -55,7 +55,7 @@ Read these first:
 A stage may declare plateau only through one of two paths:
 
 - **Exhaustive candidate-space proof:** all criteria below are true.
-- **Repeated no-movement:** at least three same-stage attempts have pivoted among available stable residual families without a safe source change or measurable holdout/legacy movement.
+- **Repeated no-movement:** at least three same-stage implementation/candidate attempts have pivoted among available stable residual families with source changes or attempted behavior, but without a safe kept change or measurable holdout/legacy movement. Pure evidence-gathering or diagnostic-only passes with no source changes do not consume a no-movement attempt.
 
 The exhaustive criteria are:
 
