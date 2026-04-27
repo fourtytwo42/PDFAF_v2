@@ -55,8 +55,12 @@ interface CorpusEvolutionState {
   policy: 'corpus_loop' | 'disabled';
   legacyBaselineRun?: string;
   knownHoldoutManifests: string[];
+  activeHoldoutManifest?: string;
   latestLegacyRuns: string[];
   latestHoldoutRuns: string[];
+  activeHoldoutRun?: string;
+  interruptedAgentRuns: string[];
+  incompleteHoldoutRuns: string[];
   discoveryHoldoutRoot: string;
   v1SourceRoot: string;
   discoveryHoldoutSize: number;
@@ -383,12 +387,20 @@ async function listMatchingDirs(root: string, pattern: RegExp, limit: number): P
 
 async function discoverHoldoutManifests(): Promise<string[]> {
   const inputDirs = await listMatchingDirs('Input', /^from_sibling_pdfaf_v1/, 20);
-  const manifests: string[] = [];
+  const manifests: Array<{ path: string; mtimeMs: number }> = [];
   for (const dir of inputDirs) {
     const manifest = join(dir, 'manifest.json');
-    if (await pathExists(manifest)) manifests.push(manifest);
+    if (!await pathExists(manifest)) continue;
+    try {
+      const info = await stat(manifest);
+      manifests.push({ path: manifest, mtimeMs: info.mtimeMs });
+    } catch {
+      manifests.push({ path: manifest, mtimeMs: 0 });
+    }
   }
-  return manifests;
+  return manifests
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .map(manifest => manifest.path);
 }
 
 async function discoverLatestHoldoutRuns(limit = 12): Promise<string[]> {
@@ -410,17 +422,67 @@ async function discoverLatestHoldoutRuns(limit = 12): Promise<string[]> {
     .map(run => run.name);
 }
 
+async function discoverIncompleteHoldoutRuns(limit = 12): Promise<string[]> {
+  const outputDirs = await listMatchingDirs('Output', /^from_sibling_pdfaf_v1/, 20);
+  const runs: Array<{ name: string; mtimeMs: number }> = [];
+  for (const dir of outputDirs) {
+    for (const run of await listMatchingDirs(dir, /^run-stage\d+/, limit)) {
+      if (await pathExists(join(run, 'summary.json'))) continue;
+      try {
+        const info = await stat(run);
+        runs.push({ name: run, mtimeMs: info.mtimeMs });
+      } catch {
+        // Best-effort recovery state only.
+      }
+    }
+  }
+  return runs
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, limit)
+    .map(run => run.name);
+}
+
+async function discoverInterruptedAgentRuns(outRoot: string, limit = 8): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(outRoot);
+  } catch {
+    return [];
+  }
+  const runs: Array<{ name: string; mtimeMs: number }> = [];
+  for (const name of names) {
+    if (!/^stage\d+-/.test(name)) continue;
+    const dir = join(outRoot, name);
+    if (await pathExists(join(dir, 'iteration-1-summary.json'))) continue;
+    if (!await pathExists(join(dir, 'iteration-1-prompt.md'))) continue;
+    try {
+      const info = await stat(dir);
+      runs.push({ name: dir, mtimeMs: info.mtimeMs });
+    } catch {
+      // Best-effort recovery state only.
+    }
+  }
+  return runs
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, limit)
+    .map(run => run.name);
+}
+
 async function discoverCorpusEvolutionState(args: EvolveArgs, protectedBaseline: ProtectedBaselinePreflight): Promise<CorpusEvolutionState> {
+  const knownHoldoutManifests = args.corpusLoop ? await discoverHoldoutManifests() : [];
+  const latestHoldoutRuns = args.corpusLoop ? await discoverLatestHoldoutRuns(12) : [];
   return {
     policy: args.corpusLoop ? 'corpus_loop' : 'disabled',
     legacyBaselineRun: protectedBaseline.effectivePath,
-    knownHoldoutManifests: args.corpusLoop ? await discoverHoldoutManifests() : [],
+    knownHoldoutManifests,
+    activeHoldoutManifest: knownHoldoutManifests[0],
     latestLegacyRuns: args.corpusLoop
       ? await listMatchingDirs('Output/experiment-corpus-baseline', /^run-stage\d+.*(?:full|legacy|current)/, 8)
       : [],
-    latestHoldoutRuns: args.corpusLoop
-      ? await discoverLatestHoldoutRuns(12)
-      : [],
+    latestHoldoutRuns,
+    activeHoldoutRun: latestHoldoutRuns[0],
+    interruptedAgentRuns: args.corpusLoop ? await discoverInterruptedAgentRuns(args.outRoot, 8) : [],
+    incompleteHoldoutRuns: args.corpusLoop ? await discoverIncompleteHoldoutRuns(12) : [],
     discoveryHoldoutRoot: args.discoveryHoldoutRoot,
     v1SourceRoot: args.v1SourceRoot,
     discoveryHoldoutSize: args.discoveryHoldoutSize,
@@ -448,8 +510,15 @@ function renderCorpusEvolutionState(state: CorpusEvolutionState): string {
     'Corpus evolution loop: enabled.',
     `Legacy protected baseline: ${state.legacyBaselineRun ?? 'not available; do not run formal protected acceptance until restored'}.`,
     `Known v1 holdout manifests: ${state.knownHoldoutManifests.length ? state.knownHoldoutManifests.join(', ') : 'none found'}.`,
+    `Active v1 holdout manifest: ${state.activeHoldoutManifest ?? 'none found'}.`,
     `Recent legacy runs: ${state.latestLegacyRuns.length ? state.latestLegacyRuns.join(', ') : 'none found'}.`,
     `Recent holdout runs: ${state.latestHoldoutRuns.length ? state.latestHoldoutRuns.join(', ') : 'none found'}.`,
+    `Active holdout run: ${state.activeHoldoutRun ?? 'none found'}.`,
+    `Interrupted agent runs without summary: ${state.interruptedAgentRuns.length ? state.interruptedAgentRuns.join(', ') : 'none found'}.`,
+    `Incomplete holdout benchmark dirs without summary: ${state.incompleteHoldoutRuns.length ? state.incompleteHoldoutRuns.join(', ') : 'none found'}.`,
+    state.interruptedAgentRuns.length || state.incompleteHoldoutRuns.length
+      ? 'Interruption recovery policy: reuse completed manifests/runs; rerun only incomplete benchmark dirs to a new output dir before rebuilding or discarding a holdout.'
+      : 'Interruption recovery policy: no incomplete local stage or holdout benchmark artifacts detected.',
     `New holdout target: ${state.discoveryHoldoutSize} rows under ${state.discoveryHoldoutRoot} from ${state.v1SourceRoot}.`,
     `Plateau policy: after ${state.plateauAfterBatches} no-material-progress batch(es), pivot to selecting a fresh v1 holdout or a different stable residual family.`,
   ].join(' ');
@@ -540,6 +609,14 @@ async function runStageBatch(args: EvolveArgs, stage: number, target: TargetSele
   console.log(`Corpus loop: ${corpusState.policy}`);
   if (corpusState.policy === 'corpus_loop') {
     console.log(`Known holdout manifests: ${corpusState.knownHoldoutManifests.length}`);
+    console.log(`Active holdout manifest: ${corpusState.activeHoldoutManifest ?? 'none found'}`);
+    console.log(`Active holdout run: ${corpusState.activeHoldoutRun ?? 'none found'}`);
+    if (corpusState.interruptedAgentRuns.length) {
+      console.log(`Interrupted agent runs: ${corpusState.interruptedAgentRuns.join(', ')}`);
+    }
+    if (corpusState.incompleteHoldoutRuns.length) {
+      console.log(`Incomplete holdout benchmark dirs: ${corpusState.incompleteHoldoutRuns.join(', ')}`);
+    }
     console.log(`Discovery holdout root: ${corpusState.discoveryHoldoutRoot}`);
   }
   if (target.cooledTopics.length) console.log(`Cooldown topics: ${target.cooledTopics.join(', ')}`);

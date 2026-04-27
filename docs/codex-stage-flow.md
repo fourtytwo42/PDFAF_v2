@@ -4,7 +4,8 @@
 flowchart TD
   A[User starts runner] --> B[Runner creates Output/agent-runs stage folder]
   B --> C[Discover corpus state: legacy runs, protected baseline, v1 holdouts]
-  C --> D[Render coordinator prompt from docs/agent-prompts plus corpus-loop policy]
+  C --> C2[Detect interrupted agent runs and incomplete holdout benchmarks]
+  C2 --> D[Render coordinator prompt from docs/agent-prompts plus corpus-loop policy]
   D --> E[Record metadata and local LLM/listener status]
   E --> F[Launch codex exec worker]
   F --> G[Stream readable progress to terminal and log]
@@ -109,6 +110,17 @@ flowchart LR
 12. **Legacy Validate:** protected legacy validation and Stage 41 gate for behavior changes when feasible.
 13. **Commit Or Reject:** source/docs/tests only, generated artifacts remain local.
 14. **Summarize:** evidence, commands, artifacts, gates, plateau status, remaining debt, next stage.
+
+## Interruption Recovery
+
+Each evolve launch now reports:
+
+- the active v1 holdout manifest, chosen from the newest local v1 holdout manifest;
+- the active completed holdout benchmark run;
+- interrupted agent run directories that have a prompt but no summary;
+- incomplete holdout benchmark directories that lack `summary.json`.
+
+If a stage is interrupted during a holdout pivot, the next launch should reuse the completed fresh manifest and rerun only incomplete benchmark output dirs to a new output path. It should not rebuild or discard a fresh holdout unless the manifest itself is missing or corrupt.
 
 ## Plateau Definition
 
