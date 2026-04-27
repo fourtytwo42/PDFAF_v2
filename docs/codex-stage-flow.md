@@ -3,25 +3,30 @@
 ```mermaid
 flowchart TD
   A[User starts runner] --> B[Runner creates Output/agent-runs stage folder]
-  B --> C[Render coordinator prompt from docs/agent-prompts]
-  C --> D[Record metadata and local LLM/listener status]
-  D --> E[Launch codex exec worker]
-  E --> F[Stream readable progress to terminal and log]
-  F --> G[Worker reads AGENTS, docs, artifacts, scripts]
-  G --> H{Evidence supports behavior change?}
-  H -- No --> I[Create diagnostic script/doc]
-  H -- Yes --> J[Make narrow source change]
-  I --> K[Run focused validation]
-  J --> K
-  K --> L{Known wins preserved?}
-  L -- No --> M[Reject or revert candidate]
-  L -- Yes --> N[Commit and push source/docs/tests]
-  M --> O[Write structured summary JSON]
-  N --> O
-  O --> P{Continuous mode stop reason?}
-  P -- blocked/rejected/acceptance_ready/safe_to_implement --> Q[Stop for human decision]
-  P -- diagnostic_only/implemented --> R[Increment stage number]
-  R --> B
+  B --> C[Discover corpus state: legacy runs, protected baseline, v1 holdouts]
+  C --> D[Render coordinator prompt from docs/agent-prompts plus corpus-loop policy]
+  D --> E[Record metadata and local LLM/listener status]
+  E --> F[Launch codex exec worker]
+  F --> G[Stream readable progress to terminal and log]
+  G --> H[Worker establishes current baseline on legacy plus active holdout]
+  H --> I{Stable general fix candidate?}
+  I -- No --> J[Classify debt: analyzer volatility, manual policy, runtime, parked]
+  J --> K{Holdout plateau?}
+  K -- Yes --> L[Select or build next v1 holdout batch]
+  K -- No --> M[Write diagnostic report]
+  I -- Yes --> N[Make one narrow source change]
+  N --> O[Validate target holdout and legacy protected corpus]
+  L --> P[Write structured summary JSON]
+  M --> P
+  O --> Q{Quality/speed/purity preserved?}
+  Q -- No --> R[Reject, tighten, or revert candidate]
+  Q -- Yes --> S[Commit and push source/docs/tests only]
+  R --> P
+  S --> P
+  P --> T{Continuous mode stop reason?}
+  T -- blocked/rejected/acceptance_ready/safe_to_implement --> U[Stop for human decision]
+  T -- diagnostic_only/implemented --> V[Increment stage number]
+  V --> B
 ```
 
 ## Terminal Views
@@ -49,15 +54,40 @@ sequenceDiagram
   participant Bench as Local Artifacts
 
   You->>Runner: pnpm run agent:continuous -- --stage 82
-  Runner->>Codex: coordinator prompt + output schema
+  Runner->>Runner: discover legacy baseline and v1 holdout state
+  Runner->>Codex: coordinator prompt + corpus-loop policy + output schema
   Codex->>Repo: inspect AGENTS/docs/scripts
-  Codex->>Bench: inspect Stage 78-81 evidence
-  Codex->>Repo: add diagnostic source/doc
-  Codex->>Bench: write generated report under Output/
-  Codex->>Repo: run validation
+  Codex->>Bench: run or inspect current legacy and holdout baselines
+  Codex->>Bench: classify stable failures vs parked debt
+  Codex->>Repo: add one narrow fixer or diagnostic source/doc
+  Codex->>Bench: validate target holdout, legacy corpus, and visual stability
   Codex->>Repo: commit and push source/doc only
   Codex->>Runner: structured stage decision
   Runner->>Runner: decide continue or stop
+```
+
+## Corpus Evolution Loop
+
+```mermaid
+flowchart LR
+  A[Current engine] --> B[Legacy protected corpus baseline]
+  A --> C[Active v1 holdout batch]
+  C --> D[Classify residual families]
+  D --> E{Stable safe fixer?}
+  E -- Yes --> F[Implement one narrow general rule]
+  F --> G[Validate holdout improvement]
+  F --> H[Validate legacy non-regression]
+  G --> I{Both pass?}
+  H --> I
+  I -- Yes --> J[Commit and continue]
+  I -- No --> K[Tighten or revert]
+  E -- No --> L{Holdout plateau?}
+  L -- Yes --> M[Pull/select next v1 holdout]
+  L -- No --> N[Run focused diagnostics]
+  J --> D
+  K --> D
+  M --> C
+  N --> D
 ```
 
 ## Safety Gates
@@ -72,5 +102,9 @@ flowchart LR
   D -- No --> X
   D -- Yes --> E{Stage 78 p95/protected wins preserved?}
   E -- No --> X
-  E -- Yes --> F[Allow commit/push]
+  E -- Yes --> F{Holdout target improved or debt classified?}
+  F -- No --> X
+  F -- Yes --> G{Legacy protected corpus non-regressed?}
+  G -- No --> X
+  G -- Yes --> H[Allow commit/push]
 ```

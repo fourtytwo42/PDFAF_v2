@@ -25,6 +25,11 @@ interface EvolveArgs {
   protectedBaselineRun?: string;
   xhighTaskClasses: string;
   extraObjective: string;
+  corpusLoop: boolean;
+  discoveryHoldoutSize: number;
+  plateauAfterBatches: number;
+  v1SourceRoot: string;
+  discoveryHoldoutRoot: string;
 }
 
 interface StageSummary {
@@ -46,6 +51,18 @@ interface TargetSelection {
   recentCooldownTopics: string[];
 }
 
+interface CorpusEvolutionState {
+  policy: 'corpus_loop' | 'disabled';
+  legacyBaselineRun?: string;
+  knownHoldoutManifests: string[];
+  latestLegacyRuns: string[];
+  latestHoldoutRuns: string[];
+  discoveryHoldoutRoot: string;
+  v1SourceRoot: string;
+  discoveryHoldoutSize: number;
+  plateauAfterBatches: number;
+}
+
 interface ProtectedBaselinePreflight {
   requestedPath?: string;
   effectivePath?: string;
@@ -55,9 +72,13 @@ interface ProtectedBaselinePreflight {
 
 const DEFAULT_OUT_ROOT = 'Output/agent-runs';
 const DEFAULT_XHIGH_TASK_CLASSES = 'hard-planning,boundary-policy,full-gate,protected,analyzer,determinism,architecture,release,acceptance';
-const DEFAULT_TARGET_FAMILIES = 'runtime-tail,protected-parity,visual-stability,font-text-extractability,figure-alt,table,heading,analyzer-volatility,boundary';
+const DEFAULT_TARGET_FAMILIES = 'corpus-generalization,figure-alt,table,heading,font-text-extractability,protected-parity,runtime-tail,visual-stability,analyzer-volatility,boundary';
 
 const TARGET_FAMILIES: Record<string, { label: string; objective: string }> = {
+  'corpus-generalization': {
+    label: 'corpus generalization',
+    objective: 'Prioritize the corpus-evolution loop: measure the current engine on the legacy protected corpus and the active v1 holdout, classify stable residual families, implement one narrow general improvement only if evidence supports it, then validate against both the holdout and the legacy protected corpus. When the active holdout has plateaued, select or build the next small v1-derived holdout batch before more fixer work.',
+  },
   'runtime-tail': {
     label: 'runtime tail',
     objective: 'Prioritize runtime-tail evidence and speed-preserving remediation. Inspect p95/runtime artifacts and repeated no-gain expensive paths first; if fresh artifacts are missing, generate a small no-semantic target runtime sample on known tail rows before blocking. Do not trade quality or protected-floor preservation for speed.',
@@ -108,6 +129,11 @@ function usage(): string {
     '  --sleep-seconds <n>            Default: 300 between batches in --forever mode.',
     '  --mode <name>                  Default: diagnostic-first.',
     '  --corpora <csv>                Default: legacy,v1-edge.',
+    '  --no-corpus-loop               Disable the default v1 holdout discovery -> fix -> legacy validation policy.',
+    '  --discovery-holdout-size <n>   Default: 30. Target row count for newly selected v1 holdout batches.',
+    '  --plateau-after-batches <n>    Default: 2. Pull/select a new holdout after this many no-material-progress batches.',
+    '  --v1-source-root <dir>         Default: /home/hendo420/pdfaf.',
+    '  --discovery-holdout-root <dir> Default: Input/from_sibling_pdfaf_v1_evolve.',
     '  --max-iterations <n>           Default: 1.',
     '  --poll-seconds <n>             Default: 30.',
     '  --parked-pivot-after <n>       Default: 2. Encourages a pivot after repeated parked diagnostics for one topic.',
@@ -145,10 +171,16 @@ function parseArgs(argv: string[]): EvolveArgs {
     visualGate: false,
     xhighTaskClasses: DEFAULT_XHIGH_TASK_CLASSES,
     extraObjective: '',
+    corpusLoop: true,
+    discoveryHoldoutSize: 30,
+    plateauAfterBatches: 2,
+    v1SourceRoot: '/home/hendo420/pdfaf',
+    discoveryHoldoutRoot: 'Input/from_sibling_pdfaf_v1_evolve',
   };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+    if (arg === '--') continue;
     if (arg === '--help' || arg === '-h') {
       console.log(usage());
       process.exit(0);
@@ -173,6 +205,10 @@ function parseArgs(argv: string[]): EvolveArgs {
       args.visualGate = true;
       continue;
     }
+    if (arg === '--no-corpus-loop') {
+      args.corpusLoop = false;
+      continue;
+    }
 
     const next = argv[i + 1];
     if (!next) throw new Error(`Missing value for ${arg}`);
@@ -192,6 +228,10 @@ function parseArgs(argv: string[]): EvolveArgs {
     else if (arg === '--protected-baseline-run') args.protectedBaselineRun = next;
     else if (arg === '--xhigh-task-classes') args.xhighTaskClasses = next;
     else if (arg === '--objective') args.extraObjective = next;
+    else if (arg === '--discovery-holdout-size') args.discoveryHoldoutSize = Math.max(5, Math.min(60, positiveInt(next, arg)));
+    else if (arg === '--plateau-after-batches') args.plateauAfterBatches = Math.max(1, positiveInt(next, arg));
+    else if (arg === '--v1-source-root') args.v1SourceRoot = next;
+    else if (arg === '--discovery-holdout-root') args.discoveryHoldoutRoot = next;
     else throw new Error(`Unknown argument: ${arg}`);
     i += 1;
   }
@@ -318,15 +358,85 @@ async function llmStatus(): Promise<string> {
   return [`Processes:\n${proc.stdout.trim() || 'none'}`, `Listeners:\n${ports.stdout.trim() || 'none'}`].join('\n\n');
 }
 
-function buildObjective(args: EvolveArgs, stage: number, target: TargetSelection): string {
+async function listMatchingDirs(root: string, pattern: RegExp, limit: number): Promise<string[]> {
+  try {
+    const names = await readdir(root);
+    const rows: Array<{ name: string; mtimeMs: number }> = [];
+    for (const name of names) {
+      if (!pattern.test(name)) continue;
+      const full = join(root, name);
+      try {
+        const info = await stat(full);
+        if (info.isDirectory()) rows.push({ name: full, mtimeMs: info.mtimeMs });
+      } catch {
+        // Best-effort corpus state only.
+      }
+    }
+    return rows
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(0, limit)
+      .map(row => row.name);
+  } catch {
+    return [];
+  }
+}
+
+async function discoverHoldoutManifests(): Promise<string[]> {
+  const inputDirs = await listMatchingDirs('Input', /^from_sibling_pdfaf_v1/, 20);
+  const manifests: string[] = [];
+  for (const dir of inputDirs) {
+    const manifest = join(dir, 'manifest.json');
+    if (await pathExists(manifest)) manifests.push(manifest);
+  }
+  return manifests;
+}
+
+async function discoverCorpusEvolutionState(args: EvolveArgs, protectedBaseline: ProtectedBaselinePreflight): Promise<CorpusEvolutionState> {
+  return {
+    policy: args.corpusLoop ? 'corpus_loop' : 'disabled',
+    legacyBaselineRun: protectedBaseline.effectivePath,
+    knownHoldoutManifests: args.corpusLoop ? await discoverHoldoutManifests() : [],
+    latestLegacyRuns: args.corpusLoop
+      ? await listMatchingDirs('Output/experiment-corpus-baseline', /^run-stage\d+.*(?:full|legacy|current)/, 8)
+      : [],
+    latestHoldoutRuns: args.corpusLoop
+      ? await listMatchingDirs('Output/from_sibling_pdfaf_v1_holdout_3', /^run-stage\d+/, 8)
+      : [],
+    discoveryHoldoutRoot: args.discoveryHoldoutRoot,
+    v1SourceRoot: args.v1SourceRoot,
+    discoveryHoldoutSize: args.discoveryHoldoutSize,
+    plateauAfterBatches: args.plateauAfterBatches,
+  };
+}
+
+function renderCorpusEvolutionState(state: CorpusEvolutionState): string {
+  if (state.policy === 'disabled') return 'Corpus evolution loop: disabled for this run.';
+  return [
+    'Corpus evolution loop: enabled.',
+    `Legacy protected baseline: ${state.legacyBaselineRun ?? 'not available; do not run formal protected acceptance until restored'}.`,
+    `Known v1 holdout manifests: ${state.knownHoldoutManifests.length ? state.knownHoldoutManifests.join(', ') : 'none found'}.`,
+    `Recent legacy runs: ${state.latestLegacyRuns.length ? state.latestLegacyRuns.join(', ') : 'none found'}.`,
+    `Recent holdout runs: ${state.latestHoldoutRuns.length ? state.latestHoldoutRuns.join(', ') : 'none found'}.`,
+    `New holdout target: ${state.discoveryHoldoutSize} rows under ${state.discoveryHoldoutRoot} from ${state.v1SourceRoot}.`,
+    `Plateau policy: after ${state.plateauAfterBatches} no-material-progress batch(es), pivot to selecting a fresh v1 holdout or a different stable residual family.`,
+  ].join(' ');
+}
+
+function buildObjective(args: EvolveArgs, stage: number, target: TargetSelection, corpusState: CorpusEvolutionState): string {
   const parts = [
     'Evolve PDFAF Engine v2 over bounded stages. Improve general PDF accessibility remediation while preserving processing speed, avoiding regressions, and keeping rendered PDFs visually unchanged.',
     'Prefer evidence-first diagnostics, then narrow general implementation only when a safe rule is proven.',
     'Every accepted behavior change must protect false-positive applied = 0, protected rows, F count, runtime p95, text extraction, structure/tag state, page count, and visual stability.',
     'Reject or revert candidates that overfit, broaden route guards without evidence, change scorer/gate semantics, or alter visible rendering.',
+    'Default operating loop: establish the current baseline on the legacy protected corpus and active v1 holdout; classify stable residual failures; implement one narrow general improvement; validate against both the discovery holdout and the legacy protected corpus; repeat until that holdout plateaus, then select a fresh v1-derived holdout batch.',
+    'Treat v1-derived holdouts as discovery/generalization corpora, not release gates. The legacy protected corpus remains the regression gate for protected parity, speed, F count, and prior wins.',
+    'When pulling a new v1 batch, prefer original/source PDFs, exclude all prior manifests and debug targets, stratify by failure family, cap runtime/size risk, keep files/artifacts local, and never commit PDFs/Base64/generated benchmark payloads.',
+    'Do not build fixers on analyzer-volatility, manual/scanned policy debt, or rows without a stable safe candidate. Park those explicitly and pivot to stable residuals or a new holdout.',
+    'For any behavior change, require target holdout improvement, legacy protected non-regression, false-positive applied = 0, runtime within envelope, previous named wins preserved, and visual stability for changed PDFs.',
     'Do not spend repeated stages reaffirming one parked topic. If a family is parked with no implementation justified, pivot to a different residual family or stop with a clear blocked decision.',
     'If the selected target family lacks fresh artifacts, create the smallest focused diagnostic or benchmark sample needed for that family before returning blocked. Do not block solely because old artifacts were cleaned up.',
     `Target-family directive: prioritize ${target.selectedLabel}. ${target.selectedObjective}`,
+    renderCorpusEvolutionState(corpusState),
     target.cooledTopics.length
       ? `Cooldown directive: avoid these recently parked topics unless genuinely new evidence appears: ${target.cooledTopics.join(', ')}.`
       : 'Cooldown directive: no recently parked topics are currently excluded.',
@@ -345,7 +455,7 @@ function buildObjective(args: EvolveArgs, stage: number, target: TargetSelection
   return parts.join(' ');
 }
 
-function stageArgs(args: EvolveArgs, stage: number, target: TargetSelection): string[] {
+function stageArgs(args: EvolveArgs, stage: number, target: TargetSelection, corpusState: CorpusEvolutionState): string[] {
   const out = [
     '--continuous',
     '--stage', String(stage),
@@ -358,18 +468,23 @@ function stageArgs(args: EvolveArgs, stage: number, target: TargetSelection): st
     '--corpora', args.corpora,
     '--out-root', args.outRoot,
     '--xhigh-task-classes', args.xhighTaskClasses,
-    '--objective', buildObjective(args, stage, target),
+    '--objective', buildObjective(args, stage, target, corpusState),
   ];
   if (args.allowDirty) out.push('--allow-dirty');
   if (args.dryRun) out.push('--dry-run');
   return out;
 }
 
-async function runStageBatch(args: EvolveArgs, stage: number, target: TargetSelection): Promise<number> {
-  const childArgs = stageArgs(args, stage, target);
+async function runStageBatch(args: EvolveArgs, stage: number, target: TargetSelection, corpusState: CorpusEvolutionState): Promise<number> {
+  const childArgs = stageArgs(args, stage, target, corpusState);
   console.log('');
   console.log(`=== Evolve batch starting at Stage ${stage}; batch size ${args.batchSize} ===`);
   console.log(`Target family: ${target.selectedFamily} (${target.selectedLabel})`);
+  console.log(`Corpus loop: ${corpusState.policy}`);
+  if (corpusState.policy === 'corpus_loop') {
+    console.log(`Known holdout manifests: ${corpusState.knownHoldoutManifests.length}`);
+    console.log(`Discovery holdout root: ${corpusState.discoveryHoldoutRoot}`);
+  }
   if (target.cooledTopics.length) console.log(`Cooldown topics: ${target.cooledTopics.join(', ')}`);
   console.log(`Command: ./scripts/codex-stage.sh ${childArgs.map(quoteArg).join(' ')}`);
   if (args.dryRun) {
@@ -528,7 +643,9 @@ async function main(): Promise<void> {
     const startedAt = new Date().toISOString();
     const previousSummaries = await readLatestSummaries(args.outRoot, 16);
     const targetSelection = selectTargetFamily(args, previousSummaries);
-    const nextStage = await runStageBatch(args, stage, targetSelection);
+    const corpusEvolutionState = await discoverCorpusEvolutionState(args, protectedBaselinePreflight);
+    console.log(`Corpus state: ${renderCorpusEvolutionState(corpusEvolutionState)}`);
+    const nextStage = await runStageBatch(args, stage, targetSelection, corpusEvolutionState);
     const summaries = await readLatestSummaries(args.outRoot);
     await writeState(statePath, {
       updatedAt: new Date().toISOString(),
@@ -538,6 +655,7 @@ async function main(): Promise<void> {
       nextStage,
       args,
       protectedBaselinePreflight,
+      corpusEvolutionState,
       targetSelection,
       latestSummaries: summaries,
     });
