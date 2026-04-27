@@ -774,7 +774,7 @@ function rejectedPivotTopic(decision: StageDecision | null): string | null {
 function exhaustedPlateauDecision(decision: StageDecision | null): boolean {
   if (decision?.classification !== 'diagnostic_only') return false;
   const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
-  return /(?:candidate space exhausted|all (?:stable |bounded |safe )?(?:candidate|fixer|residual)s? (?:are )?(?:exhausted|classified|parked)|no bounded next diagnostic remains|no stable (?:safe )?(?:candidate|fixer) remains|every non-manual residual row is classified)/i.test(text)
+  return /(?:candidate space exhausted|plateau_reached_for_current_holdout|current holdout (?:has )?plateau(?:d|ed)?|all (?:stable |bounded |safe )?(?:candidate|fixer|residual)s? (?:are )?(?:exhausted|classified|parked)|no bounded next diagnostic remain(?:s|ed)?|no stable (?:safe )?(?:candidate|fixer) remain(?:s|ed)?|every non-manual residual row is classified)/i.test(text)
     && /(?:fresh|new v1|holdout|select|build|pivot|plateau|complete|no bounded next diagnostic)/i.test(text);
 }
 
