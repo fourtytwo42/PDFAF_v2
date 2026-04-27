@@ -24,7 +24,7 @@ const FAMILY_TOOLS: Record<StructuralRepairFamily, readonly string[]> = {
   tables: ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'],
   annotations: ['tag_unowned_annotations', 'normalize_annotation_tab_order', 'repair_native_link_structure'],
   tagged_content: ['synthesize_basic_structure_from_layout', 'artifact_repeating_page_furniture', 'repair_structure_conformance', 'wrap_singleton_orphan_mcid', 'remap_orphan_mcids_as_artifacts'],
-  headings: ['synthesize_basic_structure_from_layout', 'artifact_repeating_page_furniture', 'create_heading_from_visible_text_anchor', 'create_heading_from_ocr_page_shell_anchor', 'create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'],
+  headings: ['synthesize_basic_structure_from_layout', 'create_structure_from_degenerate_native_anchor', 'artifact_repeating_page_furniture', 'create_heading_from_visible_text_anchor', 'create_heading_from_ocr_page_shell_anchor', 'create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'],
 };
 
 const FAMILY_CATEGORIES: Record<StructuralRepairFamily, readonly CategoryKey[]> = {

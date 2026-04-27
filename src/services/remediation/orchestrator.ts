@@ -396,6 +396,7 @@ export function withHeadingTargetRef(
 const HEADING_STRUCTURE_TOOLS = new Set([
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
+  'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
@@ -634,6 +635,9 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
   if (key === 'title_language') return tools.has('set_document_title') || tools.has('set_document_language');
   if (key === 'heading_structure') {
     return tools.has('create_heading_from_candidate') ||
+      tools.has('create_structure_from_degenerate_native_anchor') ||
+      tools.has('create_heading_from_visible_text_anchor') ||
+      tools.has('create_heading_from_ocr_page_shell_anchor') ||
       tools.has('normalize_heading_hierarchy') ||
       tools.has('repair_structure_conformance') ||
       tools.has('synthesize_basic_structure_from_layout');
@@ -661,6 +665,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
     return tools.has('repair_native_reading_order') ||
       tools.has('normalize_annotation_tab_order') ||
       tools.has('artifact_repeating_page_furniture') ||
+      tools.has('create_structure_from_degenerate_native_anchor') ||
       tools.has('synthesize_basic_structure_from_layout');
   }
   if (key === 'form_accessibility') return tools.has('fill_form_field_tooltips');
@@ -1792,6 +1797,7 @@ interface RemediationState {
 }
 
 const STAGE35_STRUCTURAL_TOOLS = new Set([
+  'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
@@ -3276,6 +3282,7 @@ export async function runSingleTool(
       case 'set_link_annotation_contents':
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
+      case 'create_structure_from_degenerate_native_anchor':
       case 'create_heading_from_visible_text_anchor':
       case 'create_heading_from_ocr_page_shell_anchor':
       case 'create_heading_from_candidate':

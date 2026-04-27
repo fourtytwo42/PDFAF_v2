@@ -4896,6 +4896,46 @@ def trace_structure_main(pdf_path: str) -> int:
     return 0
 
 
+def stage131_shape_main(pdf_path: str) -> int:
+    try:
+        with pikepdf.open(pdf_path, suppress_warnings=True) as pdf:
+            sr = pdf.Root.get("/StructTreeRoot")
+            root_k_type = "missing"
+            parent_tree_nums = 0
+            if isinstance(sr, pikepdf.Dictionary):
+                k = sr.get("/K")
+                root_k_type = "array" if isinstance(k, pikepdf.Array) else "dict" if isinstance(k, pikepdf.Dictionary) else type(k).__name__
+                pt = sr.get("/ParentTree")
+                if isinstance(pt, pikepdf.Dictionary):
+                    nums = pt.get("/Nums")
+                    parent_tree_nums = len(nums) if isinstance(nums, pikepdf.Array) else 0
+            raw = b""
+            if len(pdf.pages) > 0:
+                raw = _read_page_contents_raw(pdf.pages[0].obj)
+            out = {
+                "structTreeRoot": isinstance(sr, pikepdf.Dictionary),
+                "rootKType": root_k_type,
+                "parentTreeNums": parent_tree_nums,
+                "page0BdcCount": len(re.findall(rb"\bBDC\b", raw)),
+                "page0McidCount": len(re.findall(rb"/MCID\s+\d+", raw)),
+                "page0BtCount": len(re.findall(rb"\bBT\b", raw)),
+                "page0EtCount": len(re.findall(rb"\bET\b", raw)),
+            }
+    except Exception as exc:
+        out = {
+            "structTreeRoot": False,
+            "rootKType": "unknown",
+            "parentTreeNums": 0,
+            "page0BdcCount": 0,
+            "page0McidCount": 0,
+            "page0BtCount": 0,
+            "page0EtCount": 0,
+            "error": str(exc),
+        }
+    print(json.dumps(out, ensure_ascii=False, default=str))
+    return 0
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: pdf_analysis_helper.py <pdf_path>"}))
@@ -7464,6 +7504,161 @@ def _op_create_heading_from_visible_text_anchor(pdf: pikepdf.Pdf, params: dict) 
     return new_elem is not None
 
 
+def _is_artifact_bdc_instruction(inst) -> bool:
+    try:
+        if str(inst.operator) != "BDC":
+            return False
+        operands = list(inst.operands)
+        return len(operands) >= 1 and str(operands[0]) == "/Artifact"
+    except Exception:
+        return False
+
+
+def _strip_enclosing_artifact_shell(insts: list) -> tuple[list, bool]:
+    """Remove one page-wide /Artifact BDC...EMC shell while preserving inner content."""
+    if len(insts) < 3 or not _is_artifact_bdc_instruction(insts[0]):
+        return insts, False
+    if str(insts[-1].operator) != "EMC":
+        return insts, False
+    depth = 0
+    for idx, inst in enumerate(insts):
+        op = str(inst.operator)
+        if op in ("BDC", "BMC"):
+            depth += 1
+        elif op == "EMC":
+            depth -= 1
+            if depth == 0 and idx != len(insts) - 1:
+                return insts, False
+            if depth < 0:
+                return insts, False
+    if depth != 0:
+        return insts, False
+    return insts[1:-1], True
+
+
+def _has_mcid_marked_content(insts: list) -> bool:
+    for inst in insts:
+        try:
+            if str(inst.operator) != "BDC":
+                continue
+            operands = list(inst.operands)
+            if len(operands) >= 2 and isinstance(operands[1], pikepdf.Dictionary) and operands[1].get("/MCID") is not None:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _op_create_structure_from_degenerate_native_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Build bounded structure for native PDFs whose current tree is only a shell."""
+    if _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("ocr_pdf_deferred")
+        return False
+    visible_text = re.sub(r"\s+", " ", str(params.get("text") or "").strip())
+    if _score_mcid_text_as_heading(visible_text, visible_text) is None:
+        _set_last_mutation_note("weak_visible_anchor_text")
+        return False
+    if _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0:
+        _set_last_mutation_note("heading_already_present")
+        return False
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_document_struct_elem")
+        return False
+    try:
+        existing_k = doc_elem.get("/K")
+        if isinstance(existing_k, pikepdf.Array) and any(_is_struct_elem_dict(ch) and _struct_elem_has_nonempty_children(ch) for ch in existing_k):
+            _set_last_mutation_note("existing_nonempty_structure")
+            return False
+        if isinstance(existing_k, pikepdf.Dictionary) and _struct_elem_has_nonempty_children(existing_k):
+            _set_last_mutation_note("existing_nonempty_structure")
+            return False
+    except Exception:
+        pass
+    pt = sr.get("/ParentTree")
+    if not isinstance(pt, pikepdf.Dictionary):
+        pt = pikepdf.Dictionary(Nums=pikepdf.Array([]))
+        sr["/ParentTree"] = pt
+    nums = pt.get("/Nums")
+    if not isinstance(nums, pikepdf.Array):
+        nums = pikepdf.Array([])
+        pt["/Nums"] = nums
+
+    page_children = pikepdf.Array([])
+    assigned_h1 = False
+    heading_count = 0
+    changed_pages = 0
+    stripped_pages = 0
+    skipped_mcid_pages = 0
+    pages_without_segments = 0
+
+    for page_idx, page in enumerate(pdf.pages):
+        page_obj = page.obj
+        try:
+            insts = list(pikepdf.parse_content_stream(page_obj))
+        except Exception:
+            pages_without_segments += 1
+            continue
+        if _has_mcid_marked_content(insts):
+            skipped_mcid_pages += 1
+            continue
+        work_insts, stripped = _strip_enclosing_artifact_shell(insts)
+        if stripped:
+            stripped_pages += 1
+        groups = _bt_et_text_groups(work_insts)
+        segments = [(start, end + 1, text) for start, end, text in groups if text or (end + 1) > start]
+        if not segments:
+            pages_without_segments += 1
+            continue
+        page_parent_tree, _page_key, _page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+        if page_parent_tree is None:
+            pages_without_segments += 1
+            continue
+        ok, _next_mcid, assigned_h1, heading_count, payload = _append_structured_segments_for_page(
+            pdf,
+            page_obj,
+            page_idx,
+            len(pdf.pages),
+            work_insts,
+            segments,
+            doc_elem,
+            page_parent_tree,
+            max(0, _page_max_mcid(page_obj) + 1),
+            assigned_h1,
+            heading_count,
+        )
+        if not ok:
+            pages_without_segments += 1
+            continue
+        sect, final_rewritten = payload
+        try:
+            page_obj["/Contents"] = pdf.make_stream(pikepdf.unparse_content_stream(final_rewritten))
+            page_obj["/Tabs"] = pikepdf.Name("/S")
+        except Exception as e:
+            print(f"[warn] create_structure_from_degenerate_native_anchor page {page_idx}: {e}", file=sys.stderr)
+            continue
+        page_children.append(sect)
+        changed_pages += 1
+
+    if len(page_children) == 0:
+        _set_last_mutation_note(
+            f"no_promotable_degenerate_native_pages(stripped:{stripped_pages},mcidSkipped:{skipped_mcid_pages},empty:{pages_without_segments})"
+        )
+        return False
+    doc_elem["/K"] = page_children
+    _op_normalize_heading_hierarchy(pdf, {})
+    _global_heading_cleanup(pdf)
+    _set_last_mutation_note("degenerate_native_structure_from_bt_et_applied")
+    _set_last_mutation_debug({
+        "visibleText": visible_text[:200],
+        "changedPages": changed_pages,
+        "strippedArtifactPages": stripped_pages,
+        "skippedMcidPages": skipped_mcid_pages,
+        "pagesWithoutSegments": pages_without_segments,
+    })
+    return True
+
+
 def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     """Promote /P, /Span, or /Div structure elements to /H1–/H6 (Office-tagged PDFs often use Span/Div).
 
@@ -8506,6 +8701,7 @@ def _stage35_annotation_snapshot(pdf: pikepdf.Pdf, _params: dict) -> dict:
 
 
 _STAGE35_HEADING_OPS = {
+    "create_structure_from_degenerate_native_anchor",
     "create_heading_from_visible_text_anchor",
     "create_heading_from_ocr_page_shell_anchor",
     "create_heading_from_candidate",
@@ -9358,6 +9554,7 @@ MUTATORS = {
     "set_document_language": _op_set_document_language,
     "set_pdfua_identification": _op_set_pdfua_identification,
     "synthesize_basic_structure_from_layout": _op_synthesize_basic_structure_from_layout,
+    "create_structure_from_degenerate_native_anchor": _op_create_structure_from_degenerate_native_anchor,
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_visible_text_anchor": _op_create_heading_from_visible_text_anchor,
     "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,
@@ -9638,6 +9835,8 @@ if __name__ == "__main__":
         raise SystemExit(mutate_main(argv[1]))
     if len(argv) >= 2 and argv[0] == "--trace-structure":
         raise SystemExit(trace_structure_main(argv[1]))
+    if len(argv) >= 2 and argv[0] == "--stage131-shape":
+        raise SystemExit(stage131_shape_main(argv[1]))
     if len(argv) >= 3 and argv[0] == "--dump-structure-page":
         page_i = int(argv[1])
         path = argv[2]

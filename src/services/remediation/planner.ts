@@ -44,6 +44,10 @@ import {
   selectOcrPageShellHeadingCandidate,
   shouldTryOcrPageShellHeadingRecovery,
 } from './ocrPageShellHeading.js';
+import {
+  selectDegenerateNativeAnchorCandidate,
+  shouldTryDegenerateNativeStructureRecovery,
+} from './degenerateNativeStructure.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -111,6 +115,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   ],
   post_bootstrap_heading_convergence: [
     'artifact_repeating_page_furniture',
+    'create_structure_from_degenerate_native_anchor',
     'create_heading_from_visible_text_anchor',
     'create_heading_from_candidate',
     'normalize_heading_hierarchy',
@@ -121,6 +126,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   ],
   untagged_structure_recovery: [
     'synthesize_basic_structure_from_layout',
+    'create_structure_from_degenerate_native_anchor',
     'repair_structure_conformance',
     'artifact_repeating_page_furniture',
   ],
@@ -209,8 +215,18 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
   post_bootstrap_heading_convergence: {
     allowedTools: ROUTE_TOOL_MAP.post_bootstrap_heading_convergence,
     prohibitedTools: ['set_figure_alt_text', 'mark_figure_decorative'],
-    failureTools: ['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'],
-    requiredFailureTools: ['create_heading_from_candidate'],
+    failureTools: [
+      'create_structure_from_degenerate_native_anchor',
+      'create_heading_from_visible_text_anchor',
+      'create_heading_from_candidate',
+      'normalize_heading_hierarchy',
+      'repair_structure_conformance',
+    ],
+    requiredFailureTools: [
+      'create_structure_from_degenerate_native_anchor',
+      'create_heading_from_visible_text_anchor',
+      'create_heading_from_candidate',
+    ],
   },
   figure_semantics: {
     allowedTools: ROUTE_TOOL_MAP.figure_semantics,
@@ -790,6 +806,16 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
   }
+  if (toolName === 'create_structure_from_degenerate_native_anchor') {
+    if (pdfClass === 'scanned') return false;
+    const depth = snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? (snapshot.structureTree ? 2 : 0);
+    const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
+    return snapshot.textCharCount > 0
+      && snapshot.structureTree !== null
+      && depth <= 1
+      && treeHeadingCount === 0
+      && snapshot.headings.length === 0;
+  }
   if (toolName === 'normalize_nested_figure_containers') {
     return pdfClass !== 'scanned' && snapshot.structureTree !== null && snapshot.figures.length > 0;
   }
@@ -957,7 +983,7 @@ export function isProtectedZeroHeadingConvergence(
 export function planForRemediation(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
-  alreadyApplied: AppliedRemediationTool[],
+  alreadyApplied: AppliedRemediationTool[] = [],
   toolOutcomeStore?: ToolOutcomeStore,
   includeOptionalRemediation = false,
 ): RemediationPlan {
@@ -1152,6 +1178,12 @@ export function planForRemediation(
     if (
       toolName === 'create_heading_from_ocr_page_shell_anchor' &&
       !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'create_structure_from_degenerate_native_anchor' &&
+      !(shouldTryDegenerateNativeStructureRecovery(analysis, snapshot) && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1380,6 +1412,32 @@ export function planForRemediation(
         rationale: 'Protected zero-heading convergence fallback when heading bootstrap candidate selection remains eligible.',
         route: 'post_bootstrap_heading_convergence',
       });
+    }
+  }
+
+  {
+    const toolName = 'create_structure_from_degenerate_native_anchor';
+    if (
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      shouldTryDegenerateNativeStructureRecovery(analysis, snapshot) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        typeof params['text'] === 'string' &&
+        params['text'].length > 0 &&
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 131 degenerate native structure recovery from a proven first-page text anchor.',
+          route: 'post_bootstrap_heading_convergence',
+        });
+      }
     }
   }
 
@@ -1710,6 +1768,18 @@ export function buildDefaultParams(
         page: candidate.page,
         ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
         ...(candidate.targetRef ? { targetRef: candidate.targetRef } : {}),
+        level: 1,
+        text: candidate.text.slice(0, 200),
+        source: candidate.source,
+        confidenceScore: candidate.score,
+      };
+    }
+    case 'create_structure_from_degenerate_native_anchor': {
+      if (!shouldTryDegenerateNativeStructureRecovery(analysis, snapshot)) return {};
+      const candidate = selectDegenerateNativeAnchorCandidate(analysis, snapshot);
+      if (!candidate) return {};
+      return {
+        page: candidate.page,
         level: 1,
         text: candidate.text.slice(0, 200),
         source: candidate.source,
