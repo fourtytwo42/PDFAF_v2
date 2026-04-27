@@ -25,8 +25,10 @@ flowchart TD
   R --> P
   S --> P
   P --> T{Continuous mode stop reason?}
-  T -- blocked/rejected/acceptance_ready/safe_to_implement --> U[Stop for human decision]
+  T -- clean rejected or soft blocked --> W[Inject pivot directive]
+  T -- dirty rejected/acceptance_ready/safe_to_implement/hard blocked --> U[Stop for human decision]
   T -- implemented or plateaued diagnostic_only --> V[Increment stage number]
+  W --> V
   V --> B
 ```
 

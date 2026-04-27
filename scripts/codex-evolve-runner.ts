@@ -722,6 +722,10 @@ function cooldownTopic(summary: StageSummary): string | null {
     && /(?:pivot to a different residual (?:family|branch)|pivot to another (?:target|residual) family|select a different (?:stable )?residual family|pivot away from|\bpark(?:ed)?\b|leave .* parked|wait for a fresh row|no repeatable .* rule was proven|no .* evidence-backed .* rule|did not justify (?:changing|a code change|any code change)|no safe .* behavior change|no safe .* change)/i.test(text)) {
     return topicFromText(text);
   }
+  if (summary.classification === 'rejected'
+    && /(?:pivot away from|pick a different|select a different|rejected after|candidate (?:was )?rejected|no safe general gain|no safe general rule|regress(?:ed|ion)|do not keep|was reverted|leaving no source changes|no source changes)/i.test(text)) {
+    return topicFromText(text);
+  }
   return null;
 }
 

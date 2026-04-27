@@ -33,6 +33,7 @@ interface StageDecision {
   classification?: string;
   summary?: string;
   next_action?: string;
+  stop_reason?: string;
 }
 
 interface ContinuousStop {
@@ -656,10 +657,17 @@ function softPivotBlockedTopic(decision: StageDecision | null): string | null {
   return topicFromText(text);
 }
 
+function rejectedPivotTopic(decision: StageDecision | null): string | null {
+  if (decision?.classification !== 'rejected') return null;
+  const text = `${decision.summary ?? ''}\n${decision.next_action ?? ''}\n${decision.stop_reason ?? ''}`;
+  if (!/(?:pivot away from|pick a different|select a different|rejected after|candidate (?:was )?rejected|no safe general gain|no safe general rule|regress(?:ed|ion)|do not keep|was reverted|leaving no source changes|no source changes)/i.test(text)) return null;
+  return topicFromText(text);
+}
+
 function pivotObjective(baseObjective: string, topic: string, count: number): string {
   return [
     baseObjective,
-    `Pivot directive: the last ${count} diagnostic-only stage(s) kept the ${topic} topic parked.`,
+    `Pivot directive: the last ${count} stage(s) parked or rejected the ${topic} topic.`,
     `Do not spend this stage reaffirming ${topic} unless genuinely new evidence is available.`,
     'Select a different residual family or benchmark/acceptance risk from the latest artifacts, such as runtime tail, protected parity, font/text extractability, figure/alt, table, heading, analyzer determinism, or visual stability.',
     'If no safe alternate target exists, return blocked with a concise reason instead of writing another parking note.',
@@ -738,6 +746,17 @@ async function main(): Promise<void> {
       pivotTopicForNext = { topic: softPivotTopic, count: 1 };
       console.log(`Continuing after soft blocked stage ${stageArgs.stage}; next stage will pivot away from ${softPivotTopic}.`);
       stop = null;
+    }
+    const rejectedTopic = rejectedPivotTopic(decision);
+    if (stop?.reason === 'rejected' && rejectedTopic) {
+      const dirtyAfterRejected = await trackedDirty();
+      if (dirtyAfterRejected) {
+        console.log(`Rejected stage ${stageArgs.stage} left tracked changes; stopping for cleanup before continuing.\n${dirtyAfterRejected}`);
+      } else {
+        pivotTopicForNext = { topic: rejectedTopic, count: 1 };
+        console.log(`Continuing after clean rejected stage ${stageArgs.stage}; next stage will pivot away from ${rejectedTopic}.`);
+        stop = null;
+      }
     }
     const topic = parkedTopic(decision);
     if (topic) {

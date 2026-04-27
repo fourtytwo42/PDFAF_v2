@@ -36,7 +36,7 @@ Use this when you want the coordinator to run the next stage automatically after
   --poll-seconds 30
 ```
 
-Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. When a blocked stage recommends pivoting, parks a topic, or finds no safe behavior change for that family, the runner continues and injects a pivot directive into the next stage objective. When diagnostic stages keep parking the same topic, the runner also injects a pivot directive. It stops only if the topic keeps repeating past `--parked-repeat-limit`, or on unapproved xhigh requests, `rejected`, `acceptance_ready`, hard `blocked`, repeated `safe_to_implement`, or missing/unparseable summaries.
+Continuous mode increments the stage number after a completed worker run. If a worker reports `blocked` or `safe_to_implement`, the runner reruns that same stage once with `--model-policy xhigh` only when the worker explicitly asks for xhigh and the requested work matches an approved xhigh task class. Use `--no-auto-escalate` to disable that behavior. When a blocked stage recommends pivoting, parks a topic, or finds no safe behavior change for that family, the runner continues and injects a pivot directive into the next stage objective. Clean rejected stages also continue with a pivot directive when the rejected candidate left no tracked source changes. When diagnostic stages keep parking the same topic, the runner also injects a pivot directive. It stops only if the topic keeps repeating past `--parked-repeat-limit`, or on unapproved xhigh requests, dirty `rejected`, `acceptance_ready`, hard `blocked`, repeated `safe_to_implement`, or missing/unparseable summaries.
 The `scripts/codex-stage.sh` wrapper runs the TypeScript runner under Node 22 directly, which avoids the pnpm unsupported-engine warning in the live terminal.
 
 ## Evolve Run
@@ -200,6 +200,7 @@ The runner:
 - passes an explicit Codex model and reasoning effort based on `--model-policy`;
 - reruns a blocked/safe-to-implement continuous stage once at xhigh only when the worker explicitly asks for xhigh and the task matches `--xhigh-task-classes`;
 - continues through soft blocked stages that recommend pivoting, park a topic, or find no safe behavior change for that family;
+- continues through clean rejected stages by pivoting away from the rejected topic, but stops when rejection leaves tracked source changes that need cleanup;
 - injects a pivot directive after repeated diagnostic-only parked decisions for one topic, then stops if repetition continues;
 - passes `schemas/codex-stage-decision.schema.json` as the final response contract;
 - writes prompt, JSONL event log, stderr, and final summary to `Output/agent-runs/`;
