@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 interface RunnerArgs {
@@ -34,6 +34,11 @@ interface StageDecision {
   summary?: string;
   next_action?: string;
   stop_reason?: string;
+}
+
+interface WorktreeSnapshot {
+  trackedDirty: string;
+  sourceStatusKeys: Set<string>;
 }
 
 interface ContinuousStop {
@@ -306,6 +311,95 @@ async function trackedDirty(): Promise<string> {
   const diff = await command('git', ['diff', '--name-only']);
   const cached = await command('git', ['diff', '--cached', '--name-only']);
   return [diff.stdout.trim(), cached.stdout.trim()].filter(Boolean).join('\n');
+}
+
+function isGeneratedOrPayloadPath(path: string): boolean {
+  return path.startsWith('Output/') ||
+    path.startsWith('Input/') ||
+    /\.(pdf|html|accreport|base64|png|jpg|jpeg)$/i.test(path);
+}
+
+function parsePorcelainStatus(text: string): Array<{ code: string; path: string }> {
+  const entries: Array<{ code: string; path: string }> = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim() || line.length < 4) continue;
+    const code = line.slice(0, 2);
+    const rawPath = line.slice(3).trim();
+    const path = rawPath.includes(' -> ') ? rawPath.split(' -> ').pop()!.trim() : rawPath;
+    entries.push({ code, path });
+  }
+  return entries;
+}
+
+async function sourceStatusEntries(): Promise<Array<{ code: string; path: string }>> {
+  const status = await command('git', ['status', '--porcelain', '--untracked-files=all']);
+  return parsePorcelainStatus(status.stdout)
+    .filter(entry => !isGeneratedOrPayloadPath(entry.path));
+}
+
+async function worktreeSnapshot(): Promise<WorktreeSnapshot> {
+  const [tracked, sourceEntries] = await Promise.all([trackedDirty(), sourceStatusEntries()]);
+  return {
+    trackedDirty: tracked,
+    sourceStatusKeys: new Set(sourceEntries.map(entry => `${entry.code}\t${entry.path}`)),
+  };
+}
+
+async function autoRestoreRejectedStage(before: WorktreeSnapshot): Promise<{ restored: string[]; removed: string[]; blockedReason?: string }> {
+  if (before.trackedDirty.trim()) {
+    return {
+      restored: [],
+      removed: [],
+      blockedReason: `tracked source changes existed before the stage:\n${before.trackedDirty.trim()}`,
+    };
+  }
+
+  const afterEntries = await sourceStatusEntries();
+  const newOrChangedEntries = afterEntries
+    .filter(entry => !before.sourceStatusKeys.has(`${entry.code}\t${entry.path}`));
+  const trackedPaths = [...new Set((await trackedDirty())
+    .split('\n')
+    .map(path => path.trim())
+    .filter(Boolean))];
+  const untrackedPaths = [...new Set(newOrChangedEntries
+    .filter(entry => entry.code === '??')
+    .map(entry => entry.path))];
+
+  if (trackedPaths.length) {
+    const restore = await command('git', ['restore', '--staged', '--worktree', '--', ...trackedPaths]);
+    if (restore.code !== 0) {
+      return {
+        restored: [],
+        removed: [],
+        blockedReason: `git restore failed:\n${restore.stderr.trim() || restore.stdout.trim()}`,
+      };
+    }
+  }
+
+  const removed: string[] = [];
+  for (const path of untrackedPaths) {
+    await rm(resolve(path), { recursive: true, force: true });
+    removed.push(path);
+  }
+
+  const remainingTracked = await trackedDirty();
+  const remaining = await sourceStatusEntries();
+  const remainingNew = remaining.filter(entry => !before.sourceStatusKeys.has(`${entry.code}\t${entry.path}`));
+  if (remainingTracked.trim() || remainingNew.length) {
+    return {
+      restored: trackedPaths,
+      removed,
+      blockedReason: [
+        remainingTracked.trim() ? `tracked changes remain:\n${remainingTracked.trim()}` : '',
+        remainingNew.length ? `source changes remain:\n${remainingNew.map(entry => `${entry.code} ${entry.path}`).join('\n')}` : '',
+      ].filter(Boolean).join('\n'),
+    };
+  }
+
+  return {
+    restored: trackedPaths,
+    removed,
+  };
 }
 
 async function codexPath(): Promise<string> {
@@ -730,6 +824,7 @@ async function main(): Promise<void> {
       pivotTopicForNext = null;
     }
     let alreadyEscalated = false;
+    const snapshotBeforeStage = await worktreeSnapshot();
     let { decision } = await runStage(stageArgs);
     let stop = shouldStopContinuous(stageArgs, decision);
     if (stop && canAutoEscalate(stageArgs, stop, alreadyEscalated)) {
@@ -750,8 +845,19 @@ async function main(): Promise<void> {
     const rejectedTopic = rejectedPivotTopic(decision);
     if (stop?.reason === 'rejected' && rejectedTopic) {
       const dirtyAfterRejected = await trackedDirty();
-      if (dirtyAfterRejected) {
-        console.log(`Rejected stage ${stageArgs.stage} left tracked changes; stopping for cleanup before continuing.\n${dirtyAfterRejected}`);
+      const sourceChangesAfterRejected = (await sourceStatusEntries())
+        .filter(entry => !snapshotBeforeStage.sourceStatusKeys.has(`${entry.code}\t${entry.path}`));
+      if (dirtyAfterRejected || sourceChangesAfterRejected.length) {
+        const restored = await autoRestoreRejectedStage(snapshotBeforeStage);
+        if (restored.blockedReason) {
+          console.log(`Rejected stage ${stageArgs.stage} left source changes and auto-restore was not safe; stopping for cleanup before continuing.\n${restored.blockedReason}`);
+        } else {
+          pivotTopicForNext = { topic: rejectedTopic, count: 1 };
+          console.log(`Auto-restored rejected stage ${stageArgs.stage} changes; next stage will pivot away from ${rejectedTopic}.`);
+          if (restored.restored.length) console.log(`Restored tracked paths:\n${restored.restored.join('\n')}`);
+          if (restored.removed.length) console.log(`Removed untracked source paths:\n${restored.removed.join('\n')}`);
+          stop = null;
+        }
       } else {
         pivotTopicForNext = { topic: rejectedTopic, count: 1 };
         console.log(`Continuing after clean rejected stage ${stageArgs.stage}; next stage will pivot away from ${rejectedTopic}.`);
