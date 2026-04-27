@@ -74,20 +74,23 @@ flowchart LR
   A --> C[Active v1 holdout batch]
   C --> D[Classify residual families]
   D --> E{Stable safe fixer?}
-  E -- Yes --> F[Implement one narrow general rule]
-  F --> G[Validate holdout improvement]
-  F --> H[Validate legacy non-regression]
-  G --> I{Both pass?}
-  H --> I
-  I -- Yes --> J[Commit and continue]
-  I -- No --> K[Tighten or revert]
-  E -- No --> L{Holdout plateau?}
-  L -- Yes --> M[Pull/select next v1 holdout]
-  L -- No --> N[Run focused diagnostics]
-  J --> D
-  K --> D
-  M --> C
-  N --> D
+  E -- Yes --> F{Repeat evidence present?}
+  F -- No --> G[Run bounded repeat/target diagnostic in same stage]
+  G --> D
+  F -- Yes --> H[Implement one narrow general rule]
+  H --> I[Validate holdout improvement]
+  H --> J[Validate legacy non-regression]
+  I --> K{Both pass?}
+  J --> K
+  K -- Yes --> L[Commit and continue]
+  K -- No --> M[Tighten or revert]
+  E -- No --> N{Holdout plateau?}
+  N -- Yes --> O[Pull/select next v1 holdout]
+  N -- No --> P[Run focused diagnostics]
+  L --> D
+  M --> D
+  O --> C
+  P --> D
 ```
 
 ## Stage Checklist
@@ -97,13 +100,14 @@ flowchart LR
 3. **Classify:** stable fix candidates vs analyzer volatility, manual/OCR policy debt, runtime tail, protected parity debt, controls.
 4. **Select:** one stable general family, or declare plateau and select/build a new v1 holdout.
 5. **Diagnose:** smallest target sample with controls, timelines, category deltas, raw evidence, and visual-risk signals.
-6. **Decide:** implement only with a proven safe general rule; otherwise park and report.
-7. **Implement:** one narrow criterion-driven change with tests, no filename/corpus-specific logic.
-8. **Focused Validate:** static/unit tests, target rows, controls, visual diff when needed.
-9. **Holdout Validate:** active v1 holdout or justified subset, with previous holdout wins preserved.
-10. **Legacy Validate:** protected legacy validation and Stage 41 gate for behavior changes when feasible.
-11. **Commit Or Reject:** source/docs/tests only, generated artifacts remain local.
-12. **Summarize:** evidence, commands, artifacts, gates, remaining debt, next stage.
+6. **Repeat Before Stopping:** if stable candidates exist and repeat evidence is bounded, run that repeat/target diagnostic in the same stage.
+7. **Decide:** implement only with a proven safe general rule; otherwise park and report.
+8. **Implement:** one narrow criterion-driven change with tests, no filename/corpus-specific logic.
+9. **Focused Validate:** static/unit tests, target rows, controls, visual diff when needed.
+10. **Holdout Validate:** active v1 holdout or justified subset, with previous holdout wins preserved.
+11. **Legacy Validate:** protected legacy validation and Stage 41 gate for behavior changes when feasible.
+12. **Commit Or Reject:** source/docs/tests only, generated artifacts remain local.
+13. **Summarize:** evidence, commands, artifacts, gates, remaining debt, next stage.
 
 ## Safety Gates
 
