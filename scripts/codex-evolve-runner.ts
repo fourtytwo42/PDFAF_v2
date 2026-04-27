@@ -429,8 +429,17 @@ async function discoverLatestHoldoutRuns(limit = 12): Promise<string[]> {
     .map(run => run.name);
 }
 
-async function discoverActiveHoldoutRun(): Promise<string | undefined> {
-  const outputDirs = await listMatchingDirs('Output', /^from_sibling_pdfaf_v1/, 20);
+function holdoutOutputRootForManifest(manifestPath: string | undefined): string | undefined {
+  if (!manifestPath?.startsWith('Input/')) return undefined;
+  const inputDir = manifestPath.split('/').slice(0, -1).join('/');
+  return inputDir ? inputDir.replace(/^Input\//, 'Output/') : undefined;
+}
+
+async function discoverActiveHoldoutRun(activeManifest?: string): Promise<string | undefined> {
+  const preferredRoot = holdoutOutputRootForManifest(activeManifest);
+  const outputDirs = preferredRoot && await pathExists(preferredRoot)
+    ? [preferredRoot]
+    : await listMatchingDirs('Output', /^from_sibling_pdfaf_v1/, 20);
   const runs: Array<{ name: string; mtimeMs: number }> = [];
   for (const dir of outputDirs) {
     for (const run of await listMatchingDirs(dir, /^run-stage\d+.*(?:baseline|full|edge-mix|holdout)/, 20)) {
@@ -495,12 +504,13 @@ async function discoverInterruptedAgentRuns(outRoot: string, limit = 8): Promise
 async function discoverCorpusEvolutionState(args: EvolveArgs, protectedBaseline: ProtectedBaselinePreflight): Promise<CorpusEvolutionState> {
   const knownHoldoutManifests = args.corpusLoop ? await discoverHoldoutManifests() : [];
   const latestHoldoutRuns = args.corpusLoop ? await discoverLatestHoldoutRuns(12) : [];
-  const activeHoldoutRun = args.corpusLoop ? await discoverActiveHoldoutRun() : undefined;
+  const activeHoldoutManifest = knownHoldoutManifests[0];
+  const activeHoldoutRun = args.corpusLoop ? await discoverActiveHoldoutRun(activeHoldoutManifest) : undefined;
   return {
     policy: args.corpusLoop ? 'corpus_loop' : 'disabled',
     legacyBaselineRun: protectedBaseline.effectivePath,
     knownHoldoutManifests,
-    activeHoldoutManifest: knownHoldoutManifests[0],
+    activeHoldoutManifest,
     latestLegacyRuns: args.corpusLoop
       ? await listMatchingDirs('Output/experiment-corpus-baseline', /^run-stage\d+.*(?:full|legacy|current)/, 8)
       : [],
