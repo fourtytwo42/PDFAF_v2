@@ -391,6 +391,25 @@ async function discoverHoldoutManifests(): Promise<string[]> {
   return manifests;
 }
 
+async function discoverLatestHoldoutRuns(limit = 12): Promise<string[]> {
+  const outputDirs = await listMatchingDirs('Output', /^from_sibling_pdfaf_v1/, 20);
+  const runs: Array<{ name: string; mtimeMs: number }> = [];
+  for (const dir of outputDirs) {
+    for (const run of await listMatchingDirs(dir, /^run-stage\d+/, limit)) {
+      try {
+        const info = await stat(run);
+        runs.push({ name: run, mtimeMs: info.mtimeMs });
+      } catch {
+        // Best-effort corpus state only.
+      }
+    }
+  }
+  return runs
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, limit)
+    .map(run => run.name);
+}
+
 async function discoverCorpusEvolutionState(args: EvolveArgs, protectedBaseline: ProtectedBaselinePreflight): Promise<CorpusEvolutionState> {
   return {
     policy: args.corpusLoop ? 'corpus_loop' : 'disabled',
@@ -400,13 +419,27 @@ async function discoverCorpusEvolutionState(args: EvolveArgs, protectedBaseline:
       ? await listMatchingDirs('Output/experiment-corpus-baseline', /^run-stage\d+.*(?:full|legacy|current)/, 8)
       : [],
     latestHoldoutRuns: args.corpusLoop
-      ? await listMatchingDirs('Output/from_sibling_pdfaf_v1_holdout_3', /^run-stage\d+/, 8)
+      ? await discoverLatestHoldoutRuns(12)
       : [],
     discoveryHoldoutRoot: args.discoveryHoldoutRoot,
     v1SourceRoot: args.v1SourceRoot,
     discoveryHoldoutSize: args.discoveryHoldoutSize,
     plateauAfterBatches: args.plateauAfterBatches,
   };
+}
+
+function renderPlateauDefinition(): string {
+  return [
+    'Plateau definition:',
+    'A stage may declare plateau only when all of these are true:',
+    'A. Active holdout and legacy protected baseline metrics are known or were intentionally refreshed/inspected.',
+    'B. Every non-manual residual row is classified as stable fixer candidate, analyzer volatility, protected parity debt, runtime tail, manual/OCR policy debt, already-good control, no-safe-candidate, or stable-engine-gain-below-target.',
+    'C. All stable fixer candidates in the selected family have either produced a safe implemented rule, or have bounded repeat/target evidence proving no safe general rule right now.',
+    'D. No bounded next diagnostic remains that could decide an implementation/rejection inside the current stage.',
+    'E. Prior named wins remain checked or explicitly scoped as unaffected: Stage 75 font gains, Stage 127/129/131 holdout gains, false-positive applied = 0, protected rows, runtime p95, page/text/tag/link stability, and visual stability for changed PDFs.',
+    'F. The next action is a real pivot: a different residual family, a fresh v1 holdout, analyzer-determinism project, runtime project, or a human acceptance decision.',
+    'If any criterion is missing and the needed evidence is locally bounded, continue the stage work instead of returning diagnostic_only.',
+  ].join(' ');
 }
 
 function renderCorpusEvolutionState(state: CorpusEvolutionState): string {
@@ -431,13 +464,14 @@ function renderStageChecklist(): string {
     '4. Select: pick one stable general target family; if no stable family remains, declare plateau and select/build a fresh v1 holdout rather than forcing a fixer.',
     '5. Diagnose: run the smallest target sample with controls and collect tool timelines, category deltas, analyzer evidence, link/font/text/page/tag signals, and visual-risk indicators.',
     '6. Repeat before stopping: if stable candidates exist and the missing evidence is bounded repeat/target validation, run that repeat diagnostic in this same stage before returning diagnostic_only or blocked. Do not advance the stage just because repeat evidence is missing.',
-    '7. Decide: implement only when the diagnostic proves a safe general rule; otherwise write a diagnostic report, park the debt, and pivot/stop.',
-    '8. Implement: make one narrow criterion-driven engine change with focused tests; never use publication-id, filename, corpus-label, scorer/gate semantic changes, or broad route guards unless explicitly authorized by evidence.',
-    '9. Focused validate: run static/unit tests, target rows, controls, and visual diff for changed PDFs or visual-risk mutations.',
-    '10. Holdout validate: run the active v1 holdout or the justified target subset; require target improvement or clear debt classification, false-positive applied = 0, bounded runtime, and preservation of previous holdout wins.',
-    '11. Legacy validate: for behavior changes, run legacy protected validation and Stage 41 gate when feasible; require protected non-regression, F count/runtime/mean/median within envelope, and preservation of Stage 75/127/129/131 wins.',
-    '12. Commit or reject: commit and push source/docs/tests only when clean; otherwise tighten or revert. Generated PDFs, benchmark artifacts, copied corpora, and Base64 stay local.',
-    '13. Summarize: record what changed, evidence, commands, artifacts, pass/fail gates, remaining debt, and the next stage recommendation.',
+    '7. Plateau gate: before returning diagnostic_only, prove the plateau definition is satisfied; otherwise continue diagnostics, implement, reject, or return blocked with the specific unbounded blocker.',
+    '8. Decide: implement only when the diagnostic proves a safe general rule; otherwise write a diagnostic report, park the debt, and pivot/stop.',
+    '9. Implement: make one narrow criterion-driven engine change with focused tests; never use publication-id, filename, corpus-label, scorer/gate semantic changes, or broad route guards unless explicitly authorized by evidence.',
+    '10. Focused validate: run static/unit tests, target rows, controls, and visual diff for changed PDFs or visual-risk mutations.',
+    '11. Holdout validate: run the active v1 holdout or the justified target subset; require target improvement or clear debt classification, false-positive applied = 0, bounded runtime, and preservation of previous holdout wins.',
+    '12. Legacy validate: for behavior changes, run legacy protected validation and Stage 41 gate when feasible; require protected non-regression, F count/runtime/mean/median within envelope, and preservation of Stage 75/127/129/131 wins.',
+    '13. Commit or reject: commit and push source/docs/tests only when clean; otherwise tighten or revert. Generated PDFs, benchmark artifacts, copied corpora, and Base64 stay local.',
+    '14. Summarize: record what changed, evidence, commands, artifacts, pass/fail gates, plateau status, remaining debt, and the next stage recommendation.',
   ].join(' ');
 }
 
@@ -448,6 +482,8 @@ function buildObjective(args: EvolveArgs, stage: number, target: TargetSelection
     'Every accepted behavior change must protect false-positive applied = 0, protected rows, F count, runtime p95, text extraction, structure/tag state, page count, and visual stability.',
     'Reject or revert candidates that overfit, broaden route guards without evidence, change scorer/gate semantics, or alter visible rendering.',
     'Default operating loop: establish the current baseline on the legacy protected corpus and active v1 holdout; classify stable residual failures; implement one narrow general improvement; validate against both the discovery holdout and the legacy protected corpus; repeat until that holdout plateaus, then select a fresh v1-derived holdout batch.',
+    'Do not consider a stage complete just because it produced a diagnostic. A stage is complete only when it lands a safe engine improvement, rejects a tested unsafe candidate, or satisfies the plateau definition below.',
+    renderPlateauDefinition(),
     'Treat v1-derived holdouts as discovery/generalization corpora, not release gates. The legacy protected corpus remains the regression gate for protected parity, speed, F count, and prior wins.',
     'When pulling a new v1 batch, prefer original/source PDFs, exclude all prior manifests and debug targets, stratify by failure family, cap runtime/size risk, keep files/artifacts local, and never commit PDFs/Base64/generated benchmark payloads.',
     'Do not build fixers on analyzer-volatility, manual/scanned policy debt, or rows without a stable safe candidate. Park those explicitly and pivot to stable residuals or a new holdout.',
