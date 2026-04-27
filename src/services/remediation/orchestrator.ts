@@ -61,6 +61,7 @@ import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
+import { shouldTryOcrPageShellHeadingRecovery } from './ocrPageShellHeading.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -396,6 +397,7 @@ const HEADING_STRUCTURE_TOOLS = new Set([
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
   'create_heading_from_visible_text_anchor',
+  'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
 ]);
@@ -1791,6 +1793,7 @@ interface RemediationState {
 
 const STAGE35_STRUCTURAL_TOOLS = new Set([
   'create_heading_from_visible_text_anchor',
+  'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
   'repair_structure_conformance',
@@ -2386,6 +2389,59 @@ async function applyGuardedPostPass(args: {
         outcome: 'rejected',
         details: enrichDetailsWithReplayState(
           `local_font_substitution_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},scoreImproved:${scoreImproved},textCategoryImproved:${textCategoryImproved})`,
+          {
+            beforeAnalysis: currentAnalysis,
+            beforeSnapshot: currentSnapshot,
+            afterAnalysis: analyzed.result,
+            afterSnapshot: analyzed.snapshot,
+          },
+        ),
+        durationMs,
+        source: 'post_pass',
+      });
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'rejected',
+      });
+      return {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        accepted: false,
+      };
+    }
+  }
+  if (toolName === 'create_heading_from_ocr_page_shell_anchor') {
+    const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
+    const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
+    const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
+    const taggedLost = currentSnapshot.isTagged === true && analyzed.snapshot.isTagged !== true;
+    const linksDropped = analyzed.snapshot.links.length < currentSnapshot.links.length;
+    const beforeHeading = categoryScore(currentAnalysis, 'heading_structure') ?? 0;
+    const afterHeading = categoryScore(analyzed.result, 'heading_structure') ?? 0;
+    const invalidRewrite =
+      analyzed.snapshot.pageCount !== currentSnapshot.pageCount ||
+      textDropped > textDropLimit ||
+      structureLost ||
+      taggedLost ||
+      linksDropped ||
+      afterHeading <= beforeHeading ||
+      analyzed.result.score < currentAnalysis.score;
+    if (invalidRewrite) {
+      appliedTools.push({
+        toolName,
+        stage,
+        round,
+        scoreBefore: currentAnalysis.score,
+        scoreAfter: currentAnalysis.score,
+        delta: 0,
+        outcome: 'rejected',
+        details: enrichDetailsWithReplayState(
+          `ocr_page_shell_heading_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},taggedLost:${taggedLost},links:${currentSnapshot.links.length}->${analyzed.snapshot.links.length},heading:${beforeHeading}->${afterHeading},score:${currentAnalysis.score}->${analyzed.result.score})`,
           {
             beforeAnalysis: currentAnalysis,
             beforeSnapshot: currentSnapshot,
@@ -3221,6 +3277,7 @@ export async function runSingleTool(
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
       case 'create_heading_from_visible_text_anchor':
+      case 'create_heading_from_ocr_page_shell_anchor':
       case 'create_heading_from_candidate':
       case 'normalize_heading_hierarchy':
       case 'normalize_nested_figure_containers':
@@ -3372,6 +3429,76 @@ async function applyAccessibilityStructureEnsure(args: {
   }
 
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
+}
+
+async function applyOcrPageShellHeadingPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
+  const { filename, signal, round, protectedBaseline } = args;
+  const toolName = 'create_heading_from_ocr_page_shell_anchor';
+  if (!shouldTryOcrPageShellHeadingRecovery(currentAnalysis, currentSnapshot)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const params = buildDefaultParams(toolName, currentAnalysis, currentSnapshot);
+  if (
+    typeof params['text'] !== 'string' ||
+    params['text'].trim().length === 0 ||
+    typeof params['mcid'] !== 'number'
+  ) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const stageStarted = performance.now();
+  const { buffer: next, result } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: toolName, params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes(toolName)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const accepted = await applyGuardedPostPass({
+    filename,
+    toolName,
+    stage: 11,
+    round,
+    details: pythonMutationDetails(result, toolName) ?? 'stage129_ocr_page_shell_heading_anchor',
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer: next,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-ocr-heading',
+    protectedBaseline,
+  });
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 11,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: accepted.analysis.runtimeSummary?.totalMs ?? accepted.analysis.analysisDurationMs,
+    });
+  }
+  currentBuffer = accepted.buffer;
+  currentAnalysis = accepted.analysis;
+  currentSnapshot = accepted.snapshot;
+  return {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    accepted: accepted.accepted,
+  };
 }
 
 /** Metadata, bookmarks, optional font embed — shared by main remediate and playbook replay. */
@@ -3914,6 +4041,18 @@ export async function executePlaybook(
     currentBuffer = st0.buffer;
     currentAnalysis = st0.analysis;
     currentSnapshot = st0.snapshot;
+    const ocrHeading0 = await applyOcrPageShellHeadingPostPass({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = ocrHeading0.buffer;
+    currentAnalysis = ocrHeading0.analysis;
+    currentSnapshot = ocrHeading0.snapshot;
     if (hasAcrobatAltOwnershipRisk(currentSnapshot)) {
       const alt0 = await applyPostRemediationAltRepair(
         currentBuffer,
@@ -4077,6 +4216,18 @@ export async function executePlaybook(
     currentBuffer = st.buffer;
     currentAnalysis = st.analysis;
     currentSnapshot = st.snapshot;
+    const ocrHeading = await applyOcrPageShellHeadingPostPass({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = ocrHeading.buffer;
+    currentAnalysis = ocrHeading.analysis;
+    currentSnapshot = ocrHeading.snapshot;
   }
 
   {
@@ -4961,6 +5112,20 @@ export async function remediatePdf(
     currentBuffer = st.buffer;
     currentAnalysis = st.analysis;
     currentSnapshot = st.snapshot;
+    const ocrHeading = await applyOcrPageShellHeadingPostPass({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = ocrHeading.buffer;
+    currentAnalysis = ocrHeading.analysis;
+    currentSnapshot = ocrHeading.snapshot;
     await rememberProtectedRunBestState('ensure_accessibility_tagging');
   }
 

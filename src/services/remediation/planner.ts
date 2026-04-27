@@ -40,6 +40,10 @@ import {
   selectVisibleHeadingAnchorCandidate,
   shouldTryVisibleHeadingAnchorRecovery,
 } from './visibleHeadingAnchor.js';
+import {
+  selectOcrPageShellHeadingCandidate,
+  shouldTryOcrPageShellHeadingRecovery,
+} from './ocrPageShellHeading.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -146,6 +150,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   font_ocr_repair: [
     'ocr_scanned_pdf',
     'tag_ocr_text_blocks',
+    'create_heading_from_ocr_page_shell_anchor',
     'tag_native_text_blocks',
     'mark_untagged_content_as_artifact',
   ],
@@ -781,6 +786,10 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && (snapshot.mcidTextSpans?.length ?? 0) > 0;
   }
+  if (toolName === 'create_heading_from_ocr_page_shell_anchor') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
+  }
   if (toolName === 'normalize_nested_figure_containers') {
     return pdfClass !== 'scanned' && snapshot.structureTree !== null && snapshot.figures.length > 0;
   }
@@ -1037,6 +1046,7 @@ export function planForRemediation(
     : [];
   const zeroHeadingRecovery = classifyZeroHeadingRecovery(analysis, snapshot);
   const visibleHeadingAnchorRecoveryActive = shouldTryVisibleHeadingAnchorRecovery(analysis, snapshot);
+  const ocrPageShellHeadingRecoveryActive = shouldTryOcrPageShellHeadingRecovery(analysis, snapshot);
   const headingCreateRecoveryActive =
     zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
     zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
@@ -1136,6 +1146,12 @@ export function planForRemediation(
     if (
       toolName === 'create_heading_from_visible_text_anchor' &&
       !(visibleHeadingAnchorRecoveryActive && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'create_heading_from_ocr_page_shell_anchor' &&
+      !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1388,6 +1404,33 @@ export function planForRemediation(
           params,
           rationale: 'Stage 127 visible-anchor zero-heading recovery from a proven first-page content anchor.',
           route: 'post_bootstrap_heading_convergence',
+        });
+      }
+    }
+  }
+
+  {
+    const toolName = 'create_heading_from_ocr_page_shell_anchor';
+    if (
+      ocrPageShellHeadingRecoveryActive &&
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        typeof params['text'] === 'string' &&
+        params['text'].length > 0 &&
+        typeof params['mcid'] === 'number' &&
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 129 OCR page-shell heading recovery from a proven first-page OCR content anchor.',
+          route: 'font_ocr_repair',
         });
       }
     }
@@ -1667,6 +1710,19 @@ export function buildDefaultParams(
         page: candidate.page,
         ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
         ...(candidate.targetRef ? { targetRef: candidate.targetRef } : {}),
+        level: 1,
+        text: candidate.text.slice(0, 200),
+        source: candidate.source,
+        confidenceScore: candidate.score,
+      };
+    }
+    case 'create_heading_from_ocr_page_shell_anchor': {
+      const candidate = selectOcrPageShellHeadingCandidate(analysis, snapshot);
+      if (!candidate) return {};
+      return {
+        page: candidate.page,
+        mcid: candidate.mcid,
+        mcids: candidate.mcids,
         level: 1,
         text: candidate.text.slice(0, 200),
         source: candidate.source,

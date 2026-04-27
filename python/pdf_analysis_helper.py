@@ -6949,6 +6949,61 @@ def _find_mcid_owner_in_struct(pdf: pikepdf.Pdf, mcid: int):
     return None, None
 
 
+def _elem_explicit_page_number(elem, page_map: dict) -> int | None:
+    try:
+        pg = elem.get("/Pg")
+        if pg is None:
+            return None
+        objid = pg.objgen[0]
+        return page_map.get(objid)
+    except Exception:
+        return None
+
+
+def _elem_directly_references_mcid(elem, mcid: int) -> bool:
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return False
+    if isinstance(k, (int, pikepdf.Integer)) and int(k) == int(mcid):
+        return True
+    if isinstance(k, pikepdf.Array):
+        for ch in k:
+            if isinstance(ch, (int, pikepdf.Integer)) and int(ch) == int(mcid):
+                return True
+            if isinstance(ch, pikepdf.Dictionary):
+                try:
+                    if ch.get("/Type") == pikepdf.Name("/MCR"):
+                        mid = ch.get("/MCID")
+                        if isinstance(mid, (int, pikepdf.Integer)) and int(mid) == int(mcid):
+                            return True
+                except Exception:
+                    pass
+    return False
+
+
+def _find_mcid_owner_in_struct_on_page(pdf: pikepdf.Pdf, page_idx: int, mcid: int):
+    """Return the explicit-page owner for a direct MCID reference.
+
+    OCRmyPDF page-shell PDFs usually reuse low MCID numbers on every page. The
+    older owner lookup is intentionally page-agnostic, so the OCR heading path
+    uses this stricter page-aware helper to avoid moving content from another
+    page with the same MCID.
+    """
+    page_map = build_page_map(pdf)
+    try:
+        for elem in _iter_struct_elems(pdf):
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            if _elem_explicit_page_number(elem, page_map) != int(page_idx):
+                continue
+            if _elem_directly_references_mcid(elem, mcid):
+                return elem
+    except Exception:
+        pass
+    return None
+
+
 def _synthesize_heading_from_page_mcid(
     pdf: pikepdf.Pdf,
     sr,
@@ -7216,6 +7271,150 @@ def _synthesize_heading_from_specific_mcid(
         "visibleText": text[:200],
     })
     return new_elem, "synthesized_heading_from_visible_mcid_anchor"
+
+
+def _is_ocr_heading_anchor_content_role(role: str | None) -> bool:
+    return (role or "").upper() in {"P", "SPAN", "H", "H1", "H2", "H3"}
+
+
+def _synthesize_heading_from_ocr_page_shell_mcids(
+    pdf: pikepdf.Pdf,
+    sr,
+    doc_elem,
+    page_idx: int,
+    mcids: list[int],
+    level: int,
+    visible_text: str,
+):
+    """Create one /H1 from a title-like OCRmyPDF page-shell marked-content span."""
+    if page_idx != 0:
+        return None, "non_first_page_anchor_rejected"
+    text = re.sub(r"[\x00-\x1f\x7f]+", "", str(visible_text or ""))
+    text = re.sub(r"\s+", " ", text.strip())
+    if not text:
+        return None, "missing_visible_anchor_text"
+    if _score_mcid_text_as_heading(text, text) is None:
+        return None, "weak_visible_anchor_text"
+    if _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0:
+        return None, "heading_already_present"
+    clean_mcids = sorted({int(m) for m in mcids if isinstance(m, int) or str(m).strip().isdigit()})
+    if not clean_mcids:
+        return None, "missing_ocr_mcid_anchor"
+    if len(clean_mcids) > 24:
+        return None, "too_many_ocr_heading_mcids"
+    try:
+        page_obj = pdf.pages[page_idx].obj
+    except Exception:
+        return None, "page_unavailable"
+    if not isinstance(page_obj, pikepdf.Dictionary):
+        return None, "page_not_dict"
+    try:
+        raw = _read_page_contents_raw(page_obj)
+        page_mcids = {int(match.group(1)) for match in MCID_OP_RE.finditer(raw)}
+    except Exception:
+        return None, "page_content_unreadable"
+    if any(mcid not in page_mcids for mcid in clean_mcids):
+        return None, "mcid_not_found_on_page"
+
+    owners = []
+    roles = []
+    for mcid in clean_mcids:
+        role = _role_tag_for_page_mcid(pdf, page_idx, mcid)
+        if not _is_ocr_heading_anchor_content_role(role):
+            return None, "mcid_role_not_ocr_text"
+        owner = _find_mcid_owner_in_struct_on_page(pdf, page_idx, mcid)
+        if owner is None:
+            return None, "mcid_owner_not_found"
+        owners.append((mcid, owner))
+        roles.append(role)
+
+    for mcid, owner in owners:
+        if not _detach_direct_mcid_from_owner(owner, mcid):
+            return None, "failed_to_detach_mcid"
+
+    tag = "/H1" if level == 1 else f"/H{level}"
+    try:
+        if len(clean_mcids) == 1:
+            heading_k = pikepdf.Integer(int(clean_mcids[0]))
+        else:
+            heading_k = pikepdf.Array([pikepdf.Integer(int(mcid)) for mcid in clean_mcids])
+        new_elem = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name(tag),
+            P=doc_elem,
+            Pg=page_obj,
+            K=heading_k,
+            T=_pdf_text_string(text, 500),
+        ))
+    except Exception:
+        return None, "failed_to_create_heading_elem"
+    if not _append_struct_child(doc_elem, new_elem):
+        return None, "failed_to_append_to_document"
+    try:
+        arr, _page_key, _pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+        if isinstance(arr, pikepdf.Array):
+            for mcid in clean_mcids:
+                _set_page_parent_tree_mcid(arr, int(mcid), new_elem)
+    except Exception:
+        pass
+    _set_last_mutation_debug({
+        "page": int(page_idx),
+        "mcid": int(clean_mcids[0]),
+        "mcids": clean_mcids,
+        "contentRole": roles[0] if roles else None,
+        "contentRoles": sorted({r for r in roles if r}),
+        "visibleText": text[:200],
+    })
+    return new_elem, "synthesized_ocr_heading_from_visible_mcid_anchor"
+
+
+def _op_create_heading_from_ocr_page_shell_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
+    if not _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("non_ocr_pdf")
+        return False
+    try:
+        level = int(params.get("level", 1))
+    except (TypeError, ValueError):
+        level = 1
+    level = max(1, min(level, 6))
+    try:
+        page_idx = int(params.get("page", 0))
+    except (TypeError, ValueError):
+        page_idx = 0
+    raw_mcids = params.get("mcids")
+    mcids: list[int] = []
+    if isinstance(raw_mcids, list):
+        for raw_mcid in raw_mcids:
+            try:
+                mcids.append(int(raw_mcid))
+            except (TypeError, ValueError):
+                pass
+    if not mcids:
+        try:
+            mcid_param = params.get("mcid")
+            if mcid_param is not None:
+                mcids = [int(mcid_param)]
+        except (TypeError, ValueError):
+            mcids = []
+    visible_text = str(params.get("text") or "").strip()
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+    if not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_document_struct_elem")
+        return False
+    new_elem, note = _synthesize_heading_from_ocr_page_shell_mcids(
+        pdf,
+        sr,
+        doc_elem,
+        page_idx,
+        mcids,
+        level,
+        visible_text,
+    )
+    _set_last_mutation_note(note)
+    return new_elem is not None
 
 
 def _op_create_heading_from_visible_text_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
@@ -8308,6 +8507,7 @@ def _stage35_annotation_snapshot(pdf: pikepdf.Pdf, _params: dict) -> dict:
 
 _STAGE35_HEADING_OPS = {
     "create_heading_from_visible_text_anchor",
+    "create_heading_from_ocr_page_shell_anchor",
     "create_heading_from_candidate",
     "normalize_heading_hierarchy",
     "repair_structure_conformance",
@@ -9160,6 +9360,7 @@ MUTATORS = {
     "synthesize_basic_structure_from_layout": _op_synthesize_basic_structure_from_layout,
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_visible_text_anchor": _op_create_heading_from_visible_text_anchor,
+    "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,
     "create_heading_from_candidate": _op_create_heading_from_candidate,
     "set_figure_alt_text": _op_set_figure_alt_text,
     "retag_as_figure": _op_retag_as_figure,

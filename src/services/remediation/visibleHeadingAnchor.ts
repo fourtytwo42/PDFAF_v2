@@ -99,6 +99,10 @@ function rejectWeakVisibleTitle(value: string, filename: string): boolean {
   return false;
 }
 
+export function isWeakVisibleHeadingAnchorText(value: string, filename = ''): boolean {
+  return rejectWeakVisibleTitle(value, filename);
+}
+
 function splitLikelyTitlePrefix(firstPageText: string): string {
   let text = normalizeText(firstPageText);
   const splitters = [

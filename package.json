@@ -51,6 +51,7 @@
     "benchmark:stage126-report": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage126-holdout-generalization-report.ts",
     "benchmark:stage127-zero-heading-anchor": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage127-zero-heading-anchor-diagnostic.ts",
     "benchmark:stage128-protected-closeout": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage128-protected-reanalysis-closeout.ts",
+    "benchmark:stage129-ocr-page-shell": "npx -y node@22 /usr/bin/pnpm exec tsx scripts/stage129-ocr-page-shell-diagnostic.ts",
     "agent:improve-accessibility": "tsx scripts/codex-stage-runner.ts",
     "agent:continuous": "tsx scripts/codex-stage-runner.ts --continuous",
     "agent:dry-run": "tsx scripts/codex-stage-runner.ts --dry-run",
