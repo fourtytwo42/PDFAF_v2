@@ -426,6 +426,104 @@ function mutationTargetRef(details: PythonMutationDetailPayload | null | undefin
   return null;
 }
 
+function attemptedMutationRefs(applied: AppliedRemediationTool[], toolName: string): Set<string> {
+  return new Set(
+    applied
+      .filter(row => row.toolName === toolName)
+      .map(row => mutationTargetRef(parseMutationDetails(row.details)))
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+  );
+}
+
+function safeCheckerVisibleMissingAltTargets(
+  snapshot: DocumentSnapshot,
+  attemptedRefs = new Set<string>(),
+): NonNullable<DocumentSnapshot['checkerFigureTargets']> {
+  return sortFigureTargets(
+    (snapshot.checkerFigureTargets ?? []).filter(target =>
+      target.reachable &&
+      target.directContent &&
+      !target.isArtifact &&
+      !target.hasAlt &&
+      typeof target.structRef === 'string' &&
+      target.structRef.length > 0 &&
+      !attemptedRefs.has(target.structRef) &&
+      isFigureRole(target.resolvedRole ?? target.role)
+    ),
+  );
+}
+
+function safeRoleMapRetagTargets(
+  snapshot: DocumentSnapshot,
+  attemptedRefs = new Set<string>(),
+): DocumentSnapshot['figures'] {
+  return sortFigureTargets(
+    snapshot.figures.filter(figure =>
+      !figure.isArtifact &&
+      !figure.hasAlt &&
+      typeof figure.structRef === 'string' &&
+      figure.structRef.length > 0 &&
+      !attemptedRefs.has(figure.structRef) &&
+      figure.reachable === true &&
+      isFigureRole(figure.role) &&
+      typeof figure.rawRole === 'string' &&
+      figure.rawRole.length > 0 &&
+      !isFigureRole(figure.rawRole) &&
+      (figure.directContent === true || (figure.subtreeMcidCount ?? 0) > 0)
+    ),
+  );
+}
+
+export function shouldAllowStage146FigureAltContinuation(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+): boolean {
+  if (analysis.score >= 90) return false;
+  if ((analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
+  if (successfulApplyCount(alreadyApplied, 'set_figure_alt_text') < DEFAULT_FIGURE_ALT_TARGETS_PER_RUN) return false;
+  const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'set_figure_alt_text');
+  return safeCheckerVisibleMissingAltTargets(snapshot, attemptedRefs).length > 0;
+}
+
+export function maxFigureAltTargetsForRun(
+  analysis?: AnalysisResult,
+  snapshot?: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+  options: { protectedBaselineActive?: boolean } = {},
+): number {
+  if (options.protectedBaselineActive) return DEFAULT_FIGURE_ALT_TARGETS_PER_RUN;
+  if (analysis && snapshot && shouldAllowStage146FigureAltContinuation(analysis, snapshot, alreadyApplied)) {
+    return STAGE146_FIGURE_ALT_TARGETS_PER_RUN;
+  }
+  return DEFAULT_FIGURE_ALT_TARGETS_PER_RUN;
+}
+
+export function shouldAllowStage146RoleMapRetagContinuation(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+): boolean {
+  if (analysis.score >= 90) return false;
+  if ((analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
+  if (successfulApplyCount(alreadyApplied, 'retag_as_figure') < DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN) return false;
+  const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  return safeRoleMapRetagTargets(snapshot, attemptedRefs).length > 0;
+}
+
+function maxRetagAsFigureTargetsForRun(
+  analysis?: AnalysisResult,
+  snapshot?: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+): number {
+  if (analysis && snapshot && shouldAllowStage146RoleMapRetagContinuation(analysis, snapshot, alreadyApplied)) {
+    return STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
+  }
+  return DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN;
+}
+
 function isBlockedHeadingNoEffect(details: PythonMutationDetailPayload | null | undefined): boolean {
   if (!details) return false;
   if (headingInvariantImproved(details)) return false;
@@ -739,6 +837,11 @@ function sortFigureTargets<T extends { page: number; structRef?: string }>(targe
   return [...targets].sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
 }
 
+const DEFAULT_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
+export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 5);
+const DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN = 2;
+const STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN = 3;
+
 export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
   const metaTitle = snapshot.metadata.title?.trim();
   if (metaTitle && !isFilenameLikeTitle(metaTitle)) return metaTitle;
@@ -762,12 +865,23 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
 }
 
 /** One-shot tools: skip after first success. Figure alt/decorative + table headers: repeat until cap or no targets. */
-function shouldSkipAfterSuccessfulApply(toolName: string, applied: AppliedRemediationTool[]): boolean {
+function shouldSkipAfterSuccessfulApply(
+  toolName: string,
+  applied: AppliedRemediationTool[],
+  analysis?: AnalysisResult,
+  snapshot?: DocumentSnapshot,
+): boolean {
   if (toolName === 'set_figure_alt_text' || toolName === 'mark_figure_decorative') {
-    return successfulApplyCount(applied, toolName) >= Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
+    const cap = toolName === 'set_figure_alt_text'
+      ? maxFigureAltTargetsForRun(analysis, snapshot, applied)
+      : DEFAULT_FIGURE_ALT_TARGETS_PER_RUN;
+    return successfulApplyCount(applied, toolName) >= cap;
   }
   if (toolName === 'normalize_nested_figure_containers' || toolName === 'canonicalize_figure_alt_ownership' || toolName === 'retag_as_figure') {
-    return successfulApplyCount(applied, toolName) >= 2;
+    const cap = toolName === 'retag_as_figure'
+      ? maxRetagAsFigureTargetsForRun(analysis, snapshot, applied)
+      : DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN;
+    return successfulApplyCount(applied, toolName) >= cap;
   }
   // Stage 43 table tools target one table per call and stay bounded to two table targets.
   if (toolName === 'normalize_table_structure' || toolName === 'set_table_header_cells') {
@@ -1394,7 +1508,7 @@ export function planForRemediation(
         addSkipped(toolName, 'not_applicable');
         continue;
       }
-      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) {
+      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) {
         addSkipped(toolName, 'already_succeeded');
         continue;
       }
@@ -1639,7 +1753,7 @@ export function planForRemediation(
         addSkipped(toolName, 'not_applicable');
         continue;
       }
-      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) {
+      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) {
         addSkipped(toolName, 'already_succeeded');
         continue;
       }
@@ -1670,7 +1784,7 @@ export function planForRemediation(
     for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'retag_as_figure']) {
       if (toolSet.has(toolName)) continue;
       if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) continue;
-      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied)) continue;
+      if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) continue;
       const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
       if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) continue;
       toolSet.set(toolName, {

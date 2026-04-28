@@ -2,7 +2,18 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
-import { buildDefaultParams, classifyStage43TableFailure, classifyStage44FigureFailure, deriveFailureDisposition, isToolAllowedByRouteContract, planForRemediation, routeContractFor } from '../../src/services/remediation/planner.js';
+import {
+  buildDefaultParams,
+  classifyStage43TableFailure,
+  classifyStage44FigureFailure,
+  deriveFailureDisposition,
+  isToolAllowedByRouteContract,
+  maxFigureAltTargetsForRun,
+  planForRemediation,
+  routeContractFor,
+  shouldAllowStage146FigureAltContinuation,
+  shouldAllowStage146RoleMapRetagContinuation,
+} from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { classifyZeroHeadingRecovery } from '../../src/services/remediation/headingRecovery.js';
 import { score } from '../../src/services/scorer/scorer.js';
@@ -1789,6 +1800,182 @@ describe('planForRemediation', () => {
       structRef: '4_0',
       altText: 'Illustration (page 2)',
     });
+  });
+
+  it('continues figure alt assignment to two additional safe checker-visible targets for Stage 146 tails', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+      figures: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        rawRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 1,
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 20 });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: {
+          targetRef: `${index}_0`,
+          targetReachable: true,
+          targetIsFigureAfter: true,
+          targetHasAltAfter: true,
+        },
+        structuralBenefits: { figureAltAttachedToReachableFigure: true },
+      }),
+    }));
+
+    expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(true);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(5);
+    expect(buildDefaultParams('set_figure_alt_text', analysis, snap, applied)).toEqual({
+      structRef: '4_0',
+      altText: 'Illustration (page 4)',
+    });
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('set_figure_alt_text');
+  });
+
+  it('keeps Stage 146 figure alt continuation out of protected-baseline runs', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 20 });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied, { protectedBaselineActive: true })).toBe(3);
+  });
+
+  it('does not enable Stage 146 figure alt continuation on already high-score rows', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        structRef: '4_0',
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', 'Figure@4_0'],
+      }],
+    };
+    const lowAlt = withCategoryScores(score(snap, META), { alt_text: 20 });
+    const analysis = { ...lowAlt, score: 95 };
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 95,
+      scoreAfter: 95,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(false);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(3);
+  });
+
+  it('allows one extra safe role-map retag only after the normal retag cap is reached', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      figures: [1, 2, 3].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        rawRole: 'InlineShape',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 1,
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 20 });
+    const applied: AppliedRemediationTool[] = [1, 2].map(index => ({
+      toolName: 'retag_as_figure',
+      stage: 6,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({
+        outcome: 'applied',
+        invariants: { targetRef: `${index}_0`, targetReachable: true, targetIsFigureAfter: true },
+      }),
+    }));
+
+    expect(shouldAllowStage146RoleMapRetagContinuation(analysis, snap, applied)).toBe(true);
+    expect(buildDefaultParams('retag_as_figure', analysis, snap, applied)).toEqual({
+      structRef: '3_0',
+      altText: 'Illustration (page 3)',
+    });
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('retag_as_figure');
   });
 
   it('does not schedule canonicalize_figure_alt_ownership without checker-visible ownership debt', () => {

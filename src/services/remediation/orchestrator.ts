@@ -9,7 +9,6 @@ import {
   PLAYBOOK_LEARN_MIN_SCORE_DELTA,
   REMEDIATION_CATEGORY_THRESHOLD,
   REMEDIATION_IMPLEMENTED_TOOLS,
-  REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN,
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_MAX_ROUNDS,
   REMEDIATION_MIN_ROUND_IMPROVEMENT,
@@ -50,6 +49,7 @@ import {
   deriveFallbackDocumentTitle,
   isProtectedZeroHeadingConvergence,
   isToolAllowedByRouteContract,
+  maxFigureAltTargetsForRun,
   planForRemediation,
 } from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
@@ -424,8 +424,6 @@ const FIGURE_OWNERSHIP_REFRESH_TOOLS = new Set([
   'canonicalize_figure_alt_ownership',
   'retag_as_figure',
 ]);
-
-const MAX_STAGE64_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
 
 const LINK_STRUCTURE_TOOLS = new Set([
   'set_link_annotation_contents',
@@ -5081,7 +5079,12 @@ export async function remediatePdf(
           const attemptedRefs = new Set<string>();
           while (
             activeFigureTool &&
-            figureAltMutationAttemptCount([...appliedTools, ...stageApplied]) < MAX_STAGE64_FIGURE_ALT_TARGETS_PER_RUN
+            figureAltMutationAttemptCount([...appliedTools, ...stageApplied]) < maxFigureAltTargetsForRun(
+              workingAnalysis,
+              workingSnapshot,
+              [...appliedTools, ...stageApplied],
+              { protectedBaselineActive: Boolean(options?.protectedBaseline) },
+            )
           ) {
             const activeRef = typeof activeFigureTool.params['structRef'] === 'string'
               ? activeFigureTool.params['structRef']
