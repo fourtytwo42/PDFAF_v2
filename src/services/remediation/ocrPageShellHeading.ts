@@ -35,6 +35,25 @@ export interface Stage129OcrPageShellDisposition {
   reasons: string[];
 }
 
+export interface OcrPageShellHeadingSeedDebug {
+  text: string;
+  source: OcrPageShellHeadingSource;
+  tokens: string[];
+  exactMatch: boolean;
+  windowMatch: boolean;
+  matchedTokenCount: number;
+  mcids: number[];
+  score: number | null;
+  reasons: string[];
+}
+
+export interface OcrPageShellHeadingDebug {
+  seeds: OcrPageShellHeadingSeedDebug[];
+  firstPageLineCandidates: string[];
+  firstPageMcidSpanSamples: Array<{ mcid: number; text: string }>;
+  paragraphSamples: Array<{ page: number; text: string; structRef?: string }>;
+}
+
 function categoryScore(analysis: AnalysisResult, key: string): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
 }
@@ -86,6 +105,39 @@ function alphaTokens(value: string): string[] {
     .match(/[a-z]+/g) ?? [];
 }
 
+const TITLE_STOPWORDS = new Set(['a', 'an', 'and', 'for', 'in', 'of', 'on', 'the', 'to', 'with']);
+
+function displayToken(value: string): string {
+  return value.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '');
+}
+
+function isTitlePrefixToken(value: string, index: number): boolean {
+  const token = displayToken(value);
+  if (!token) return false;
+  const lower = token.toLowerCase();
+  if (index > 0 && TITLE_STOPWORDS.has(lower)) return true;
+  if (/^[A-Z][A-Za-z0-9'’-]*$/.test(token)) return true;
+  if (/^[A-Z]{2,}$/.test(token)) return true;
+  return false;
+}
+
+function titlePrefixSeedsFromFirstPageText(snapshot: DocumentSnapshot, filename: string): string[] {
+  const raw = cleanOcrShellText(snapshot.textByPage[0] ?? '');
+  if (!raw || /^[^A-Za-z]*\d/.test(raw)) return [];
+  const words = raw.split(/\s+/).filter(Boolean).slice(0, 16);
+  if (words.length < 4 || !isTitlePrefixToken(words[0]!, 0)) return [];
+  const candidates: string[] = [];
+  for (let length = 4; length <= Math.min(10, words.length); length += 1) {
+    const slice = words.slice(0, length);
+    const last = displayToken(slice[slice.length - 1]!).toLowerCase();
+    if (TITLE_STOPWORDS.has(last)) continue;
+    if (!slice.every((word, index) => isTitlePrefixToken(word, index))) continue;
+    const text = slice.map(displayToken).join(' ');
+    if (!isWeakVisibleHeadingAnchorText(text, filename)) candidates.push(text);
+  }
+  return candidates;
+}
+
 function seedFromRaw(raw: string | undefined | null): string | null {
   const segment = stripLeadingDocumentId(normalizeCandidateText(stripPdfExtension(lastPathSegment(raw ?? ''))));
   if (!segment || alphaTokens(segment).length < 4) return null;
@@ -110,6 +162,9 @@ function candidateSeeds(analysis: AnalysisResult, snapshot: DocumentSnapshot): A
 
   const visible = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
   if (visible) add(visible, 'first_page_visible_line');
+  for (const text of titlePrefixSeedsFromFirstPageText(snapshot, analysis.filename)) {
+    add(text, 'first_page_visible_line');
+  }
   return out;
 }
 
@@ -337,6 +392,56 @@ export function selectOcrPageShellHeadingCandidate(
     };
   }
   return null;
+}
+
+export function debugOcrPageShellHeadingSelection(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): OcrPageShellHeadingDebug {
+  const seeds = candidateSeeds(analysis, snapshot).map(seed => {
+    const exact = findVisibleMcidMatch(snapshot, seed.text);
+    const window = exact ? null : findVisibleMcidWindowMatch(snapshot, seed.text);
+    const match = exact ?? window;
+    const text = match?.exact === false ? match.text : seed.text;
+    const scored = match && !isWeakVisibleHeadingAnchorText(text, '')
+      ? candidateScore({
+        title: text,
+        matchedTokenCount: match.matchedTokenCount,
+        source: seed.source,
+        exactVisibleMatch: match.exact,
+      })
+      : null;
+    return {
+      text: seed.text,
+      source: seed.source,
+      tokens: alphaTokens(seed.text),
+      exactMatch: Boolean(exact),
+      windowMatch: Boolean(window),
+      matchedTokenCount: match?.matchedTokenCount ?? 0,
+      mcids: match?.mcids ?? [],
+      score: scored?.score ?? null,
+      reasons: scored?.reasons ?? [],
+    };
+  });
+  return {
+    seeds,
+    firstPageLineCandidates: [
+      extractFirstPageVisibleHeadingText(snapshot, analysis.filename),
+      ...titlePrefixSeedsFromFirstPageText(snapshot, analysis.filename),
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0),
+    firstPageMcidSpanSamples: (snapshot.mcidTextSpans ?? [])
+      .filter(row => row.page === 0 && Number.isInteger(row.mcid))
+      .slice(0, 24)
+      .map(row => ({ mcid: row.mcid, text: cleanOcrShellText(row.resolvedText ?? row.snippet).slice(0, 120) })),
+    paragraphSamples: (snapshot.paragraphStructElems ?? [])
+      .filter(row => row.page === 0)
+      .slice(0, 8)
+      .map(row => ({
+        page: row.page,
+        text: cleanOcrShellText(row.text).slice(0, 200),
+        structRef: row.structRef,
+      })),
+  };
 }
 
 export function classifyStage129OcrPageShell(

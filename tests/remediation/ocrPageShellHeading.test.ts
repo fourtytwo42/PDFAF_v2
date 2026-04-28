@@ -183,6 +183,34 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
     expect(classifyStage129OcrPageShell(analysis, snap).classification).toBe('ocr_page_shell_heading_candidate');
   });
 
+  it('uses a first-page OCR lead title phrase when the metadata title is not visibly present', () => {
+    const words = ['To', 'the', 'People', 'of', 'Illinois', 'It', 'should', 'come', 'as', 'no', 'surprise'];
+    const snap = makeSnapshot({
+      textByPage: ["To the People of Illinois It should come as no surprise to readers of this year's Trends and Issues report."],
+      metadata: {
+        title: '3513 trends and issues 90 criminal and juvenile justice in illinois',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: words.join(' '), page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: words.map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    const candidate = selectOcrPageShellHeadingCandidate(analysisFor(snap), snap);
+    expect(candidate).toMatchObject({
+      page: 0,
+      mcid: 0,
+      mcids: [0, 1, 2, 3, 4],
+      text: 'To the People of Illinois',
+      source: 'first_page_visible_line',
+    });
+  });
+
   it('matches safe split OCR title tokens across adjacent MCIDs', () => {
     const words = ['Pre-', 'trial', 'Release', 'and', 'Crime', 'in', 'Cook', 'County'];
     const snap = makeSnapshot({
@@ -226,6 +254,23 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
       })),
     });
     expect(selectOcrPageShellHeadingCandidate(analysisFor(bodyOnly), bodyOnly)).toBeNull();
+
+    const lowercaseBodyLead = makeSnapshot({
+      textByPage: ['ationwide, backlogs in state court systems are at an alarming rate.'],
+      metadata: {
+        title: '3451 state court backlogs in illinois and the united states',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      mcidTextSpans: ['ationwide', 'backlogs', 'in', 'state', 'court', 'systems'].map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    expect(selectOcrPageShellHeadingCandidate(analysisFor(lowercaseBodyLead), lowercaseBodyLead)).toBeNull();
 
     const byline = makeSnapshot({
       textByPage: ['Prepared by Jane Doe Research Center'],
