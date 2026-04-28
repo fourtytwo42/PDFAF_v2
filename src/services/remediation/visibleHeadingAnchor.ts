@@ -10,6 +10,11 @@ import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCand
 export type Stage127ZeroHeadingClass =
   | 'visible_anchor_candidate'
   | 'tagged_zero_heading_anchor_candidate'
+  | 'safe_partial_heading_anchor_candidate'
+  | 'split_mcid_heading_anchor_candidate'
+  | 'paragraph_candidate_too_weak'
+  | 'mixed_alt_table_blocker'
+  | 'analyzer_volatility'
   | 'degenerate_marked_content_no_candidate'
   | 'link_only_no_heading_candidate'
   | 'ocr_page_shell_defer'
@@ -26,6 +31,7 @@ export type VisibleHeadingAnchorSource =
 export interface VisibleHeadingAnchorCandidate {
   page: number;
   mcid?: number;
+  mcids?: number[];
   targetRef?: string;
   text: string;
   source: VisibleHeadingAnchorSource;
@@ -71,6 +77,10 @@ function wordCount(value: string): number {
   return normalized ? normalized.split(/\s+/).length : 0;
 }
 
+function alphaTokens(value: string): string[] {
+  return normalizeText(value).toLowerCase().match(/[a-z]+/g) ?? [];
+}
+
 function isTitleCaseLike(value: string): boolean {
   const words = normalizeText(value).split(/\s+/).filter(Boolean);
   if (words.length === 0 || words.length > HEADING_BOOTSTRAP_TITLE_MAX_WORDS + 6) return false;
@@ -98,6 +108,17 @@ function rejectWeakVisibleTitle(value: string, filename: string): boolean {
   if (/^[a-z]/.test(text)) return true;
   if (/[.!?]\s+\S/.test(text) && wordCount(text) > 10) return true;
   if (isFilenameLikeTitle(text) && normalizeFingerprint(text) === normalizeFingerprint(filename.replace(/\.pdf$/i, ''))) return true;
+  return false;
+}
+
+function rejectWeakPartialHeadingText(value: string, filename: string): boolean {
+  const text = normalizeText(value);
+  if (rejectWeakVisibleTitle(text, filename)) return true;
+  if (/^(what|when|where|why|how|who|whose|which)\b/i.test(text)) return true;
+  if (/^(by|prepared by|submitted by)\b/i.test(text)) return true;
+  if (/^(research bulletin|research brief)$/i.test(text)) return true;
+  if (/[\u0000-\u001f\u007f]/.test(value)) return true;
+  if (alphaTokens(text).length < 4) return true;
   return false;
 }
 
@@ -222,6 +243,74 @@ function titleShapeScore(text: string): { score: number; reasons: string[] } {
     reasons.push('not_question_or_exclamation');
   }
   return { score, reasons };
+}
+
+function cleanMcidText(value: string | undefined): string {
+  return normalizeText(value ?? '').replace(/[\u0000-\u001f\u007f]+/g, '').trim();
+}
+
+function firstPageSplitMcidHeadingCandidate(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): VisibleHeadingAnchorCandidate | null {
+  const pageTextKey = normalizeFingerprint(snapshot.textByPage[0] ?? '');
+  if (!pageTextKey) return null;
+  const page0 = (snapshot.mcidTextSpans ?? [])
+    .filter(row => row.page === 0 && Number.isInteger(row.mcid))
+    .map(row => ({
+      page: row.page,
+      mcid: row.mcid,
+      text: cleanMcidText(row.resolvedText),
+      role: roleFromMcidSnippet(row.snippet),
+      fontScore: snippetFontScore(row.snippet),
+    }))
+    .filter(row => row.text.length > 0 && row.mcid >= 0)
+    .sort((a, b) => a.mcid - b.mcid);
+  if (page0.length === 0) return null;
+
+  let best: VisibleHeadingAnchorCandidate | null = null;
+  for (let start = 0; start < Math.min(page0.length, 10); start += 1) {
+    const mcids: number[] = [];
+    const parts: string[] = [];
+    let previous = page0[start]!.mcid - 1;
+    for (let index = start; index < Math.min(page0.length, start + 6); index += 1) {
+      const row = page0[index]!;
+      if (row.mcid !== previous + 1) break;
+      previous = row.mcid;
+      mcids.push(row.mcid);
+      parts.push(row.text);
+      const text = normalizeText(parts.join(' '));
+      if (rejectWeakPartialHeadingText(text, analysis.filename)) continue;
+      const tokens = alphaTokens(text);
+      if (tokens.length < 4) continue;
+      const key = normalizeFingerprint(text);
+      if (!key || !pageTextKey.startsWith(key)) continue;
+      const shape = titleShapeScore(text);
+      const maxFont = Math.max(0, ...page0.slice(start, index + 1).map(item => item.fontScore));
+      const sourceScore = 46 + shape.score + Math.min(maxFont, 24) + Math.min(tokens.length, 8);
+      const reasons = [
+        'partial_heading_reachability',
+        'page0',
+        'first_page_text_prefix',
+        `strong_alpha_tokens:${tokens.length}`,
+        `mcid_count:${mcids.length}`,
+        ...shape.reasons,
+      ];
+      const candidate: VisibleHeadingAnchorCandidate = {
+        page: 0,
+        mcid: mcids[0],
+        mcids: [...mcids],
+        text,
+        source: 'tagged_visible_line_mcid_first_page',
+        score: sourceScore,
+        reasons,
+      };
+      if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.text.length > best.text.length)) {
+        best = candidate;
+      }
+    }
+  }
+  return best;
 }
 
 export function selectVisibleHeadingAnchorCandidate(
@@ -441,4 +530,78 @@ export function shouldTryTaggedVisibleHeadingAnchorRecovery(
     disposition.candidate.page === 0 &&
     disposition.candidate.source === 'tagged_visible_line_mcid_first_page' &&
     typeof disposition.candidate.mcid === 'number';
+}
+
+export function classifyPartialHeadingReachability(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): Stage127ZeroHeadingDisposition {
+  const score = headingScore(analysis);
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  const readingOrder = analysis.categories.find(row => row.key === 'reading_order');
+  const tableMarkup = analysis.categories.find(row => row.key === 'table_markup');
+  const formAccessibility = analysis.categories.find(row => row.key === 'form_accessibility');
+  const textExtractability = textExtractabilityScore(analysis);
+  if (analysis.pdfClass !== 'native_tagged' || snapshot.structureTree === null || snapshot.isTagged !== true) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['not_tagged_native_pdf'] };
+  }
+  if (isOcrPageShell(snapshot, analysis)) {
+    return { classification: 'ocr_page_shell_defer', candidate: null, reasons: ['ocr_or_scanned_shell'] };
+  }
+  if (score == null || score >= 80) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['heading_structure_not_low'] };
+  }
+  if ((textExtractability ?? 0) < 90) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['text_extractability_not_strong'] };
+  }
+  if ((headingSignals?.treeHeadingCount ?? snapshot.headings.length) > 0) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['tree_heading_already_present'] };
+  }
+  if (headingSignals?.extractedHeadingsMissingFromTree !== true) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['no_missing_exported_heading_signal'] };
+  }
+  if ((readingOrder?.score ?? 100) > 45) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['reading_order_not_heading_capped'] };
+  }
+  if ((tableMarkup?.applicable !== false && (tableMarkup?.score ?? 100) < 50) ||
+      (formAccessibility?.applicable !== false && (formAccessibility?.score ?? 100) < 80)) {
+    return { classification: 'mixed_alt_table_blocker', candidate: null, reasons: ['table_or_form_blocker_present'] };
+  }
+
+  const candidate = firstPageSplitMcidHeadingCandidate(analysis, snapshot);
+  if (candidate && candidate.score >= HEADING_BOOTSTRAP_MIN_SCORE) {
+    const classification = (candidate.mcids?.length ?? 0) > 1
+      ? 'split_mcid_heading_anchor_candidate'
+      : 'safe_partial_heading_anchor_candidate';
+    return { classification, candidate, reasons: ['high_confidence_partial_heading_anchor', ...candidate.reasons] };
+  }
+
+  const weakParagraph = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
+  if (weakParagraph?.source === 'paragraph_candidate') {
+    return { classification: 'paragraph_candidate_too_weak', candidate: weakParagraph, reasons: ['paragraph_candidate_not_title_backed'] };
+  }
+  return { classification: 'no_safe_candidate', candidate: null, reasons: ['no_safe_partial_heading_anchor'] };
+}
+
+export function shouldTryPartialHeadingReachabilityRecovery(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  const disposition = classifyPartialHeadingReachability(analysis, snapshot);
+  return (
+    disposition.classification === 'safe_partial_heading_anchor_candidate' ||
+    disposition.classification === 'split_mcid_heading_anchor_candidate'
+  ) && disposition.candidate !== null && disposition.candidate.page === 0 &&
+    typeof disposition.candidate.mcid === 'number';
+}
+
+export function selectPartialHeadingReachabilityCandidate(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): VisibleHeadingAnchorCandidate | null {
+  const disposition = classifyPartialHeadingReachability(analysis, snapshot);
+  return (
+    disposition.classification === 'safe_partial_heading_anchor_candidate' ||
+    disposition.classification === 'split_mcid_heading_anchor_candidate'
+  ) ? disposition.candidate : null;
 }

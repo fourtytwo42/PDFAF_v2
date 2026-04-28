@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { score } from '../../src/services/scorer/scorer.js';
 import {
   classifyTaggedZeroHeadingAnchor,
+  classifyPartialHeadingReachability,
   classifyStage127ZeroHeadingAnchor,
   extractFirstPageVisibleHeadingText,
+  selectPartialHeadingReachabilityCandidate,
   selectTaggedVisibleHeadingAnchorCandidate,
   selectVisibleHeadingAnchorCandidate,
+  shouldTryPartialHeadingReachabilityRecovery,
   shouldTryTaggedVisibleHeadingAnchorRecovery,
   shouldTryVisibleHeadingAnchorRecovery,
 } from '../../src/services/remediation/visibleHeadingAnchor.js';
@@ -109,6 +112,23 @@ function withScores(analysis: AnalysisResult): AnalysisResult {
 
 function analysisFor(snap: DocumentSnapshot): AnalysisResult {
   return withScores(score(snap, META));
+}
+
+function partialHeadingAnalysisFor(snap: DocumentSnapshot): AnalysisResult {
+  const base = score(snap, META);
+  return {
+    ...base,
+    score: 70,
+    categories: base.categories.map(category => {
+      if (category.key === 'heading_structure') return { ...category, applicable: true, score: 45 };
+      if (category.key === 'reading_order') return { ...category, applicable: true, score: 45 };
+      if (category.key === 'text_extractability') return { ...category, applicable: true, score: 96 };
+      if (category.key === 'table_markup') return { ...category, applicable: false, score: 100 };
+      if (category.key === 'form_accessibility') return { ...category, applicable: false, score: 100 };
+      if (category.key === 'alt_text') return { ...category, applicable: true, score: 90 };
+      return { ...category, score: 100 };
+    }),
+  };
 }
 
 describe('Stage 127 visible heading anchor recovery', () => {
@@ -277,5 +297,88 @@ describe('Stage 127 visible heading anchor recovery', () => {
       level: 1,
       source: 'tagged_visible_line_mcid_first_page',
     });
+  });
+
+  it('selects a split-MCID first-page title for partial heading reachability recovery', () => {
+    const snap = snapshot({
+      textByPage: ['Child sex exploitation study probes extent of victimization in Illinois By Jessica Ashley Research Bulletin body starts here.'],
+      mcidTextSpans: [
+        { page: 0, mcid: 0, snippet: '/Span <</MCID 0>> BDC BT /T1 1 Tf 32 0 0 32 53 590 Tm', resolvedText: 'Child sex exploitation study probes' },
+        { page: 0, mcid: 1, snippet: '/Span <</MCID 1>> BDC BT /T1 1 Tf 32 0 0 32 53 560 Tm', resolvedText: 'extent of victimization in Illinois' },
+        { page: 0, mcid: 2, snippet: '/Span <</MCID 2>> BDC BT /T1 1 Tf 10 0 0 10 54 536 Tm', resolvedText: 'Research Bulletin' },
+      ],
+      detectionProfile: detection({
+        readingOrderSignals: { ...detection().readingOrderSignals, structureTreeDepth: 4 },
+        headingSignals: {
+          extractedHeadingCount: 2,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+      }),
+    });
+    const analysis = partialHeadingAnalysisFor(snap);
+    expect(classifyPartialHeadingReachability(analysis, snap).classification).toBe('split_mcid_heading_anchor_candidate');
+    expect(selectPartialHeadingReachabilityCandidate(analysis, snap)).toMatchObject({
+      page: 0,
+      mcid: 0,
+      mcids: [0, 1],
+      text: 'Child sex exploitation study probes extent of victimization in Illinois',
+    });
+    expect(shouldTryPartialHeadingReachabilityRecovery(analysis, snap)).toBe(true);
+    expect(buildDefaultParams('create_heading_from_tagged_visible_anchor', analysis, snap)).toMatchObject({
+      mcid: 0,
+      mcids: [0, 1],
+      level: 1,
+      source: 'tagged_visible_line_mcid_first_page',
+      allowExistingHeadingRolesForPartialReachability: true,
+    });
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('rejects weak partial-heading paragraph and garbled MCID candidates', () => {
+    const weakParagraph = snapshot({
+      textByPage: ['The report body starts here with findings and context.'],
+      paragraphStructElems: [{
+        tag: 'P',
+        page: 0,
+        structRef: '55_0',
+        text: 'What is the incidence and',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document'],
+      }],
+      mcidTextSpans: [],
+      detectionProfile: detection({
+        headingSignals: {
+          extractedHeadingCount: 2,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+      }),
+    });
+    expect(classifyPartialHeadingReachability(partialHeadingAnalysisFor(weakParagraph), weakParagraph).classification)
+      .toBe('paragraph_candidate_too_weak');
+
+    const garbled = snapshot({
+      textByPage: ['Research Brief Lack of an influential male role model in the receiving household.'],
+      mcidTextSpans: [
+        { page: 0, mcid: 2, snippet: '/Span <</MCID 2>> BDC BT /C2_0 1 Tf 10 0 0 10 72 560 Tm', resolvedText: '\u0000/\u0000D\u0000F\u0000N\u0000\u0003\u0000R\u0000I' },
+        { page: 0, mcid: 3, snippet: '/Span <</MCID 3>> BDC BT /C2_0 1 Tf 10 0 0 10 72 548 Tm', resolvedText: '\u0000P\u0000R\u0000G\u0000H\u0000O' },
+      ],
+      detectionProfile: detection({
+        headingSignals: {
+          extractedHeadingCount: 3,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: true,
+        },
+      }),
+    });
+    expect(classifyPartialHeadingReachability(partialHeadingAnalysisFor(garbled), garbled).classification)
+      .toBe('no_safe_candidate');
+    expect(shouldTryPartialHeadingReachabilityRecovery(partialHeadingAnalysisFor(garbled), garbled)).toBe(false);
   });
 });

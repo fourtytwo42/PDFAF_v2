@@ -37,8 +37,10 @@ import {
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 import { classifyZeroHeadingRecovery } from './headingRecovery.js';
 import {
+  selectPartialHeadingReachabilityCandidate,
   selectTaggedVisibleHeadingAnchorCandidate,
   selectVisibleHeadingAnchorCandidate,
+  shouldTryPartialHeadingReachabilityRecovery,
   shouldTryTaggedVisibleHeadingAnchorRecovery,
   shouldTryVisibleHeadingAnchorRecovery,
 } from './visibleHeadingAnchor.js';
@@ -1617,7 +1619,10 @@ export function planForRemediation(
     if (
       headingNeedsRepair &&
       !toolSet.has(toolName) &&
-      shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) &&
+      (
+        shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) ||
+        shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot)
+      ) &&
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
@@ -1631,7 +1636,9 @@ export function planForRemediation(
         toolSet.set(toolName, {
           toolName,
           params,
-          rationale: 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
+          rationale: shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot)
+            ? 'Stage 149 partial-heading reachability recovery from a proven first-page content anchor.'
+            : 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
           route: 'post_bootstrap_heading_convergence',
         });
       }
@@ -1969,17 +1976,23 @@ export function buildDefaultParams(
       };
     }
     case 'create_heading_from_tagged_visible_anchor': {
-      if (!shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot)) return {};
-      const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
+      const partialReachability = shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot);
+      const candidate = partialReachability
+        ? selectPartialHeadingReachabilityCandidate(analysis, snapshot)
+        : shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot)
+          ? selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot)
+          : null;
       if (!candidate) return {};
       return {
         page: candidate.page,
         ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
+        ...(Array.isArray(candidate.mcids) && candidate.mcids.length > 0 ? { mcids: candidate.mcids } : {}),
         ...(candidate.targetRef ? { targetRef: candidate.targetRef } : {}),
         level: 1,
         text: candidate.text.slice(0, 200),
         source: candidate.source,
         confidenceScore: candidate.score,
+        ...(partialReachability ? { allowExistingHeadingRolesForPartialReachability: true } : {}),
       };
     }
     case 'create_structure_from_degenerate_native_anchor': {

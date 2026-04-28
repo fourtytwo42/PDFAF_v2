@@ -7325,6 +7325,8 @@ def _synthesize_heading_from_ocr_page_shell_mcids(
     mcids: list[int],
     level: int,
     visible_text: str,
+    *,
+    allow_existing_headings: bool = False,
 ):
     """Create one /H1 from a title-like OCRmyPDF page-shell marked-content span."""
     if page_idx != 0:
@@ -7335,7 +7337,10 @@ def _synthesize_heading_from_ocr_page_shell_mcids(
         return None, "missing_visible_anchor_text"
     if _score_mcid_text_as_heading(text, text) is None:
         return None, "weak_visible_anchor_text"
-    if _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0:
+    if (
+        not allow_existing_headings
+        and _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0
+    ):
         return None, "heading_already_present"
     clean_mcids = sorted({int(m) for m in mcids if isinstance(m, int) or str(m).strip().isdigit()})
     if not clean_mcids:
@@ -7649,7 +7654,11 @@ def _op_create_heading_from_tagged_visible_anchor(pdf: pikepdf.Pdf, params: dict
     if _is_ocrmypdf_produced(pdf):
         _set_last_mutation_note("ocr_pdf_deferred")
         return False
-    if _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0:
+    allow_existing_headings = bool(params.get("allowExistingHeadingRolesForPartialReachability"))
+    if (
+        not allow_existing_headings
+        and _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0
+    ):
         _set_last_mutation_note("heading_already_present")
         return False
     target_ref = params.get("targetRef") or params.get("structRef")
@@ -7677,7 +7686,17 @@ def _op_create_heading_from_tagged_visible_anchor(pdf: pikepdf.Pdf, params: dict
         mcid = int(mcid_param) if mcid_param is not None else None
     except (TypeError, ValueError):
         mcid = None
-    if page_idx != 0 or mcid is None:
+    raw_mcids = params.get("mcids")
+    mcids: list[int] = []
+    if isinstance(raw_mcids, list):
+        for raw_mcid in raw_mcids:
+            try:
+                mcids.append(int(raw_mcid))
+            except Exception:
+                pass
+    if not mcids and mcid is not None:
+        mcids = [mcid]
+    if page_idx != 0 or not mcids:
         _set_last_mutation_note("missing_tagged_visible_mcid_anchor")
         return False
     sr, doc_elem = _find_or_create_document_elem(pdf)
@@ -7689,9 +7708,10 @@ def _op_create_heading_from_tagged_visible_anchor(pdf: pikepdf.Pdf, params: dict
         sr,
         doc_elem,
         page_idx,
-        [mcid],
+        mcids,
         level,
         str(params.get("text") or "").strip(),
+        allow_existing_headings=allow_existing_headings,
     )
     _set_last_mutation_note("tagged_visible_anchor_promoted" if new_elem is not None else note)
     return new_elem is not None
