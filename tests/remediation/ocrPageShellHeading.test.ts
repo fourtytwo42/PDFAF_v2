@@ -4,6 +4,7 @@ import {
   classifyStage129OcrPageShell,
   selectOcrPageShellHeadingCandidate,
   shouldTryOcrPageShellHeadingRecovery,
+  shouldTryOcrPageShellReadingOrderRecovery,
 } from '../../src/services/remediation/ocrPageShellHeading.js';
 import {
   selectVisibleHeadingAnchorCandidate,
@@ -200,5 +201,73 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
     const nativePlanned = planForRemediation(nativeAnalysis, native, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
     expect(nativePlanned).toContain('create_heading_from_visible_text_anchor');
     expect(nativePlanned).not.toContain('create_heading_from_ocr_page_shell_anchor');
+  });
+
+  it('classifies and plans OCR page-shell reading-order recovery after safe OCR tagging', () => {
+    const snap = makeSnapshot({
+      headings: [{ level: 1, page: 0, text: 'New Federal Justice Aid Coming To Illinois', structRef: '20_0' }],
+      paragraphStructElems: [
+        { tag: 'P', text: 'Page one body', page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] },
+        { tag: 'P', text: 'Page two body', page: 1, structRef: '11_0', reachable: true, directContent: true, parentPath: ['Document'] },
+        { tag: 'P', text: 'Page three body', page: 2, structRef: '12_0', reachable: true, directContent: true, parentPath: ['Document'] },
+        { tag: 'P', text: 'Page four body', page: 3, structRef: '13_0', reachable: true, directContent: true, parentPath: ['Document'] },
+      ],
+      detectionProfile: detection({
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: { extractedHeadingCount: 1, treeHeadingCount: 1, headingTreeDepth: 2, extractedHeadingsMissingFromTree: false },
+      }),
+    });
+    const analysis = {
+      ...analysisFor(snap),
+      categories: analysisFor(snap).categories.map(category =>
+        category.key === 'heading_structure'
+          ? { ...category, score: 95 }
+          : category,
+      ),
+    };
+    expect(shouldTryOcrPageShellReadingOrderRecovery(analysis, snap)).toBe(true);
+    expect(classifyStage129OcrPageShell(analysis, snap).classification).toBe('ocr_page_shell_reading_order_candidate');
+    const params = buildDefaultParams('synthesize_ocr_page_shell_reading_order_structure', analysis, snap);
+    expect(params).toMatchObject({ maxParagraphsPerPage: 1, maxPages: 4 });
+    const planned = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(planned).toContain('synthesize_ocr_page_shell_reading_order_structure');
+  });
+
+  it('rejects OCR reading-order recovery when OCR blocks are not engine-owned or carry annotation risk', () => {
+    const base = makeSnapshot({
+      remediationProvenance: { engineAppliedOcr: true, engineTaggedOcrText: true },
+      detectionProfile: detection({
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+      }),
+    });
+    const analysis = analysisFor(base);
+    expect(shouldTryOcrPageShellReadingOrderRecovery(analysis, {
+      ...base,
+      remediationProvenance: undefined,
+    })).toBe(false);
+    expect(shouldTryOcrPageShellReadingOrderRecovery(analysis, {
+      ...base,
+      annotationAccessibility: { linkAnnotationsMissingStructParent: 1 },
+    })).toBe(false);
   });
 });

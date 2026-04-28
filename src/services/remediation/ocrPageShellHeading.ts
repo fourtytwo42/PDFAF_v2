@@ -8,6 +8,7 @@ import {
 
 export type Stage129OcrPageShellClass =
   | 'ocr_page_shell_heading_candidate'
+  | 'ocr_page_shell_reading_order_candidate'
   | 'ocr_text_without_safe_anchor'
   | 'ocr_reading_order_shell_debt'
   | 'scanned_no_extractable_text_defer'
@@ -270,6 +271,13 @@ export function classifyStage129OcrPageShell(
   if (candidate) {
     return { classification: 'ocr_page_shell_heading_candidate', candidate, reasons: ['safe_visible_ocr_anchor', ...candidate.reasons] };
   }
+  if (shouldTryOcrPageShellReadingOrderRecovery(analysis, snapshot)) {
+    return {
+      classification: 'ocr_page_shell_reading_order_candidate',
+      candidate: null,
+      reasons: ['ocr_page_shell_degenerate_reading_order', 'engine_ocr_text_blocks_present'],
+    };
+  }
   if ((categoryScore(analysis, 'heading_structure') ?? 100) <= 0) {
     return { classification: 'ocr_text_without_safe_anchor', candidate: null, reasons: ['heading_zero_no_safe_visible_anchor'] };
   }
@@ -284,4 +292,24 @@ export function shouldTryOcrPageShellHeadingRecovery(
   snapshot: DocumentSnapshot,
 ): boolean {
   return classifyStage129OcrPageShell(analysis, snapshot).classification === 'ocr_page_shell_heading_candidate';
+}
+
+export function shouldTryOcrPageShellReadingOrderRecovery(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  if (!isOcrPageShell(snapshot, analysis)) return false;
+  if (snapshot.textCharCount <= 0 || (categoryScore(analysis, 'text_extractability') ?? 0) < 60) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) >= 95) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 0) <= 0 && snapshot.headings.length <= 0) return false;
+  if (snapshot.structureTree === null || (snapshot.paragraphStructElems?.length ?? 0) < Math.min(3, Math.max(1, snapshot.pageCount))) return false;
+  if ((snapshot.mcidTextSpans?.length ?? 0) <= 0) return false;
+  if (snapshot.remediationProvenance?.engineAppliedOcr !== true) return false;
+  if (snapshot.remediationProvenance?.engineTaggedOcrText !== true) return false;
+  const reading = snapshot.detectionProfile?.readingOrderSignals;
+  if (reading?.headerFooterPollutionRisk === true) return false;
+  if ((reading?.annotationOrderRiskCount ?? 0) > 0 || (reading?.annotationStructParentRiskCount ?? 0) > 0) return false;
+  if ((snapshot.annotationAccessibility?.linkAnnotationsMissingStructParent ?? 0) > 0) return false;
+  if ((snapshot.annotationAccessibility?.nonLinkAnnotationsMissingStructParent ?? 0) > 0) return false;
+  return (reading?.degenerateStructureTree === true) || ((reading?.structureTreeDepth ?? 0) <= 2 && snapshot.pageCount > 1);
 }

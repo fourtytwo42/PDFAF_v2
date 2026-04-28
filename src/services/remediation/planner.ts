@@ -45,6 +45,7 @@ import {
 import {
   selectOcrPageShellHeadingCandidate,
   shouldTryOcrPageShellHeadingRecovery,
+  shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
 import {
   selectDegenerateNativeAnchorCandidate,
@@ -159,6 +160,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   font_ocr_repair: [
     'ocr_scanned_pdf',
     'tag_ocr_text_blocks',
+    'synthesize_ocr_page_shell_reading_order_structure',
     'create_heading_from_ocr_page_shell_anchor',
     'tag_native_text_blocks',
     'mark_untagged_content_as_artifact',
@@ -815,6 +817,13 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
   }
+  if (toolName === 'synthesize_ocr_page_shell_reading_order_structure') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.textCharCount > 0
+      && snapshot.structureTree !== null
+      && (snapshot.paragraphStructElems?.length ?? 0) > 0
+      && (snapshot.mcidTextSpans?.length ?? 0) > 0;
+  }
   if (toolName === 'create_structure_from_degenerate_native_anchor') {
     if (pdfClass === 'scanned') return false;
     const depth = snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? (snapshot.structureTree ? 2 : 0);
@@ -1082,6 +1091,7 @@ export function planForRemediation(
   const zeroHeadingRecovery = classifyZeroHeadingRecovery(analysis, snapshot);
   const visibleHeadingAnchorRecoveryActive = shouldTryVisibleHeadingAnchorRecovery(analysis, snapshot);
   const ocrPageShellHeadingRecoveryActive = shouldTryOcrPageShellHeadingRecovery(analysis, snapshot);
+  const ocrPageShellReadingOrderRecoveryActive = shouldTryOcrPageShellReadingOrderRecovery(analysis, snapshot);
   const headingCreateRecoveryActive =
     zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
     zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
@@ -1193,6 +1203,12 @@ export function planForRemediation(
     if (
       toolName === 'create_heading_from_ocr_page_shell_anchor' &&
       !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'synthesize_ocr_page_shell_reading_order_structure' &&
+      !ocrPageShellReadingOrderRecoveryActive
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1503,6 +1519,29 @@ export function planForRemediation(
           params,
           rationale: 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
           route: 'post_bootstrap_heading_convergence',
+        });
+      }
+    }
+  }
+
+  {
+    const toolName = 'synthesize_ocr_page_shell_reading_order_structure';
+    if (
+      ocrPageShellReadingOrderRecoveryActive &&
+      !toolSet.has(toolName) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 144 OCR page-shell reading-order recovery from existing OCR text structure.',
+          route: 'font_ocr_repair',
         });
       }
     }
@@ -1854,6 +1893,12 @@ export function buildDefaultParams(
         confidenceScore: candidate.score,
       };
     }
+    case 'synthesize_ocr_page_shell_reading_order_structure':
+      if (!shouldTryOcrPageShellReadingOrderRecovery(analysis, snapshot)) return {};
+      return {
+        maxParagraphsPerPage: 1,
+        maxPages: Math.min(Math.max(snapshot.pageCount, 1), 240),
+      };
     case 'substitute_legacy_fonts_in_place':
       return { maxWidthDrift: 0.12 };
     case 'finalize_substituted_font_conformance':

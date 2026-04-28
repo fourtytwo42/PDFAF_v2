@@ -7457,6 +7457,146 @@ def _op_create_heading_from_ocr_page_shell_anchor(pdf: pikepdf.Pdf, params: dict
     return new_elem is not None
 
 
+def _ocr_shell_direct_content_elem(elem) -> bool:
+    if not isinstance(elem, pikepdf.Dictionary):
+        return False
+    try:
+        role = (get_name(elem) or "").lstrip("/").upper()
+    except Exception:
+        role = ""
+    if role in {"DOCUMENT", "SECT", "DIV"}:
+        return False
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return False
+    if isinstance(k, (int, pikepdf.Integer)):
+        return True
+    if isinstance(k, pikepdf.Array):
+        for child in k:
+            if isinstance(child, (int, pikepdf.Integer)):
+                return True
+            if isinstance(child, pikepdf.Dictionary):
+                try:
+                    if child.get("/Type") == pikepdf.Name("/MCR") and child.get("/MCID") is not None:
+                        return True
+                except Exception:
+                    pass
+    if isinstance(k, pikepdf.Dictionary):
+        try:
+            return k.get("/Type") == pikepdf.Name("/MCR") and k.get("/MCID") is not None
+        except Exception:
+            return False
+    return False
+
+
+def _op_synthesize_ocr_page_shell_reading_order_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Deepen engine-owned OCR page-shell structure without changing page content streams."""
+    if not _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("non_ocr_pdf")
+        return False
+    try:
+        max_pages = int(params.get("maxPages", 240))
+    except Exception:
+        max_pages = 240
+    max_pages = max(1, min(max_pages, 240))
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+
+    existing_children = _struct_elem_children(doc_elem)
+    if not existing_children:
+        _set_last_mutation_note("missing_document_children")
+        return False
+
+    page_map = build_page_map(pdf)
+    heading_children: list = []
+    by_page: dict[int, list] = {}
+    kept_other: list = []
+    for child in existing_children:
+        if not isinstance(child, pikepdf.Dictionary):
+            continue
+        role = (get_name(child) or "").lstrip("/").upper()
+        page_idx = _elem_explicit_page_number(child, page_map)
+        if role in {"H", "H1", "H2", "H3", "H4", "H5", "H6"}:
+            heading_children.append(child)
+            continue
+        if page_idx is not None and 0 <= int(page_idx) < max_pages and _ocr_shell_direct_content_elem(child):
+            by_page.setdefault(int(page_idx), []).append(child)
+        else:
+            kept_other.append(child)
+
+    page_count = len(by_page)
+    content_count = sum(len(items) for items in by_page.values())
+    if page_count <= 0 or content_count <= 0:
+        _set_last_mutation_note("no_ocr_content_children")
+        return False
+
+    new_children = pikepdf.Array()
+    for child in heading_children:
+        try:
+            child["/P"] = doc_elem
+        except Exception:
+            pass
+        new_children.append(child)
+
+    page_sections = 0
+    for page_idx in sorted(by_page):
+        if page_sections >= max_pages:
+            break
+        try:
+            page_obj = pdf.pages[page_idx].obj
+        except Exception:
+            continue
+        sect = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Sect"),
+            P=doc_elem,
+            Pg=page_obj,
+        ))
+        div = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Div"),
+            P=sect,
+            Pg=page_obj,
+        ))
+        page_k = pikepdf.Array()
+        for child in by_page[page_idx]:
+            try:
+                child["/P"] = div
+            except Exception:
+                pass
+            page_k.append(child)
+        div["/K"] = page_k
+        sect["/K"] = pikepdf.Array([div])
+        new_children.append(sect)
+        page_sections += 1
+
+    for child in kept_other:
+        try:
+            child["/P"] = doc_elem
+        except Exception:
+            pass
+        new_children.append(child)
+
+    if page_sections <= 0:
+        _set_last_mutation_note("no_page_sections_created")
+        return False
+    try:
+        doc_elem["/K"] = new_children
+    except Exception:
+        _set_last_mutation_note("failed_to_rewrite_document_children")
+        return False
+    _set_last_mutation_debug({
+        "pageSections": page_sections,
+        "contentChildren": content_count,
+        "headingChildrenPreserved": len(heading_children),
+    })
+    _set_last_mutation_note("ocr_page_shell_reading_order_structure_synthesized")
+    return True
+
+
 def _op_create_heading_from_visible_text_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
     if _is_ocrmypdf_produced(pdf):
         _set_last_mutation_note("ocr_pdf_deferred")
@@ -9595,6 +9735,7 @@ def _op_ensure_accessibility_tagging(pdf: pikepdf.Pdf, params: dict) -> bool:
                 changed = True
     if _is_ocrmypdf_produced(pdf):
         if _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=True):
+            _set_pdfaf_remediation_marker(pdf, PDFAF_ENGINE_OCR_TAGGED_MARKER, True)
             changed = True
     else:
         if _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=False):
@@ -9612,6 +9753,7 @@ MUTATORS = {
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_visible_text_anchor": _op_create_heading_from_visible_text_anchor,
     "create_heading_from_tagged_visible_anchor": _op_create_heading_from_tagged_visible_anchor,
+    "synthesize_ocr_page_shell_reading_order_structure": _op_synthesize_ocr_page_shell_reading_order_structure,
     "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,
     "create_heading_from_candidate": _op_create_heading_from_candidate,
     "set_figure_alt_text": _op_set_figure_alt_text,

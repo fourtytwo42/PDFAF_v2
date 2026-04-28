@@ -61,7 +61,10 @@ import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
-import { shouldTryOcrPageShellHeadingRecovery } from './ocrPageShellHeading.js';
+import {
+  shouldTryOcrPageShellHeadingRecovery,
+  shouldTryOcrPageShellReadingOrderRecovery,
+} from './ocrPageShellHeading.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -668,6 +671,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
       tools.has('normalize_annotation_tab_order') ||
       tools.has('artifact_repeating_page_furniture') ||
       tools.has('create_structure_from_degenerate_native_anchor') ||
+      tools.has('synthesize_ocr_page_shell_reading_order_structure') ||
       tools.has('synthesize_basic_structure_from_layout');
   }
   if (key === 'form_accessibility') return tools.has('fill_form_field_tooltips');
@@ -1810,6 +1814,7 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
   'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
   'create_heading_from_tagged_visible_anchor',
+  'synthesize_ocr_page_shell_reading_order_structure',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
@@ -2459,6 +2464,62 @@ async function applyGuardedPostPass(args: {
         outcome: 'rejected',
         details: enrichDetailsWithReplayState(
           `${toolName}_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},taggedLost:${taggedLost},links:${currentSnapshot.links.length}->${analyzed.snapshot.links.length},heading:${beforeHeading}->${afterHeading},score:${currentAnalysis.score}->${analyzed.result.score})`,
+          {
+            beforeAnalysis: currentAnalysis,
+            beforeSnapshot: currentSnapshot,
+            afterAnalysis: analyzed.result,
+            afterSnapshot: analyzed.snapshot,
+          },
+        ),
+        durationMs,
+        source: 'post_pass',
+      });
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'rejected',
+      });
+      return {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        accepted: false,
+      };
+    }
+  }
+  if (toolName === 'synthesize_ocr_page_shell_reading_order_structure') {
+    const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
+    const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
+    const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
+    const taggedLost = currentSnapshot.isTagged === true && analyzed.snapshot.isTagged !== true;
+    const linksDropped = analyzed.snapshot.links.length < currentSnapshot.links.length;
+    const beforeReading = categoryScore(currentAnalysis, 'reading_order') ?? 0;
+    const afterReading = categoryScore(analyzed.result, 'reading_order') ?? 0;
+    const beforeHeading = categoryScore(currentAnalysis, 'heading_structure') ?? 0;
+    const afterHeading = categoryScore(analyzed.result, 'heading_structure') ?? 0;
+    const invalidRewrite =
+      analyzed.snapshot.pageCount !== currentSnapshot.pageCount ||
+      textDropped > textDropLimit ||
+      structureLost ||
+      taggedLost ||
+      linksDropped ||
+      afterReading <= beforeReading ||
+      afterHeading < beforeHeading ||
+      analyzed.result.score <= currentAnalysis.score;
+    if (invalidRewrite) {
+      appliedTools.push({
+        toolName,
+        stage,
+        round,
+        scoreBefore: currentAnalysis.score,
+        scoreAfter: currentAnalysis.score,
+        delta: 0,
+        outcome: 'rejected',
+        details: enrichDetailsWithReplayState(
+          `${toolName}_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},taggedLost:${taggedLost},links:${currentSnapshot.links.length}->${analyzed.snapshot.links.length},reading:${beforeReading}->${afterReading},heading:${beforeHeading}->${afterHeading},score:${currentAnalysis.score}->${analyzed.result.score})`,
           {
             beforeAnalysis: currentAnalysis,
             beforeSnapshot: currentSnapshot,
@@ -3296,6 +3357,7 @@ export async function runSingleTool(
       case 'create_structure_from_degenerate_native_anchor':
       case 'create_heading_from_visible_text_anchor':
       case 'create_heading_from_tagged_visible_anchor':
+      case 'synthesize_ocr_page_shell_reading_order_structure':
       case 'create_heading_from_ocr_page_shell_anchor':
       case 'create_heading_from_candidate':
       case 'normalize_heading_hierarchy':
@@ -3497,6 +3559,69 @@ async function applyOcrPageShellHeadingPostPass(args: {
     appliedTools,
     runtimeSummary,
     tempPrefix: 'pdfaf-ocr-heading',
+    protectedBaseline,
+  });
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 11,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: accepted.analysis.runtimeSummary?.totalMs ?? accepted.analysis.analysisDurationMs,
+    });
+  }
+  currentBuffer = accepted.buffer;
+  currentAnalysis = accepted.analysis;
+  currentSnapshot = accepted.snapshot;
+  return {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    accepted: accepted.accepted,
+  };
+}
+
+async function applyOcrPageShellReadingOrderPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
+  const { filename, signal, round, protectedBaseline } = args;
+  const toolName = 'synthesize_ocr_page_shell_reading_order_structure';
+  if (!shouldTryOcrPageShellReadingOrderRecovery(currentAnalysis, currentSnapshot)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const params = buildDefaultParams(toolName, currentAnalysis, currentSnapshot);
+  const stageStarted = performance.now();
+  const { buffer: next, result } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: toolName, params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes(toolName)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const accepted = await applyGuardedPostPass({
+    filename,
+    toolName,
+    stage: 11,
+    round,
+    details: pythonMutationDetails(result, toolName) ?? 'stage144_ocr_page_shell_reading_order_structure',
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer: next,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-ocr-reading',
     protectedBaseline,
   });
   if (runtimeSummary) {
@@ -4072,6 +4197,18 @@ export async function executePlaybook(
     currentBuffer = ocrHeading0.buffer;
     currentAnalysis = ocrHeading0.analysis;
     currentSnapshot = ocrHeading0.snapshot;
+    const ocrReading0 = await applyOcrPageShellReadingOrderPostPass({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = ocrReading0.buffer;
+    currentAnalysis = ocrReading0.analysis;
+    currentSnapshot = ocrReading0.snapshot;
     if (hasAcrobatAltOwnershipRisk(currentSnapshot)) {
       const alt0 = await applyPostRemediationAltRepair(
         currentBuffer,
@@ -4247,6 +4384,18 @@ export async function executePlaybook(
     currentBuffer = ocrHeading.buffer;
     currentAnalysis = ocrHeading.analysis;
     currentSnapshot = ocrHeading.snapshot;
+    const ocrReading = await applyOcrPageShellReadingOrderPostPass({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = ocrReading.buffer;
+    currentAnalysis = ocrReading.analysis;
+    currentSnapshot = ocrReading.snapshot;
   }
 
   {
@@ -5151,6 +5300,20 @@ export async function remediatePdf(
     currentBuffer = ocrHeading.buffer;
     currentAnalysis = ocrHeading.analysis;
     currentSnapshot = ocrHeading.snapshot;
+    const ocrReading = await applyOcrPageShellReadingOrderPostPass({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = ocrReading.buffer;
+    currentAnalysis = ocrReading.analysis;
+    currentSnapshot = ocrReading.snapshot;
     await rememberProtectedRunBestState('ensure_accessibility_tagging');
   }
 
