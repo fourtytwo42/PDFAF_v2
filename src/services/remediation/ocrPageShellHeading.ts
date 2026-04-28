@@ -143,59 +143,137 @@ function tokenMatches(expected: string, actual: string): boolean {
   return false;
 }
 
-function findVisibleMcidMatch(
-  snapshot: DocumentSnapshot,
-  title: string,
-): { mcid: number; mcids: number[]; text: string; matchedTokenCount: number } | null {
-  const wanted = alphaTokens(title);
-  if (wanted.length < 4) return null;
-  const entries = (snapshot.mcidTextSpans ?? [])
+interface OcrMcidTokenEntry {
+  token: string;
+  mcid: number;
+  text: string;
+}
+
+interface OcrMcidTokenMatch {
+  mcid: number;
+  mcids: number[];
+  text: string;
+  matchedTokenCount: number;
+  exact: boolean;
+}
+
+function mcidTokenEntries(snapshot: DocumentSnapshot): OcrMcidTokenEntry[] {
+  return (snapshot.mcidTextSpans ?? [])
     .filter(row => row.page === 0 && Number.isInteger(row.mcid))
     .flatMap(row => alphaTokens(row.resolvedText ?? row.snippet).map(token => ({
       token,
       mcid: row.mcid,
       text: cleanOcrShellText(row.resolvedText ?? ''),
     })));
+}
+
+function matchWantedTokensAt(
+  wanted: string[],
+  entries: OcrMcidTokenEntry[],
+  wantedStart: number,
+  entryStart: number,
+): { matched: number; endEntry: number } {
+  let matched = 0;
+  let entryIndex = entryStart;
+  while (wantedStart + matched < wanted.length && entryIndex < entries.length) {
+    const expected = wanted[wantedStart + matched]!;
+    const current = entries[entryIndex]!;
+    if (tokenMatches(expected, current.token)) {
+      matched += 1;
+      entryIndex += 1;
+      continue;
+    }
+    const next = entries[entryIndex + 1];
+    if (next && tokenMatches(expected, `${current.token}${next.token}`)) {
+      matched += 1;
+      entryIndex += 2;
+      continue;
+    }
+    break;
+  }
+  return { matched, endEntry: entryIndex };
+}
+
+function matchToVisibleText(entries: OcrMcidTokenEntry[], start: number, end: number, fallback: string): string {
+  return entries
+    .slice(start, end)
+    .map(entry => entry.text)
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim() || fallback;
+}
+
+function matchToMcids(entries: OcrMcidTokenEntry[], start: number, end: number): number[] {
+  return [...new Set(entries.slice(start, end).map(entry => entry.mcid))]
+    .filter(value => Number.isInteger(value))
+    .sort((a, b) => a - b);
+}
+
+function findVisibleMcidMatch(
+  snapshot: DocumentSnapshot,
+  title: string,
+): OcrMcidTokenMatch | null {
+  const wanted = alphaTokens(title);
+  if (wanted.length < 4) return null;
+  const entries = mcidTokenEntries(snapshot);
   if (entries.length < wanted.length) return null;
 
   for (let start = 0; start < entries.length; start++) {
-    if (!tokenMatches(wanted[0]!, entries[start]!.token)) continue;
-    let matched = 0;
-    let end = start;
-    while (
-      matched < wanted.length &&
-      end < entries.length &&
-      tokenMatches(wanted[matched]!, entries[end]!.token)
-    ) {
-      matched += 1;
-      end += 1;
-    }
+    const { matched, endEntry } = matchWantedTokensAt(wanted, entries, 0, start);
     if (matched === wanted.length) {
-      const matchedText = entries
-        .slice(start, end)
-        .map(entry => entry.text)
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const mcids = [...new Set(entries.slice(start, end).map(entry => entry.mcid))]
-        .filter(value => Number.isInteger(value))
-        .sort((a, b) => a - b);
+      const mcids = matchToMcids(entries, start, endEntry);
       return {
         mcid: entries[start]!.mcid,
         mcids,
-        text: matchedText || title,
+        text: matchToVisibleText(entries, start, endEntry, title),
         matchedTokenCount: matched,
+        exact: true,
       };
     }
   }
   return null;
 }
 
+function findVisibleMcidWindowMatch(
+  snapshot: DocumentSnapshot,
+  title: string,
+): OcrMcidTokenMatch | null {
+  const wanted = alphaTokens(title);
+  if (wanted.length < 5) return null;
+  const entries = mcidTokenEntries(snapshot);
+  if (entries.length < 4) return null;
+  let best: { start: number; end: number; matched: number; wantedStart: number } | null = null;
+  for (let entryStart = 0; entryStart < entries.length; entryStart += 1) {
+    for (let wantedStart = 0; wantedStart < wanted.length; wantedStart += 1) {
+      const { matched, endEntry } = matchWantedTokensAt(wanted, entries, wantedStart, entryStart);
+      if (matched < 4) continue;
+      if (!best || matched > best.matched || (matched === best.matched && wantedStart < best.wantedStart)) {
+        best = { start: entryStart, end: endEntry, matched, wantedStart };
+      }
+    }
+  }
+  if (!best) return null;
+  const coverage = best.matched / wanted.length;
+  if (best.matched < 4 || coverage < 0.6) return null;
+  const text = matchToVisibleText(entries, best.start, best.end, '');
+  if (isWeakVisibleHeadingAnchorText(text, '')) return null;
+  const mcids = matchToMcids(entries, best.start, best.end);
+  if (mcids.length <= 0) return null;
+  return {
+    mcid: entries[best.start]!.mcid,
+    mcids,
+    text,
+    matchedTokenCount: best.matched,
+    exact: false,
+  };
+}
+
 function candidateScore(input: {
   title: string;
   matchedTokenCount: number;
   source: OcrPageShellHeadingSource;
+  exactVisibleMatch?: boolean;
 }): { score: number; reasons: string[] } {
   const tokens = alphaTokens(input.title);
   let score = 34;
@@ -211,6 +289,9 @@ function candidateScore(input: {
   if (input.matchedTokenCount >= 5) {
     score += 12;
     reasons.push('multi_word_title_match');
+  }
+  if (input.exactVisibleMatch === false) {
+    reasons.push('line_aware_visible_title_window');
   }
   if (tokens.length >= 4 && tokens.length <= 14) {
     score += 12;
@@ -234,14 +315,15 @@ export function selectOcrPageShellHeadingCandidate(
   if (snapshot.headings.length > 0 || (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) > 0) return null;
 
   for (const seed of candidateSeeds(analysis, snapshot)) {
-    const match = findVisibleMcidMatch(snapshot, seed.text);
+    const match = findVisibleMcidMatch(snapshot, seed.text) ?? findVisibleMcidWindowMatch(snapshot, seed.text);
     if (!match) continue;
-    const text = seed.text;
+    const text = match.exact ? seed.text : match.text;
     if (isWeakVisibleHeadingAnchorText(text, '')) continue;
     const scored = candidateScore({
       title: text,
       matchedTokenCount: match.matchedTokenCount,
       source: seed.source,
+      exactVisibleMatch: match.exact,
     });
     if (scored.score < HEADING_BOOTSTRAP_MIN_SCORE) continue;
     return {

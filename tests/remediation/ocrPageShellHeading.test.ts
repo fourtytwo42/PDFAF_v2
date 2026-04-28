@@ -149,6 +149,102 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
     expect(classifyStage129OcrPageShell(analysis, snap).classification).toBe('ocr_text_without_safe_anchor');
   });
 
+  it('accepts a line-aware visible title window when OCR order has extra cover text', () => {
+    const words = [
+      'Executive', 'Summary',
+      'Needs', 'Assessment', 'Survey', 'of', 'Illinois', 'Criminal', 'Justice', 'Agencies',
+      'October', '17', '1997',
+    ];
+    const snap = makeSnapshot({
+      textByPage: ['Executive Summary\nNeeds Assessment Survey of Illinois Criminal Justice Agencies\nOctober 17, 1997'],
+      metadata: {
+        title: '3490 needs assessment survey of illinois criminal justice agencies executive',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: words.join(' '), page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: words.map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    const analysis = analysisFor(snap);
+    const candidate = selectOcrPageShellHeadingCandidate(analysis, snap);
+    expect(candidate).toMatchObject({
+      page: 0,
+      mcid: 2,
+      mcids: [2, 3, 4, 5, 6, 7, 8, 9],
+      text: 'Needs Assessment Survey of Illinois Criminal Justice Agencies',
+    });
+    expect(candidate?.reasons).toContain('line_aware_visible_title_window');
+    expect(classifyStage129OcrPageShell(analysis, snap).classification).toBe('ocr_page_shell_heading_candidate');
+  });
+
+  it('matches safe split OCR title tokens across adjacent MCIDs', () => {
+    const words = ['Pre-', 'trial', 'Release', 'and', 'Crime', 'in', 'Cook', 'County'];
+    const snap = makeSnapshot({
+      textByPage: ['Pre-trial Release and Crime in Cook County'],
+      metadata: {
+        title: '3459 pretrial release and crime in cook county',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: words.join(' '), page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: words.map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    const candidate = selectOcrPageShellHeadingCandidate(analysisFor(snap), snap);
+    expect(candidate).toMatchObject({
+      mcid: 0,
+      mcids: [0, 1, 2, 3, 4, 5, 6, 7],
+      text: 'Pretrial Release And Crime in Cook County',
+    });
+  });
+
+  it('rejects weak body-only partial matches and byline-like OCR anchors', () => {
+    const bodyOnly = makeSnapshot({
+      textByPage: ['Nationwide, backlogs in state court systems are rising at an alarming rate.'],
+      metadata: {
+        title: '3451 state court backlogs in illinois and the united states',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      mcidTextSpans: ['Nationwide', 'backlogs', 'in', 'state', 'court', 'systems'].map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    expect(selectOcrPageShellHeadingCandidate(analysisFor(bodyOnly), bodyOnly)).toBeNull();
+
+    const byline = makeSnapshot({
+      textByPage: ['Prepared by Jane Doe Research Center'],
+      metadata: {
+        title: 'prepared by jane doe research center',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      mcidTextSpans: ['Prepared', 'by', 'Jane', 'Doe', 'Research', 'Center'].map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    expect(selectOcrPageShellHeadingCandidate(analysisFor(byline), byline)).toBeNull();
+  });
+
   it('skips scanned/no-text rows and already-clean heading rows', () => {
     const noText = makeSnapshot({
       textByPage: [''],
