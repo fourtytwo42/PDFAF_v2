@@ -7602,6 +7602,154 @@ def _op_synthesize_ocr_page_shell_reading_order_structure(pdf: pikepdf.Pdf, para
     return True
 
 
+def _direct_struct_elem_children_permissive(elem) -> list:
+    out: list = []
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return out
+    rows = list(k) if isinstance(k, pikepdf.Array) else [k]
+    for child in rows:
+        if _is_struct_elem_dict(child):
+            out.append(child)
+    return out
+
+
+def _op_repair_degenerate_native_reading_order_shell(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Deepen a shallow native tagged structure tree by grouping existing children in page order."""
+    if _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("ocr_pdf_deferred")
+        return False
+    try:
+        max_children = int(params.get("maxChildren", 500))
+    except Exception:
+        max_children = 500
+    max_children = max(1, min(max_children, 1000))
+    try:
+        max_pages = int(params.get("maxPages", 240))
+    except Exception:
+        max_pages = 240
+    max_pages = max(1, min(max_pages, 240))
+
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        sr = None
+    if not isinstance(sr, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_document_struct_elem")
+        return False
+
+    existing_children = _direct_struct_elem_children_permissive(doc_elem)
+    if not existing_children:
+        _set_last_mutation_note("missing_document_children")
+        return False
+    if len(existing_children) > max_children:
+        _set_last_mutation_note(f"too_many_document_children({len(existing_children)})")
+        return False
+    if len(existing_children) == 1:
+        first = existing_children[0]
+        role = (get_name(first) or "").lstrip("/").upper()
+        grandchildren = _direct_struct_elem_children_permissive(first)
+        if role in {"SECT", "DIV", "DOCUMENT"} and grandchildren:
+            nested = any(_direct_struct_elem_children_permissive(child) for child in grandchildren)
+            if nested:
+                _set_last_mutation_note("reading_order_shell_already_deep")
+                return False
+
+    page_map = build_page_map(pdf)
+    by_page: dict[int, list] = {}
+    no_page: list = []
+    for idx, child in enumerate(existing_children):
+        try:
+            page_idx = get_page_number(child, page_map)
+        except Exception:
+            page_idx = -1
+        if page_idx is not None and 0 <= int(page_idx) < max_pages:
+            by_page.setdefault(int(page_idx), []).append(child)
+        else:
+            no_page.append(child)
+        if idx >= max_children:
+            break
+
+    grouped_count = sum(len(children) for children in by_page.values())
+    if grouped_count <= 0:
+        _set_last_mutation_note("no_page_owned_structure_children")
+        return False
+
+    new_children = pikepdf.Array()
+    page_sections = 0
+    for page_idx in sorted(by_page):
+        try:
+            page_obj = pdf.pages[page_idx].obj
+        except Exception:
+            continue
+        sect = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Sect"),
+            P=doc_elem,
+            Pg=page_obj,
+        ))
+        div = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Div"),
+            P=sect,
+            Pg=page_obj,
+        ))
+        page_k = pikepdf.Array()
+        for child in by_page[page_idx]:
+            try:
+                child["/P"] = div
+            except Exception:
+                pass
+            page_k.append(child)
+        div["/K"] = page_k
+        sect["/K"] = pikepdf.Array([div])
+        new_children.append(sect)
+        page_sections += 1
+        try:
+            page_obj["/Tabs"] = pikepdf.Name("/S")
+        except Exception:
+            pass
+
+    if no_page:
+        sect = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Sect"),
+            P=doc_elem,
+        ))
+        div = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/Div"),
+            P=sect,
+        ))
+        k = pikepdf.Array()
+        for child in no_page:
+            try:
+                child["/P"] = div
+            except Exception:
+                pass
+            k.append(child)
+        div["/K"] = k
+        sect["/K"] = pikepdf.Array([div])
+        new_children.append(sect)
+
+    if page_sections <= 0 or len(new_children) == 0:
+        _set_last_mutation_note("no_page_sections_created")
+        return False
+    doc_elem["/K"] = new_children
+    _set_last_mutation_debug({
+        "pageSections": page_sections,
+        "groupedChildren": grouped_count,
+        "unpagedChildren": len(no_page),
+    })
+    _set_last_mutation_note("degenerate_native_reading_order_shell_repaired")
+    return True
+
+
 def _op_create_heading_from_visible_text_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
     if _is_ocrmypdf_produced(pdf):
         _set_last_mutation_note("ocr_pdf_deferred")
@@ -9041,6 +9189,7 @@ _STAGE35_HEADING_OPS = {
     "create_heading_from_visible_text_anchor",
     "create_heading_from_tagged_visible_anchor",
     "create_heading_from_ocr_page_shell_anchor",
+    "repair_degenerate_native_reading_order_shell",
     "create_heading_from_candidate",
     "normalize_heading_hierarchy",
     "repair_structure_conformance",
@@ -9896,6 +10045,7 @@ MUTATORS = {
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_visible_text_anchor": _op_create_heading_from_visible_text_anchor,
     "create_heading_from_tagged_visible_anchor": _op_create_heading_from_tagged_visible_anchor,
+    "repair_degenerate_native_reading_order_shell": _op_repair_degenerate_native_reading_order_shell,
     "synthesize_ocr_page_shell_reading_order_structure": _op_synthesize_ocr_page_shell_reading_order_structure,
     "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,
     "create_heading_from_candidate": _op_create_heading_from_candidate,

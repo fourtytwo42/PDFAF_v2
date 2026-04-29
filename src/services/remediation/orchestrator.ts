@@ -666,6 +666,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
   }
   if (key === 'reading_order') {
     return tools.has('repair_native_reading_order') ||
+      tools.has('repair_degenerate_native_reading_order_shell') ||
       tools.has('normalize_annotation_tab_order') ||
       tools.has('artifact_repeating_page_furniture') ||
       tools.has('create_structure_from_degenerate_native_anchor') ||
@@ -3437,6 +3438,7 @@ export async function runSingleTool(
       case 'set_link_annotation_contents':
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
+      case 'repair_degenerate_native_reading_order_shell':
       case 'create_structure_from_degenerate_native_anchor':
       case 'create_heading_from_visible_text_anchor':
       case 'create_heading_from_tagged_visible_anchor':

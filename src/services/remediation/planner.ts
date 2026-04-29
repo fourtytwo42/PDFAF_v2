@@ -54,6 +54,7 @@ import {
   selectDegenerateNativeAnchorCandidate,
   shouldTryDegenerateNativeStructureRecovery,
 } from './degenerateNativeStructure.js';
+import { shouldTryNativeReadingOrderTopup } from './nativeReadingOrderTopup.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -128,6 +129,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'normalize_heading_hierarchy',
     'normalize_nested_figure_containers',
     'canonicalize_figure_alt_ownership',
+    'repair_degenerate_native_reading_order_shell',
     'repair_native_reading_order',
     'repair_structure_conformance',
   ],
@@ -153,6 +155,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'repair_annotation_alt_text',
   ],
   native_structure_repair: [
+    'repair_degenerate_native_reading_order_shell',
     'repair_native_reading_order',
     'normalize_heading_hierarchy',
     'repair_list_li_wrong_parent',
@@ -941,6 +944,9 @@ function toolApplicableToPdfClass(
       && (snapshot.paragraphStructElems?.length ?? 0) > 0
       && (snapshot.mcidTextSpans?.length ?? 0) > 0;
   }
+  if (toolName === 'repair_degenerate_native_reading_order_shell') {
+    return pdfClass === 'native_tagged' && snapshot.textCharCount > 0 && snapshot.structureTree !== null;
+  }
   if (toolName === 'create_structure_from_degenerate_native_anchor') {
     if (pdfClass === 'scanned') return false;
     const depth = snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? (snapshot.structureTree ? 2 : 0);
@@ -1329,6 +1335,12 @@ export function planForRemediation(
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (
+      toolName === 'repair_degenerate_native_reading_order_shell' &&
+      !shouldTryNativeReadingOrderTopup(analysis, snapshot)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
       toolName === 'create_structure_from_degenerate_native_anchor' &&
       !(shouldTryDegenerateNativeStructureRecovery(analysis, snapshot) && headingNeedsRepair)
     ) {
@@ -1583,6 +1595,29 @@ export function planForRemediation(
           params,
           rationale: 'Stage 131 degenerate native structure recovery from a proven first-page text anchor.',
           route: 'post_bootstrap_heading_convergence',
+        });
+      }
+    }
+  }
+
+  {
+    const toolName = 'repair_degenerate_native_reading_order_shell';
+    if (
+      !toolSet.has(toolName) &&
+      shouldTryNativeReadingOrderTopup(analysis, snapshot) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 152 native tagged reading-order topup for a shallow but content-backed structure shell.',
+          route: 'native_structure_repair',
         });
       }
     }
@@ -2029,6 +2064,12 @@ export function buildDefaultParams(
       if (!shouldTryOcrPageShellReadingOrderRecovery(analysis, snapshot)) return {};
       return {
         maxParagraphsPerPage: 1,
+        maxPages: Math.min(Math.max(snapshot.pageCount, 1), 240),
+      };
+    case 'repair_degenerate_native_reading_order_shell':
+      if (!shouldTryNativeReadingOrderTopup(analysis, snapshot)) return {};
+      return {
+        maxChildren: 500,
         maxPages: Math.min(Math.max(snapshot.pageCount, 1), 240),
       };
     case 'substitute_legacy_fonts_in_place':
