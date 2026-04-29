@@ -3432,6 +3432,7 @@ export async function runSingleTool(
       case 'remap_orphan_mcids_as_artifacts':
       case 'artifact_repeating_page_furniture':
       case 'mark_untagged_content_as_artifact':
+      case 'recover_ocr_text_ownership':
       case 'tag_ocr_text_blocks':
       case 'tag_native_text_blocks':
       case 'tag_unowned_annotations':

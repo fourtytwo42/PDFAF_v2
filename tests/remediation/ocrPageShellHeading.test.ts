@@ -7,6 +7,10 @@ import {
   shouldTryOcrPageShellReadingOrderRecovery,
 } from '../../src/services/remediation/ocrPageShellHeading.js';
 import {
+  classifyStage154OcrTextOwnership,
+  shouldTryOcrTextOwnershipRecovery,
+} from '../../src/services/remediation/ocrTextOwnership.js';
+import {
   selectVisibleHeadingAnchorCandidate,
   shouldTryVisibleHeadingAnchorRecovery,
 } from '../../src/services/remediation/visibleHeadingAnchor.js';
@@ -410,5 +414,48 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
       ...base,
       annotationAccessibility: { linkAnnotationsMissingStructParent: 1 },
     })).toBe(false);
+  });
+
+  it('plans OCR text ownership recovery before OCR heading recovery when ownership is missing', () => {
+    const snap = makeSnapshot({
+      remediationProvenance: { engineAppliedOcr: true, engineTaggedOcrText: false, bookmarkStrategy: 'none' },
+      paragraphStructElems: [],
+      mcidTextSpans: [],
+      taggedContentAudit: { orphanMcidCount: 2, mcidTextSpanCount: 2, suspectedPathPaintOutsideMc: 0 },
+      structureTree: { type: 'Document', children: [] },
+    });
+    const analysis = analysisFor(snap);
+    expect(classifyStage154OcrTextOwnership(analysis, snap).classification)
+      .toBe('ocr_existing_bdc_rewrap_candidate');
+    expect(shouldTryOcrTextOwnershipRecovery(analysis, snap)).toBe(true);
+    expect(selectOcrPageShellHeadingCandidate(analysis, snap)).toBeNull();
+    const planned = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(planned).toContain('recover_ocr_text_ownership');
+    expect(planned).not.toContain('create_heading_from_ocr_page_shell_anchor');
+    expect(buildDefaultParams('recover_ocr_text_ownership', analysis, snap)).toMatchObject({
+      allowExistingBdcText: true,
+      maxPages: 4,
+    });
+  });
+
+  it('does not schedule OCR ownership recovery for native or already-owned OCR controls', () => {
+    const owned = makeSnapshot();
+    const ownedAnalysis = analysisFor(owned);
+    expect(classifyStage154OcrTextOwnership(ownedAnalysis, owned).classification)
+      .toBe('already_fixed_control');
+    expect(shouldTryOcrTextOwnershipRecovery(ownedAnalysis, owned)).toBe(false);
+
+    const native = makeSnapshot({
+      metadata: { title: 'Native report title', language: 'en-US', creator: '', producer: '' },
+      remediationProvenance: undefined,
+      pdfClass: 'native_tagged',
+      paragraphStructElems: [],
+      mcidTextSpans: [],
+      taggedContentAudit: { orphanMcidCount: 0, mcidTextSpanCount: 0, suspectedPathPaintOutsideMc: 0 },
+    });
+    const nativeAnalysis = analysisFor(native);
+    expect(classifyStage154OcrTextOwnership(nativeAnalysis, native).classification)
+      .toBe('already_fixed_control');
+    expect(shouldTryOcrTextOwnershipRecovery(nativeAnalysis, native)).toBe(false);
   });
 });

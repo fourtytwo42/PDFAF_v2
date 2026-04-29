@@ -49,6 +49,7 @@ import {
   shouldTryOcrPageShellHeadingRecovery,
   shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
+import { shouldTryOcrTextOwnershipRecovery } from './ocrTextOwnership.js';
 import {
   classifyStage131DegenerateNative,
   selectDegenerateNativeAnchorCandidate,
@@ -166,6 +167,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   font_ocr_repair: [
     'ocr_scanned_pdf',
     'tag_ocr_text_blocks',
+    'recover_ocr_text_ownership',
     'synthesize_ocr_page_shell_reading_order_structure',
     'create_heading_from_ocr_page_shell_anchor',
     'tag_native_text_blocks',
@@ -281,7 +283,7 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
   },
   font_ocr_repair: {
     allowedTools: ROUTE_TOOL_MAP.font_ocr_repair,
-    failureTools: ['ocr_scanned_pdf', 'tag_ocr_text_blocks', 'tag_native_text_blocks'],
+    failureTools: ['ocr_scanned_pdf', 'tag_ocr_text_blocks', 'recover_ocr_text_ownership', 'tag_native_text_blocks'],
     requiredFailureTools: ['ocr_scanned_pdf'],
   },
   font_unicode_tail_recovery: {
@@ -1045,6 +1047,18 @@ function toolApplicableToPdfClass(
     const creator = (snapshot.metadata.creator ?? '').toLowerCase();
     return creator.includes('ocrmypdf');
   }
+  if (toolName === 'recover_ocr_text_ownership') {
+    if (pdfClass === 'scanned') return false;
+    const creator = (snapshot.metadata.creator ?? '').toLowerCase();
+    const producer = (snapshot.metadata.producer ?? '').toLowerCase();
+    return snapshot.textCharCount > 0
+      && snapshot.structureTree !== null
+      && (
+        snapshot.remediationProvenance?.engineAppliedOcr === true
+        || creator.includes('ocrmypdf')
+        || producer.includes('ocrmypdf')
+      );
+  }
   if (toolName === 'tag_native_text_blocks') {
     if (pdfClass === 'scanned') return false;
     const creator = (snapshot.metadata.creator ?? '').toLowerCase();
@@ -1214,6 +1228,7 @@ export function planForRemediation(
   const visibleHeadingAnchorRecoveryActive = shouldTryVisibleHeadingAnchorRecovery(analysis, snapshot);
   const ocrPageShellHeadingRecoveryActive = shouldTryOcrPageShellHeadingRecovery(analysis, snapshot);
   const ocrPageShellReadingOrderRecoveryActive = shouldTryOcrPageShellReadingOrderRecovery(analysis, snapshot);
+  const ocrTextOwnershipRecoveryActive = shouldTryOcrTextOwnershipRecovery(analysis, snapshot);
   const headingCreateRecoveryActive =
     zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
     zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
@@ -1325,6 +1340,12 @@ export function planForRemediation(
     if (
       toolName === 'create_heading_from_ocr_page_shell_anchor' &&
       !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'recover_ocr_text_ownership' &&
+      !(ocrTextOwnershipRecoveryActive && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1704,6 +1725,30 @@ export function planForRemediation(
   }
 
   {
+    const toolName = 'recover_ocr_text_ownership';
+    if (
+      ocrTextOwnershipRecoveryActive &&
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 154 OCR text ownership recovery before strict OCR heading-anchor selection.',
+          route: 'font_ocr_repair',
+        });
+      }
+    }
+  }
+
+  {
     const toolName = 'create_heading_from_ocr_page_shell_anchor';
     if (
       ocrPageShellHeadingRecoveryActive &&
@@ -2065,6 +2110,12 @@ export function buildDefaultParams(
       return {
         maxParagraphsPerPage: 1,
         maxPages: Math.min(Math.max(snapshot.pageCount, 1), 240),
+      };
+    case 'recover_ocr_text_ownership':
+      if (!shouldTryOcrTextOwnershipRecovery(analysis, snapshot)) return {};
+      return {
+        maxPages: Math.min(Math.max(snapshot.pageCount, 1), 240),
+        allowExistingBdcText: true,
       };
     case 'repair_degenerate_native_reading_order_shell':
       if (!shouldTryNativeReadingOrderTopup(analysis, snapshot)) return {};

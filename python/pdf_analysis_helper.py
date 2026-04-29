@@ -9817,7 +9817,13 @@ def _op_artifact_repeating_page_furniture(pdf: pikepdf.Pdf, _params: dict) -> bo
     return changed
 
 
-def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool) -> bool:
+def _tag_bt_et_blocks_into_structure(
+    pdf: pikepdf.Pdf,
+    *,
+    require_ocrmypdf: bool,
+    allow_existing_bdc_text: bool = False,
+    append_to_existing_document_children: bool = False,
+) -> bool:
     """
     Wrap each BT…ET block in /P <</MCID N>> BDC … EMC and attach ONE P struct element
     per page under the Document element. Shared by OCRmyPDF and legacy native paths.
@@ -9854,12 +9860,19 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
         ))
         sr["/K"] = pikepdf.Array([doc_elem])
 
-    # Idempotent guard: if Document already has children, skip.
+    # Idempotent guard: if Document already has children, skip unless a guarded
+    # OCR ownership recovery pass is explicitly allowed to append new /P nodes.
+    existing_doc_children: list = []
     try:
         existing_ck = doc_elem.get("/K")
         if existing_ck is not None:
-            _set_last_mutation_note("already_has_document_children")
-            return False
+            if not append_to_existing_document_children:
+                _set_last_mutation_note("already_has_document_children")
+                return False
+            if isinstance(existing_ck, pikepdf.Array):
+                existing_doc_children = list(existing_ck)
+            else:
+                existing_doc_children = [existing_ck]
     except Exception:
         pass
 
@@ -9886,25 +9899,42 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
             pages_without_bt_et += 1
             continue
 
-        # Skip pages that already have BDC markers
-        if any(str(i.operator) == "BDC" for i in insts):
+        # Normal OCR tagging remains conservative. Stage 154 owner recovery can
+        # still wrap unowned OCR text groups that are outside existing BDC/BMC spans.
+        if not allow_existing_bdc_text and any(str(i.operator) == "BDC" for i in insts):
             pages_with_existing_marked_content += 1
             continue
 
-        # Find BT…ET groups
+        # Find unowned BT…ET groups. In recovery mode, preserve existing marked
+        # content intact and wrap only text groups that are not already inside it.
         bt_et_groups: list[tuple[int, int]] = []
         in_bt = False
         bt_start = 0
+        bt_marked_depth = 0
+        marked_depth = 0
+        skipped_marked_bt_et = 0
         for idx, inst in enumerate(insts):
             op = str(inst.operator)
+            depth_before = marked_depth
             if op == "BT" and not in_bt:
                 in_bt = True
                 bt_start = idx
+                bt_marked_depth = depth_before
             elif op == "ET" and in_bt:
                 in_bt = False
-                bt_et_groups.append((bt_start, idx))
+                if allow_existing_bdc_text and bt_marked_depth > 0:
+                    skipped_marked_bt_et += 1
+                else:
+                    bt_et_groups.append((bt_start, idx))
+            if op in ("BDC", "BMC"):
+                marked_depth += 1
+            elif op == "EMC" and marked_depth > 0:
+                marked_depth -= 1
 
         if not bt_et_groups:
+            if skipped_marked_bt_et > 0 or any(str(i.operator) == "BDC" for i in insts):
+                pages_with_existing_marked_content += 1
+                continue
             pages_without_bt_et += 1
             continue
         page_parent_tree, _page_key, page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
@@ -9975,9 +10005,13 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
             _set_last_mutation_note("no_pages_processed")
         return False
 
-    # Attach all page P elements to Document
-    doc_elem["/K"] = pikepdf.Array(new_p_elems)
-    _set_last_mutation_note("bt_et_page_wrapping_applied")
+    # Attach all page P elements to Document. Guarded ownership recovery appends
+    # to existing structure children instead of replacing them.
+    doc_elem["/K"] = pikepdf.Array(existing_doc_children + new_p_elems)
+    if allow_existing_bdc_text:
+        _set_last_mutation_note("ocr_text_owner_recovery_applied")
+    else:
+        _set_last_mutation_note("bt_et_page_wrapping_applied")
     _op_normalize_heading_hierarchy(pdf, {})
     return True
 
@@ -9985,6 +10019,19 @@ def _tag_bt_et_blocks_into_structure(pdf: pikepdf.Pdf, *, require_ocrmypdf: bool
 def _op_tag_ocr_text_blocks(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """OCRmyPDF sandwich: see _tag_bt_et_blocks_into_structure."""
     changed = _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=True)
+    if changed:
+        _set_pdfaf_remediation_marker(pdf, PDFAF_ENGINE_OCR_TAGGED_MARKER, True)
+    return changed
+
+
+def _op_recover_ocr_text_ownership(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """Stage 154: tag unowned OCR text groups even when unrelated BDC markers exist."""
+    changed = _tag_bt_et_blocks_into_structure(
+        pdf,
+        require_ocrmypdf=True,
+        allow_existing_bdc_text=True,
+        append_to_existing_document_children=True,
+    )
     if changed:
         _set_pdfaf_remediation_marker(pdf, PDFAF_ENGINE_OCR_TAGGED_MARKER, True)
     return changed
@@ -10060,6 +10107,7 @@ MUTATORS = {
     "finalize_substituted_font_conformance": _op_finalize_substituted_font_conformance,
     "bootstrap_struct_tree": _op_bootstrap_struct_tree,
     "mark_untagged_content_as_artifact": _op_mark_untagged_content_as_artifact,
+    "recover_ocr_text_ownership": _op_recover_ocr_text_ownership,
     "tag_ocr_text_blocks": _op_tag_ocr_text_blocks,
     "tag_native_text_blocks": _op_tag_native_text_blocks,
     "ensure_accessibility_tagging": _op_ensure_accessibility_tagging,
