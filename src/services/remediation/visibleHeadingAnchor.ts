@@ -135,6 +135,7 @@ function splitLikelyTitlePrefix(firstPageText: string): string {
     /\s+Illinois Criminal Justice Information Authority\b/i,
     /\s+Research Bulletin\b/i,
     /\s+\d\s*\d?\s*\/\s*\d\s*\d?\s*\/\s*\d\s*\d?\s*\d?\s*\d?/,
+    /\s+[A-Z](?:\s+[a-z]){2,8}\s+\d(?:\s+\d){0,1}\s*,?\s+\d(?:\s+\d){3}/,
   ];
   let cut = text.length;
   for (const pattern of splitters) {
@@ -376,6 +377,10 @@ export function selectTaggedVisibleHeadingAnchorCandidate(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
 ): VisibleHeadingAnchorCandidate | null {
+  if (headingScore(analysis) === 0 && analysis.pdfClass === 'native_tagged' && !isOcrPageShell(snapshot, analysis)) {
+    const splitTitle = firstPageSplitMcidHeadingCandidate(analysis, snapshot);
+    if (splitTitle && splitTitle.score >= HEADING_BOOTSTRAP_MIN_SCORE) return splitTitle;
+  }
   const normal = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
   if (normal?.page === 0) return normal;
   const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
@@ -496,8 +501,8 @@ export function classifyTaggedZeroHeadingAnchor(
     return { classification: 'no_safe_candidate', candidate: null, reasons: ['text_extractability_not_strong'] };
   }
   const figureSignals = snapshot.detectionProfile?.figureSignals;
-  if ((figureSignals?.treeFigureCount ?? 0) > 0 && (altText?.score ?? 100) < 90) {
-    return { classification: 'no_safe_candidate', candidate: null, reasons: ['mixed_figure_alt_debt_not_tagged_zero_heading_tail'] };
+  if ((figureSignals?.treeFigureCount ?? 0) > 0 && (altText?.score ?? 100) < 50) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['severe_figure_alt_debt_not_tagged_zero_heading_tail'] };
   }
   const readingScore = readingOrder?.score ?? 0;
   const readingOrderRepairableByTabs = readingScore < 90 && (snapshot.annotationAccessibility?.pagesMissingTabsS ?? 0) > 0;

@@ -337,6 +337,55 @@ describe('Stage 127 visible heading anchor recovery', () => {
     expect(names).toContain('create_heading_from_tagged_visible_anchor');
   });
 
+  it('prefers a split-MCID first-page title over a weak paragraph candidate for tagged zero-heading rows', () => {
+    const snap = snapshot({
+      textByPage: ['Demystifying Program Evaluation in Criminal Justice A Guide for Practitioners May 31 2019 Abstract: body starts here.'],
+      paragraphStructElems: [{
+        tag: 'P',
+        page: 8,
+        structRef: '281_0',
+        text: 'Conclusion',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document'],
+      }],
+      mcidTextSpans: [
+        { page: 0, mcid: 0, snippet: '/Span <</MCID 0>> BDC BT /T1 1 Tf 30 0 0 30 53 690 Tm', resolvedText: 'Demystifying Program Evaluation' },
+        { page: 0, mcid: 1, snippet: '/Span <</MCID 1>> BDC BT /T1 1 Tf 30 0 0 30 53 660 Tm', resolvedText: 'in Criminal Justice' },
+        { page: 0, mcid: 2, snippet: '/Span <</MCID 2>> BDC BT /T1 1 Tf 30 0 0 30 53 630 Tm', resolvedText: 'A Guide for Practitioners' },
+      ],
+      detectionProfile: detection({
+        readingOrderSignals: { ...detection().readingOrderSignals, structureTreeDepth: 4 },
+        figureSignals: { extractedFigureCount: 3, treeFigureCount: 3, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+      }),
+    });
+    const analysis = {
+      ...analysisFor(snap),
+      categories: analysisFor(snap).categories.map(category =>
+        category.key === 'alt_text' ? { ...category, applicable: true, score: 68 } : category,
+      ),
+    };
+
+    expect(selectTaggedVisibleHeadingAnchorCandidate(analysis, snap)).toMatchObject({
+      mcid: 0,
+      mcids: [0, 1, 2],
+      text: 'Demystifying Program Evaluation in Criminal Justice A Guide for Practitioners',
+      source: 'tagged_visible_line_mcid_first_page',
+    });
+    expect(classifyTaggedZeroHeadingAnchor(analysis, snap).classification).toBe('tagged_zero_heading_anchor_candidate');
+    expect(shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snap)).toBe(true);
+  });
+
+  it('cuts spaced date suffixes from visible title anchors', () => {
+    const snap = snapshot({
+      textByPage: ['VICTIM OFFENDER OVERLAP: FIREARM HOMICIDE VICTIMS WITH AND WITHOUT CRIMINAL RECORDS J u n e 1 0 , 2 0 2 3 Body starts.'],
+    });
+
+    expect(extractFirstPageVisibleHeadingText(snap, 'victim-overlap.pdf')).toBe(
+      'VICTIM OFFENDER OVERLAP: FIREARM HOMICIDE VICTIMS WITH AND WITHOUT CRIMINAL RECORDS',
+    );
+  });
+
   it('rejects weak partial-heading paragraph and garbled MCID candidates', () => {
     const weakParagraph = snapshot({
       textByPage: ['The report body starts here with findings and context.'],
