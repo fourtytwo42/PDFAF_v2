@@ -300,6 +300,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     threeCcGoldenOrphanV1: Boolean(struct.threeCcGoldenOrphanV1),
     orphanMcids: struct.orphanMcids ?? [],
     mcidTextSpans: struct.mcidTextSpans ?? [],
+    ocrTitleMcidCandidates: struct.ocrTitleMcidCandidates ?? [],
     taggedContentAudit: struct.taggedContentAudit,
     listStructureAudit: struct.listStructureAudit,
     acrobatStyleAltRisks: struct.acrobatStyleAltRisks,

@@ -17,6 +17,7 @@ export type Stage129OcrPageShellClass =
 export type OcrPageShellHeadingSource =
   | 'metadata_visible_match'
   | 'filename_visible_match'
+  | 'metadata_deep_mcid_match'
   | 'first_page_visible_line';
 
 export interface OcrPageShellHeadingCandidate {
@@ -51,6 +52,7 @@ export interface OcrPageShellHeadingDebug {
   seeds: OcrPageShellHeadingSeedDebug[];
   firstPageLineCandidates: string[];
   firstPageMcidSpanSamples: Array<{ mcid: number; text: string }>;
+  titleMcidCandidates: NonNullable<DocumentSnapshot['ocrTitleMcidCandidates']>;
   paragraphSamples: Array<{ page: number; text: string; structRef?: string }>;
 }
 
@@ -324,6 +326,32 @@ function findVisibleMcidWindowMatch(
   };
 }
 
+function findDeepTitleMcidMatch(
+  snapshot: DocumentSnapshot,
+  title: string,
+): OcrMcidTokenMatch | null {
+  const wanted = alphaTokens(title);
+  if (wanted.length < 4) return null;
+  const candidates = snapshot.ocrTitleMcidCandidates ?? [];
+  for (const candidate of candidates) {
+    if (candidate.page !== 0) continue;
+    if (candidate.beyondGlobalCap !== true) continue;
+    if ((candidate.matchedTokenCount ?? 0) < 4) continue;
+    const coverage = candidate.matchedTokenCount / Math.max(1, candidate.totalTokenCount || wanted.length);
+    if (coverage < 0.7) continue;
+    const candidateTokens = alphaTokens(candidate.text);
+    if (candidateTokens.length < 4) continue;
+    return {
+      mcid: candidate.mcid,
+      mcids: candidate.mcids,
+      text: cleanOcrShellText(candidate.text),
+      matchedTokenCount: candidate.matchedTokenCount,
+      exact: false,
+    };
+  }
+  return null;
+}
+
 function candidateScore(input: {
   title: string;
   matchedTokenCount: number;
@@ -333,9 +361,9 @@ function candidateScore(input: {
   const tokens = alphaTokens(input.title);
   let score = 34;
   const reasons = ['ocr_page_shell', 'visible_page0_mcid_match'];
-  if (input.source === 'metadata_visible_match') {
+  if (input.source === 'metadata_visible_match' || input.source === 'metadata_deep_mcid_match') {
     score += 14;
-    reasons.push('metadata_title_visible_match');
+    reasons.push(input.source === 'metadata_deep_mcid_match' ? 'metadata_title_deep_mcid_match' : 'metadata_title_visible_match');
   }
   if (input.source === 'filename_visible_match') {
     score += 8;
@@ -366,18 +394,20 @@ export function selectOcrPageShellHeadingCandidate(
   if (!isOcrPageShell(snapshot, analysis)) return null;
   if ((categoryScore(analysis, 'heading_structure') ?? 100) > 0) return null;
   if ((categoryScore(analysis, 'text_extractability') ?? 0) < 60) return null;
-  if ((snapshot.mcidTextSpans?.length ?? 0) <= 0) return null;
+  if ((snapshot.mcidTextSpans?.length ?? 0) <= 0 && (snapshot.ocrTitleMcidCandidates?.length ?? 0) <= 0) return null;
   if (snapshot.headings.length > 0 || (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) > 0) return null;
 
   for (const seed of candidateSeeds(analysis, snapshot)) {
-    const match = findVisibleMcidMatch(snapshot, seed.text) ?? findVisibleMcidWindowMatch(snapshot, seed.text);
+    const deepMatch = findDeepTitleMcidMatch(snapshot, seed.text);
+    const match = findVisibleMcidMatch(snapshot, seed.text) ?? findVisibleMcidWindowMatch(snapshot, seed.text) ?? deepMatch;
     if (!match) continue;
     const text = match.exact ? seed.text : match.text;
-    if (isWeakVisibleHeadingAnchorText(text, '')) continue;
+    if (isWeakVisibleHeadingAnchorText(text, analysis.filename)) continue;
+    const source: OcrPageShellHeadingSource = match === deepMatch ? 'metadata_deep_mcid_match' : seed.source;
     const scored = candidateScore({
       title: text,
       matchedTokenCount: match.matchedTokenCount,
-      source: seed.source,
+      source,
       exactVisibleMatch: match.exact,
     });
     if (scored.score < HEADING_BOOTSTRAP_MIN_SCORE) continue;
@@ -386,7 +416,7 @@ export function selectOcrPageShellHeadingCandidate(
       mcid: match.mcid,
       mcids: match.mcids,
       text: text.slice(0, 200),
-      source: seed.source,
+      source,
       score: scored.score,
       reasons: scored.reasons,
     };
@@ -401,13 +431,14 @@ export function debugOcrPageShellHeadingSelection(
   const seeds = candidateSeeds(analysis, snapshot).map(seed => {
     const exact = findVisibleMcidMatch(snapshot, seed.text);
     const window = exact ? null : findVisibleMcidWindowMatch(snapshot, seed.text);
-    const match = exact ?? window;
+    const deep = exact || window ? null : findDeepTitleMcidMatch(snapshot, seed.text);
+    const match = exact ?? window ?? deep;
     const text = match?.exact === false ? match.text : seed.text;
     const scored = match && !isWeakVisibleHeadingAnchorText(text, '')
       ? candidateScore({
         title: text,
         matchedTokenCount: match.matchedTokenCount,
-        source: seed.source,
+        source: match === deep ? 'metadata_deep_mcid_match' : seed.source,
         exactVisibleMatch: match.exact,
       })
       : null;
@@ -416,7 +447,7 @@ export function debugOcrPageShellHeadingSelection(
       source: seed.source,
       tokens: alphaTokens(seed.text),
       exactMatch: Boolean(exact),
-      windowMatch: Boolean(window),
+      windowMatch: Boolean(window || deep),
       matchedTokenCount: match?.matchedTokenCount ?? 0,
       mcids: match?.mcids ?? [],
       score: scored?.score ?? null,
@@ -433,6 +464,7 @@ export function debugOcrPageShellHeadingSelection(
       .filter(row => row.page === 0 && Number.isInteger(row.mcid))
       .slice(0, 24)
       .map(row => ({ mcid: row.mcid, text: cleanOcrShellText(row.resolvedText ?? row.snippet).slice(0, 120) })),
+    titleMcidCandidates: snapshot.ocrTitleMcidCandidates ?? [],
     paragraphSamples: (snapshot.paragraphStructElems ?? [])
       .filter(row => row.page === 0)
       .slice(0, 8)

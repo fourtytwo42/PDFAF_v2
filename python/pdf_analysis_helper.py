@@ -34,6 +34,7 @@ except ImportError:
         "threeCcGoldenOrphanV1": False,
         "orphanMcids": [],
         "mcidTextSpans": [],
+        "ocrTitleMcidCandidates": [],
         "annotationAccessibility": {
             "pagesMissingTabsS": 0,
             "pagesAnnotationOrderDiffers": 0,
@@ -1624,6 +1625,175 @@ def collect_mcid_text_spans(pdf: pikepdf.Pdf) -> list[dict]:
         except Exception:
             continue
     return out
+
+
+_STAGE155_TITLE_STOPWORDS = {"a", "an", "and", "for", "in", "of", "on", "the", "to", "with"}
+
+
+def _stage155_alpha_tokens(value: str) -> list[str]:
+    return re.findall(r"[a-z]+", (value or "").lower())
+
+
+def _stage155_strip_title_seed(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").replace("_", " ").replace("-", " ")).strip()
+    if not text:
+        return ""
+    text = re.split(r"[\\/]", text)[-1]
+    text = re.sub(r"\.pdf$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(?:manual\s+scanned|manual scanned|scanned|ocr)\s+", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"^\d{3,6}\s+", "", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _stage155_edit_distance_at_most_one(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = 0
+    j = 0
+    edits = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(a) > len(b):
+            i += 1
+        elif len(b) > len(a):
+            j += 1
+        else:
+            i += 1
+            j += 1
+    return edits + (len(a) - i) + (len(b) - j) <= 1
+
+
+def _stage155_token_matches(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    if len(expected) >= 5 and len(actual) >= 5:
+        return _stage155_edit_distance_at_most_one(expected, actual)
+    return False
+
+
+def _stage155_match_wanted_tokens_at(wanted: list[str], entries: list[dict], wanted_start: int, entry_start: int) -> tuple[int, int]:
+    matched = 0
+    entry_index = entry_start
+    while wanted_start + matched < len(wanted) and entry_index < len(entries):
+        expected = wanted[wanted_start + matched]
+        current = entries[entry_index]
+        if _stage155_token_matches(expected, str(current.get("token") or "")):
+            matched += 1
+            entry_index += 1
+            continue
+        next_entry = entries[entry_index + 1] if entry_index + 1 < len(entries) else None
+        if next_entry is not None and _stage155_token_matches(
+            expected,
+            f"{current.get('token') or ''}{next_entry.get('token') or ''}",
+        ):
+            matched += 1
+            entry_index += 2
+            continue
+        break
+    return matched, entry_index
+
+
+def _stage155_match_text(entries: list[dict], start: int, end: int, fallback: str) -> str:
+    parts = [str(entry.get("text") or "").strip() for entry in entries[start:end] if str(entry.get("text") or "").strip()]
+    return re.sub(r"\s+", " ", " ".join(parts)).strip() or fallback
+
+
+def _stage155_match_mcids(entries: list[dict], start: int, end: int) -> list[int]:
+    return sorted({int(entry["mcid"]) for entry in entries[start:end] if isinstance(entry.get("mcid"), int)})
+
+
+def collect_ocr_title_mcid_candidates(pdf: pikepdf.Pdf, metadata_title: str | None) -> list[dict]:
+    """Stage 155: deep page-0 OCR title scan without raising the global MCID JSON cap."""
+    try:
+        if not _is_ocrmypdf_produced(pdf):
+            return []
+    except Exception:
+        return []
+    if len(pdf.pages) <= 0:
+        return []
+    seed = _stage155_strip_title_seed(metadata_title)
+    wanted = _stage155_alpha_tokens(seed)
+    if len(wanted) < 4:
+        return []
+    try:
+        raw = _read_page_contents_raw(pdf.pages[0])
+    except Exception:
+        return []
+
+    entries: list[dict] = []
+    ordinal = 0
+    for match in MCID_OP_RE.finditer(raw):
+        resolved = extract_resolved_text_after_mcid(raw, match)
+        for token in _stage155_alpha_tokens(resolved):
+            entries.append({
+                "token": token,
+                "mcid": int(match.group(1)),
+                "text": re.sub(r"\s+", " ", resolved).strip(),
+                "ordinal": ordinal,
+            })
+        ordinal += 1
+        if ordinal > 5000:
+            break
+    if len(entries) < 4:
+        return []
+
+    best: dict | None = None
+    for entry_start in range(len(entries)):
+        # Exact full-title match from the seed start is preferred.
+        matched, end_entry = _stage155_match_wanted_tokens_at(wanted, entries, 0, entry_start)
+        if matched == len(wanted):
+            best = {
+                "start": entry_start,
+                "end": end_entry,
+                "matched": matched,
+                "wantedStart": 0,
+                "exact": True,
+            }
+            break
+        # Fallback window match mirrors the TS OCR selector but remains strict:
+        # at least four strong title tokens and most of the title seed.
+        for wanted_start in range(len(wanted)):
+            matched, end_entry = _stage155_match_wanted_tokens_at(wanted, entries, wanted_start, entry_start)
+            if matched < 4:
+                continue
+            coverage = matched / max(1, len(wanted))
+            if coverage < 0.7:
+                continue
+            if best is None or matched > best["matched"] or (matched == best["matched"] and wanted_start < best["wantedStart"]):
+                best = {
+                    "start": entry_start,
+                    "end": end_entry,
+                    "matched": matched,
+                    "wantedStart": wanted_start,
+                    "exact": False,
+                }
+    if best is None:
+        return []
+    start = int(best["start"])
+    end = int(best["end"])
+    mcids = _stage155_match_mcids(entries, start, end)
+    if not mcids:
+        return []
+    return [{
+        "page": 0,
+        "mcid": mcids[0],
+        "mcids": mcids[:24],
+        "text": _stage155_match_text(entries, start, end, seed)[:200],
+        "source": "metadata_title_deep_mcid_match",
+        "matchedTokenCount": int(best["matched"]),
+        "totalTokenCount": len(wanted),
+        "startIndex": int(entries[start].get("ordinal") or 0),
+        "beyondGlobalCap": int(entries[start].get("ordinal") or 0) >= MAX_MCID_SPANS,
+    }]
 
 
 def dump_structure_page(pdf: pikepdf.Pdf, page_idx: int) -> dict:
@@ -4936,6 +5106,29 @@ def stage131_shape_main(pdf_path: str) -> int:
     return 0
 
 
+def stage155_title_owner_main(pdf_path: str) -> int:
+    out = {
+        "isOcr": False,
+        "title": None,
+        "page0McidCount": 0,
+        "normalMcidCap": MAX_MCID_SPANS,
+        "titleCandidates": [],
+    }
+    try:
+        with pikepdf.open(pdf_path, suppress_warnings=True) as pdf:
+            out["isOcr"] = _is_ocrmypdf_produced(pdf)
+            meta = extract_metadata(pdf)
+            out["title"] = meta.get("title")
+            if len(pdf.pages) > 0:
+                raw = _read_page_contents_raw(pdf.pages[0])
+                out["page0McidCount"] = len(list(MCID_OP_RE.finditer(raw)))
+            out["titleCandidates"] = collect_ocr_title_mcid_candidates(pdf, meta.get("title"))
+    except Exception as exc:
+        out["error"] = str(exc)
+    print(json.dumps(out, ensure_ascii=False, default=str))
+    return 0
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: pdf_analysis_helper.py <pdf_path>"}))
@@ -5015,6 +5208,10 @@ def main():
         # Metadata
         meta = extract_metadata(pdf)
         result.update(meta)
+        try:
+            result["ocrTitleMcidCandidates"] = collect_ocr_title_mcid_candidates(pdf, result.get("title"))
+        except Exception as e:
+            print(f"[warn] ocr title mcid candidates: {e}", file=sys.stderr)
 
         # Build page→index map once (used by struct traversal)
         page_map = build_page_map(pdf)
@@ -10375,6 +10572,8 @@ if __name__ == "__main__":
         raise SystemExit(trace_structure_main(argv[1]))
     if len(argv) >= 2 and argv[0] == "--stage131-shape":
         raise SystemExit(stage131_shape_main(argv[1]))
+    if len(argv) >= 2 and argv[0] == "--stage155-title-owner":
+        raise SystemExit(stage155_title_owner_main(argv[1]))
     if len(argv) >= 3 and argv[0] == "--dump-structure-page":
         page_i = int(argv[1])
         path = argv[2]

@@ -241,6 +241,90 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
     });
   });
 
+  it('uses a title-focused deep MCID candidate beyond the global MCID cap', () => {
+    const snap = makeSnapshot({
+      textByPage: ['Nationwide, court systems are busy. State Court Backlogs in Illinois and the United States'],
+      metadata: {
+        title: '3451 state court backlogs in illinois and the united states',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: 'Page body', page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: ['Nationwide', 'court', 'systems', 'are', 'busy'].map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+      ocrTitleMcidCandidates: [{
+        page: 0,
+        mcid: 820,
+        mcids: [820, 821, 822, 823, 824, 825, 826, 827],
+        text: 'State Court Backlogs in Illinois and the United States',
+        source: 'metadata_title_deep_mcid_match',
+        matchedTokenCount: 9,
+        totalTokenCount: 9,
+        startIndex: 820,
+        beyondGlobalCap: true,
+      }],
+    });
+    const analysis = analysisFor(snap);
+    const candidate = selectOcrPageShellHeadingCandidate(analysis, snap);
+    expect(candidate).toMatchObject({
+      mcid: 820,
+      mcids: [820, 821, 822, 823, 824, 825, 826, 827],
+      text: 'State Court Backlogs in Illinois and the United States',
+      source: 'metadata_deep_mcid_match',
+    });
+    expect(candidate?.reasons).toContain('metadata_title_deep_mcid_match');
+  });
+
+  it('rejects title-focused deep MCID candidates inside the normal cap or with weak coverage', () => {
+    const base = makeSnapshot({
+      textByPage: ['State Court Backlogs in Illinois and the United States'],
+      metadata: {
+        title: '3451 state court backlogs in illinois and the united states',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: 'Page body', page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: [{ page: 0, mcid: 0, snippet: '/P <</MCID 0>> BDC', resolvedText: 'Body' }],
+    });
+    const insideCap = makeSnapshot({
+      ...base,
+      ocrTitleMcidCandidates: [{
+        page: 0,
+        mcid: 20,
+        mcids: [20, 21, 22, 23],
+        text: 'State Court Backlogs in Illinois',
+        source: 'metadata_title_deep_mcid_match',
+        matchedTokenCount: 5,
+        totalTokenCount: 9,
+        startIndex: 20,
+        beyondGlobalCap: false,
+      }],
+    });
+    expect(selectOcrPageShellHeadingCandidate(analysisFor(insideCap), insideCap)).toBeNull();
+
+    const weakCoverage = makeSnapshot({
+      ...base,
+      ocrTitleMcidCandidates: [{
+        page: 0,
+        mcid: 820,
+        mcids: [820, 821, 822, 823],
+        text: 'Backlogs in State Court',
+        source: 'metadata_title_deep_mcid_match',
+        matchedTokenCount: 4,
+        totalTokenCount: 9,
+        startIndex: 820,
+        beyondGlobalCap: true,
+      }],
+    });
+    expect(selectOcrPageShellHeadingCandidate(analysisFor(weakCoverage), weakCoverage)).toBeNull();
+  });
+
   it('rejects weak body-only partial matches and byline-like OCR anchors', () => {
     const bodyOnly = makeSnapshot({
       textByPage: ['Nationwide, backlogs in state court systems are rising at an alarming rate.'],

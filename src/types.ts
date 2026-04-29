@@ -286,6 +286,18 @@ export interface DocumentSnapshot {
   orphanMcids?: Array<{ page: number; mcid: number }>;
   /** Marked-content MCID operators found in page streams (bounded list). */
   mcidTextSpans?: Array<{ page: number; mcid: number; snippet: string; resolvedText?: string }>;
+  /** Title-focused OCR page-0 MCID matches outside the normal capped MCID sample. */
+  ocrTitleMcidCandidates?: Array<{
+    page: number;
+    mcid: number;
+    mcids: number[];
+    text: string;
+    source: string;
+    matchedTokenCount: number;
+    totalTokenCount: number;
+    startIndex: number;
+    beyondGlobalCap: boolean;
+  }>;
   /** Acrobat-oriented tagged-content signals (bounded heuristics; not full TaggedCont parity). */
   taggedContentAudit?: {
     orphanMcidCount: number;
@@ -505,6 +517,7 @@ export interface PythonAnalysisResult {
   threeCcGoldenOrphanV1?: boolean;
   orphanMcids?: DocumentSnapshot['orphanMcids'];
   mcidTextSpans?: DocumentSnapshot['mcidTextSpans'];
+  ocrTitleMcidCandidates?: DocumentSnapshot['ocrTitleMcidCandidates'];
   annotationAccessibility?: DocumentSnapshot['annotationAccessibility'];
   /** Pikepdf scan of all pages’ /Link annotations for scorer (pdfjs samples pages). */
   linkScoringRows?: Array<{ page: number; url: string; effectiveText: string }>;
