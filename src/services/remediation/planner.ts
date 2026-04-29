@@ -50,6 +50,7 @@ import {
   shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
 import {
+  classifyStage131DegenerateNative,
   selectDegenerateNativeAnchorCandidate,
   shouldTryDegenerateNativeStructureRecovery,
 } from './degenerateNativeStructure.js';
@@ -945,7 +946,6 @@ function toolApplicableToPdfClass(
     const depth = snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? (snapshot.structureTree ? 2 : 0);
     const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
     return snapshot.textCharCount > 0
-      && snapshot.structureTree !== null
       && depth <= 1
       && treeHeadingCount === 0
       && snapshot.headings.length === 0;
@@ -1997,14 +1997,19 @@ export function buildDefaultParams(
     }
     case 'create_structure_from_degenerate_native_anchor': {
       if (!shouldTryDegenerateNativeStructureRecovery(analysis, snapshot)) return {};
+      const disposition = classifyStage131DegenerateNative(analysis, snapshot);
       const candidate = selectDegenerateNativeAnchorCandidate(analysis, snapshot);
-      if (!candidate) return {};
+      const activeCandidate = candidate ?? disposition.candidate;
+      if (!activeCandidate) return {};
       return {
-        page: candidate.page,
+        page: activeCandidate.page,
         level: 1,
-        text: candidate.text.slice(0, 200),
-        source: candidate.source,
-        confidenceScore: candidate.score,
+        text: activeCandidate.text.slice(0, 200),
+        source: activeCandidate.source,
+        confidenceScore: activeCandidate.score,
+        ...(disposition.classification === 'native_marked_content_shell_candidate'
+          ? { allowExistingMarkedContentShell: true }
+          : {}),
       };
     }
     case 'create_heading_from_ocr_page_shell_anchor': {

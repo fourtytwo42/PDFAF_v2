@@ -2567,6 +2567,68 @@ async function applyGuardedPostPass(args: {
       };
     }
   }
+  if (toolName === 'create_structure_from_degenerate_native_anchor') {
+    const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
+    const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
+    const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
+    const taggedLost = currentSnapshot.isTagged === true && analyzed.snapshot.isTagged !== true;
+    const linksDropped = analyzed.snapshot.links.length < currentSnapshot.links.length;
+    const beforeReading = categoryScore(currentAnalysis, 'reading_order') ?? 0;
+    const afterReading = categoryScore(analyzed.result, 'reading_order') ?? 0;
+    const beforeHeading = categoryScore(currentAnalysis, 'heading_structure') ?? 0;
+    const afterHeading = categoryScore(analyzed.result, 'heading_structure') ?? 0;
+    const headingImproved = afterHeading > beforeHeading;
+    const readingImproved = afterReading > beforeReading;
+    const materialBenefit =
+      (headingImproved && readingImproved) ||
+      (analyzed.result.score >= currentAnalysis.score + 10 && (headingImproved || readingImproved));
+    const invalidRewrite =
+      analyzed.snapshot.pageCount !== currentSnapshot.pageCount ||
+      textDropped > textDropLimit ||
+      structureLost ||
+      taggedLost ||
+      linksDropped ||
+      afterHeading < beforeHeading ||
+      afterReading < beforeReading ||
+      !materialBenefit ||
+      analyzed.result.score <= currentAnalysis.score;
+    if (invalidRewrite) {
+      appliedTools.push({
+        toolName,
+        stage,
+        round,
+        scoreBefore: currentAnalysis.score,
+        scoreAfter: currentAnalysis.score,
+        delta: 0,
+        outcome: 'rejected',
+        details: enrichDetailsWithReplayState(
+          `${toolName}_no_safe_benefit(pageCount:${currentSnapshot.pageCount}->${analyzed.snapshot.pageCount},text:${currentSnapshot.textCharCount}->${analyzed.snapshot.textCharCount},structureLost:${structureLost},taggedLost:${taggedLost},links:${currentSnapshot.links.length}->${analyzed.snapshot.links.length},reading:${beforeReading}->${afterReading},heading:${beforeHeading}->${afterHeading},score:${currentAnalysis.score}->${analyzed.result.score})`,
+          {
+            beforeAnalysis: currentAnalysis,
+            beforeSnapshot: currentSnapshot,
+            afterAnalysis: analyzed.result,
+            afterSnapshot: analyzed.snapshot,
+          },
+        ),
+        durationMs,
+        source: 'post_pass',
+      });
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'rejected',
+      });
+      return {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        accepted: false,
+      };
+    }
+  }
   const strongAlt = protectedStrongAltPreservationViolation({
     baseline: protectedBaseline,
     before: currentAnalysis,

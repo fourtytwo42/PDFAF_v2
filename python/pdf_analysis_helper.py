@@ -7762,6 +7762,92 @@ def _has_mcid_marked_content(insts: list) -> bool:
     return False
 
 
+def _append_existing_mcid_structure_for_page(
+    pdf: pikepdf.Pdf,
+    doc_elem,
+    page_obj,
+    page_idx: int,
+    page_count: int,
+    mcid_rows: list[tuple[int, str]],
+    page_parent_tree: pikepdf.Array,
+    assigned_h1: bool,
+    heading_count: int,
+    prefer_text: str,
+) -> tuple[bool, bool, int, object | None]:
+    """Create a bounded structure section for MCIDs already present in page content."""
+    clean_rows: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    for mcid, text in sorted(mcid_rows, key=lambda row: row[0]):
+        mcid = int(mcid)
+        if mcid in seen:
+            continue
+        seen.add(mcid)
+        cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+        if not cleaned:
+            continue
+        clean_rows.append((mcid, cleaned[:500]))
+        if len(clean_rows) >= 60:
+            break
+    if not clean_rows:
+        return False, assigned_h1, heading_count, None
+
+    forced_heading_mcid: int | None = None
+    if not assigned_h1 and page_idx == 0:
+        scored: list[tuple[int, int]] = []
+        for mcid, text in clean_rows[:12]:
+            score = _score_mcid_text_as_heading(text, prefer_text)
+            if score is not None:
+                scored.append((score, mcid))
+        if scored:
+            scored.sort(key=lambda row: (-row[0], row[1]))
+            if scored[0][0] >= 70:
+                forced_heading_mcid = scored[0][1]
+
+    sect = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name("/StructElem"),
+        S=pikepdf.Name("/Sect"),
+        P=doc_elem,
+        Pg=page_obj,
+        K=pikepdf.Array([]),
+    ))
+    sect_children = pikepdf.Array([])
+    for block_idx, (mcid, text) in enumerate(clean_rows):
+        if forced_heading_mcid is not None and mcid == forced_heading_mcid:
+            tag_name = "/H1"
+            assigned_h1 = True
+            heading_count += 1
+            actual_text = _compact_heading_text(text, page_idx, page_count)
+        else:
+            tag_name, assigned_h1, heading_count = _choose_synthesized_tag_name(
+                text,
+                page_idx,
+                block_idx,
+                page_count,
+                assigned_h1,
+                heading_count,
+            )
+            actual_text = text if tag_name == "/P" else _compact_heading_text(text, page_idx, page_count)
+        elem = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name(tag_name),
+            K=pikepdf.Integer(int(mcid)),
+            Pg=page_obj,
+            P=sect,
+            ActualText=_pdf_text_string(actual_text, 500),
+        ))
+        sect_children.append(elem)
+        _set_page_parent_tree_mcid(page_parent_tree, int(mcid), elem)
+
+    if len(sect_children) == 0:
+        return False, assigned_h1, heading_count, None
+    sect["/K"] = sect_children
+    try:
+        page_obj["/Tabs"] = pikepdf.Name("/S")
+    except Exception:
+        pass
+    return True, assigned_h1, heading_count, sect
+
+
 def _op_create_structure_from_degenerate_native_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
     """Build bounded structure for native PDFs whose current tree is only a shell."""
     if _is_ocrmypdf_produced(pdf):
@@ -7802,8 +7888,14 @@ def _op_create_structure_from_degenerate_native_anchor(pdf: pikepdf.Pdf, params:
     heading_count = 0
     changed_pages = 0
     stripped_pages = 0
+    reused_mcid_pages = 0
     skipped_mcid_pages = 0
     pages_without_segments = 0
+    allow_existing_mcid_shell = bool(params.get("allowExistingMarkedContentShell"))
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
 
     for page_idx, page in enumerate(pdf.pages):
         page_obj = page.obj
@@ -7813,6 +7905,33 @@ def _op_create_structure_from_degenerate_native_anchor(pdf: pikepdf.Pdf, params:
             pages_without_segments += 1
             continue
         if _has_mcid_marked_content(insts):
+            if allow_existing_mcid_shell:
+                page_rows = [
+                    (mcid, text)
+                    for (lookup_page, mcid), text in mcid_lookup.items()
+                    if int(lookup_page) == int(page_idx)
+                ]
+                page_parent_tree, _page_key, _page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+                if page_parent_tree is None:
+                    pages_without_segments += 1
+                    continue
+                ok, assigned_h1, heading_count, sect = _append_existing_mcid_structure_for_page(
+                    pdf,
+                    doc_elem,
+                    page_obj,
+                    page_idx,
+                    len(pdf.pages),
+                    page_rows,
+                    page_parent_tree,
+                    assigned_h1,
+                    heading_count,
+                    visible_text,
+                )
+                if ok and sect is not None:
+                    page_children.append(sect)
+                    changed_pages += 1
+                    reused_mcid_pages += 1
+                    continue
             skipped_mcid_pages += 1
             continue
         work_insts, stripped = _strip_enclosing_artifact_shell(insts)
@@ -7861,10 +7980,14 @@ def _op_create_structure_from_degenerate_native_anchor(pdf: pikepdf.Pdf, params:
     doc_elem["/K"] = page_children
     _op_normalize_heading_hierarchy(pdf, {})
     _global_heading_cleanup(pdf)
-    _set_last_mutation_note("degenerate_native_structure_from_bt_et_applied")
+    if reused_mcid_pages > 0:
+        _set_last_mutation_note("degenerate_native_structure_from_existing_mcids_applied")
+    else:
+        _set_last_mutation_note("degenerate_native_structure_from_bt_et_applied")
     _set_last_mutation_debug({
         "visibleText": visible_text[:200],
         "changedPages": changed_pages,
+        "reusedMcidPages": reused_mcid_pages,
         "strippedArtifactPages": stripped_pages,
         "skippedMcidPages": skipped_mcid_pages,
         "pagesWithoutSegments": pages_without_segments,

@@ -174,4 +174,64 @@ describe('Stage 131 degenerate native structure recovery', () => {
     expect(names).toContain('create_structure_from_degenerate_native_anchor');
     expect(names).not.toContain('create_heading_from_ocr_page_shell_anchor');
   });
+
+  it('classifies native marked-content shells as content-backed recovery candidates', () => {
+    const snap = snapshot({
+      textByPage: ['Newsletter 5 Public safety update and related body text.'],
+      metadata: { title: 'Newsletter 5', language: 'en-US' },
+      mcidTextSpans: [
+        { page: 0, mcid: 0, snippet: '/P <</MCID 0>> BDC BT /F1 24 Tf', resolvedText: 'Newsletter 5' },
+        { page: 0, mcid: 1, snippet: '/P <</MCID 1>> BDC BT /F1 10 Tf', resolvedText: 'Public safety update body text.' },
+      ],
+      taggedContentAudit: { orphanMcidCount: 0, mcidTextSpanCount: 2, suspectedPathPaintOutsideMc: 0 },
+    });
+    const analysis = analysisFor(snap);
+    const disposition = classifyStage131DegenerateNative(analysis, snap);
+    const params = buildDefaultParams('create_structure_from_degenerate_native_anchor', analysis, snap);
+    const names = planForRemediation(analysis, snap).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(disposition.classification).toBe('native_marked_content_shell_candidate');
+    expect(shouldTryDegenerateNativeStructureRecovery(analysis, snap)).toBe(true);
+    expect(params).toMatchObject({
+      allowExistingMarkedContentShell: true,
+      source: 'first_page_mcid_visible_line',
+    });
+    expect(names).toContain('create_structure_from_degenerate_native_anchor');
+  });
+
+  it('accepts a first-page prominent native phrase when metadata is filename-like', () => {
+    const snap = snapshot({
+      pdfClass: 'native_untagged',
+      isTagged: false,
+      markInfo: { Marked: false },
+      structureTree: null,
+      structTitle: undefined,
+      metadata: {
+        title: 'juvprob.p65',
+        language: 'en-US',
+        creator: 'PageMaker 6.5',
+        producer: 'Acrobat Distiller',
+      },
+      textByPage: [
+        '- 1 - The impact of intensive juvenile probation programs On Good Authority Vol. 6, No. 1 August 2002 Body starts here.',
+      ],
+      detectionProfile: detection({
+        readingOrderSignals: { ...detection().readingOrderSignals, missingStructureTree: true, structureTreeDepth: 0 },
+      }),
+    });
+    const analysis = analysisFor(snap);
+    const disposition = classifyStage131DegenerateNative(analysis, snap);
+    const params = buildDefaultParams('create_structure_from_degenerate_native_anchor', analysis, snap);
+    const names = planForRemediation(analysis, snap).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(disposition.classification).toBe('degenerate_native_text_block_candidate');
+    expect(disposition.candidate?.source).toBe('first_page_prominent_phrase');
+    expect(disposition.candidate?.text).toBe('The impact of intensive juvenile probation programs');
+    expect(shouldTryDegenerateNativeStructureRecovery(analysis, snap)).toBe(true);
+    expect(params).toMatchObject({
+      source: 'first_page_prominent_phrase',
+      text: 'The impact of intensive juvenile probation programs',
+    });
+    expect(names).toContain('create_structure_from_degenerate_native_anchor');
+  });
 });

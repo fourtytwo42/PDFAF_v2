@@ -11,6 +11,7 @@ import {
 export type Stage131DegenerateNativeClass =
   | 'degenerate_native_title_anchor_candidate'
   | 'degenerate_native_text_block_candidate'
+  | 'native_marked_content_shell_candidate'
   | 'marked_content_without_safe_anchor'
   | 'native_link_only_no_structure_candidate'
   | 'ocr_shell_defer'
@@ -19,7 +20,11 @@ export type Stage131DegenerateNativeClass =
 export interface DegenerateNativeAnchorCandidate {
   page: number;
   text: string;
-  source: 'metadata_visible_match' | 'first_page_visible_line';
+  source:
+    | 'metadata_visible_match'
+    | 'first_page_visible_line'
+    | 'first_page_mcid_visible_line'
+    | 'first_page_prominent_phrase';
   score: number;
   reasons: string[];
 }
@@ -82,23 +87,97 @@ function titleScore(text: string, metadataMatched: boolean): { score: number; re
   return { score, reasons };
 }
 
+const PROMINENT_PHRASE_BOUNDARY_RE =
+  /\s+(?:On Good Authority|Vol\.?\s*\d+|No\.?\s*\d+|Research Bulletin|Illinois Criminal Justice Information Authority|[A-Z][a-z]+\s+\d{4})\b/;
+
+function firstPageProminentPhrase(snapshot: DocumentSnapshot, filename: string): DegenerateNativeAnchorCandidate | null {
+  const raw = normalizeText(snapshot.textByPage[0] ?? '');
+  if (!raw) return null;
+  const prefix = raw
+    .replace(/^[\s\-–—]*\d+[\s\-–—]+/, '')
+    .slice(0, 320)
+    .trim();
+  const boundary = PROMINENT_PHRASE_BOUNDARY_RE.exec(prefix);
+  if (!boundary || boundary.index < 12) return null;
+  const text = normalizeText(prefix.slice(0, boundary.index));
+  if (isWeakVisibleHeadingAnchorText(text, filename)) return null;
+  const words = text.split(/\s+/).filter(Boolean);
+  const alphaWords = words.filter(word => /[A-Za-z]/.test(word));
+  if (alphaWords.length < 4 || alphaWords.length > 16) return null;
+  if (/[.!?]\s+\S/.test(text) || /[.!?]$/.test(text)) return null;
+  if (/^(by|prepared by|submitted by|compiled by)\b/i.test(text)) return null;
+  if (/^(this|these|the following)\b/i.test(text) && alphaWords.length < 6) return null;
+  const scored = titleScore(text, false);
+  const score = scored.score + 10;
+  if (score < HEADING_BOOTSTRAP_MIN_SCORE + 8) return null;
+  return {
+    page: 0,
+    text,
+    source: 'first_page_prominent_phrase',
+    score,
+    reasons: [...scored.reasons, 'first_page_prominent_phrase'],
+  };
+}
+
 export function selectDegenerateNativeAnchorCandidate(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
 ): DegenerateNativeAnchorCandidate | null {
   const visible = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
-  if (!visible || isWeakVisibleHeadingAnchorText(visible, analysis.filename)) return null;
+  if (visible && !isWeakVisibleHeadingAnchorText(visible, analysis.filename)) {
+    const metadataTitle = normalizeText(snapshot.metadata.title ?? snapshot.structTitle);
+    const metadataMatched = containsMeaningfulTitleMatch(metadataTitle, visible);
+    const scored = titleScore(visible, metadataMatched);
+    if (metadataMatched || scored.score >= HEADING_BOOTSTRAP_MIN_SCORE + 8) {
+      return {
+        page: 0,
+        text: visible,
+        source: metadataMatched ? 'metadata_visible_match' : 'first_page_visible_line',
+        score: scored.score,
+        reasons: scored.reasons,
+      };
+    }
+  }
+  return firstPageProminentPhrase(snapshot, analysis.filename);
+}
+
+function selectMarkedContentShellAnchorCandidate(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): DegenerateNativeAnchorCandidate | null {
+  const filename = analysis.filename;
+  const page0 = (snapshot.mcidTextSpans ?? [])
+    .filter(span => span.page === 0)
+    .map(span => ({
+      text: normalizeText(span.resolvedText ?? ''),
+      mcid: span.mcid,
+    }))
+    .filter(row => row.text && !isWeakVisibleHeadingAnchorText(row.text, filename));
+  if (!page0.length) return null;
   const metadataTitle = normalizeText(snapshot.metadata.title ?? snapshot.structTitle);
-  const metadataMatched = containsMeaningfulTitleMatch(metadataTitle, visible);
-  const scored = titleScore(visible, metadataMatched);
-  if (!metadataMatched && scored.score < HEADING_BOOTSTRAP_MIN_SCORE + 8) return null;
-  return {
-    page: 0,
-    text: visible,
-    source: metadataMatched ? 'metadata_visible_match' : 'first_page_visible_line',
-    score: scored.score,
-    reasons: scored.reasons,
-  };
+  const visiblePageText = normalizeText(snapshot.textByPage[0] ?? '');
+  const candidates = page0.map(row => {
+    const metadataMatched = containsMeaningfulTitleMatch(metadataTitle, row.text);
+    const visibleMatched = containsMeaningfulTitleMatch(visiblePageText.slice(0, 240), row.text);
+    const scored = titleScore(row.text, metadataMatched);
+    let score = scored.score;
+    const reasons = [...scored.reasons, `mcid:${row.mcid}`];
+    if (visibleMatched) {
+      score += 10;
+      reasons.push('visible_page_prefix_match');
+    }
+    return {
+      page: 0,
+      text: row.text,
+      source: 'first_page_mcid_visible_line' as const,
+      score,
+      reasons,
+    };
+  });
+  candidates.sort((a, b) => b.score - a.score || a.text.length - b.text.length);
+  const best = candidates[0];
+  if (!best || best.score < HEADING_BOOTSTRAP_MIN_SCORE) return null;
+  return best;
 }
 
 export function classifyStage131DegenerateNative(
@@ -148,6 +227,23 @@ export function classifyStage131DegenerateNative(
     return { classification: 'marked_content_without_safe_anchor', candidate: null, reasons: [`structure_depth:${depth}`] };
   }
 
+  const markedContentCount = Math.max(
+    snapshot.taggedContentAudit?.mcidTextSpanCount ?? 0,
+    snapshot.mcidTextSpans?.length ?? 0,
+  );
+  if (markedContentCount > 0) {
+    const candidate = selectDegenerateNativeAnchorCandidate(analysis, snapshot)
+      ?? selectMarkedContentShellAnchorCandidate(analysis, snapshot);
+    if (!candidate) {
+      return { classification: 'marked_content_without_safe_anchor', candidate: null, reasons: ['marked_content_shell_without_safe_anchor'] };
+    }
+    return {
+      classification: 'native_marked_content_shell_candidate',
+      candidate,
+      reasons: ['marked_content_shell_with_safe_anchor', ...candidate.reasons],
+    };
+  }
+
   const candidate = selectDegenerateNativeAnchorCandidate(analysis, snapshot);
   if (!candidate) {
     return { classification: 'marked_content_without_safe_anchor', candidate: null, reasons: ['no_safe_visible_native_anchor'] };
@@ -165,9 +261,21 @@ export function shouldTryDegenerateNativeStructureRecovery(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
 ): boolean {
-  if (analysis.score >= 70) return false;
+  if (analysis.score >= 80) return false;
   if (analysis.pdfClass === 'scanned') return false;
   const disposition = classifyStage131DegenerateNative(analysis, snapshot);
-  return disposition.classification === 'degenerate_native_title_anchor_candidate'
-    && disposition.candidate?.source === 'metadata_visible_match';
+  if (disposition.classification === 'degenerate_native_title_anchor_candidate') {
+    return disposition.candidate?.source === 'metadata_visible_match';
+  }
+  if (disposition.classification === 'degenerate_native_text_block_candidate') {
+    const heading = categoryScore(analysis, 'heading_structure') ?? 100;
+    const reading = categoryScore(analysis, 'reading_order') ?? 100;
+    return disposition.candidate?.source === 'first_page_prominent_phrase' && heading <= 45 && reading <= 45;
+  }
+  if (disposition.classification === 'native_marked_content_shell_candidate') {
+    const heading = categoryScore(analysis, 'heading_structure') ?? 100;
+    const reading = categoryScore(analysis, 'reading_order') ?? 100;
+    return heading <= 45 && reading <= 45 && (snapshot.mcidTextSpans?.length ?? 0) > 0;
+  }
+  return false;
 }
