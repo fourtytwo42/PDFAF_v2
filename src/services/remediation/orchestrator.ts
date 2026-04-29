@@ -1875,6 +1875,29 @@ export function shouldRecordSameStateNoGainRuntimeAttempt(input: {
   return sameStateNoGainRuntimeKey(input.toolName, input.stateSignatureBefore) !== null;
 }
 
+export function shouldStopProtectedHeadingCandidateAfterHardNoEffect(input: {
+  protectedBaselineActive: boolean;
+  toolName: string;
+  outcome: AppliedRemediationTool['outcome'];
+  details?: string;
+}): boolean {
+  if (!input.protectedBaselineActive) return false;
+  if (input.toolName !== 'create_heading_from_candidate' || input.outcome !== 'no_effect') return false;
+  const parsed = parseMutationDetails(input.details);
+  if (!parsed) return false;
+  const raw = (parsed as unknown as Record<string, unknown>)['raw'];
+  const note = parsed.note ?? (typeof raw === 'string' ? raw : undefined);
+  if (
+    note === 'role_invalid_after_mutation' ||
+    note === 'heading_not_root_reachable' ||
+    note === 'target_unreachable'
+  ) {
+    return true;
+  }
+  const inv = parsed.invariants;
+  return inv?.targetReachable === false || inv?.headingCandidateReachable === false;
+}
+
 function recordSameStateNoGainRuntimeAttempt(
   row: AppliedRemediationTool,
   noGainAttempts: Set<string>,
@@ -4957,6 +4980,15 @@ export async function remediatePdf(
                 outcome: activeOutcome,
               });
               if (activeOutcome !== 'no_effect') break;
+              if (shouldStopProtectedHeadingCandidateAfterHardNoEffect({
+                protectedBaselineActive: Boolean(options?.protectedBaseline),
+                toolName: activeTool.toolName,
+                outcome: activeOutcome,
+                details: activeDetails,
+              })) {
+                noteEarlyExit(runtimeSummary, 'protected_heading_candidate_hard_no_effect');
+                break;
+              }
               const nextParams = buildDefaultParams(
                 activeTool.toolName,
                 workingAnalysis,

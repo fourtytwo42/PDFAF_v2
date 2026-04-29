@@ -26,6 +26,7 @@ import {
   shouldSkipCanonicalizeFigureAltBeforeRetag,
   shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
+  shouldStopProtectedHeadingCandidateAfterHardNoEffect,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
 import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnapshot, PlanningSummary, RemediationStagePlan } from '../../src/types.js';
@@ -384,6 +385,61 @@ describe('withHeadingTargetRef', () => {
     const parsed = parseMutationDetails(details);
     expect(parsed?.invariants?.targetRef).toBe('existing_ref');
     expect(parsed?.debug?.['targetRef']).toBe('existing_ref');
+  });
+});
+
+describe('protected heading candidate hard no-effect cap', () => {
+  it('stops protected heading candidate progression after unreachable target failures', () => {
+    const details = JSON.stringify({
+      outcome: 'no_effect',
+      note: 'role_invalid_after_mutation',
+      invariants: {
+        targetRef: '176_0',
+        targetReachable: false,
+        headingCandidateReachable: false,
+      },
+    });
+
+    expect(shouldStopProtectedHeadingCandidateAfterHardNoEffect({
+      protectedBaselineActive: true,
+      toolName: 'create_heading_from_candidate',
+      outcome: 'no_effect',
+      details,
+    })).toBe(true);
+  });
+
+  it('does not affect non-protected candidate progression', () => {
+    const details = JSON.stringify({
+      outcome: 'no_effect',
+      note: 'role_invalid_after_mutation',
+      invariants: { targetRef: '176_0', targetReachable: false },
+    });
+
+    expect(shouldStopProtectedHeadingCandidateAfterHardNoEffect({
+      protectedBaselineActive: false,
+      toolName: 'create_heading_from_candidate',
+      outcome: 'no_effect',
+      details,
+    })).toBe(false);
+  });
+
+  it('allows convergence-sensitive no-effects to continue', () => {
+    const details = JSON.stringify({
+      outcome: 'no_effect',
+      note: 'structure_depth_not_improved',
+      invariants: {
+        targetRef: '176_0',
+        targetReachable: true,
+        headingCandidateReachable: true,
+      },
+    });
+
+    expect(shouldStopProtectedHeadingCandidateAfterHardNoEffect({
+      protectedBaselineActive: true,
+      toolName: 'create_heading_from_candidate',
+      outcome: 'no_effect',
+      details,
+    })).toBe(false);
   });
 });
 
