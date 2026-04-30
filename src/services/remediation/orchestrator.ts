@@ -459,6 +459,18 @@ function mutationInvariantsPassForStructuralBenefit(detail: PythonMutationDetail
   if (inv.targetReachable === false) return false;
   if (inv.ownershipPreserved === false) return false;
   if (inv.tableTreeValidAfter === false) return false;
+  if (detail.structuralBenefits?.headingReachabilityImproved || detail.structuralBenefits?.headingHierarchyImproved) {
+    const beforeHeadingCount = inv.rootReachableHeadingCountBefore;
+    const afterHeadingCount = inv.rootReachableHeadingCountAfter;
+    if (
+      typeof beforeHeadingCount === 'number' &&
+      typeof afterHeadingCount === 'number' &&
+      beforeHeadingCount > 0 &&
+      afterHeadingCount < beforeHeadingCount
+    ) {
+      return false;
+    }
+  }
   if (detail.structuralBenefits?.figureAltAttachedToReachableFigure && inv.targetHasAltAfter !== true) return false;
   if (
     (detail.structuralBenefits?.figureOwnershipImproved || detail.structuralBenefits?.figureAltAttachedToReachableFigure) &&

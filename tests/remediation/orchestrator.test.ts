@@ -698,6 +698,43 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects score-regressing structural stages that erase existing root-reachable headings', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 58, confidence: 'medium' }),
+      after: makeAnalysis({ score: 52, confidence: 'medium' }),
+      stage: makeStage('repair_structure_conformance'),
+      stageApplied: [{
+        toolName: 'repair_structure_conformance',
+        stage: 2,
+        round: 1,
+        scoreBefore: 58,
+        scoreAfter: 52,
+        delta: -6,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          note: 'heading_reachability_improved',
+          invariants: {
+            rootReachableHeadingCountBefore: 8,
+            rootReachableHeadingCountAfter: 0,
+            rootReachableDepthBefore: 5,
+            rootReachableDepthAfter: 2,
+            globalH1CountBefore: 8,
+            globalH1CountAfter: 0,
+          },
+          structuralBenefits: {
+            headingReachabilityImproved: true,
+          },
+        }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_score(52)',
+    });
+  });
+
   it('keeps score-regressing stages when typed structural benefits are present and invariants pass', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),

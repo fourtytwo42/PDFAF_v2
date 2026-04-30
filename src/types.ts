@@ -610,6 +610,7 @@ export interface PythonMutationInvariantPayload {
   rootReachableHeadingCountAfter?: number;
   rootReachableDepthBefore?: number;
   rootReachableDepthAfter?: number;
+  globalH1CountBefore?: number;
   globalH1CountAfter?: number;
   headingCandidateReachable?: boolean;
   rootReachableFigureCountBefore?: number;

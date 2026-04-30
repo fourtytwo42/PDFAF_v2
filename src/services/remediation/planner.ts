@@ -923,23 +923,52 @@ export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGU
 const DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN = 2;
 const STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN = 3;
 
+function normalizeFallbackTitleCandidate(value: string | null | undefined): string | null {
+  const raw = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (!raw || isFilenameLikeTitle(raw)) return null;
+  if (raw.length < 4) return null;
+  if ((raw.match(/[A-Za-z]/g) ?? []).length < 4) return null;
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(raw)) return null;
+  if (/\b(MCID|BDC|EMC|TJ|BT|ET)\b/.test(raw)) return null;
+  if (!/\s/.test(raw) && /[._-]/.test(raw)) return null;
+  if (/^[A-Z][A-Z\s]{5,}$/.test(raw) && raw.trim().split(/\s+/).length <= 2) return null;
+  const genericSection = new Set([
+    'acknowledgements',
+    'acknowledgments',
+    'appendix',
+    'contents',
+    'introduction',
+    'overview',
+    'table of contents',
+  ]);
+  if (genericSection.has(raw.toLowerCase())) return null;
+  return raw.slice(0, 500);
+}
+
 export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename: string): string {
   const metaTitle = snapshot.metadata.title?.trim();
-  if (metaTitle && !isFilenameLikeTitle(metaTitle)) return metaTitle;
-  const headingTitle = snapshot.headings[0]?.text?.trim();
-  if (headingTitle) return headingTitle.slice(0, 500);
+  const cleanMetaTitle = normalizeFallbackTitleCandidate(metaTitle);
+  if (cleanMetaTitle) return cleanMetaTitle;
+  const headingTitle = normalizeFallbackTitleCandidate(snapshot.headings[0]?.text);
+  if (headingTitle) return headingTitle;
+  for (const bookmark of snapshot.bookmarks ?? []) {
+    const title = normalizeFallbackTitleCandidate(bookmark.title);
+    if (title) return title;
+  }
   for (const pageText of snapshot.textByPage) {
     const line = (pageText ?? '')
       .split('\n')
       .map(part => part.trim())
-      .find(part => part.length >= 4 && /[A-Za-z]/.test(part));
-    if (line && !isFilenameLikeTitle(line)) return line.slice(0, 500);
+      .map(part => normalizeFallbackTitleCandidate(part))
+      .find((part): part is string => Boolean(part));
+    if (line) return line;
     const sentence = (pageText ?? '')
       .replace(/\s+/g, ' ')
       .split(/(?<=[.!?])\s+/)[0]
       ?.trim();
-    if (sentence && /[A-Za-z]/.test(sentence) && !isFilenameLikeTitle(sentence)) {
-      return sentence.split(/\s+/).slice(0, 12).join(' ').slice(0, 500);
+    const cleanSentence = normalizeFallbackTitleCandidate(sentence);
+    if (cleanSentence) {
+      return cleanSentence.split(/\s+/).slice(0, 12).join(' ').slice(0, 500);
     }
   }
   return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').slice(0, 500);

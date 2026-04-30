@@ -9467,6 +9467,7 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
         "rootReachableHeadingCountAfter": after.get("rootReachableHeadingCount", 0),
         "rootReachableDepthBefore": before.get("rootReachableDepth", 0),
         "rootReachableDepthAfter": after.get("rootReachableDepth", 0),
+        "globalH1CountBefore": before.get("globalH1Count", 0),
         "globalH1CountAfter": after.get("globalH1Count", 0),
         "headingCandidateReachable": after.get("headingCandidateReachable"),
     }
@@ -9476,10 +9477,20 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
         return "no_effect", "target_not_found", invariants
     if (after.get("globalH1Count", 0) or 0) > 1 and (before.get("globalH1Count", 0) or 0) <= 1:
         return "no_effect", "multiple_h1_after_mutation", invariants
+    before_heading_count = before.get("rootReachableHeadingCount", 0) or 0
+    after_heading_count = after.get("rootReachableHeadingCount", 0) or 0
+    before_h1_count = before.get("globalH1Count", 0) or 0
+    after_h1_count = after.get("globalH1Count", 0) or 0
+    duplicate_h1_normalized = (
+        before_h1_count > 1
+        and after_h1_count >= 1
+        and after_h1_count < before_h1_count
+        and after_heading_count >= before_heading_count
+    )
     improved = (
-        (after.get("rootReachableHeadingCount", 0) > before.get("rootReachableHeadingCount", 0))
-        or (after.get("rootReachableDepth", 0) > before.get("rootReachableDepth", 0) and after.get("rootReachableHeadingCount", 0) > 0)
-        or ((before.get("globalH1Count", 0) or 0) > 1 and (after.get("globalH1Count", 0) or 0) == 1)
+        (after_heading_count > before_heading_count)
+        or (after.get("rootReachableDepth", 0) > before.get("rootReachableDepth", 0) and after_heading_count > 0)
+        or duplicate_h1_normalized
     )
     if improved:
         if (

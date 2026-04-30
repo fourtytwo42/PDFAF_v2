@@ -451,6 +451,28 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('skips garbage heading text and filename-like bookmarks for fallback document title', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 44,
+      metadata: { ...bareSnapshot().metadata, title: 'DVFR.AnnualReport.CoverBackPages.2023' },
+      headings: [
+        { level: 1, text: '\u00000', page: 2, structRef: '327_0' },
+      ],
+      bookmarks: [
+        { title: 'DVFR.AnnualReport.CoverBackPages.2023', level: 1 },
+        { title: 'Binder1.pdf', level: 1 },
+        { title: 'Combined and Edited 2023 Annual Report', level: 2 },
+      ],
+      textByPage: ['', '', 'ACKNOWLEDGEMENTS\nBody copy'],
+      textCharCount: 1200,
+    };
+    const analysis = score(snap, META);
+    expect(buildDefaultParams('set_document_title', analysis, snap)).toEqual({
+      title: 'Combined and Edited 2023 Annual Report',
+    });
+  });
+
   it('picks a title-like bootstrap heading candidate over long body text and captions', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
