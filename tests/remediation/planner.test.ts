@@ -244,6 +244,200 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('set_pdfua_identification');
   });
 
+  it('retries annotation ownership repair when debt appears after an earlier zero-debt no-effect', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      metadata: { ...bareSnapshot().metadata, title: 'Program report', language: 'en-US' },
+      structureTree: { type: 'Document', children: [{ type: 'P', children: [] }] },
+      links: [{ text: 'Program page', url: 'https://example.test', page: 0 }],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 98,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 1, treeHeadingCount: 1, headingTreeDepth: 2, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 98 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 98,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), {
+      pdf_ua_compliance: 71,
+      link_quality: 60,
+    }), {
+      detectionProfile: snap.detectionProfile,
+      failureProfile: {
+        deterministicIssues: ['pdf_ua_compliance', 'link_quality'],
+        semanticIssues: [],
+        manualOnlyIssues: [],
+        primaryFailureFamily: 'near_pass_residual',
+        secondaryFailureFamilies: [],
+        routingHints: ['prefer_annotation_normalization'],
+      },
+    });
+    const plan = planForRemediation(analysis, snap, [
+      {
+        toolName: 'repair_native_link_structure',
+        stage: 8,
+        round: 1,
+        scoreBefore: 59,
+        scoreAfter: 59,
+        delta: 0,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'annotation_ownership_not_preserved',
+          invariants: {
+            visibleAnnotationsMissingStructParentBefore: 0,
+            visibleAnnotationsMissingStructParentAfter: 0,
+            visibleAnnotationsMissingStructureBefore: 0,
+            visibleAnnotationsMissingStructureAfter: 0,
+          },
+        }),
+      },
+    ]);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).toContain('repair_native_link_structure');
+    expect(plan.planningSummary?.scheduledTools).toContain('repair_native_link_structure');
+  });
+
+  it('does not retry annotation ownership repair on broad low-grade rows', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      metadata: { ...bareSnapshot().metadata, title: 'Program report', language: 'en-US' },
+      structureTree: { type: 'Document', children: [{ type: 'P', children: [] }] },
+      links: [{ text: 'Program page', url: 'https://example.test', page: 0 }],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 39,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 0, treeHeadingCount: 0, headingTreeDepth: 0, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 64, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 39 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 39,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), {
+      heading_structure: 45,
+      reading_order: 45,
+      alt_text: 20,
+      table_markup: 10,
+      pdf_ua_compliance: 71,
+      link_quality: 95,
+    }), {
+      detectionProfile: snap.detectionProfile,
+      failureProfile: {
+        deterministicIssues: ['pdf_ua_compliance', 'link_quality'],
+        semanticIssues: [],
+        manualOnlyIssues: [],
+        primaryFailureFamily: 'mixed_structural',
+        secondaryFailureFamilies: ['figure_alt_ownership_heavy'],
+        routingHints: ['prefer_annotation_normalization'],
+      },
+    });
+    const priorZeroDebtNoEffect: AppliedRemediationTool[] = [{
+      toolName: 'repair_native_link_structure',
+      stage: 8,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'no_effect',
+      details: JSON.stringify({
+        outcome: 'no_effect',
+        note: 'annotation_ownership_not_preserved',
+        invariants: {
+          visibleAnnotationsMissingStructParentBefore: 0,
+          visibleAnnotationsMissingStructParentAfter: 0,
+          visibleAnnotationsMissingStructureBefore: 0,
+          visibleAnnotationsMissingStructureAfter: 0,
+        },
+      }),
+    }];
+    const names = planForRemediation(analysis, snap, priorZeroDebtNoEffect)
+      .stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('repair_native_link_structure');
+  });
+
   it('prefers first-page text over filename for fallback document title', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

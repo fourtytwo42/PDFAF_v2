@@ -105,6 +105,13 @@ function failingCategories(analysis: AnalysisResult): CategoryKey[] {
   return out;
 }
 
+function categoryScore(analysis: AnalysisResult, key: CategoryKey): number | null {
+  const category = analysis.categories.find(row => row.key === key);
+  return category?.applicable === false ? null : category?.score ?? null;
+}
+
+const STAGE162_LARGE_ANNOTATION_OWNERSHIP_DEBT = 50;
+
 const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   metadata_first_commit: [
     'set_pdfua_identification',
@@ -587,6 +594,12 @@ export function deriveFailureDisposition(
     const structureFlat =
       typeof inv?.visibleAnnotationsMissingStructureBefore === 'number' &&
       inv.visibleAnnotationsMissingStructureBefore === inv.visibleAnnotationsMissingStructureAfter;
+    const zeroDebtFlat =
+      inv?.visibleAnnotationsMissingStructParentBefore === 0 &&
+      inv?.visibleAnnotationsMissingStructParentAfter === 0 &&
+      inv?.visibleAnnotationsMissingStructureBefore === 0 &&
+      inv?.visibleAnnotationsMissingStructureAfter === 0;
+    if (zeroDebtFlat) return false;
     return detail.note === 'annotation_ownership_not_preserved' || (structParentFlat && structureFlat);
   });
 
@@ -671,6 +684,7 @@ export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis
 
 function noEffectSignature(row: AppliedRemediationTool): string | null {
   if (row.outcome !== 'no_effect') return null;
+  if (zeroDebtAnnotationNoEffect(row, row.toolName)) return null;
   const details = parseMutationDetails(row.details);
   if (!details?.invariants && !details?.note) return null;
   const inv = details.invariants;
@@ -721,14 +735,73 @@ function hasPriorNoEffectSignature(
   });
 }
 
+function currentAnnotationOwnershipDebt(snapshot: DocumentSnapshot): number {
+  const signals = snapshot.detectionProfile?.annotationSignals ?? snapshot.annotationAccessibility;
+  return (
+    (signals?.linkAnnotationsMissingStructure ?? 0) +
+    (signals?.nonLinkAnnotationsMissingStructure ?? 0) +
+    (signals?.linkAnnotationsMissingStructParent ?? 0) +
+    (signals?.nonLinkAnnotationsMissingStructParent ?? 0)
+  );
+}
+
+function zeroDebtAnnotationNoEffect(row: AppliedRemediationTool, toolName: string): boolean {
+  if (row.toolName !== toolName || row.outcome !== 'no_effect') return false;
+  if (toolName !== 'repair_native_link_structure' && toolName !== 'tag_unowned_annotations') return false;
+  const details = parseMutationDetails(row.details);
+  if (details?.note !== 'annotation_ownership_not_preserved') return false;
+  const inv = details.invariants;
+  return (
+    (inv?.visibleAnnotationsMissingStructParentBefore ?? null) === 0 &&
+    (inv?.visibleAnnotationsMissingStructParentAfter ?? null) === 0 &&
+    (inv?.visibleAnnotationsMissingStructureBefore ?? null) === 0 &&
+    (inv?.visibleAnnotationsMissingStructureAfter ?? null) === 0
+  );
+}
+
+function shouldRetryAnnotationRepairAfterDebtAppears(
+  applied: AppliedRemediationTool[],
+  toolName: string,
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  if (toolName !== 'repair_native_link_structure' && toolName !== 'tag_unowned_annotations') return false;
+  if (currentAnnotationOwnershipDebt(snapshot) < STAGE162_LARGE_ANNOTATION_OWNERSHIP_DEBT) return false;
+  const coreHealthy =
+    (categoryScore(analysis, 'heading_structure') ?? 100) >= 75 &&
+    (categoryScore(analysis, 'reading_order') ?? 100) >= 80 &&
+    (categoryScore(analysis, 'alt_text') ?? 100) >= 80 &&
+    (categoryScore(analysis, 'table_markup') ?? 100) >= 80;
+  if (!coreHealthy) return false;
+  const pdfUaOrLinkLimited =
+    (categoryScore(analysis, 'pdf_ua_compliance') ?? 100) < 80 ||
+    (categoryScore(analysis, 'link_quality') ?? 100) < 100;
+  if (!pdfUaOrLinkLimited) return false;
+  return applied.some(row => zeroDebtAnnotationNoEffect(row, toolName));
+}
+
 function routeFailureProof(
   route: RemediationRoute,
   alreadyApplied: AppliedRemediationTool[],
+  snapshot?: DocumentSnapshot,
+  analysis?: AnalysisResult,
 ): string | null {
   const contract = ROUTE_CONTRACTS[route];
   if (!contract?.failureTools?.length) return null;
 
-  const routeRows = alreadyApplied.filter(row => contract.failureTools!.includes(row.toolName));
+  const annotationDebtRetryActive =
+    route === 'annotation_link_normalization' &&
+    snapshot != null &&
+    analysis != null;
+  const routeRows = alreadyApplied.filter(row => {
+    if (!contract.failureTools!.includes(row.toolName)) return false;
+    if (
+      annotationDebtRetryActive &&
+      zeroDebtAnnotationNoEffect(row, row.toolName) &&
+      shouldRetryAnnotationRepairAfterDebtAppears(alreadyApplied, row.toolName, analysis!, snapshot!)
+    ) return false;
+    return true;
+  });
   const signatures = new Map<string, number>();
   for (const row of routeRows) {
     const signature = noEffectSignature(row);
@@ -1160,7 +1233,7 @@ export function planForRemediation(
     (route): route is RemediationRoute => route !== null,
   );
   const stoppedRoutes = routedRoutes
-    .map(route => ({ route, reason: routeFailureProof(route, alreadyApplied) }))
+    .map(route => ({ route, reason: routeFailureProof(route, alreadyApplied, snapshot, analysis) }))
     .filter((row): row is { route: RemediationRoute; reason: string } => row.reason !== null);
   const stoppedRouteSet = new Set(stoppedRoutes.map(row => row.route));
   const activeRoutes = routedRoutes.filter(route => !stoppedRouteSet.has(route));
@@ -1547,16 +1620,17 @@ export function planForRemediation(
         addSkipped(toolName, 'already_succeeded');
         continue;
       }
+      const annotationDebtRetry = shouldRetryAnnotationRepairAfterDebtAppears(alreadyApplied, toolName, analysis, snapshot);
       const noEffectLimit = toolName === 'create_heading_from_candidate'
         ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
         : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
-      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit) {
+      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (toolSet.has(toolName)) continue;
       const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
-      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
+      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }

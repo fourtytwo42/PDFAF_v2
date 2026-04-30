@@ -67,6 +67,7 @@ describe('font embedding gates', () => {
     const risky = snap({
       fonts: [{ name: 'Helvetica', isEmbedded: false, hasUnicode: false, encodingRisk: true }],
     });
+    expect(shouldTryLocalFontSubstitution(risky, analysis({ score: 96, textScore: 98 }))).toBe(false);
     expect(shouldTryLocalFontSubstitution(risky, analysis({ score: 99, textScore: 98 }))).toBe(false);
     expect(shouldTryLocalFontSubstitution(risky, analysis({ score: 99, textScore: 90 }))).toBe(true);
   });

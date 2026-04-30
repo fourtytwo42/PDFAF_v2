@@ -77,7 +77,7 @@ export function shouldTryLocalFontSubstitution(
 
   const text = category(analysis, 'text_extractability');
   const fontCategoryIsLimiting = text !== null && text.score <= 90;
-  return analysis.score < 98 || fontCategoryIsLimiting;
+  return analysis.score < 95 || fontCategoryIsLimiting;
 }
 
 /**
