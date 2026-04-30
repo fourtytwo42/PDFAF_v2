@@ -1,5 +1,6 @@
 # Repository Working Rules
 
+- Read `memory.md` at the repository root when starting work, after context compression, or whenever stage/checkpoint status is unclear. Add concise durable updates there whenever the repo learns something future agents should remember; keep transient benchmark artifacts and PDF payloads out of it.
 - Commit and push after every major completed change.
 - Do not include local verification artifacts in commits unless they are explicitly required source assets.
 - Keep PDF payloads and generated Base64 content out of logs, docs, and commits.
