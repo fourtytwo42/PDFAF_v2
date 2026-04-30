@@ -441,6 +441,25 @@ describe('protected heading candidate hard no-effect cap', () => {
       details,
     })).toBe(false);
   });
+
+  it('stops protected heading candidate progression after duplicate-H1 no-effects', () => {
+    const details = JSON.stringify({
+      outcome: 'no_effect',
+      note: 'multiple_h1_after_mutation',
+      invariants: {
+        targetRef: '109_0',
+        targetReachable: true,
+        headingCandidateReachable: true,
+      },
+    });
+
+    expect(shouldStopProtectedHeadingCandidateAfterHardNoEffect({
+      protectedBaselineActive: true,
+      toolName: 'create_heading_from_candidate',
+      outcome: 'no_effect',
+      details,
+    })).toBe(true);
+  });
 });
 
 describe('mergePlanningSummaries', () => {

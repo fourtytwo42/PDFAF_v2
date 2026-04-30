@@ -65,6 +65,10 @@ import {
   shouldTryOcrPageShellHeadingRecovery,
   shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
+import {
+  shouldTryStage165LinkParentTreeRepair,
+  stage165LinkParentTreeBenefit,
+} from './linkParentTreeRepair.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -1891,7 +1895,8 @@ export function shouldStopProtectedHeadingCandidateAfterHardNoEffect(input: {
   if (
     note === 'role_invalid_after_mutation' ||
     note === 'heading_not_root_reachable' ||
-    note === 'target_unreachable'
+    note === 'target_unreachable' ||
+    note === 'multiple_h1_after_mutation'
   ) {
     return true;
   }
@@ -2628,6 +2633,61 @@ async function applyGuardedPostPass(args: {
         snapshot: currentSnapshot,
         accepted: false,
       };
+    }
+  }
+  if (toolName === 'repair_native_link_structure') {
+    const parsedDetails = parseMutationDetails(details);
+    const isStage165PostPass =
+      parsedDetails?.['note'] === 'stage165_link_parenttree_repair' ||
+      (typeof details === 'string' && details.includes('stage165_link_parenttree_repair'));
+    if (isStage165PostPass) {
+      const decision = stage165LinkParentTreeBenefit({
+        beforeAnalysis: currentAnalysis,
+        afterAnalysis: analyzed.result,
+        beforeSnapshot: currentSnapshot,
+        afterSnapshot: analyzed.snapshot,
+      });
+      if (!decision.safe) {
+        appliedTools.push({
+          toolName,
+          stage,
+          round,
+          scoreBefore: currentAnalysis.score,
+          scoreAfter: currentAnalysis.score,
+          delta: 0,
+          outcome: 'rejected',
+          details: enrichDetailsWithReplayState(
+            JSON.stringify({
+              outcome: 'rejected',
+              note: `stage165_link_parenttree_repair_${decision.reason}`,
+              beforeDebt: decision.beforeDebt,
+              afterDebt: decision.afterDebt,
+            }),
+            {
+              beforeAnalysis: currentAnalysis,
+              beforeSnapshot: currentSnapshot,
+              afterAnalysis: analyzed.result,
+              afterSnapshot: analyzed.snapshot,
+            },
+          ),
+          durationMs,
+          source: 'post_pass',
+        });
+        runtimeSummary?.toolTimings.push({
+          toolName,
+          stage,
+          round,
+          source: 'post_pass',
+          durationMs,
+          outcome: 'rejected',
+        });
+        return {
+          buffer: currentBuffer,
+          analysis: currentAnalysis,
+          snapshot: currentSnapshot,
+          accepted: false,
+        };
+      }
     }
   }
   const strongAlt = protectedStrongAltPreservationViolation({
@@ -4069,6 +4129,59 @@ async function applyTaggedCleanupPostPasses(args: {
   return { buffer, analysis, snapshot };
 }
 
+async function applyLinkParentTreeRepairPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { buffer, analysis, snapshot } = args.state;
+  const protectedFloorScore = protectedBaseline ? protectedBaselineFloorScore(protectedBaseline) : null;
+  if (!shouldTryStage165LinkParentTreeRepair({ analysis, snapshot, protectedFloorScore })) {
+    return args.state;
+  }
+
+  const { buffer: repaired, result } = await runPythonMutationBatch(
+    buffer,
+    [{ op: 'repair_native_link_structure', params: { stage: 'stage165_link_parenttree_repair' } }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes('repair_native_link_structure')) {
+    return args.state;
+  }
+
+  const mutationDetails = pythonMutationDetails(result, 'repair_native_link_structure');
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'stage165_link_parenttree_repair',
+    mutation: parseMutationDetails(mutationDetails) ?? mutationDetails ?? null,
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    toolName: 'repair_native_link_structure',
+    stage: 10,
+    round,
+    details,
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer: repaired,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-link-parenttree',
+    protectedBaseline,
+  });
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+  };
+}
+
 async function applyProtectedRecoveryPostPasses(args: {
   filename: string;
   signal?: AbortSignal;
@@ -4320,6 +4433,22 @@ export async function executePlaybook(
       currentAnalysis = altAccepted.analysis;
       currentSnapshot = altAccepted.snapshot;
     }
+    if (shouldTryStage165LinkParentTreeRepair({
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      protectedFloorScore: null,
+    })) {
+      const link0 = await applyLinkParentTreeRepairPostPass({
+        filename,
+        round: 1,
+        state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+        appliedTools,
+        runtimeSummary,
+      });
+      currentBuffer = link0.buffer;
+      currentAnalysis = link0.analysis;
+      currentSnapshot = link0.snapshot;
+    }
     const fin0 = await applyIcjiaDocumentFinalization({
       filename,
       round: 1,
@@ -4486,6 +4615,23 @@ export async function executePlaybook(
 
   {
     const state = await applyAltCleanupPostPass({
+      filename,
+      round: 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
+  }
+
+  if (shouldTryStage165LinkParentTreeRepair({
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    protectedFloorScore: null,
+  })) {
+    const state = await applyLinkParentTreeRepairPostPass({
       filename,
       round: 1,
       state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
@@ -5453,6 +5599,27 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('tagged_cleanup_post_pass');
+  }
+
+  if (shouldTryStage165LinkParentTreeRepair({
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    protectedFloorScore: options?.protectedBaseline ? protectedBaselineFloorScore(options.protectedBaseline) : null,
+  })) {
+    await reportProgress(86, 'Repairing link annotation ownership');
+    const state = await applyLinkParentTreeRepairPostPass({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
+    await rememberProtectedRunBestState('link_parenttree_post_pass');
   }
 
   {
