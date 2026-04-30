@@ -93,9 +93,9 @@ function displayTitleCase(value: string): string {
   return value
     .split(/\s+/)
     .filter(Boolean)
-    .map(word => {
+    .map((word, index) => {
       if (/^\d+(?:[./]\d+)?$/.test(word)) return word;
-      if (word.length <= 2) return word.toLowerCase();
+      if (word.length <= 2 && index > 0) return word.toLowerCase();
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join(' ');

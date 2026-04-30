@@ -241,6 +241,32 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
     });
   });
 
+  it('keeps a leading short title word from a visible filename-derived OCR title', () => {
+    const words = ['On', 'the', 'alert', 'In-car', 'terminal', 'network', 'to', 'speed', 'police', 'communications'];
+    const snap = makeSnapshot({
+      textByPage: ['Published by Illinois Criminal Justice Authority Vol. No.3 On the alert: In-car terminal network to speed police communications By Sarah M. Dowse'],
+      metadata: { title: '', language: 'en-US', creator: 'OCRmyPDF 16.10.1', producer: 'pikepdf' },
+      paragraphStructElems: [{ tag: 'P', text: words.join(' '), page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: words.map((word, index) => ({
+        page: 0,
+        mcid: 22 + index,
+        snippet: `/P <</MCID ${22 + index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    const analysis = {
+      ...analysisFor(snap),
+      filename: 'manual_scanned/3443-on-the-alert-incar-terminal-network-to-speed-police-communications.pdf',
+    };
+    const candidate = selectOcrPageShellHeadingCandidate(analysis, snap);
+    expect(candidate).toMatchObject({
+      mcid: 22,
+      source: 'filename_visible_match',
+      text: 'On The Alert Incar Terminal Network to Speed Police Communications',
+    });
+    expect(candidate?.score ?? 0).toBeGreaterThanOrEqual(60);
+  });
+
   it('uses a title-focused deep MCID candidate beyond the global MCID cap', () => {
     const snap = makeSnapshot({
       textByPage: ['Nationwide, court systems are busy. State Court Backlogs in Illinois and the United States'],
