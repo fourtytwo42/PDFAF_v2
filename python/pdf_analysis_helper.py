@@ -651,8 +651,12 @@ def _promote_first_column_td_to_th(table_elem) -> bool:
     return changed
 
 
+def _table_target_ref(params: dict):
+    return params.get("targetStructRef") or params.get("structRef") or params.get("targetRef")
+
+
 def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
-    ref = params.get("structRef")
+    ref = _table_target_ref(params)
     if not ref:
         return False
     try:
@@ -663,12 +667,37 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
         return False
     if (get_name(table) or "").lstrip("/").upper() != "TABLE":
         return False
-    if _promote_first_row_td_to_th(table):
-        return True
-    return _promote_first_column_td_to_th(table)
+    changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+    if changed:
+        try:
+            _set_last_mutation_debug({"targetRef": ref})
+        except Exception:
+            pass
+    return changed
 
 
-def _op_repair_native_table_headers(pdf: pikepdf.Pdf, _params: dict) -> bool:
+def _op_repair_native_table_headers(pdf: pikepdf.Pdf, params: dict) -> bool:
+    ref = _table_target_ref(params)
+    if ref:
+        try:
+            table = _resolve_ref(pdf, ref)
+        except Exception:
+            table = None
+        if table is None or not isinstance(table, pikepdf.Dictionary):
+            return False
+        if (get_name(table) or "").lstrip("/").upper() != "TABLE":
+            return False
+        th, td = _count_table_cells(table)
+        if th != 0 or td <= 0:
+            return False
+        changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+        if changed:
+            try:
+                _set_last_mutation_debug({"targetRef": ref})
+            except Exception:
+                pass
+        return changed
+
     changed = False
     if _repair_table_role_misplacement(pdf):
         changed = True
@@ -6456,7 +6485,7 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
 
 
 def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
-    ref = params.get("structRef")
+    ref = _table_target_ref(params)
     max_tables = 1
     try:
         max_tables = max(1, min(4, int(params.get("maxTablesPerRun") or 1)))
@@ -9373,7 +9402,7 @@ def _stage35_figure_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
 
 
 def _stage35_table_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
-    ref = params.get("structRef")
+    ref = _table_target_ref(params)
     return _table_invariant_stats(pdf, ref if isinstance(ref, str) else None)
 
 
