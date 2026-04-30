@@ -24,6 +24,7 @@ This file is durable context for agents working in this repository. Read it when
 - Stage 163 full original-50 run `Output/experiment-corpus-baseline/run-stage163-full-2026-04-30-r1` failed only `protected_file_regressions` with `short-4176` and `long-4683`; runtime p95 passed, attempts passed, font controls stayed good, and active-tail Stage 162 wins stayed good.
 - A Stage 163 experiment forcing protected final confirmation to bypass analyzer cache was rejected: `Output/experiment-corpus-baseline/run-stage163-full-postfix-2026-04-30-r1` failed both `protected_file_regressions` and `runtime_p95_wall`, so the behavior was reverted.
 - Remaining protected debt after Stage 163 is analyzer/route volatility, especially `short-4176`, `long-4683`, and known volatile control `structure-4076`. Do not add broad protected route guards or scorer/gate changes without new repeat evidence.
+- Stage 164 is diagnostic-only. `scripts/stage164-alt-pdfua-tail-diagnostic.ts` classifies stable low-alt/PDF-UA residuals using original-50 Stage 163 artifacts plus active-tail controls. Final-byte diagnostics showed possible extra checker-visible figure-alt targets on `figure-4754` and `long-4680`, but protected continuation experiments were rejected: the apparent `figure-4754` lift traded against PDF/UA/no-alt-gain guards, and guarded reruns did not produce a clean repeatable lift. No Stage 164 remediation behavior should be kept without a new category-stable target proof.
 
 ## Parked Or Sensitive Areas
 
