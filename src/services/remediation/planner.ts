@@ -45,7 +45,9 @@ import {
   shouldTryVisibleHeadingAnchorRecovery,
 } from './visibleHeadingAnchor.js';
 import {
+  selectOcrCollectionCoverTitleHeadingCandidate,
   selectOcrPageShellHeadingCandidate,
+  shouldTryOcrCollectionCoverTitleHeadingRecovery,
   shouldTryOcrPageShellHeadingRecovery,
   shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
@@ -182,6 +184,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'recover_ocr_text_ownership',
     'synthesize_ocr_page_shell_reading_order_structure',
     'create_heading_from_ocr_page_shell_anchor',
+    'create_heading_from_ocr_collection_title_anchor',
     'tag_native_text_blocks',
     'mark_untagged_content_as_artifact',
   ],
@@ -1052,6 +1055,10 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
   }
+  if (toolName === 'create_heading_from_ocr_collection_title_anchor') {
+    if (pdfClass === 'scanned') return false;
+    return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
+  }
   if (toolName === 'synthesize_ocr_page_shell_reading_order_structure') {
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0
@@ -1340,6 +1347,7 @@ export function planForRemediation(
   const zeroHeadingRecovery = classifyZeroHeadingRecovery(analysis, snapshot);
   const visibleHeadingAnchorRecoveryActive = shouldTryVisibleHeadingAnchorRecovery(analysis, snapshot);
   const ocrPageShellHeadingRecoveryActive = shouldTryOcrPageShellHeadingRecovery(analysis, snapshot);
+  const ocrCollectionCoverHeadingRecoveryActive = shouldTryOcrCollectionCoverTitleHeadingRecovery(analysis, snapshot);
   const ocrPageShellReadingOrderRecoveryActive = shouldTryOcrPageShellReadingOrderRecovery(analysis, snapshot);
   const ocrTextOwnershipRecoveryActive = shouldTryOcrTextOwnershipRecovery(analysis, snapshot);
   const headingCreateRecoveryActive =
@@ -1459,6 +1467,12 @@ export function planForRemediation(
     if (
       toolName === 'create_heading_from_ocr_page_shell_anchor' &&
       !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      toolName === 'create_heading_from_ocr_collection_title_anchor' &&
+      !(ocrCollectionCoverHeadingRecoveryActive && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1924,6 +1938,35 @@ export function planForRemediation(
     }
   }
 
+  {
+    const toolName = 'create_heading_from_ocr_collection_title_anchor';
+    if (
+      ocrCollectionCoverHeadingRecoveryActive &&
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        typeof params['text'] === 'string' &&
+        params['text'].length > 0 &&
+        typeof params['mcid'] === 'number' &&
+        typeof params['page'] === 'number' &&
+        params['page'] > 0 &&
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 175 OCR collection-cover title-page heading recovery from a proven later-page OCR content anchor.',
+          route: 'font_ocr_repair',
+        });
+      }
+    }
+  }
+
   // For native_tagged PDFs with pathologically shallow structure trees (depth <= threshold),
   // the route loop above never selects synthesize_basic_structure_from_layout because
   // structure_bootstrap_and_conformance is gated to native_untagged/mixed. Inject it directly
@@ -2255,6 +2298,19 @@ export function buildDefaultParams(
     }
     case 'create_heading_from_ocr_page_shell_anchor': {
       const candidate = selectOcrPageShellHeadingCandidate(analysis, snapshot);
+      if (!candidate) return {};
+      return {
+        page: candidate.page,
+        mcid: candidate.mcid,
+        mcids: candidate.mcids,
+        level: 1,
+        text: candidate.text.slice(0, 200),
+        source: candidate.source,
+        confidenceScore: candidate.score,
+      };
+    }
+    case 'create_heading_from_ocr_collection_title_anchor': {
+      const candidate = selectOcrCollectionCoverTitleHeadingCandidate(analysis, snapshot);
       if (!candidate) return {};
       return {
         page: candidate.page,

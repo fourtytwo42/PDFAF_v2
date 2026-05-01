@@ -7558,9 +7558,10 @@ def _synthesize_heading_from_ocr_page_shell_mcids(
     visible_text: str,
     *,
     allow_existing_headings: bool = False,
+    allow_non_first_page: bool = False,
 ):
     """Create one /H1 from a title-like OCRmyPDF page-shell marked-content span."""
-    if page_idx != 0:
+    if page_idx != 0 and not allow_non_first_page:
         return None, "non_first_page_anchor_rejected"
     text = re.sub(r"[\x00-\x1f\x7f]+", "", str(visible_text or ""))
     text = re.sub(r"\s+", " ", text.strip())
@@ -7688,6 +7689,59 @@ def _op_create_heading_from_ocr_page_shell_anchor(pdf: pikepdf.Pdf, params: dict
         mcids,
         level,
         visible_text,
+    )
+    _set_last_mutation_note(note)
+    return new_elem is not None
+
+
+def _op_create_heading_from_ocr_collection_title_anchor(pdf: pikepdf.Pdf, params: dict) -> bool:
+    if not _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("non_ocr_pdf")
+        return False
+    try:
+        level = int(params.get("level", 1))
+    except (TypeError, ValueError):
+        level = 1
+    level = max(1, min(level, 6))
+    try:
+        page_idx = int(params.get("page", 0))
+    except (TypeError, ValueError):
+        page_idx = 0
+    if page_idx < 1 or page_idx > 7:
+        _set_last_mutation_note("collection_title_page_out_of_range")
+        return False
+    raw_mcids = params.get("mcids")
+    mcids: list[int] = []
+    if isinstance(raw_mcids, list):
+        for raw_mcid in raw_mcids:
+            try:
+                mcids.append(int(raw_mcid))
+            except (TypeError, ValueError):
+                pass
+    if not mcids:
+        try:
+            mcid_param = params.get("mcid")
+            if mcid_param is not None:
+                mcids = [int(mcid_param)]
+        except (TypeError, ValueError):
+            mcids = []
+    visible_text = str(params.get("text") or "").strip()
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_struct_tree_root")
+        return False
+    if not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_document_struct_elem")
+        return False
+    new_elem, note = _synthesize_heading_from_ocr_page_shell_mcids(
+        pdf,
+        sr,
+        doc_elem,
+        page_idx,
+        mcids,
+        level,
+        visible_text,
+        allow_non_first_page=True,
     )
     _set_last_mutation_note(note)
     return new_elem is not None
@@ -9690,6 +9744,7 @@ _STAGE35_HEADING_OPS = {
     "create_heading_from_tagged_visible_anchor",
     "bridge_native_title_text_owner",
     "create_heading_from_ocr_page_shell_anchor",
+    "create_heading_from_ocr_collection_title_anchor",
     "repair_degenerate_native_reading_order_shell",
     "create_heading_from_candidate",
     "normalize_heading_hierarchy",
@@ -10608,6 +10663,7 @@ MUTATORS = {
     "repair_degenerate_native_reading_order_shell": _op_repair_degenerate_native_reading_order_shell,
     "synthesize_ocr_page_shell_reading_order_structure": _op_synthesize_ocr_page_shell_reading_order_structure,
     "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,
+    "create_heading_from_ocr_collection_title_anchor": _op_create_heading_from_ocr_collection_title_anchor,
     "create_heading_from_candidate": _op_create_heading_from_candidate,
     "set_figure_alt_text": _op_set_figure_alt_text,
     "retag_as_figure": _op_retag_as_figure,

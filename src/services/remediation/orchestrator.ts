@@ -62,6 +62,7 @@ import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCand
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 import {
+  shouldTryOcrCollectionCoverTitleHeadingRecovery,
   shouldTryOcrPageShellHeadingRecovery,
   shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
@@ -408,6 +409,7 @@ const HEADING_STRUCTURE_TOOLS = new Set([
   'create_heading_from_tagged_visible_anchor',
   'bridge_native_title_text_owner',
   'create_heading_from_ocr_page_shell_anchor',
+  'create_heading_from_ocr_collection_title_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
 ]);
@@ -659,6 +661,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
       tools.has('create_heading_from_tagged_visible_anchor') ||
       tools.has('bridge_native_title_text_owner') ||
       tools.has('create_heading_from_ocr_page_shell_anchor') ||
+      tools.has('create_heading_from_ocr_collection_title_anchor') ||
       tools.has('normalize_heading_hierarchy') ||
       tools.has('repair_structure_conformance') ||
       tools.has('synthesize_basic_structure_from_layout');
@@ -1834,6 +1837,7 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
   'bridge_native_title_text_owner',
   'synthesize_ocr_page_shell_reading_order_structure',
   'create_heading_from_ocr_page_shell_anchor',
+  'create_heading_from_ocr_collection_title_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
   'repair_structure_conformance',
@@ -2479,7 +2483,7 @@ async function applyGuardedPostPass(args: {
       };
     }
   }
-  if (toolName === 'create_heading_from_ocr_page_shell_anchor' || toolName === 'create_heading_from_tagged_visible_anchor' || toolName === 'bridge_native_title_text_owner') {
+  if (toolName === 'create_heading_from_ocr_page_shell_anchor' || toolName === 'create_heading_from_ocr_collection_title_anchor' || toolName === 'create_heading_from_tagged_visible_anchor' || toolName === 'bridge_native_title_text_owner') {
     const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
     const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
     const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
@@ -3521,6 +3525,7 @@ export async function runSingleTool(
       case 'bridge_native_title_text_owner':
       case 'synthesize_ocr_page_shell_reading_order_structure':
       case 'create_heading_from_ocr_page_shell_anchor':
+      case 'create_heading_from_ocr_collection_title_anchor':
       case 'create_heading_from_candidate':
       case 'normalize_heading_hierarchy':
       case 'normalize_nested_figure_containers':
@@ -3721,6 +3726,78 @@ async function applyOcrPageShellHeadingPostPass(args: {
     appliedTools,
     runtimeSummary,
     tempPrefix: 'pdfaf-ocr-heading',
+    protectedBaseline,
+  });
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 11,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: accepted.analysis.runtimeSummary?.totalMs ?? accepted.analysis.analysisDurationMs,
+    });
+  }
+  currentBuffer = accepted.buffer;
+  currentAnalysis = accepted.analysis;
+  currentSnapshot = accepted.snapshot;
+  return {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    accepted: accepted.accepted,
+  };
+}
+
+async function applyOcrCollectionCoverTitleHeadingPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
+  const { filename, signal, round, protectedBaseline } = args;
+  const toolName = 'create_heading_from_ocr_collection_title_anchor';
+  if (!shouldTryOcrCollectionCoverTitleHeadingRecovery(currentAnalysis, currentSnapshot)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const params = buildDefaultParams(toolName, currentAnalysis, currentSnapshot);
+  if (
+    typeof params['text'] !== 'string' ||
+    params['text'].trim().length === 0 ||
+    typeof params['mcid'] !== 'number' ||
+    typeof params['page'] !== 'number' ||
+    params['page'] <= 0
+  ) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const stageStarted = performance.now();
+  const { buffer: next, result } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: toolName, params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes(toolName)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const accepted = await applyGuardedPostPass({
+    filename,
+    toolName,
+    stage: 11,
+    round,
+    details: pythonMutationDetails(result, toolName) ?? 'stage175_ocr_collection_title_heading_anchor',
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer: next,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-ocr-collection-heading',
     protectedBaseline,
   });
   if (runtimeSummary) {
@@ -4412,6 +4489,18 @@ export async function executePlaybook(
     currentBuffer = ocrHeading0.buffer;
     currentAnalysis = ocrHeading0.analysis;
     currentSnapshot = ocrHeading0.snapshot;
+    const ocrCollectionHeading0 = await applyOcrCollectionCoverTitleHeadingPostPass({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = ocrCollectionHeading0.buffer;
+    currentAnalysis = ocrCollectionHeading0.analysis;
+    currentSnapshot = ocrCollectionHeading0.snapshot;
     const ocrReading0 = await applyOcrPageShellReadingOrderPostPass({
       filename,
       round: 1,
@@ -4615,6 +4704,18 @@ export async function executePlaybook(
     currentBuffer = ocrHeading.buffer;
     currentAnalysis = ocrHeading.analysis;
     currentSnapshot = ocrHeading.snapshot;
+    const ocrCollectionHeading = await applyOcrCollectionCoverTitleHeadingPostPass({
+      filename,
+      round: 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = ocrCollectionHeading.buffer;
+    currentAnalysis = ocrCollectionHeading.analysis;
+    currentSnapshot = ocrCollectionHeading.snapshot;
     const ocrReading = await applyOcrPageShellReadingOrderPostPass({
       filename,
       round: 1,
@@ -5562,6 +5663,20 @@ export async function remediatePdf(
     currentBuffer = ocrHeading.buffer;
     currentAnalysis = ocrHeading.analysis;
     currentSnapshot = ocrHeading.snapshot;
+    const ocrCollectionHeading = await applyOcrCollectionCoverTitleHeadingPostPass({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = ocrCollectionHeading.buffer;
+    currentAnalysis = ocrCollectionHeading.analysis;
+    currentSnapshot = ocrCollectionHeading.snapshot;
     const ocrReading = await applyOcrPageShellReadingOrderPostPass({
       filename,
       signal: options?.signal,

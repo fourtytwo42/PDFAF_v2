@@ -18,7 +18,8 @@ export type OcrPageShellHeadingSource =
   | 'metadata_visible_match'
   | 'filename_visible_match'
   | 'metadata_deep_mcid_match'
-  | 'first_page_visible_line';
+  | 'first_page_visible_line'
+  | 'collection_page_visible_title';
 
 export interface OcrPageShellHeadingCandidate {
   page: number;
@@ -54,7 +55,37 @@ export interface OcrPageShellHeadingDebug {
   firstPageMcidSpanSamples: Array<{ mcid: number; text: string }>;
   titleMcidCandidates: NonNullable<DocumentSnapshot['ocrTitleMcidCandidates']>;
   paragraphSamples: Array<{ page: number; text: string; structRef?: string }>;
+  collectionCover?: {
+    firstPageLooksLikeCollectionCover: boolean;
+    candidates: Array<{
+      page: number;
+      text: string;
+      exactMatch: boolean;
+      windowMatch: boolean;
+      matchedTokenCount: number;
+      mcids: number[];
+      score: number | null;
+      reasons: string[];
+    }>;
+  };
 }
+
+export type Stage175OcrCollectionCoverClass =
+  | 'ocr_collection_cover_title_candidate'
+  | 'normal_page1_ocr_title_candidate'
+  | 'title_page_not_first_page_no_owned_candidate'
+  | 'not_collection_cover'
+  | 'already_fixed_control'
+  | 'not_ocr_page_shell';
+
+export interface Stage175OcrCollectionCoverDisposition {
+  classification: Stage175OcrCollectionCoverClass;
+  candidate: OcrPageShellHeadingCandidate | null;
+  reasons: string[];
+}
+
+export const OCR_COLLECTION_TITLE_SEARCH_START_PAGE = 1;
+export const OCR_COLLECTION_TITLE_SEARCH_END_PAGE = 7;
 
 function categoryScore(analysis: AnalysisResult, key: string): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
@@ -214,9 +245,9 @@ interface OcrMcidTokenMatch {
   exact: boolean;
 }
 
-function mcidTokenEntries(snapshot: DocumentSnapshot): OcrMcidTokenEntry[] {
+function mcidTokenEntries(snapshot: DocumentSnapshot, page = 0): OcrMcidTokenEntry[] {
   return (snapshot.mcidTextSpans ?? [])
-    .filter(row => row.page === 0 && Number.isInteger(row.mcid))
+    .filter(row => row.page === page && Number.isInteger(row.mcid))
     .flatMap(row => alphaTokens(row.resolvedText ?? row.snippet).map(token => ({
       token,
       mcid: row.mcid,
@@ -270,10 +301,11 @@ function matchToMcids(entries: OcrMcidTokenEntry[], start: number, end: number):
 function findVisibleMcidMatch(
   snapshot: DocumentSnapshot,
   title: string,
+  page = 0,
 ): OcrMcidTokenMatch | null {
   const wanted = alphaTokens(title);
   if (wanted.length < 4) return null;
-  const entries = mcidTokenEntries(snapshot);
+  const entries = mcidTokenEntries(snapshot, page);
   if (entries.length < wanted.length) return null;
 
   for (let start = 0; start < entries.length; start++) {
@@ -295,10 +327,11 @@ function findVisibleMcidMatch(
 function findVisibleMcidWindowMatch(
   snapshot: DocumentSnapshot,
   title: string,
+  page = 0,
 ): OcrMcidTokenMatch | null {
   const wanted = alphaTokens(title);
   if (wanted.length < 5) return null;
-  const entries = mcidTokenEntries(snapshot);
+  const entries = mcidTokenEntries(snapshot, page);
   if (entries.length < 4) return null;
   let best: { start: number; end: number; matched: number; wantedStart: number } | null = null;
   for (let entryStart = 0; entryStart < entries.length; entryStart += 1) {
@@ -329,12 +362,13 @@ function findVisibleMcidWindowMatch(
 function findDeepTitleMcidMatch(
   snapshot: DocumentSnapshot,
   title: string,
+  page = 0,
 ): OcrMcidTokenMatch | null {
   const wanted = alphaTokens(title);
   if (wanted.length < 4) return null;
   const candidates = snapshot.ocrTitleMcidCandidates ?? [];
   for (const candidate of candidates) {
-    if (candidate.page !== 0) continue;
+    if (candidate.page !== page) continue;
     if (candidate.beyondGlobalCap !== true) continue;
     if ((candidate.matchedTokenCount ?? 0) < 4) continue;
     const coverage = candidate.matchedTokenCount / Math.max(1, candidate.totalTokenCount || wanted.length);
@@ -360,7 +394,12 @@ function candidateScore(input: {
 }): { score: number; reasons: string[] } {
   const tokens = alphaTokens(input.title);
   let score = 34;
-  const reasons = ['ocr_page_shell', 'visible_page0_mcid_match'];
+  const reasons = [
+    'ocr_page_shell',
+    input.source === 'collection_page_visible_title'
+      ? 'visible_collection_title_page_mcid_match'
+      : 'visible_page0_mcid_match',
+  ];
   if (input.source === 'metadata_visible_match' || input.source === 'metadata_deep_mcid_match') {
     score += 14;
     reasons.push(input.source === 'metadata_deep_mcid_match' ? 'metadata_title_deep_mcid_match' : 'metadata_title_visible_match');
@@ -385,6 +424,128 @@ function candidateScore(input: {
     reasons.push('title_length');
   }
   return { score, reasons };
+}
+
+function strongAlphaTokens(value: string): string[] {
+  return alphaTokens(value).filter(token => token.length >= 4 && !TITLE_STOPWORDS.has(token));
+}
+
+export function firstPageLooksLikeCollectionCover(snapshot: DocumentSnapshot): boolean {
+  const text = cleanOcrShellText(snapshot.textByPage[0] ?? '');
+  const key = text.toLowerCase();
+  if (!key || snapshot.pageCount < 2) return false;
+  if (
+    key.includes('research and program evaluation') &&
+    (key.includes('studies on') || key.includes('violent crime') || key.includes('drug abuse'))
+  ) {
+    return true;
+  }
+  if (
+    key.includes('studies on') &&
+    key.includes('prepared by') &&
+    alphaTokens(text).length >= 12
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function splitCollectionTitlePrefix(value: string): string {
+  let text = cleanOcrShellText(value);
+  const splitters = [
+    /\s+Prepared\s+(?:by|for)\b/i,
+    /\s+Submitted\s+(?:by|to)\b/i,
+    /\s+Supported\s+by\b/i,
+    /\s+This\s+project\s+was\s+supported\b/i,
+    /\s+Table\s+of\s+Contents\b/i,
+    /\s+Executive\s+Summary\b/i,
+    /\s+Grant\s+#/i,
+  ];
+  let cut = text.length;
+  for (const pattern of splitters) {
+    const match = pattern.exec(text);
+    if (match && match.index > 0) cut = Math.min(cut, match.index);
+  }
+  text = text.slice(0, cut).replace(/[:;,.\s]+$/g, '').trim();
+  if (text.length <= 140) return text;
+  return text.split(/\s+/).slice(0, 14).join(' ').slice(0, 140).trim();
+}
+
+function weakCollectionTitle(value: string, filename: string): boolean {
+  const text = cleanOcrShellText(value);
+  if (isWeakVisibleHeadingAnchorText(text, filename)) return true;
+  if (strongAlphaTokens(text).length < 4) return true;
+  if (/\b(table of contents|executive summary|appendix|appendices|acknowledg(?:e)?ments)\b/i.test(text)) return true;
+  if (/\b(grant\s+#|awarded to|bureau of justice|office of justice programs)\b/i.test(text)) return true;
+  if (/^(this project|supported by|prepared by|submitted by|introduction)\b/i.test(text)) return true;
+  return false;
+}
+
+function collectionPageVisibleTitleSeeds(
+  snapshot: DocumentSnapshot,
+  filename: string,
+  page: number,
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: string | undefined | null) => {
+    const candidate = splitCollectionTitlePrefix(raw ?? '');
+    if (weakCollectionTitle(candidate, filename)) return;
+    const key = alphaTokens(candidate).join(' ');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(candidate);
+  };
+  for (const paragraph of (snapshot.paragraphStructElems ?? []).filter(row => row.page === page).slice(0, 3)) {
+    add(paragraph.text);
+  }
+  const rawPage = snapshot.textByPage[page] ?? '';
+  for (const line of rawPage.split(/\r?\n/).slice(0, 8)) {
+    add(line);
+  }
+  if (out.length === 0) add(rawPage);
+  return out;
+}
+
+export function selectOcrCollectionCoverTitleHeadingCandidate(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): OcrPageShellHeadingCandidate | null {
+  if (!isOcrPageShell(snapshot, analysis)) return null;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) > 0) return null;
+  if ((categoryScore(analysis, 'text_extractability') ?? 0) < 60) return null;
+  if ((snapshot.mcidTextSpans?.length ?? 0) <= 0) return null;
+  if (snapshot.headings.length > 0 || (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) > 0) return null;
+  if (selectOcrPageShellHeadingCandidate(analysis, snapshot)) return null;
+  if (!firstPageLooksLikeCollectionCover(snapshot)) return null;
+
+  const maxPage = Math.min(OCR_COLLECTION_TITLE_SEARCH_END_PAGE, snapshot.pageCount - 1);
+  for (let page = OCR_COLLECTION_TITLE_SEARCH_START_PAGE; page <= maxPage; page += 1) {
+    for (const seed of collectionPageVisibleTitleSeeds(snapshot, analysis.filename, page)) {
+      const match = findVisibleMcidMatch(snapshot, seed, page) ?? findVisibleMcidWindowMatch(snapshot, seed, page);
+      if (!match) continue;
+      const text = match.exact ? seed : match.text;
+      if (weakCollectionTitle(text, analysis.filename)) continue;
+      if (strongAlphaTokens(text).length < 4 || match.matchedTokenCount < 4) continue;
+      const scored = candidateScore({
+        title: text,
+        matchedTokenCount: match.matchedTokenCount,
+        source: 'collection_page_visible_title',
+        exactVisibleMatch: match.exact,
+      });
+      if (scored.score < HEADING_BOOTSTRAP_MIN_SCORE) continue;
+      return {
+        page,
+        mcid: match.mcid,
+        mcids: match.mcids,
+        text: text.slice(0, 200),
+        source: 'collection_page_visible_title',
+        score: scored.score,
+        reasons: ['collection_cover_title_page', ...scored.reasons],
+      };
+    }
+  }
+  return null;
 }
 
 export function selectOcrPageShellHeadingCandidate(
@@ -454,6 +615,36 @@ export function debugOcrPageShellHeadingSelection(
       reasons: scored?.reasons ?? [],
     };
   });
+  const collectionCandidates: NonNullable<OcrPageShellHeadingDebug['collectionCover']>['candidates'] = [];
+  if (firstPageLooksLikeCollectionCover(snapshot)) {
+    const maxPage = Math.min(OCR_COLLECTION_TITLE_SEARCH_END_PAGE, snapshot.pageCount - 1);
+    for (let page = OCR_COLLECTION_TITLE_SEARCH_START_PAGE; page <= maxPage; page += 1) {
+      for (const text of collectionPageVisibleTitleSeeds(snapshot, analysis.filename, page)) {
+        const exact = findVisibleMcidMatch(snapshot, text, page);
+        const window = exact ? null : findVisibleMcidWindowMatch(snapshot, text, page);
+        const match = exact ?? window;
+        const matchedText = match?.exact === false ? match.text : text;
+        const scored = match && !weakCollectionTitle(matchedText, analysis.filename)
+          ? candidateScore({
+            title: matchedText,
+            matchedTokenCount: match.matchedTokenCount,
+            source: 'collection_page_visible_title',
+            exactVisibleMatch: match.exact,
+          })
+          : null;
+        collectionCandidates.push({
+          page,
+          text,
+          exactMatch: Boolean(exact),
+          windowMatch: Boolean(window),
+          matchedTokenCount: match?.matchedTokenCount ?? 0,
+          mcids: match?.mcids ?? [],
+          score: scored?.score ?? null,
+          reasons: scored?.reasons ?? [],
+        });
+      }
+    }
+  }
   return {
     seeds,
     firstPageLineCandidates: [
@@ -473,7 +664,50 @@ export function debugOcrPageShellHeadingSelection(
         text: cleanOcrShellText(row.text).slice(0, 200),
         structRef: row.structRef,
       })),
+    collectionCover: {
+      firstPageLooksLikeCollectionCover: firstPageLooksLikeCollectionCover(snapshot),
+      candidates: collectionCandidates,
+    },
   };
+}
+
+export function classifyStage175OcrCollectionCover(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): Stage175OcrCollectionCoverDisposition {
+  if (!isOcrPageShell(snapshot, analysis)) {
+    return { classification: 'not_ocr_page_shell', candidate: null, reasons: ['not_ocr_page_shell'] };
+  }
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) > 0 || snapshot.headings.length > 0) {
+    return { classification: 'already_fixed_control', candidate: null, reasons: ['heading_already_present'] };
+  }
+  const page1 = selectOcrPageShellHeadingCandidate(analysis, snapshot);
+  if (page1) {
+    return { classification: 'normal_page1_ocr_title_candidate', candidate: page1, reasons: ['normal_page1_candidate', ...page1.reasons] };
+  }
+  if (!firstPageLooksLikeCollectionCover(snapshot)) {
+    return { classification: 'not_collection_cover', candidate: null, reasons: ['page1_not_collection_cover'] };
+  }
+  const candidate = selectOcrCollectionCoverTitleHeadingCandidate(analysis, snapshot);
+  if (candidate) {
+    return {
+      classification: 'ocr_collection_cover_title_candidate',
+      candidate,
+      reasons: ['safe_collection_cover_title_anchor', ...candidate.reasons],
+    };
+  }
+  return {
+    classification: 'title_page_not_first_page_no_owned_candidate',
+    candidate: null,
+    reasons: ['collection_cover_detected_no_safe_owned_title_in_pages_2_8'],
+  };
+}
+
+export function shouldTryOcrCollectionCoverTitleHeadingRecovery(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  return classifyStage175OcrCollectionCover(analysis, snapshot).classification === 'ocr_collection_cover_title_candidate';
 }
 
 export function classifyStage129OcrPageShell(

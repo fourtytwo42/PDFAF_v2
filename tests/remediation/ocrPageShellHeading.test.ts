@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { score } from '../../src/services/scorer/scorer.js';
 import {
+  classifyStage175OcrCollectionCover,
+  selectOcrCollectionCoverTitleHeadingCandidate,
   classifyStage129OcrPageShell,
   selectOcrPageShellHeadingCandidate,
+  shouldTryOcrCollectionCoverTitleHeadingRecovery,
   shouldTryOcrPageShellHeadingRecovery,
   shouldTryOcrPageShellReadingOrderRecovery,
 } from '../../src/services/remediation/ocrPageShellHeading.js';
@@ -265,6 +268,96 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
       text: 'On The Alert Incar Terminal Network to Speed Police Communications',
     });
     expect(candidate?.score ?? 0).toBeGreaterThanOrEqual(60);
+  });
+
+  it('selects a collection-cover OCR title on pages 2-8 only when it is MCID-owned', () => {
+    const titleWords = ['Community', 'Policing', 'in', 'Chicago', 'Year', 'Three'];
+    const snap = makeSnapshot({
+      pageCount: 8,
+      textByPage: [
+        'Research and program evaluation in Illinois Studies on drug abuse and violent crime Prepared by Illinois Criminal Justice Information Authority',
+        'Community Policing in Chicago, Year Three Prepared by staff members',
+        'Body text',
+      ],
+      metadata: {
+        title: '3476 research and program evaluation in illinois studies on drug abuse and violent crime',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Research and program evaluation in Illinois Studies on drug abuse and violent crime', page: 0, structRef: '9_0', reachable: true, directContent: true, parentPath: ['Document'] },
+        { tag: 'P', text: 'Community Policing in Chicago, Year Three Prepared by staff members', page: 1, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] },
+      ],
+      mcidTextSpans: titleWords.map((word, index) => ({
+        page: 1,
+        mcid: 70 + index,
+        snippet: `/P <</MCID ${70 + index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    const analysis = analysisFor(snap);
+    expect(selectOcrPageShellHeadingCandidate(analysis, snap)).toBeNull();
+    const candidate = selectOcrCollectionCoverTitleHeadingCandidate(analysis, snap);
+    expect(candidate).toMatchObject({
+      page: 1,
+      mcid: 70,
+      mcids: [70, 71, 72, 73, 74, 75],
+      source: 'collection_page_visible_title',
+      text: 'Community Policing in Chicago, Year Three',
+    });
+    expect(classifyStage175OcrCollectionCover(analysis, snap).classification)
+      .toBe('ocr_collection_cover_title_candidate');
+    expect(shouldTryOcrCollectionCoverTitleHeadingRecovery(analysis, snap)).toBe(true);
+    const params = buildDefaultParams('create_heading_from_ocr_collection_title_anchor', analysis, snap);
+    expect(params).toMatchObject({
+      page: 1,
+      mcid: 70,
+      mcids: [70, 71, 72, 73, 74, 75],
+      level: 1,
+    });
+    const planned = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(planned).toContain('create_heading_from_ocr_collection_title_anchor');
+    expect(planned).not.toContain('create_heading_from_ocr_page_shell_anchor');
+  });
+
+  it('rejects collection-cover OCR titles without MCID ownership', () => {
+    const snap = makeSnapshot({
+      pageCount: 4,
+      textByPage: [
+        'Research and program evaluation in Illinois Studies on drug abuse and violent crime Prepared by Illinois Criminal Justice Information Authority',
+        'Community Policing in Chicago, Year Three Prepared by staff members',
+      ],
+      metadata: {
+        title: '3476 research and program evaluation in illinois studies on drug abuse and violent crime',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Community Policing in Chicago, Year Three Prepared by staff members', page: 1, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] },
+      ],
+      mcidTextSpans: [],
+    });
+    const analysis = analysisFor(snap);
+    expect(selectOcrCollectionCoverTitleHeadingCandidate(analysis, snap)).toBeNull();
+    expect(classifyStage175OcrCollectionCover(analysis, snap).classification)
+      .toBe('title_page_not_first_page_no_owned_candidate');
+    expect(shouldTryOcrCollectionCoverTitleHeadingRecovery(analysis, snap)).toBe(false);
+    const planned = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(planned).not.toContain('create_heading_from_ocr_collection_title_anchor');
+  });
+
+  it('does not reroute normal page-1 OCR title candidates through the collection-cover tool', () => {
+    const snap = makeSnapshot();
+    const analysis = analysisFor(snap);
+    expect(selectOcrPageShellHeadingCandidate(analysis, snap)).not.toBeNull();
+    expect(selectOcrCollectionCoverTitleHeadingCandidate(analysis, snap)).toBeNull();
+    expect(classifyStage175OcrCollectionCover(analysis, snap).classification)
+      .toBe('normal_page1_ocr_title_candidate');
+    const planned = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(planned).toContain('create_heading_from_ocr_page_shell_anchor');
+    expect(planned).not.toContain('create_heading_from_ocr_collection_title_anchor');
   });
 
   it('uses a title-focused deep MCID candidate beyond the global MCID cap', () => {
