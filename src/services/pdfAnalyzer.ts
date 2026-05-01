@@ -301,6 +301,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     orphanMcids: struct.orphanMcids ?? [],
     mcidTextSpans: struct.mcidTextSpans ?? [],
     ocrTitleMcidCandidates: struct.ocrTitleMcidCandidates ?? [],
+    nativeTitleBtCandidates: struct.nativeTitleBtCandidates ?? [],
     taggedContentAudit: struct.taggedContentAudit,
     listStructureAudit: struct.listStructureAudit,
     acrobatStyleAltRisks: struct.acrobatStyleAltRisks,

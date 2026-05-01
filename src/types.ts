@@ -298,6 +298,18 @@ export interface DocumentSnapshot {
     startIndex: number;
     beyondGlobalCap: boolean;
   }>;
+  /** Native page-0 BT/ET title-like text groups that lack usable MCID ownership. */
+  nativeTitleBtCandidates?: Array<{
+    page: number;
+    groupIndexes: number[];
+    fontSize: number;
+    x: number | null;
+    y: number | null;
+    textOperatorCount: number;
+    encodedTextLength: number;
+    markedDepth: number;
+    score: number;
+  }>;
   /** Acrobat-oriented tagged-content signals (bounded heuristics; not full TaggedCont parity). */
   taggedContentAudit?: {
     orphanMcidCount: number;
@@ -518,6 +530,7 @@ export interface PythonAnalysisResult {
   orphanMcids?: DocumentSnapshot['orphanMcids'];
   mcidTextSpans?: DocumentSnapshot['mcidTextSpans'];
   ocrTitleMcidCandidates?: DocumentSnapshot['ocrTitleMcidCandidates'];
+  nativeTitleBtCandidates?: DocumentSnapshot['nativeTitleBtCandidates'];
   annotationAccessibility?: DocumentSnapshot['annotationAccessibility'];
   /** Pikepdf scan of all pages’ /Link annotations for scorer (pdfjs samples pages). */
   linkScoringRows?: Array<{ page: number; url: string; effectiveText: string }>;

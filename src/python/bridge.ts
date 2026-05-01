@@ -71,6 +71,7 @@ const EMPTY_RESULT: PythonAnalysisResult = {
   threeCcGoldenOrphanV1: false,
   orphanMcids: [],
   mcidTextSpans: [],
+  nativeTitleBtCandidates: [],
   acrobatStyleAltRisks: {
     nonFigureWithAltCount: 0,
     nestedFigureAltCount: 0,

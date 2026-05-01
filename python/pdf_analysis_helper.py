@@ -5187,6 +5187,7 @@ def main():
         "threeCcGoldenOrphanV1": False,
         "orphanMcids": [],
         "mcidTextSpans": [],
+        "nativeTitleBtCandidates": [],
         "annotationAccessibility": {
             "pagesMissingTabsS": 0,
             "pagesAnnotationOrderDiffers": 0,
@@ -5241,6 +5242,10 @@ def main():
             result["ocrTitleMcidCandidates"] = collect_ocr_title_mcid_candidates(pdf, result.get("title"))
         except Exception as e:
             print(f"[warn] ocr title mcid candidates: {e}", file=sys.stderr)
+        try:
+            result["nativeTitleBtCandidates"] = collect_native_title_bt_candidates(pdf)
+        except Exception as e:
+            print(f"[warn] native title bt candidates: {e}", file=sys.stderr)
 
         # Build page→index map once (used by struct traversal)
         page_map = build_page_map(pdf)
@@ -8091,6 +8096,147 @@ def _op_create_heading_from_tagged_visible_anchor(pdf: pikepdf.Pdf, params: dict
     return new_elem is not None
 
 
+def _native_title_bridge_parent(doc_elem):
+    """Prefer the existing root-reachable page shell over appending beside it."""
+    try:
+        k = doc_elem.get("/K")
+    except Exception:
+        return doc_elem
+    children = list(k) if isinstance(k, pikepdf.Array) else [k] if isinstance(k, pikepdf.Dictionary) else []
+    for child in children:
+        if not isinstance(child, pikepdf.Dictionary):
+            continue
+        try:
+            role = str(child.get("/S") or "").lstrip("/").upper()
+        except Exception:
+            role = ""
+        if role in {"NONSTRUCT", "SECT", "DIV"}:
+            return child
+    return doc_elem
+
+
+def _op_bridge_native_title_text_owner(pdf: pikepdf.Pdf, params: dict) -> bool:
+    """Wrap exact page-0 native title BT/ET groups and attach them to a root-reachable H1."""
+    if _is_ocrmypdf_produced(pdf):
+        _set_last_mutation_note("ocr_pdf_deferred")
+        return False
+    text = re.sub(r"[\x00-\x1f\x7f]+", "", str(params.get("text") or ""))
+    text = re.sub(r"\s+", " ", text.strip())
+    if not text:
+        _set_last_mutation_note("missing_visible_anchor_text")
+        return False
+    if _score_mcid_text_as_heading(text, text) is None:
+        _set_last_mutation_note("weak_visible_anchor_text")
+        return False
+    if _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6") > 0:
+        _set_last_mutation_note("heading_already_present")
+        return False
+    sr, doc_elem = _find_or_create_document_elem(pdf)
+    if not isinstance(sr, pikepdf.Dictionary) or not isinstance(doc_elem, pikepdf.Dictionary):
+        _set_last_mutation_note("missing_document_struct_elem")
+        return False
+    try:
+        page_idx = int(params.get("page", 0))
+    except (TypeError, ValueError):
+        page_idx = 0
+    if page_idx != 0:
+        _set_last_mutation_note("non_first_page_anchor_rejected")
+        return False
+    try:
+        page_obj = pdf.pages[0].obj
+        insts = list(pikepdf.parse_content_stream(page_obj))
+    except Exception:
+        _set_last_mutation_note("page_content_unreadable")
+        return False
+    group_records = _bt_et_group_records(insts)
+    selected_indexes: list[int] = []
+    raw_indexes = params.get("groupIndexes")
+    if isinstance(raw_indexes, list):
+        for raw_index in raw_indexes:
+            try:
+                selected_indexes.append(int(raw_index))
+            except Exception:
+                pass
+    if not selected_indexes:
+        selected_indexes, _summary = _select_native_title_bt_group_indexes(insts)
+    selected_indexes = sorted({idx for idx in selected_indexes if idx >= 0})
+    if not selected_indexes or len(selected_indexes) > 4:
+        _set_last_mutation_note("missing_native_title_bt_group")
+        return False
+    selected_records = [row for row in group_records if int(row.get("groupIndex") or -1) in selected_indexes]
+    if len(selected_records) != len(selected_indexes):
+        _set_last_mutation_note("stale_native_title_bt_group")
+        return False
+    if any(float(row.get("fontSize") or 0) < 18 or int(row.get("markedDepth") or 0) > 1 for row in selected_records):
+        _set_last_mutation_note("unsafe_native_title_bt_group")
+        return False
+
+    page_parent_tree, _page_key, _page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+    if page_parent_tree is None:
+        _set_last_mutation_note("missing_page_parent_tree")
+        return False
+    next_mcid = max(0, _page_max_mcid(page_obj) + 1)
+    rewritten: list = []
+    prev_end = 0
+    mcids: list[int] = []
+    selected_by_start = sorted(selected_records, key=lambda row: int(row.get("start") or 0))
+    for record in selected_by_start:
+        start = int(record.get("start") or 0)
+        end = int(record.get("end") or 0)
+        if start < prev_end or end <= start or end > len(insts):
+            _set_last_mutation_note("invalid_native_title_bt_group_bounds")
+            return False
+        mcid = next_mcid
+        next_mcid += 1
+        mcids.append(mcid)
+        rewritten.extend(insts[prev_end:start])
+        rewritten.append(pikepdf.ContentStreamInstruction(
+            [pikepdf.Name("/H1"), pikepdf.Dictionary(MCID=mcid)],
+            pikepdf.Operator("BDC"),
+        ))
+        rewritten.extend(insts[start:end])
+        rewritten.append(pikepdf.ContentStreamInstruction([], pikepdf.Operator("EMC")))
+        prev_end = end
+    rewritten.extend(insts[prev_end:])
+    try:
+        page_obj["/Contents"] = pdf.make_stream(pikepdf.unparse_content_stream(rewritten))
+        page_obj["/Tabs"] = pikepdf.Name("/S")
+    except Exception:
+        _set_last_mutation_note("failed_to_rewrite_native_title_content")
+        return False
+
+    bridge_parent = _native_title_bridge_parent(doc_elem)
+    try:
+        heading_k = pikepdf.Integer(int(mcids[0])) if len(mcids) == 1 else pikepdf.Array([pikepdf.Integer(int(mcid)) for mcid in mcids])
+        h1 = pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/H1"),
+            P=bridge_parent,
+            Pg=page_obj,
+            K=heading_k,
+            T=_pdf_text_string(text, 500),
+            ActualText=_pdf_text_string(text, 500),
+        ))
+    except Exception:
+        _set_last_mutation_note("failed_to_create_native_title_heading")
+        return False
+    if not _append_struct_child(bridge_parent, h1):
+        _set_last_mutation_note("failed_to_append_native_title_heading")
+        return False
+    for mcid in mcids:
+        _set_page_parent_tree_mcid(page_parent_tree, int(mcid), h1)
+    _set_last_mutation_note("native_title_text_owner_bridged")
+    _set_last_mutation_debug({
+        "page": 0,
+        "mcids": mcids,
+        "groupIndexes": selected_indexes,
+        "visibleText": text[:200],
+        "fontSize": max(float(row.get("fontSize") or 0) for row in selected_records),
+        "parentRef": object_ref_str(bridge_parent),
+    })
+    return True
+
+
 def _is_artifact_bdc_instruction(inst) -> bool:
     try:
         if str(inst.operator) != "BDC":
@@ -8670,6 +8816,134 @@ def _bt_et_text_groups(insts: list) -> list[tuple[int, int, str]]:
             text = _extract_text_from_instruction_segment(insts[bt_start : idx + 1])
             groups.append((bt_start, idx, text))
     return groups
+
+
+def _bt_et_group_records(insts: list) -> list[dict]:
+    """Return bounded BT/ET group metadata for native title-owner diagnostics."""
+    groups: list[dict] = []
+    in_bt = False
+    bt_start = 0
+    bt_depth = 0
+    marked_depth = 0
+    for idx, inst in enumerate(insts):
+        op = str(inst.operator)
+        depth_before = marked_depth
+        if op == "BT" and not in_bt:
+            in_bt = True
+            bt_start = idx
+            bt_depth = depth_before
+        elif op == "ET" and in_bt:
+            in_bt = False
+            seg = insts[bt_start:idx + 1]
+            try:
+                raw = pikepdf.unparse_content_stream(seg).decode("latin-1", errors="replace")
+            except Exception:
+                raw = ""
+            font_values = [
+                float(match.group(1))
+                for match in re.finditer(r"(?:^|\s)(\d+(?:\.\d+)?)\s+Tf\b", raw)
+            ]
+            tm_matches = list(re.finditer(
+                r"(?:^|\s)(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Tm\b",
+                raw,
+            ))
+            x_val = None
+            y_val = None
+            if tm_matches:
+                try:
+                    x_val = float(tm_matches[0].group(5))
+                    y_val = float(tm_matches[0].group(6))
+                except Exception:
+                    x_val = None
+                    y_val = None
+            text_operator_count = len(re.findall(r"(?:^|\s)(?:TJ|Tj)\b", raw))
+            encoded_len = sum(len(match.group(1) or "") for match in re.finditer(r"<([0-9A-Fa-f]{2,})>", raw))
+            groups.append({
+                "groupIndex": len(groups),
+                "start": bt_start,
+                "end": idx + 1,
+                "fontSize": max(font_values) if font_values else 0.0,
+                "x": x_val,
+                "y": y_val,
+                "textOperatorCount": text_operator_count,
+                "encodedTextLength": encoded_len,
+                "markedDepth": bt_depth,
+            })
+        if op in ("BDC", "BMC"):
+            marked_depth += 1
+        elif op == "EMC" and marked_depth > 0:
+            marked_depth -= 1
+    return groups
+
+
+def _select_native_title_bt_group_indexes(insts: list) -> tuple[list[int], dict | None]:
+    """Select likely page-0 title BT/ET groups by stable geometry and font evidence.
+
+    This deliberately does not decode custom font text. It only selects large,
+    top-of-page, unowned BT/ET groups and relies on the TypeScript planner to
+    provide a separately verified visible title string from pdf.js.
+    """
+    records = _bt_et_group_records(insts)
+    candidates = [
+        row for row in records
+        if int(row.get("markedDepth") or 0) <= 1
+        and float(row.get("fontSize") or 0) >= 18
+        and (row.get("y") is None or 80 <= float(row.get("y")) <= 380)
+        and int(row.get("encodedTextLength") or 0) >= 8
+    ]
+    if not candidates:
+        return [], None
+    max_font = max(float(row.get("fontSize") or 0) for row in candidates)
+    strong = [
+        row for row in candidates
+        if float(row.get("fontSize") or 0) >= max_font * 0.92
+    ]
+    strong.sort(key=lambda row: (float(row.get("y") or 0), int(row.get("groupIndex") or 0)))
+    first = strong[0]
+    selected = [first]
+    previous_y = float(first.get("y") or 0)
+    previous_index = int(first.get("groupIndex") or 0)
+    for row in strong[1:]:
+        group_index = int(row.get("groupIndex") or 0)
+        y_val = float(row.get("y") or 0)
+        if group_index <= previous_index:
+            continue
+        if y_val - previous_y > 75:
+            break
+        selected.append(row)
+        previous_y = y_val
+        previous_index = group_index
+        if len(selected) >= 4:
+            break
+    group_indexes = [int(row.get("groupIndex")) for row in selected]
+    encoded_len = sum(int(row.get("encodedTextLength") or 0) for row in selected)
+    text_ops = sum(int(row.get("textOperatorCount") or 0) for row in selected)
+    score = int(50 + min(max_font, 32) + min(encoded_len / 8, 24) + min(text_ops, 18))
+    summary = {
+        "page": 0,
+        "groupIndexes": group_indexes,
+        "fontSize": max_font,
+        "x": selected[0].get("x"),
+        "y": selected[0].get("y"),
+        "textOperatorCount": text_ops,
+        "encodedTextLength": encoded_len,
+        "markedDepth": selected[0].get("markedDepth"),
+        "score": score,
+    }
+    return group_indexes, summary
+
+
+def collect_native_title_bt_candidates(pdf: pikepdf.Pdf) -> list[dict]:
+    """Collect compact native title-owner bridge candidates from page 0."""
+    if _is_ocrmypdf_produced(pdf):
+        return []
+    try:
+        page_obj = pdf.pages[0].obj
+        insts = list(pikepdf.parse_content_stream(page_obj))
+    except Exception:
+        return []
+    _indexes, summary = _select_native_title_bt_group_indexes(insts)
+    return [summary] if summary is not None else []
 
 
 def _outside_paint_segments(insts: list) -> list[tuple[int, int]]:
@@ -9414,6 +9688,7 @@ _STAGE35_HEADING_OPS = {
     "create_structure_from_degenerate_native_anchor",
     "create_heading_from_visible_text_anchor",
     "create_heading_from_tagged_visible_anchor",
+    "bridge_native_title_text_owner",
     "create_heading_from_ocr_page_shell_anchor",
     "repair_degenerate_native_reading_order_shell",
     "create_heading_from_candidate",
@@ -10329,6 +10604,7 @@ MUTATORS = {
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,
     "create_heading_from_visible_text_anchor": _op_create_heading_from_visible_text_anchor,
     "create_heading_from_tagged_visible_anchor": _op_create_heading_from_tagged_visible_anchor,
+    "bridge_native_title_text_owner": _op_bridge_native_title_text_owner,
     "repair_degenerate_native_reading_order_shell": _op_repair_degenerate_native_reading_order_shell,
     "synthesize_ocr_page_shell_reading_order_structure": _op_synthesize_ocr_page_shell_reading_order_structure,
     "create_heading_from_ocr_page_shell_anchor": _op_create_heading_from_ocr_page_shell_anchor,

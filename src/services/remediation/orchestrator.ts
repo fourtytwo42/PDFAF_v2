@@ -406,6 +406,7 @@ const HEADING_STRUCTURE_TOOLS = new Set([
   'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
   'create_heading_from_tagged_visible_anchor',
+  'bridge_native_title_text_owner',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
   'normalize_heading_hierarchy',
@@ -656,6 +657,7 @@ function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: Categ
       tools.has('create_structure_from_degenerate_native_anchor') ||
       tools.has('create_heading_from_visible_text_anchor') ||
       tools.has('create_heading_from_tagged_visible_anchor') ||
+      tools.has('bridge_native_title_text_owner') ||
       tools.has('create_heading_from_ocr_page_shell_anchor') ||
       tools.has('normalize_heading_hierarchy') ||
       tools.has('repair_structure_conformance') ||
@@ -1829,6 +1831,7 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
   'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',
   'create_heading_from_tagged_visible_anchor',
+  'bridge_native_title_text_owner',
   'synthesize_ocr_page_shell_reading_order_structure',
   'create_heading_from_ocr_page_shell_anchor',
   'create_heading_from_candidate',
@@ -2476,7 +2479,7 @@ async function applyGuardedPostPass(args: {
       };
     }
   }
-  if (toolName === 'create_heading_from_ocr_page_shell_anchor' || toolName === 'create_heading_from_tagged_visible_anchor') {
+  if (toolName === 'create_heading_from_ocr_page_shell_anchor' || toolName === 'create_heading_from_tagged_visible_anchor' || toolName === 'bridge_native_title_text_owner') {
     const textDropLimit = Math.max(20, Math.round((currentSnapshot.textCharCount ?? 0) * 0.01));
     const textDropped = (currentSnapshot.textCharCount ?? 0) - (analyzed.snapshot.textCharCount ?? 0);
     const structureLost = currentSnapshot.structureTree !== null && analyzed.snapshot.structureTree === null;
@@ -3515,6 +3518,7 @@ export async function runSingleTool(
       case 'create_structure_from_degenerate_native_anchor':
       case 'create_heading_from_visible_text_anchor':
       case 'create_heading_from_tagged_visible_anchor':
+      case 'bridge_native_title_text_owner':
       case 'synthesize_ocr_page_shell_reading_order_structure':
       case 'create_heading_from_ocr_page_shell_anchor':
       case 'create_heading_from_candidate':

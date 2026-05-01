@@ -56,6 +56,10 @@ import {
   shouldTryDegenerateNativeStructureRecovery,
 } from './degenerateNativeStructure.js';
 import { shouldTryNativeReadingOrderTopup } from './nativeReadingOrderTopup.js';
+import {
+  classifyStage170NativeTitleOwnerBridge,
+  selectNativeTitleOwnerBridgeCandidate,
+} from './nativeTitleOwnerBridge.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -133,6 +137,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'create_structure_from_degenerate_native_anchor',
     'create_heading_from_visible_text_anchor',
     'create_heading_from_tagged_visible_anchor',
+    'bridge_native_title_text_owner',
     'create_heading_from_candidate',
     'normalize_heading_hierarchy',
     'normalize_nested_figure_containers',
@@ -239,6 +244,7 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
       'create_structure_from_degenerate_native_anchor',
       'create_heading_from_visible_text_anchor',
       'create_heading_from_tagged_visible_anchor',
+      'bridge_native_title_text_owner',
       'create_heading_from_candidate',
       'normalize_heading_hierarchy',
       'repair_structure_conformance',
@@ -247,6 +253,7 @@ const ROUTE_CONTRACTS: Record<RemediationRoute, RouteContract> = {
       'create_structure_from_degenerate_native_anchor',
       'create_heading_from_visible_text_anchor',
       'create_heading_from_tagged_visible_anchor',
+      'bridge_native_title_text_owner',
       'create_heading_from_candidate',
     ],
   },
@@ -1037,6 +1044,10 @@ function toolApplicableToPdfClass(
     if (pdfClass !== 'native_tagged') return false;
     return snapshot.textCharCount > 0 && snapshot.structureTree !== null;
   }
+  if (toolName === 'bridge_native_title_text_owner') {
+    if (pdfClass !== 'native_tagged') return false;
+    return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.nativeTitleBtCandidates?.length ?? 0) > 0;
+  }
   if (toolName === 'create_heading_from_ocr_page_shell_anchor') {
     if (pdfClass === 'scanned') return false;
     return snapshot.textCharCount > 0 && snapshot.structureTree !== null && (snapshot.mcidTextSpans?.length ?? 0) > 0;
@@ -1440,6 +1451,12 @@ export function planForRemediation(
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (
+      toolName === 'bridge_native_title_text_owner' &&
+      !(classifyStage170NativeTitleOwnerBridge(analysis, snapshot).classification === 'native_title_bt_owner_bridge_candidate' && headingNeedsRepair)
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
       toolName === 'create_heading_from_ocr_page_shell_anchor' &&
       !(ocrPageShellHeadingRecoveryActive && headingNeedsRepair)
     ) {
@@ -1798,6 +1815,35 @@ export function planForRemediation(
           rationale: shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot)
             ? 'Stage 149 partial-heading reachability recovery from a proven first-page content anchor.'
             : 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
+          route: 'post_bootstrap_heading_convergence',
+        });
+      }
+    }
+  }
+
+  {
+    const toolName = 'bridge_native_title_text_owner';
+    const disposition = classifyStage170NativeTitleOwnerBridge(analysis, snapshot);
+    if (
+      headingNeedsRepair &&
+      !toolSet.has(toolName) &&
+      disposition.classification === 'native_title_bt_owner_bridge_candidate' &&
+      !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
+      noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+    ) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      if (
+        typeof params['text'] === 'string' &&
+        params['text'].length > 0 &&
+        Array.isArray(params['groupIndexes']) &&
+        params['groupIndexes'].length > 0 &&
+        !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
+        toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
+      ) {
+        toolSet.set(toolName, {
+          toolName,
+          params,
+          rationale: 'Stage 170 native title owner bridge for an exact visible first-page title BT/ET group.',
           route: 'post_bootstrap_heading_convergence',
         });
       }
@@ -2176,6 +2222,18 @@ export function buildDefaultParams(
         source: candidate.source,
         confidenceScore: candidate.score,
         ...(partialReachability ? { allowExistingHeadingRolesForPartialReachability: true } : {}),
+      };
+    }
+    case 'bridge_native_title_text_owner': {
+      const candidate = selectNativeTitleOwnerBridgeCandidate(analysis, snapshot);
+      if (!candidate) return {};
+      return {
+        page: candidate.page,
+        groupIndexes: candidate.groupIndexes,
+        level: 1,
+        text: candidate.text.slice(0, 200),
+        source: 'native_title_bt_owner_bridge',
+        confidenceScore: candidate.score,
       };
     }
     case 'create_structure_from_degenerate_native_anchor': {

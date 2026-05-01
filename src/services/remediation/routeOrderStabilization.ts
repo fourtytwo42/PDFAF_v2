@@ -30,7 +30,7 @@ export const STAGE160_RECOVERY_TOOLS_BY_CATEGORY: Partial<Record<CategoryKey, re
     'artifact_repeating_page_furniture',
   ],
   link_quality: ['repair_native_link_structure', 'normalize_annotation_tab_order', 'set_link_annotation_contents', 'tag_unowned_annotations'],
-  heading_structure: ['create_heading_from_candidate', 'create_heading_from_tagged_visible_anchor', 'normalize_heading_hierarchy'],
+  heading_structure: ['create_heading_from_candidate', 'create_heading_from_tagged_visible_anchor', 'bridge_native_title_text_owner', 'normalize_heading_hierarchy'],
 };
 
 export interface Stage160CleanupTransactionPlan {
