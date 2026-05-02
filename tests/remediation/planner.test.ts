@@ -13,6 +13,7 @@ import {
   routeContractFor,
   shouldAllowStage146FigureAltContinuation,
   shouldAllowStage146RoleMapRetagContinuation,
+  shouldAllowStage178ProtectedFigureAltContinuation,
 } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { classifyZeroHeadingRecovery } from '../../src/services/remediation/headingRecovery.js';
@@ -2112,6 +2113,106 @@ describe('planForRemediation', () => {
     }));
 
     expect(maxFigureAltTargetsForRun(analysis, snap, applied, { protectedBaselineActive: true })).toBe(3);
+  });
+
+  it('allows Stage 178 protected continuation only when the protected baseline already had weak alt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 86,
+      reading_order: 100,
+      table_markup: 100,
+    });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 81,
+      scoreAfter: 81,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(shouldAllowStage178ProtectedFigureAltContinuation(
+      analysis,
+      snap,
+      applied,
+      { score: 59, categories: { alt_text: 12 } },
+    )).toBe(true);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied, {
+      protectedBaselineActive: true,
+      protectedBaseline: { score: 59, categories: { alt_text: 12 } },
+    })).toBe(5);
+  });
+
+  it('keeps Stage 178 protected continuation off high-alt and mixed-blocked protected rows', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+    };
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 81,
+      scoreAfter: 81,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+    const stableLowAlt = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 86,
+      reading_order: 100,
+      table_markup: 100,
+    });
+    const tableBlocked = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 86,
+      reading_order: 100,
+      table_markup: 44,
+    });
+
+    expect(maxFigureAltTargetsForRun(stableLowAlt, snap, applied, {
+      protectedBaselineActive: true,
+      protectedBaseline: { score: 91, categories: { alt_text: 89 } },
+    })).toBe(3);
+    expect(maxFigureAltTargetsForRun(tableBlocked, snap, applied, {
+      protectedBaselineActive: true,
+      protectedBaseline: { score: 59, categories: { alt_text: 12 } },
+    })).toBe(3);
   });
 
   it('does not enable Stage 146 figure alt continuation on already high-score rows', () => {

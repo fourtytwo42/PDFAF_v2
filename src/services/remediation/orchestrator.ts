@@ -432,6 +432,8 @@ const FIGURE_OWNERSHIP_REFRESH_TOOLS = new Set([
   'retag_as_figure',
 ]);
 
+const STAGE178_PROTECTED_EXTRA_FIGURE_ALT_MIN_PRIOR_ATTEMPTS = 3;
+
 const LINK_STRUCTURE_TOOLS = new Set([
   'set_link_annotation_contents',
   'repair_native_link_structure',
@@ -1946,11 +1948,12 @@ async function reanalyzeBufferForMutation(
   buf: Buffer,
   filename: string,
   prefix: string,
+  options: { bypassCache?: boolean } = {},
 ): Promise<Awaited<ReturnType<typeof analyzePdf>>> {
   const tmpPath = join(tmpdir(), `${prefix}-${randomUUID()}.pdf`);
   await writeFile(tmpPath, buf);
   try {
-    return await analyzePdf(tmpPath, filename);
+    return await analyzePdf(tmpPath, filename, options);
   } finally {
     await unlink(tmpPath).catch(() => {});
   }
@@ -5443,7 +5446,10 @@ export async function remediatePdf(
               workingAnalysis,
               workingSnapshot,
               [...appliedTools, ...stageApplied],
-              { protectedBaselineActive: Boolean(options?.protectedBaseline) },
+              {
+                protectedBaselineActive: Boolean(options?.protectedBaseline),
+                protectedBaseline: options?.protectedBaseline,
+              },
             )
           ) {
             const activeRef = typeof activeFigureTool.params['structRef'] === 'string'
@@ -5458,6 +5464,10 @@ export async function remediatePdf(
             }
             attemptedRefs.add(activeRef);
 
+            const beforeFigureBuffer = buf;
+            const beforeFigureAnalysis = workingAnalysis;
+            const beforeFigureSnapshot = workingSnapshot;
+            const priorFigureAltAttemptCount = figureAltMutationAttemptCount([...appliedTools, ...stageApplied]);
             const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeFigureTool, workingSnapshot);
             const effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
             buf = next;
@@ -5491,6 +5501,48 @@ export async function remediatePdf(
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;
             workingSnapshot = lastStageAnalysis.snapshot;
+            if (
+              options?.protectedBaseline &&
+              priorFigureAltAttemptCount >= STAGE178_PROTECTED_EXTRA_FIGURE_ALT_MIN_PRIOR_ATTEMPTS
+            ) {
+              const confirmed = await reanalyzeBufferForMutation(
+                buf,
+                filename,
+                'pdfaf-stage178-protected-figure-alt',
+                { bypassCache: true },
+              );
+              const beforeAlt = categoryScore(beforeFigureAnalysis, 'alt_text') ?? 0;
+              const confirmedAlt = categoryScore(confirmed.result, 'alt_text') ?? beforeAlt;
+              const confirmedScoreGain = confirmed.result.score >= beforeFigureAnalysis.score;
+              if (confirmedAlt <= beforeAlt || !confirmedScoreGain) {
+                buf = beforeFigureBuffer;
+                lastStageAnalysis = { result: beforeFigureAnalysis, snapshot: beforeFigureSnapshot };
+                lastAnalyzedBuffer = beforeFigureBuffer;
+                workingAnalysis = beforeFigureAnalysis;
+                workingSnapshot = beforeFigureSnapshot;
+                const row = stageApplied[stageApplied.length - 1]!;
+                row.outcome = 'rejected';
+                row.details = JSON.stringify({
+                  outcome: 'rejected',
+                  note: 'protected_stage178_reanalysis_no_alt_gain',
+                  invariants: {
+                    targetRef: activeRef,
+                    protectedBeforeAlt: beforeAlt,
+                    protectedReanalyzedAlt: confirmedAlt,
+                    protectedBeforeScore: beforeFigureAnalysis.score,
+                    protectedReanalyzedScore: confirmed.result.score,
+                  },
+                });
+                row.scoreAfter = beforeFigureAnalysis.score;
+                row.delta = 0;
+                activeFigureTool = null;
+                break;
+              }
+              lastStageAnalysis = confirmed;
+              lastAnalyzedBuffer = buf;
+              workingAnalysis = confirmed.result;
+              workingSnapshot = confirmed.snapshot;
+            }
 
             const nextParams = buildDefaultParams(
               'set_figure_alt_text',

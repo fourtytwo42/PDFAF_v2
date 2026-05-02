@@ -512,13 +512,53 @@ export function shouldAllowStage146FigureAltContinuation(
   return safeCheckerVisibleMissingAltTargets(snapshot, attemptedRefs).length > 0;
 }
 
+interface ProtectedAltBaseline {
+  score?: number;
+  categories?: Partial<Record<CategoryKey, number>>;
+}
+
+export function shouldAllowStage178ProtectedFigureAltContinuation(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+  protectedBaseline?: ProtectedAltBaseline,
+): boolean {
+  if (!protectedBaseline) return false;
+  const baselineAlt = protectedBaseline.categories?.alt_text;
+  if (baselineAlt == null || baselineAlt >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((protectedBaseline.score ?? 100) >= 90) return false;
+  if (analysis.score >= 90) return false;
+  if ((categoryScore(analysis, 'alt_text') ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) < 60) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
+  if (successfulApplyCount(alreadyApplied, 'set_figure_alt_text') < DEFAULT_FIGURE_ALT_TARGETS_PER_RUN) return false;
+  const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'set_figure_alt_text');
+  return safeCheckerVisibleMissingAltTargets(snapshot, attemptedRefs).length > 0;
+}
+
 export function maxFigureAltTargetsForRun(
   analysis?: AnalysisResult,
   snapshot?: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[] = [],
-  options: { protectedBaselineActive?: boolean } = {},
+  options: { protectedBaselineActive?: boolean; protectedBaseline?: ProtectedAltBaseline } = {},
 ): number {
-  if (options.protectedBaselineActive) return DEFAULT_FIGURE_ALT_TARGETS_PER_RUN;
+  if (options.protectedBaselineActive || options.protectedBaseline) {
+    if (
+      analysis &&
+      snapshot &&
+      shouldAllowStage178ProtectedFigureAltContinuation(
+        analysis,
+        snapshot,
+        alreadyApplied,
+        options.protectedBaseline,
+      )
+    ) {
+      return STAGE146_FIGURE_ALT_TARGETS_PER_RUN;
+    }
+    return DEFAULT_FIGURE_ALT_TARGETS_PER_RUN;
+  }
   if (analysis && snapshot && shouldAllowStage146FigureAltContinuation(analysis, snapshot, alreadyApplied)) {
     return STAGE146_FIGURE_ALT_TARGETS_PER_RUN;
   }
