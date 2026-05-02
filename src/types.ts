@@ -322,6 +322,7 @@ export interface DocumentSnapshot {
    */
   acrobatStyleAltRisks?: {
     nonFigureWithAltCount: number;
+    emptyNonFigureAltActualCount?: number;
     nestedFigureAltCount: number;
     orphanedAltEmptyElementCount: number;
     sampleOwnershipModes?: string[];

@@ -74,6 +74,7 @@ const EMPTY_RESULT: PythonAnalysisResult = {
   nativeTitleBtCandidates: [],
   acrobatStyleAltRisks: {
     nonFigureWithAltCount: 0,
+    emptyNonFigureAltActualCount: 0,
     nestedFigureAltCount: 0,
     orphanedAltEmptyElementCount: 0,
     sampleOwnershipModes: [],

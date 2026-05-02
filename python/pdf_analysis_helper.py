@@ -5330,6 +5330,19 @@ def _has_nonempty_alt_or_actual(elem) -> bool:
     return False
 
 
+def _clear_empty_alt_actual(elem) -> bool:
+    """Remove empty /Alt or /ActualText values that only create Acrobat OtherAltText noise."""
+    changed = False
+    for key in ("/Alt", "/ActualText"):
+        try:
+            if key in elem and not safe_str(elem.get(key)).strip():
+                del elem[key]
+                changed = True
+        except Exception:
+            pass
+    return changed
+
+
 def _clear_alt_actual_and_title(elem) -> None:
     for key in ("/Alt", "/ActualText"):
         try:
@@ -5716,6 +5729,7 @@ def collect_acrobat_style_alt_risks(pdf: pikepdf.Pdf) -> dict:
     """
     out = {
         "nonFigureWithAltCount": 0,
+        "emptyNonFigureAltActualCount": 0,
         "nestedFigureAltCount": 0,
         "orphanedAltEmptyElementCount": 0,
         "sampleOwnershipModes": [],
@@ -5738,6 +5752,7 @@ def collect_acrobat_style_alt_risks(pdf: pikepdf.Pdf) -> dict:
             return
         tag_u = _struct_tag_upper(node)
         has_alt = _elem_has_alt_or_actual(node)
+        has_nonempty_alt = _has_nonempty_alt_or_actual(node)
         try:
             kl = node.get("/K")
         except Exception:
@@ -5749,7 +5764,11 @@ def collect_acrobat_style_alt_risks(pdf: pikepdf.Pdf) -> dict:
         if has_alt and not _struct_role_requires_figure_style_alt(get_name(node)):
             if has_mcid or len(child_structs) > 0:
                 out["nonFigureWithAltCount"] += 1
-                note("nonfigure_with_alt")
+                if not has_nonempty_alt:
+                    out["emptyNonFigureAltActualCount"] += 1
+                    note("empty_nonfigure_alt_actual")
+                else:
+                    note("nonfigure_with_alt")
 
         if _struct_role_requires_figure_style_alt(get_name(node)) and has_alt:
             if _subtree_has_alt_excluding_self(node):
@@ -5791,6 +5810,9 @@ def _repair_alt_text_subtree(elem) -> bool:
     changed = False
     for ch in _direct_role_children(elem):
         changed = _repair_alt_text_subtree(ch) or changed
+
+    if _clear_empty_alt_actual(elem):
+        changed = True
 
     if not _has_nonempty_alt_or_actual(elem):
         return changed
