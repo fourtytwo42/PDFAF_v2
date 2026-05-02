@@ -122,7 +122,7 @@ export function classifyStage170NativeTitleOwnerBridge(
     return { classification: 'route_order_volatility', candidate: null, reasons: ['route/order volatile control row'] };
   }
   const heading = categoryScore(analysis, 'heading_structure');
-  const treeHeadingCount = snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? snapshot.headings.length;
+  const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
   if (heading == null || heading > 0 || treeHeadingCount > 0 || snapshot.headings.length > 0) {
     return { classification: 'no_safe_anchor', candidate: null, reasons: [`heading_structure:${heading}`] };
   }

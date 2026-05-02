@@ -43,7 +43,9 @@ export interface OcrPageShellHeadingSeedDebug {
   tokens: string[];
   exactMatch: boolean;
   windowMatch: boolean;
+  noisyMatch?: boolean;
   matchedTokenCount: number;
+  missingTokenCount?: number;
   mcids: number[];
   score: number | null;
   reasons: string[];
@@ -243,6 +245,8 @@ interface OcrMcidTokenMatch {
   text: string;
   matchedTokenCount: number;
   exact: boolean;
+  noisyPartial?: boolean;
+  missingTokenCount?: number;
 }
 
 function mcidTokenEntries(snapshot: DocumentSnapshot, page = 0): OcrMcidTokenEntry[] {
@@ -283,10 +287,15 @@ function matchWantedTokensAt(
 }
 
 function matchToVisibleText(entries: OcrMcidTokenEntry[], start: number, end: number, fallback: string): string {
-  return entries
-    .slice(start, end)
-    .map(entry => entry.text)
-    .filter(Boolean)
+  const texts: string[] = [];
+  let previousKey = '';
+  for (const entry of entries.slice(start, end)) {
+    const key = `${entry.mcid}:${entry.text}`;
+    if (!entry.text || key === previousKey) continue;
+    texts.push(entry.text);
+    previousKey = key;
+  }
+  return texts
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim() || fallback;
@@ -359,6 +368,65 @@ function findVisibleMcidWindowMatch(
   };
 }
 
+function isCompactLeadTitleWindow(value: string): boolean {
+  const text = cleanOcrShellText(value);
+  if (isWeakVisibleHeadingAnchorText(text, '')) return false;
+  const letters = text.replace(/[^A-Za-z]/g, '');
+  if (letters.length < 8) return false;
+  const caps = letters.replace(/[^A-Z]/g, '').length;
+  if (caps / letters.length >= 0.75) return true;
+  const words = text.split(/\s+/).filter(Boolean);
+  const alpha = words.filter(word => /[A-Za-z]/.test(word));
+  if (alpha.length < 2 || alpha.length > 8) return false;
+  const titled = alpha.filter(word => /^[A-Z][A-Za-z0-9'’/-]*$/.test(displayToken(word))).length;
+  return titled >= Math.ceil(alpha.length * 0.7);
+}
+
+function findNoisySplitTitleMcidMatch(
+  snapshot: DocumentSnapshot,
+  title: string,
+  page = 0,
+): OcrMcidTokenMatch | null {
+  const wanted = alphaTokens(title);
+  if (wanted.length < 4 || wanted.length > 8) return null;
+  const entries = mcidTokenEntries(snapshot, page);
+  if (entries.length < 3) return null;
+  let best: { start: number; end: number; matched: number; wantedStart: number } | null = null;
+  const maxEntryStart = Math.min(entries.length - 1, 3);
+  for (let entryStart = 0; entryStart <= maxEntryStart; entryStart += 1) {
+    for (const wantedStart of [0, 1]) {
+      const { matched, endEntry } = matchWantedTokensAt(wanted, entries, wantedStart, entryStart);
+      if (matched < 3) continue;
+      if (wantedStart + matched < wanted.length) continue;
+      if (!best || matched > best.matched || (matched === best.matched && entryStart < best.start)) {
+        best = { start: entryStart, end: endEntry, matched, wantedStart };
+      }
+    }
+  }
+  if (!best) return null;
+  const coverage = best.matched / wanted.length;
+  if (coverage < 0.6) return null;
+  const visibleText = matchToVisibleText(entries, best.start, best.end, '');
+  if (!isCompactLeadTitleWindow(visibleText)) return null;
+  const matchedTitleText = displayTitleCase(wanted.slice(best.wantedStart, best.wantedStart + best.matched).join(' '));
+  if (isWeakVisibleHeadingAnchorText(matchedTitleText, '')) return null;
+  const wantedStrong = strongAlphaTokens(title);
+  const matchedStrong = strongAlphaTokens(matchedTitleText);
+  if (wantedStrong.length >= 3 && matchedStrong.length < 3) return null;
+  if (wantedStrong.length < 3 && matchedStrong.length < 1) return null;
+  const mcids = matchToMcids(entries, best.start, best.end);
+  if (mcids.length <= 0 || mcids.length > 8) return null;
+  return {
+    mcid: entries[best.start]!.mcid,
+    mcids,
+    text: matchedTitleText,
+    matchedTokenCount: best.matched,
+    exact: false,
+    noisyPartial: true,
+    missingTokenCount: best.wantedStart,
+  };
+}
+
 function findDeepTitleMcidMatch(
   snapshot: DocumentSnapshot,
   title: string,
@@ -391,6 +459,7 @@ function candidateScore(input: {
   matchedTokenCount: number;
   source: OcrPageShellHeadingSource;
   exactVisibleMatch?: boolean;
+  noisyPartialMatch?: boolean;
 }): { score: number; reasons: string[] } {
   const tokens = alphaTokens(input.title);
   let score = 34;
@@ -414,6 +483,10 @@ function candidateScore(input: {
   }
   if (input.exactVisibleMatch === false) {
     reasons.push('line_aware_visible_title_window');
+  }
+  if (input.noisyPartialMatch === true) {
+    score += 8;
+    reasons.push('noisy_split_title_window');
   }
   if (tokens.length >= 4 && tokens.length <= 14) {
     score += 12;
@@ -560,7 +633,10 @@ export function selectOcrPageShellHeadingCandidate(
 
   for (const seed of candidateSeeds(analysis, snapshot)) {
     const deepMatch = findDeepTitleMcidMatch(snapshot, seed.text);
-    const match = findVisibleMcidMatch(snapshot, seed.text) ?? findVisibleMcidWindowMatch(snapshot, seed.text) ?? deepMatch;
+    const noisyMatch = seed.source === 'metadata_visible_match'
+      ? findNoisySplitTitleMcidMatch(snapshot, seed.text)
+      : null;
+    const match = findVisibleMcidMatch(snapshot, seed.text) ?? findVisibleMcidWindowMatch(snapshot, seed.text) ?? deepMatch ?? noisyMatch;
     if (!match) continue;
     const text = match.exact ? seed.text : match.text;
     if (isWeakVisibleHeadingAnchorText(text, analysis.filename)) continue;
@@ -570,6 +646,7 @@ export function selectOcrPageShellHeadingCandidate(
       matchedTokenCount: match.matchedTokenCount,
       source,
       exactVisibleMatch: match.exact,
+      noisyPartialMatch: match.noisyPartial === true,
     });
     if (scored.score < HEADING_BOOTSTRAP_MIN_SCORE) continue;
     return {
@@ -593,7 +670,10 @@ export function debugOcrPageShellHeadingSelection(
     const exact = findVisibleMcidMatch(snapshot, seed.text);
     const window = exact ? null : findVisibleMcidWindowMatch(snapshot, seed.text);
     const deep = exact || window ? null : findDeepTitleMcidMatch(snapshot, seed.text);
-    const match = exact ?? window ?? deep;
+    const noisy = exact || window || deep || seed.source !== 'metadata_visible_match'
+      ? null
+      : findNoisySplitTitleMcidMatch(snapshot, seed.text);
+    const match = exact ?? window ?? deep ?? noisy;
     const text = match?.exact === false ? match.text : seed.text;
     const scored = match && !isWeakVisibleHeadingAnchorText(text, '')
       ? candidateScore({
@@ -601,6 +681,7 @@ export function debugOcrPageShellHeadingSelection(
         matchedTokenCount: match.matchedTokenCount,
         source: match === deep ? 'metadata_deep_mcid_match' : seed.source,
         exactVisibleMatch: match.exact,
+        noisyPartialMatch: match.noisyPartial === true,
       })
       : null;
     return {
@@ -609,7 +690,9 @@ export function debugOcrPageShellHeadingSelection(
       tokens: alphaTokens(seed.text),
       exactMatch: Boolean(exact),
       windowMatch: Boolean(window || deep),
+      noisyMatch: Boolean(noisy),
       matchedTokenCount: match?.matchedTokenCount ?? 0,
+      missingTokenCount: match?.missingTokenCount ?? 0,
       mcids: match?.mcids ?? [],
       score: scored?.score ?? null,
       reasons: scored?.reasons ?? [],

@@ -244,6 +244,59 @@ describe('Stage 129 OCR page-shell heading recovery', () => {
     });
   });
 
+  it('matches a compact noisy OCR title suffix when metadata loses the lead word in OCR', () => {
+    const words = ['FOR', '-THE*-FUTURE', 'Final', 'Report', 'of', 'Trends', 'and', 'Issues'];
+    const snap = makeSnapshot({
+      textByPage: ['FOR\n-THE*-FUTURE\nFinal\nReport\nof\nTrends and Issues'],
+      metadata: {
+        title: 'Blueprint For The Future',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: words.join(' '), page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: words.map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    const analysis = analysisFor(snap);
+    const candidate = selectOcrPageShellHeadingCandidate(analysis, snap);
+    expect(candidate).toMatchObject({
+      page: 0,
+      mcid: 0,
+      mcids: [0, 1],
+      text: 'For The Future',
+      source: 'metadata_visible_match',
+    });
+    expect(candidate?.reasons).toContain('noisy_split_title_window');
+    const planned = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(planned).toContain('create_heading_from_ocr_page_shell_anchor');
+  });
+
+  it('rejects noisy partial metadata matches when the visible text looks like a body sentence', () => {
+    const words = ['for', 'the', 'future', 'of', 'correctional', 'policy', 'this', 'report', 'examines'];
+    const snap = makeSnapshot({
+      textByPage: ['for the future of correctional policy this report examines program needs.'],
+      metadata: {
+        title: 'Blueprint For The Future',
+        language: 'en-US',
+        creator: 'OCRmyPDF 16.10.1',
+        producer: 'pikepdf',
+      },
+      paragraphStructElems: [{ tag: 'P', text: words.join(' '), page: 0, structRef: '10_0', reachable: true, directContent: true, parentPath: ['Document'] }],
+      mcidTextSpans: words.map((word, index) => ({
+        page: 0,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: word,
+      })),
+    });
+    expect(selectOcrPageShellHeadingCandidate(analysisFor(snap), snap)).toBeNull();
+  });
+
   it('keeps a leading short title word from a visible filename-derived OCR title', () => {
     const words = ['On', 'the', 'alert', 'In-car', 'terminal', 'network', 'to', 'speed', 'police', 'communications'];
     const snap = makeSnapshot({
