@@ -3061,6 +3061,165 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('synthesize_basic_structure_from_layout');
   });
 
+  it('schedules bounded synthesis for native_tagged zero-heading MCID shells when paragraph extraction drops out', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 13,
+      textByPage: Array(13).fill('Civil legal aid service providers in Illinois'),
+      textCharCount: 4200,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      headings: [],
+      paragraphStructElems: [],
+      mcidTextSpans: Array.from({ length: 120 }, (_, index) => ({
+        page: index % 13,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: `Text span ${index}`,
+      })),
+      metadata: { title: 'Civil Legal Aid Survey', language: 'en', author: '', subject: '' },
+      lang: 'en',
+      pdfUaVersion: '1',
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 10,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: true,
+        },
+        pdfUaSignals: { orphanMcidCount: 64, suspectedPathPaintOutsideMc: 11, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 96,
+      pdf_ua_compliance: 50,
+      table_markup: 100,
+      link_quality: 100,
+    });
+    const plan = planForRemediation(analysis, snap, []);
+    const synth = plan.stages.flatMap(s => s.tools).find(tool => tool.toolName === 'synthesize_basic_structure_from_layout');
+    expect(synth).toMatchObject({
+      route: 'structure_bootstrap_and_conformance',
+      rationale: expect.stringContaining('MCID/PDF-UA evidence'),
+    });
+  });
+
+  it('does not use the native tagged MCID synthesis fallback on table-blocked rows', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 10,
+      textByPage: Array(10).fill('Table heavy report'),
+      textCharCount: 3000,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      headings: [],
+      paragraphStructElems: [],
+      mcidTextSpans: Array.from({ length: 100 }, (_, index) => ({
+        page: index % 10,
+        mcid: index,
+        snippet: `/P <</MCID ${index}>> BDC`,
+        resolvedText: `Table span ${index}`,
+      })),
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 20, suspectedPathPaintOutsideMc: 2, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 4,
+          misplacedCellCount: 12,
+          irregularTableCount: 4,
+          stronglyIrregularTableCount: 2,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 96,
+      pdf_ua_compliance: 50,
+      table_markup: 0,
+      link_quality: 100,
+    });
+    const plan = planForRemediation(analysis, snap, []);
+    const directSynthesis = plan.stages.flatMap(s => s.tools).find(tool =>
+      tool.toolName === 'synthesize_basic_structure_from_layout' &&
+      /MCID\/PDF-UA evidence/.test(tool.rationale),
+    );
+    expect(directSynthesis).toBeUndefined();
+  });
+
   it('prefers direct heading promotion over synthesis for recoverable native_tagged P-only trees', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

@@ -1371,6 +1371,23 @@ export function planForRemediation(
       )
     ) &&
     (snapshot.paragraphStructElems?.length ?? 0) >= Math.max(3, Math.min(8, snapshot.pageCount));
+  const nativeTaggedMcidBackedNoHeadingSynthesisCandidate =
+    analysis.pdfClass === 'native_tagged' &&
+    headingNeedsRepair &&
+    snapshot.headings.length === 0 &&
+    (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) === 0 &&
+    snapshot.structureTree !== null &&
+    snapshot.textCharCount > 0 &&
+    zeroHeadingRecovery.kind === 'not_zero_heading_recovery' &&
+    categoryFailing('pdf_ua_compliance') &&
+    !categoryFailing('table_markup') &&
+    !categoryFailing('link_quality') &&
+    (snapshot.paragraphStructElems?.length ?? 0) < Math.max(3, Math.min(8, snapshot.pageCount)) &&
+    (snapshot.mcidTextSpans?.length ?? 0) >= Math.max(24, snapshot.pageCount * 8) &&
+    (snapshot.detectionProfile?.readingOrderSignals.structureTreeDepth ?? 0) >= 3 &&
+    (snapshot.detectionProfile?.readingOrderSignals.annotationOrderRiskCount ?? 0) <= 0 &&
+    (snapshot.detectionProfile?.readingOrderSignals.annotationStructParentRiskCount ?? 0) <= 0 &&
+    (snapshot.detectionProfile?.pdfUaSignals.orphanMcidCount ?? 0) > 0;
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
     if (
@@ -1996,7 +2013,7 @@ export function planForRemediation(
       }
     }
     if (
-      nativeTaggedNoHeadingSynthesisCandidate &&
+      (nativeTaggedNoHeadingSynthesisCandidate || nativeTaggedMcidBackedNoHeadingSynthesisCandidate) &&
       !toolSet.has(synToolName) &&
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
@@ -2008,7 +2025,9 @@ export function planForRemediation(
       toolSet.set(synToolName, {
         toolName: synToolName,
         params,
-        rationale: 'native-tagged P-only tree with zero headings triggers bounded heading synthesis',
+        rationale: nativeTaggedMcidBackedNoHeadingSynthesisCandidate
+          ? 'native-tagged zero-heading MCID/PDF-UA evidence triggers bounded structure synthesis when paragraph extraction is volatile'
+          : 'native-tagged P-only tree with zero headings triggers bounded heading synthesis',
         route: 'structure_bootstrap_and_conformance',
       });
       }
