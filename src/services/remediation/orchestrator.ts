@@ -70,6 +70,11 @@ import {
   shouldTryStage165LinkParentTreeRepair,
   stage165LinkParentTreeBenefit,
 } from './linkParentTreeRepair.js';
+import {
+  classifyStage180MixedTablePdfUa,
+  hasAppliedStage180MixedTablePdfUa,
+  shouldTryStage180LinkRepairAfterTable,
+} from './stage180MixedTablePdfua.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -2659,10 +2664,14 @@ async function applyGuardedPostPass(args: {
   }
   if (toolName === 'repair_native_link_structure') {
     const parsedDetails = parseMutationDetails(details);
-    const isStage165PostPass =
+    const isGuardedLinkPostPass =
       parsedDetails?.['note'] === 'stage165_link_parenttree_repair' ||
-      (typeof details === 'string' && details.includes('stage165_link_parenttree_repair'));
-    if (isStage165PostPass) {
+      parsedDetails?.['note'] === 'stage180_mixed_table_pdfua_link_repair' ||
+      (typeof details === 'string' && (
+        details.includes('stage165_link_parenttree_repair') ||
+        details.includes('stage180_mixed_table_pdfua_link_repair')
+      ));
+    if (isGuardedLinkPostPass) {
       const decision = stage165LinkParentTreeBenefit({
         beforeAnalysis: currentAnalysis,
         afterAnalysis: analyzed.result,
@@ -2681,7 +2690,7 @@ async function applyGuardedPostPass(args: {
           details: enrichDetailsWithReplayState(
             JSON.stringify({
               outcome: 'rejected',
-              note: `stage165_link_parenttree_repair_${decision.reason}`,
+              note: `guarded_link_parenttree_repair_${decision.reason}`,
               beforeDebt: decision.beforeDebt,
               afterDebt: decision.afterDebt,
             }),
@@ -4025,7 +4034,7 @@ async function applyIcjiaDocumentFinalization(args: {
     }
   }
 
-  if (shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis)) {
+  if (!hasAppliedStage180MixedTablePdfUa(appliedTools) && shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis)) {
     const localFonts = await runPythonMutationBatch(
       currentBuffer,
       [{ op: 'embed_local_font_substitutes', params: { maxWidthDrift: 0.12, heuristicMaxWidthDrift: 0.35 } }],
@@ -4237,13 +4246,18 @@ async function applyLinkParentTreeRepairPostPass(args: {
   const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
   const { buffer, analysis, snapshot } = args.state;
   const protectedFloorScore = protectedBaseline ? protectedBaselineFloorScore(protectedBaseline) : null;
-  if (!shouldTryStage165LinkParentTreeRepair({ analysis, snapshot, protectedFloorScore })) {
+  const stage165 = shouldTryStage165LinkParentTreeRepair({ analysis, snapshot, protectedFloorScore });
+  const stage180 = shouldTryStage180LinkRepairAfterTable({ analysis, snapshot });
+  if (!stage165 && !stage180) {
     return args.state;
   }
+  const note = stage180 && !stage165
+    ? 'stage180_mixed_table_pdfua_link_repair'
+    : 'stage165_link_parenttree_repair';
 
   const { buffer: repaired, result } = await runPythonMutationBatch(
     buffer,
-    [{ op: 'repair_native_link_structure', params: { stage: 'stage165_link_parenttree_repair' } }],
+    [{ op: 'repair_native_link_structure', params: { stage: note } }],
     { signal },
   );
   if (!result.success || !result.applied.includes('repair_native_link_structure')) {
@@ -4253,7 +4267,7 @@ async function applyLinkParentTreeRepairPostPass(args: {
   const mutationDetails = pythonMutationDetails(result, 'repair_native_link_structure');
   const details = JSON.stringify({
     outcome: 'applied',
-    note: 'stage165_link_parenttree_repair',
+    note,
     mutation: parseMutationDetails(mutationDetails) ?? mutationDetails ?? null,
   });
   const accepted = await applyGuardedPostPass({
@@ -4276,6 +4290,115 @@ async function applyLinkParentTreeRepairPostPass(args: {
     analysis: accepted.analysis,
     snapshot: accepted.snapshot,
   };
+}
+
+async function applyStage180MixedTablePdfUaPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  let { buffer, analysis, snapshot } = args.state;
+  const decision = classifyStage180MixedTablePdfUa({ analysis, snapshot, appliedTools });
+  if (!decision.shouldAttempt) return args.state;
+
+  for (const target of decision.tableTargets) {
+    if ((categoryScore(analysis, 'table_markup') ?? 100) >= 90) break;
+    const params = {
+      structRef: target.structRef,
+      targetStructRef: target.structRef,
+      tableFailureClass: 'strongly_irregular_rows',
+      dominantColumnCount: target.dominantColumnCount,
+      maxTablesPerRun: 1,
+      maxSyntheticCells: 80,
+      stage: 'stage180_mixed_table_pdfua',
+    };
+    const { buffer: nextBuffer, result } = await runPythonMutationBatch(
+      buffer,
+      [{ op: 'normalize_table_structure', params }],
+      { signal },
+    );
+    if (!result.success || !result.applied.includes('normalize_table_structure')) continue;
+    const details = JSON.stringify({
+      outcome: 'applied',
+      note: 'stage180_explicit_table_continuation',
+      target,
+      mutation: parseMutationDetails(pythonMutationDetails(result, 'normalize_table_structure')) ?? null,
+    });
+    const accepted = await applyGuardedPostPass({
+      filename,
+      toolName: 'normalize_table_structure',
+      stage: 10,
+      round,
+      details,
+      currentBuffer: buffer,
+      currentAnalysis: analysis,
+      currentSnapshot: snapshot,
+      nextBuffer,
+      appliedTools,
+      runtimeSummary,
+      tempPrefix: 'pdfaf-stage180-table',
+      protectedBaseline,
+    });
+    buffer = accepted.buffer;
+    analysis = accepted.analysis;
+    snapshot = accepted.snapshot;
+    if (!accepted.accepted) break;
+  }
+
+  if (shouldTryStage180LinkRepairAfterTable({ analysis, snapshot })) {
+    const repaired = await applyLinkParentTreeRepairPostPass({
+      filename,
+      signal,
+      round,
+      state: { buffer, analysis, snapshot },
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline,
+    });
+    buffer = repaired.buffer;
+    analysis = repaired.analysis;
+    snapshot = repaired.snapshot;
+  }
+
+  const orphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+  if (
+    orphanN > 0 &&
+    (categoryScore(analysis, 'table_markup') ?? 0) >= 80 &&
+    (categoryScore(analysis, 'pdf_ua_compliance') ?? 100) < 100
+  ) {
+    const { buffer: nextBuffer, result } = await runPythonMutationBatch(
+      buffer,
+      [{ op: 'remap_orphan_mcids_as_artifacts', params: { stage: 'stage180_mixed_table_pdfua' } }],
+      { signal },
+    );
+    if (result.success && result.applied.includes('remap_orphan_mcids_as_artifacts')) {
+      const accepted = await applyGuardedPostPass({
+        filename,
+        toolName: 'remap_orphan_mcids_as_artifacts',
+        stage: 10,
+        round,
+        details: 'stage180_post_table_orphan_drain',
+        currentBuffer: buffer,
+        currentAnalysis: analysis,
+        currentSnapshot: snapshot,
+        nextBuffer,
+        appliedTools,
+        runtimeSummary,
+        tempPrefix: 'pdfaf-stage180-orphan',
+        protectedBaseline,
+      });
+      buffer = accepted.buffer;
+      analysis = accepted.analysis;
+      snapshot = accepted.snapshot;
+    }
+  }
+
+  return { buffer, analysis, snapshot };
 }
 
 async function applyProtectedRecoveryPostPasses(args: {
@@ -4537,9 +4660,21 @@ export async function executePlaybook(
         runtimeSummary,
         tempPrefix: 'pdfaf-alt',
       });
-      currentBuffer = altAccepted.buffer;
-      currentAnalysis = altAccepted.analysis;
-      currentSnapshot = altAccepted.snapshot;
+    currentBuffer = altAccepted.buffer;
+    currentAnalysis = altAccepted.analysis;
+    currentSnapshot = altAccepted.snapshot;
+    }
+    {
+      const state = await applyStage180MixedTablePdfUaPostPass({
+        filename,
+        round: 1,
+        state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+        appliedTools,
+        runtimeSummary,
+      });
+      currentBuffer = state.buffer;
+      currentAnalysis = state.analysis;
+      currentSnapshot = state.snapshot;
     }
     if (shouldTryStage165LinkParentTreeRepair({
       analysis: currentAnalysis,
@@ -4735,6 +4870,19 @@ export async function executePlaybook(
 
   {
     const state = await applyAltCleanupPostPass({
+      filename,
+      round: 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
+  }
+
+  {
+    const state = await applyStage180MixedTablePdfUaPostPass({
       filename,
       round: 1,
       state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
@@ -5782,6 +5930,23 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('tagged_cleanup_post_pass');
+  }
+
+  {
+    await reportProgress(85, 'Running mixed table/PDF-UA cleanup');
+    const state = await applyStage180MixedTablePdfUaPostPass({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
+    await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
   }
 
   if (shouldTryStage165LinkParentTreeRepair({
