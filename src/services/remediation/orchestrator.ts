@@ -75,6 +75,12 @@ import {
   hasAppliedStage180MixedTablePdfUa,
   shouldTryStage180LinkRepairAfterTable,
 } from './stage180MixedTablePdfua.js';
+import {
+  classifyStage181HiddenAlt,
+  hasAppliedStage181HiddenAlt,
+  stage181AltPlaceholder,
+  type Stage181HiddenAltTarget,
+} from './stage181HiddenAlt.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -2026,6 +2032,56 @@ function postPassCategoryBenefitAllowsSmallScoreRegression(
   return beforeCategory !== null && afterCategory !== null && afterCategory > beforeCategory;
 }
 
+function isStage181HiddenAltPostPass(toolName: string, details: string | undefined): boolean {
+  return (toolName === 'set_figure_alt_text' || toolName === 'retag_as_figure') &&
+    typeof details === 'string' &&
+    details.includes('stage181_');
+}
+
+function stage181HiddenAltInvalidReason(input: {
+  beforeAnalysis: AnalysisResult;
+  afterAnalysis: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+}): string | null {
+  const beforeAlt = categoryScore(input.beforeAnalysis, 'alt_text') ?? 0;
+  const afterAlt = categoryScore(input.afterAnalysis, 'alt_text') ?? beforeAlt;
+  if (afterAlt <= beforeAlt) return `no_alt_gain(${beforeAlt}->${afterAlt})`;
+  if (input.afterAnalysis.score < input.beforeAnalysis.score) {
+    return `score_regressed(${input.beforeAnalysis.score}->${input.afterAnalysis.score})`;
+  }
+  const guardedCategories: CategoryKey[] = [
+    'heading_structure',
+    'reading_order',
+    'table_markup',
+    'link_quality',
+    'pdf_ua_compliance',
+  ];
+  for (const key of guardedCategories) {
+    const before = categoryScore(input.beforeAnalysis, key) ?? 100;
+    const after = categoryScore(input.afterAnalysis, key) ?? before;
+    if (after < before) return `${key}_regressed(${before}->${after})`;
+  }
+  if (input.afterSnapshot.pageCount !== input.beforeSnapshot.pageCount) {
+    return `page_count_changed(${input.beforeSnapshot.pageCount}->${input.afterSnapshot.pageCount})`;
+  }
+  const textDropLimit = Math.max(20, Math.round((input.beforeSnapshot.textCharCount ?? 0) * 0.01));
+  const textDropped = (input.beforeSnapshot.textCharCount ?? 0) - (input.afterSnapshot.textCharCount ?? 0);
+  if (textDropped > textDropLimit) {
+    return `text_dropped(${input.beforeSnapshot.textCharCount}->${input.afterSnapshot.textCharCount})`;
+  }
+  if (input.beforeSnapshot.isTagged === true && input.afterSnapshot.isTagged !== true) {
+    return 'tagged_state_lost';
+  }
+  if (input.beforeSnapshot.structureTree !== null && input.afterSnapshot.structureTree === null) {
+    return 'structure_tree_lost';
+  }
+  if (input.afterSnapshot.links.length < input.beforeSnapshot.links.length) {
+    return `links_dropped(${input.beforeSnapshot.links.length}->${input.afterSnapshot.links.length})`;
+  }
+  return null;
+}
+
 function isTeamsProtectedReadingRow(filename: string): boolean {
   return /microsoft_teams_quickstart/i.test(filename)
     && (/remediated/i.test(filename) || /targeted-wave1|targeted-figures-wave1/i.test(filename));
@@ -2719,6 +2775,55 @@ async function applyGuardedPostPass(args: {
           accepted: false,
         };
       }
+    }
+  }
+  if (isStage181HiddenAltPostPass(toolName, details)) {
+    const invalidReason = stage181HiddenAltInvalidReason({
+      beforeAnalysis: currentAnalysis,
+      afterAnalysis: analyzed.result,
+      beforeSnapshot: currentSnapshot,
+      afterSnapshot: analyzed.snapshot,
+    });
+    if (invalidReason) {
+      appliedTools.push({
+        toolName,
+        stage,
+        round,
+        scoreBefore: currentAnalysis.score,
+        scoreAfter: currentAnalysis.score,
+        delta: 0,
+        outcome: 'rejected',
+        details: enrichDetailsWithReplayState(
+          JSON.stringify({
+            outcome: 'rejected',
+            note: `stage181_hidden_alt_${invalidReason}`,
+            beforeAlt: categoryScore(currentAnalysis, 'alt_text'),
+            afterAlt: categoryScore(analyzed.result, 'alt_text'),
+          }),
+          {
+            beforeAnalysis: currentAnalysis,
+            beforeSnapshot: currentSnapshot,
+            afterAnalysis: analyzed.result,
+            afterSnapshot: analyzed.snapshot,
+          },
+        ),
+        durationMs,
+        source: 'post_pass',
+      });
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'rejected',
+      });
+      return {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        accepted: false,
+      };
     }
   }
   const strongAlt = protectedStrongAltPreservationViolation({
@@ -4034,7 +4139,11 @@ async function applyIcjiaDocumentFinalization(args: {
     }
   }
 
-  if (!hasAppliedStage180MixedTablePdfUa(appliedTools) && shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis)) {
+  if (
+    !hasAppliedStage180MixedTablePdfUa(appliedTools) &&
+    !hasAppliedStage181HiddenAlt(appliedTools) &&
+    shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis)
+  ) {
     const localFonts = await runPythonMutationBatch(
       currentBuffer,
       [{ op: 'embed_local_font_substitutes', params: { maxWidthDrift: 0.12, heuristicMaxWidthDrift: 0.35 } }],
@@ -4401,6 +4510,132 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   return { buffer, analysis, snapshot };
 }
 
+async function applyStage181HiddenAltPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { buffer, analysis, snapshot } = args.state;
+  const decision = classifyStage181HiddenAlt({ analysis, snapshot, appliedTools });
+  if (!decision.shouldAttempt || decision.targets.length === 0) return args.state;
+
+  const toolName = decision.targets[0]!.toolName;
+  const targets = decision.targets.filter(target => target.toolName === toolName);
+  const ops: PythonMutation[] = targets.map(target => ({
+    op: target.toolName,
+    params: target.toolName === 'set_figure_alt_text'
+      ? {
+        structRef: target.structRef,
+        altText: stage181AltPlaceholder(target),
+        stage: 'stage181_hidden_alt',
+      }
+      : {
+        structRef: target.structRef,
+        altText: stage181AltPlaceholder(target),
+        stage: 'stage181_hidden_alt',
+      },
+  }));
+  if (ops.length === 0) return args.state;
+
+  const { buffer: nextBuffer, result } = await runPythonMutationBatch(buffer, ops, { signal });
+  if (!result.success || !result.applied.includes(toolName)) return args.state;
+  const appliedTargets = result.opResults && result.opResults.length > 0
+    ? targets.filter((_, index) => result.opResults?.[index]?.outcome === 'applied')
+    : targets;
+  if (appliedTargets.length === 0) return args.state;
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: toolName === 'set_figure_alt_text'
+      ? 'stage181_hidden_checker_visible_alt'
+      : 'stage181_rolemap_alt_ownership',
+    classification: decision.classification,
+    targetRefs: appliedTargets.map(target => target.structRef),
+    targets: appliedTargets,
+    mutations: (result.opResults ?? []).map((op, index) => ({
+      target: targets[index] ?? null,
+      details: parseMutationDetails(pythonMutationDetailsFromOpResult(op)) ?? null,
+    })),
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    toolName,
+    stage: 10,
+    round,
+    details,
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-stage181-hidden-alt',
+    protectedBaseline,
+  });
+  if (accepted.accepted) {
+    const confirmed = await reanalyzeBufferForMutation(
+      accepted.buffer,
+      filename,
+      'pdfaf-stage181-hidden-alt-confirm',
+      { bypassCache: true },
+    );
+    const invalidReason = stage181HiddenAltInvalidReason({
+      beforeAnalysis: analysis,
+      afterAnalysis: confirmed.result,
+      beforeSnapshot: snapshot,
+      afterSnapshot: confirmed.snapshot,
+    });
+    if (invalidReason) {
+      for (let index = appliedTools.length - 1; index >= 0; index -= 1) {
+        const row = appliedTools[index]!;
+        if (
+          row.toolName === toolName &&
+          row.outcome === 'applied' &&
+          typeof row.details === 'string' &&
+          row.details.includes('stage181_')
+        ) {
+          row.outcome = 'rejected';
+          row.scoreAfter = analysis.score;
+          row.delta = 0;
+          row.details = enrichDetailsWithReplayState(
+            JSON.stringify({
+              outcome: 'rejected',
+              note: `stage181_bypass_reanalysis_${invalidReason}`,
+              targetRefs: appliedTargets.map(target => target.structRef),
+              beforeAlt: categoryScore(analysis, 'alt_text'),
+              confirmedAlt: categoryScore(confirmed.result, 'alt_text'),
+              beforeScore: analysis.score,
+              confirmedScore: confirmed.result.score,
+            }),
+            {
+              beforeAnalysis: analysis,
+              beforeSnapshot: snapshot,
+              afterAnalysis: confirmed.result,
+              afterSnapshot: confirmed.snapshot,
+            },
+          );
+          break;
+        }
+      }
+      return args.state;
+    }
+    return {
+      buffer: accepted.buffer,
+      analysis: confirmed.result,
+      snapshot: confirmed.snapshot,
+    };
+  }
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+  };
+}
+
 async function applyProtectedRecoveryPostPasses(args: {
   filename: string;
   signal?: AbortSignal;
@@ -4676,6 +4911,18 @@ export async function executePlaybook(
       currentAnalysis = state.analysis;
       currentSnapshot = state.snapshot;
     }
+    {
+      const state = await applyStage181HiddenAltPostPass({
+        filename,
+        round: 1,
+        state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+        appliedTools,
+        runtimeSummary,
+      });
+      currentBuffer = state.buffer;
+      currentAnalysis = state.analysis;
+      currentSnapshot = state.snapshot;
+    }
     if (shouldTryStage165LinkParentTreeRepair({
       analysis: currentAnalysis,
       snapshot: currentSnapshot,
@@ -4883,6 +5130,19 @@ export async function executePlaybook(
 
   {
     const state = await applyStage180MixedTablePdfUaPostPass({
+      filename,
+      round: 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
+  }
+
+  {
+    const state = await applyStage181HiddenAltPostPass({
       filename,
       round: 1,
       state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
@@ -5947,6 +6207,23 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
+  }
+
+  {
+    await reportProgress(85, 'Repairing hidden alt ownership');
+    const state = await applyStage181HiddenAltPostPass({
+      filename,
+      signal: options?.signal,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline: options?.protectedBaseline,
+    });
+    currentBuffer = state.buffer;
+    currentAnalysis = state.analysis;
+    currentSnapshot = state.snapshot;
+    await rememberProtectedRunBestState('stage181_hidden_alt_post_pass');
   }
 
   if (shouldTryStage165LinkParentTreeRepair({
