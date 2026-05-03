@@ -33,6 +33,10 @@ import {
   buildSemanticSummary,
   evaluateSemanticMutation,
 } from './semanticPolicy.js';
+import {
+  classifyStage193SemanticAlt,
+  stage193SemanticAltCandidateStructRefs,
+} from '../remediation/stage193SemanticAlt.js';
 
 export interface SemanticRepairInput {
   buffer: Buffer;
@@ -59,6 +63,9 @@ interface FigureCandidate {
   hasAlt: boolean;
   altText?: string;
   bbox?: [number, number, number, number];
+  surroundingText?: string;
+  ownershipSummary?: string;
+  documentTitle?: string;
 }
 
 const PROPOSE_ALT_TEXT_TOOL = {
@@ -99,22 +106,28 @@ function textSample(snapshot: DocumentSnapshot): string {
   return parts.slice(0, 500);
 }
 
-function buildFigureCandidates(snapshot: DocumentSnapshot): FigureCandidate[] {
+function buildFigureCandidates(snapshot: DocumentSnapshot, analysis: AnalysisResult, filename: string): FigureCandidate[] {
+  const stage193 = classifyStage193SemanticAlt({ analysis, snapshot, filename });
+  const allowed = stage193SemanticAltCandidateStructRefs({ analysis, snapshot, filename });
   const out: FigureCandidate[] = [];
   for (const fig of snapshot.figures) {
+    if (!fig.structRef || !allowed.has(fig.structRef)) continue;
     if (fig.isArtifact) continue;
-    if (!fig.structRef) continue;
     const needs =
       !fig.hasAlt ||
       !fig.altText?.trim() ||
       isGenericAlt(fig.altText);
     if (!needs) continue;
+    const context = stage193.contexts.find(row => row.structRef === fig.structRef);
     const row: FigureCandidate = {
       id: fig.structRef,
       structRef: fig.structRef,
       page: fig.page,
       hasAlt: fig.hasAlt,
       altText: fig.altText,
+      surroundingText: context?.surroundingText,
+      ownershipSummary: context?.ownershipSummary,
+      documentTitle: context?.documentTitle,
     };
     if (Array.isArray(fig.bbox) && fig.bbox.length === 4) {
       row.bbox = fig.bbox as [number, number, number, number];
@@ -135,6 +148,32 @@ function countEligibleFigureCandidates(snapshot: DocumentSnapshot): number {
     count++;
   }
   return count;
+}
+
+function normalizeAltText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function rejectSemanticAltText(proposal: LlmProposal, candidate: FigureCandidate): string | null {
+  if (proposal.isDecorative) return 'decorative proposals are not accepted in Stage193 semantic-alt pilot';
+  const alt = proposal.altText.trim();
+  if (!alt) return 'empty alt text';
+  if (alt.length > 200) return 'alt text exceeds semantic cap';
+  if (isGenericAlt(alt)) return 'generic alt text';
+  const normalized = normalizeAltText(alt);
+  if (!normalized) return 'empty normalized alt text';
+  if (/^(image|picture|photo|graphic|figure|illustration|chart|diagram)( of)?$/.test(normalized)) {
+    return 'generic visual noun only';
+  }
+  if (/^(image|picture|photo) of /.test(normalized)) return 'starts with generic image phrase';
+  const title = normalizeAltText(candidate.documentTitle ?? '');
+  if (title && normalized === title) return 'document-title-only alt text';
+  if (normalized.split(' ').length < 3) return 'alt text too short for meaningful figure';
+  return null;
 }
 
 function expandFigBboxForCaptionProximity(fig: [number, number, number, number]): [number, number, number, number] {
@@ -253,6 +292,9 @@ Rules:
     id: f.id,
     pageNumber: f.page + 1,
     priorAlt: f.altText ?? null,
+    bbox: f.bbox ?? null,
+    ownership: f.ownershipSummary ?? null,
+    nearbyText: f.surroundingText?.slice(0, 500) ?? null,
   }));
 
   const userParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
@@ -421,7 +463,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   }
 
   const candidateStarted = Date.now();
-  const candidates = buildFigureCandidates(snapshot);
+  const candidates = buildFigureCandidates(snapshot, analysis, filename);
   const unresolvedStructureDebt =
     (snapshot.acrobatStyleAltRisks?.nonFigureWithAltCount ?? 0)
     + (snapshot.acrobatStyleAltRisks?.nestedFigureAltCount ?? 0)
@@ -553,6 +595,11 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   let rejected = 0;
   for (const proposal of merged.values()) {
     if (proposal.confidence < SEMANTIC_MIN_FIGURE_CONFIDENCE) {
+      rejected++;
+      continue;
+    }
+    const candidate = candidates.find(row => row.id === proposal.id);
+    if (!candidate || rejectSemanticAltText(proposal, candidate)) {
       rejected++;
       continue;
     }
@@ -694,7 +741,7 @@ export async function applySemanticRepairs(input: SemanticRepairInput): Promise<
   }
   verifyMs += Date.now() - verifyStarted;
 
-  const nextCandidates = buildFigureCandidates(nextSnapshot);
+  const nextCandidates = buildFigureCandidates(nextSnapshot, nextAnalysis, filename);
   const decision = evaluateSemanticMutation({
     lane: 'figures',
     beforeAnalysis: analysis,
