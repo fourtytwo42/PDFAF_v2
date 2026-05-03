@@ -27,3 +27,16 @@ Below-A rows:
 | Row | Grade | Score | Main blockers | Notes |
 | --- | ---: | ---: | --- | --- |
 | `v1-4611` | C | 79 | `reading_order=55`, `link_quality=73` | Heading is now strong (`heading_structure=97`); residual is mixed reading-order/link ownership rather than heading-zero. |
+
+## 2026-05-03 - Legacy 17 Refresh Current Engine
+
+- Run: `Output/from_sibling_pdfaf_v1_legacy_17_refresh/run-current-engine-2026-05-03-r1`
+- Batch: `Input/from_sibling_pdfaf_v1_legacy_17_refresh/manifest.json`
+- Result: `15 A / 0 B / 2 C / 0 D / 0 F`, mean `94.82`, median `97`, false-positive applied `0`
+
+Below-A rows:
+
+| Row | Grade | Score | Main blockers | Notes |
+| --- | ---: | ---: | --- | --- |
+| `v1-legacy-4078-4078-community-reentry-challenges-daunt-exoff` | C | 77 | `heading_structure=45`, `reading_order=45` | Partial heading/reading-order reachability residual; alt/link/table are strong. |
+| `v1-legacy-4188-4188-corrections-data-illustrate-juvenile-inc` | C | 77 | `heading_structure=45`, `reading_order=45` | Same partial heading/reading-order cap shape as `4078`; alt/link/table are strong. |
