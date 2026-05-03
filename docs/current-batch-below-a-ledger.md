@@ -95,3 +95,70 @@ Below-A rows:
 | `v1_holdout_4-holdout4-05-ad762d4a` | C | 76 | `heading_structure=76`, `alt_text=20` | Mixed heading/alt residual. |
 | `v1_holdout_4-holdout4-11-5c9522ae` | D | 66 | `table_markup=0`, `alt_text=20`, `pdf_ua_compliance=56` | Mixed table/alt/PDF-UA residual. |
 | `v1_holdout_5-4760` | B | 89 | `heading_structure=78` | Improved from former F; remaining partial heading evidence keeps it below A. |
+
+## 2026-05-03 - Combined Unique Input Current Snapshot
+
+- Scope: all `Input/**/manifest.json` PDFs, deduped by content SHA across overlapping corpora.
+- Result source: latest current-engine artifacts available locally; original 50 uses `Output/experiment-corpus-baseline/run-stage184-full-2026-05-03-r1` in-run grades, while v1 batches use the current-engine refreshes logged above.
+- Unique processed PDFs: `348/348`
+- Grade distribution: `309 A / 6 B / 13 C / 10 D / 10 F`
+- Mean: `94.18`; median: `97`
+
+### B Rows
+
+| Row | Score | Main blockers | Source |
+| --- | ---: | --- | --- |
+| `4503` | 80 | alt_text=20, table_markup=72 | `from_sibling_pdfaf_edgecase_corpus` |
+| `4748` | 82 | alt_text=20 | `from_sibling_pdfaf_edgecase_corpus` |
+| `long-4516` | 82 | title_language=50, heading_structure=78, pdf_ua_compliance=43 | `experiment-corpus` |
+| `v1_hard_1-4767` | 82 | alt_text=20, pdf_ua_compliance=71 | `from_sibling_pdfaf_v1_hard_1` |
+| `4730` | 87 | text_extractability=62, pdf_ua_compliance=71 | `from_sibling_pdfaf_edgecase_corpus` |
+| `v1_holdout_5-4760` | 89 | heading_structure=78 | `from_sibling_pdfaf_v1_holdout_5` |
+
+### C Rows
+
+| Row | Score | Main blockers | Source |
+| --- | ---: | --- | --- |
+| `structure-4076` | 70 | heading_structure=45, pdf_ua_compliance=63, table_markup=72, reading_order=45 | `experiment-corpus` |
+| `v1_holdout_4-holdout4-04-27f9d243` | 76 | heading_structure=45, reading_order=45 | `from_sibling_pdfaf_v1_holdout_4` |
+| `v1_holdout_4-holdout4-05-ad762d4a` | 76 | heading_structure=76, alt_text=20 | `from_sibling_pdfaf_v1_holdout_4` |
+| `legacy-4078-4078-community-reentry-challenges-daunt-exoff` | 77 | heading_structure=45, reading_order=45 | `from_sibling_pdfaf_v1_legacy_17_refresh` |
+| `legacy-4188-4188-corrections-data-illustrate-juvenile-inc` | 77 | heading_structure=45, reading_order=45 | `from_sibling_pdfaf_v1_legacy_17_refresh` |
+| `v1_edge_mix-4145` | 78 | alt_text=20 | `from_sibling_pdfaf_v1_edge_mix` |
+| `4427` | 79 | heading_structure=78, pdf_ua_compliance=71 | `from_sibling_pdfaf_edgecase_corpus` |
+| `4583` | 79 | near-pass aggregate | `from_sibling_pdfaf_edgecase_corpus` |
+| `4611` | 79 | link_quality=73, reading_order=55 | `from_sibling_pdfaf_v1_heading_zero_1` |
+| `4693` | 79 | heading_structure=45, reading_order=45 | `from_sibling_pdfaf_v1_holdout_6` |
+| `4761` | 79 | alt_text=60, pdf_ua_compliance=71 | `from_sibling_pdfaf_edgecase_corpus` |
+| `short-4176` | 79 | link_quality=58 | `experiment-corpus` |
+| `v1_evolve_2-4614` | 79 | heading_structure=78 | `from_sibling_pdfaf_v1_evolve_2` |
+
+### D Rows
+
+| Row | Score | Main blockers | Source |
+| --- | ---: | --- | --- |
+| `4690` | 66 | title_language=50, alt_text=20, table_markup=6 | `from_sibling_pdfaf_edgecase_corpus` |
+| `v1_edge_mix-4567` | 66 | heading_structure=45, alt_text=20, pdf_ua_compliance=67, reading_order=45 | `from_sibling_pdfaf_v1_edge_mix` |
+| `v1_holdout_4-holdout4-11-5c9522ae` | 66 | alt_text=20, pdf_ua_compliance=56, table_markup=0 | `from_sibling_pdfaf_v1_holdout_4` |
+| `v1_hard_2-4105` | 68 | alt_text=20, table_markup=0 | `from_sibling_pdfaf_v1_hard_2` |
+| `4147` | 69 | alt_text=52, pdf_ua_compliance=71, table_markup=0 | `from_sibling_pdfaf_edgecase_corpus` |
+| `4164` | 69 | reading_order=35, form_accessibility=0 | `from_sibling_pdfaf_edgecase_corpus` |
+| `4453` | 69 | alt_text=20, pdf_ua_compliance=63, table_markup=16 | `from_sibling_pdfaf_edgecase_corpus` |
+| `4735` | 69 | alt_text=60, table_markup=35 | `from_sibling_pdfaf_edgecase_corpus` |
+| `short-4214` | 69 | link_quality=75, reading_order=0 | `experiment-corpus` |
+| `v1_edge_mix_2-4171` | 69 | heading_structure=45, alt_text=60, pdf_ua_compliance=67, reading_order=45 | `from_sibling_pdfaf_v1_edge_mix_2` |
+
+### F Rows
+
+| Row | Score | Main blockers | Source |
+| --- | ---: | --- | --- |
+| `v1_holdout_4-holdout4-03-2c974ae2` | 45 | heading_structure=0, reading_order=0 | `from_sibling_pdfaf_v1_holdout_4` |
+| `4694` | 53 | heading_structure=45, alt_text=20, pdf_ua_compliance=57, table_markup=10, reading_order=45 | `from_sibling_pdfaf_edgecase_corpus` |
+| `3506` | 59 | heading_structure=0 | `from_sibling_pdfaf_v1_holdout_6` |
+| `4519` | 59 | heading_structure=0, pdf_ua_compliance=57, reading_order=0 | `from_sibling_pdfaf_edgecase_corpus` |
+| `4673` | 59 | heading_structure=0, pdf_ua_compliance=67 | `from_sibling_pdfaf_v1_holdout_6` |
+| `v1_evolve_2-3451` | 59 | heading_structure=0 | `from_sibling_pdfaf_v1_evolve_2` |
+| `v1_evolve_2-3459` | 59 | heading_structure=0 | `from_sibling_pdfaf_v1_evolve_2` |
+| `v1_evolve_3-4635` | 59 | title_language=50, heading_structure=0 | `from_sibling_pdfaf_v1_evolve_3` |
+| `v1_evolve_4-3602` | 59 | heading_structure=0 | `from_sibling_pdfaf_v1_evolve_4` |
+| `v1_hard_1-4213` | 59 | alt_text=0 | `from_sibling_pdfaf_v1_hard_1` |
