@@ -2288,6 +2288,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                         is_artifact = _is_artifact(elem)
                         ref = object_ref_str(elem)
                         raw_tag = (get_name(elem) or "").lstrip("/")
+                        subtree_mcids = _collect_subtree_mcids(elem)
                         row = {
                             "hasAlt": alt is not None and len(alt) > 0,
                             "altText": alt,
@@ -2297,12 +2298,13 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                             "role": tag,
                             "reachable": _root_reachable(elem),
                             "directContent": _elem_has_direct_mcid_content(elem),
-                            "subtreeMcidCount": len(_collect_subtree_mcids(elem)),
+                            "subtreeMcidCount": len(subtree_mcids),
+                            "subtreeMcids": subtree_mcids[:25],
                             "parentPath": _struct_parent_chain(elem),
                             "evidenceState": _checker_facing_evidence_state(
                                 _root_reachable(elem),
                                 _elem_has_direct_mcid_content(elem),
-                                len(_collect_subtree_mcids(elem)),
+                                len(subtree_mcids),
                             ),
                         }
                         if ref:
@@ -2417,6 +2419,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                     continue
                 seen_checker_targets.add(ref)
                 alt = get_alt(elem)
+                subtree_mcids = _collect_subtree_mcids(elem)
                 checker_figure_targets.append({
                     "structRef": ref,
                     "role": raw_tag,
@@ -2427,6 +2430,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                     "isArtifact": _is_artifact(elem),
                     "reachable": _root_reachable(elem),
                     "directContent": _elem_has_direct_mcid_content(elem),
+                    "subtreeMcids": subtree_mcids[:25],
                     "parentPath": _struct_parent_chain(elem),
                 })
         except Exception as e:

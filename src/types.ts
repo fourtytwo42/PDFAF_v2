@@ -226,6 +226,8 @@ export interface DocumentSnapshot {
     reachable?: boolean;
     directContent?: boolean;
     subtreeMcidCount?: number;
+    /** Bounded MCID sample owned by this figure-like subtree; used only for evidence diagnostics. */
+    subtreeMcids?: number[];
     parentPath?: string[];
     bbox?: [number, number, number, number];
   }>;
@@ -239,6 +241,8 @@ export interface DocumentSnapshot {
     structRef?: string;
     reachable: boolean;
     directContent: boolean;
+    /** Bounded MCID sample owned by this raw /Figure subtree; used only for evidence diagnostics. */
+    subtreeMcids?: number[];
     parentPath: string[];
   }>;
   tables: Array<{
