@@ -7025,6 +7025,23 @@ def _struct_elem_heading_level(elem) -> int | None:
     return None
 
 
+def _custom_struct_elem_heading_level(elem) -> int | None:
+    """Return 1-6 for common custom heading role names such as /Heading#201."""
+    try:
+        s = elem.get("/S")
+        if s is None:
+            return None
+        raw = str(s).lstrip("/")
+        normalized = raw.replace("#20", " ").replace("_", " ").replace("-", " ")
+        normalized = re.sub(r"\s+", " ", normalized).strip().lower()
+        match = re.match(r"^heading\s*([1-6])$", normalized)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        pass
+    return None
+
+
 def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """
     Fix skipped heading levels in the structure tree so Acrobat's "Headings — Appropriate
@@ -7048,7 +7065,7 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
         return False
 
     # Collect heading elements in BFS (document) order together with their levels
-    heading_elems: list[tuple] = []  # (elem, current_level)
+    heading_elems: list[tuple] = []  # (elem, current_level, custom_role)
     q: deque = deque()
     try:
         _enqueue_children(q, sr.get("/K"))
@@ -7068,8 +7085,12 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
                 continue
             visited.add(oid)
             level = _struct_elem_heading_level(elem)
+            custom_role = False
+            if level is None:
+                level = _custom_struct_elem_heading_level(elem)
+                custom_role = level is not None
             if level is not None:
-                heading_elems.append((elem, level))
+                heading_elems.append((elem, level, custom_role))
             try:
                 _enqueue_children(q, elem.get("/K"))
             except Exception:
@@ -7083,31 +7104,26 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
     changed = False
     prev_level = 0
     h1_seen = False
-    for elem, level in heading_elems:
+    for elem, level, custom_role in heading_elems:
+        new_level = level
         # Phase 1 + single-H1 enforcement combined: if this is a second H1,
         # treat it as H2 before gap-normalization so the rest of the tree
         # stays consistent.
-        if level == 1 and h1_seen:
-            level = 2
-            try:
-                elem["/S"] = pikepdf.Name("/H2")
-                changed = True
-            except Exception:
-                pass
-        elif level == 1:
+        if new_level == 1 and h1_seen:
+            new_level = 2
+        elif new_level == 1:
             h1_seen = True
 
-        if level > prev_level + 1:
+        if new_level > prev_level + 1:
             # Skipped levels — normalise down to prev+1
             new_level = prev_level + 1
+        if custom_role or new_level != level:
             try:
-                elem["/S"] = pikepdf.Name(f"/H{new_level}")
+                elem["/S"] = pikepdf.Name("/H1" if new_level == 1 else f"/H{new_level}")
                 changed = True
             except Exception:
                 pass
-            prev_level = new_level
-        else:
-            prev_level = level
+        prev_level = new_level
 
     if _global_heading_cleanup(pdf):
         changed = True
