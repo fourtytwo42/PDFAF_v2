@@ -40,3 +40,28 @@ Below-A rows:
 | --- | ---: | ---: | --- | --- |
 | `v1-legacy-4078-4078-community-reentry-challenges-daunt-exoff` | C | 77 | `heading_structure=45`, `reading_order=45` | Partial heading/reading-order reachability residual; alt/link/table are strong. |
 | `v1-legacy-4188-4188-corrections-data-illustrate-juvenile-inc` | C | 77 | `heading_structure=45`, `reading_order=45` | Same partial heading/reading-order cap shape as `4078`; alt/link/table are strong. |
+
+## 2026-05-03 - Edgecase Corpus Current Engine Parallel-8
+
+- Run: `Output/from_sibling_pdfaf_edgecase_corpus/run-current-engine-parallel8-2026-05-03-r3`
+- Batch: `Input/from_sibling_pdfaf_edgecase_corpus/manifest.json`
+- Result: `37 A / 3 B / 3 C / 5 D / 2 F`, mean `90.54`, median `97`, false-positive applied `0`
+- Parallelism note: per-file `xargs -P 8`; no PDFs written; root disk stayed tight but stable, `/tmp` stayed safe, and memory did not approach OOM.
+
+Below-A rows:
+
+| Row | Grade | Score | Main blockers | Notes |
+| --- | ---: | ---: | --- | --- |
+| `v1-4147` | D | 69 | `table_markup=0`, `alt_text=52`, `pdf_ua_compliance=71` | Mixed table/alt/PDF-UA residual. |
+| `v1-4164` | D | 69 | `form_accessibility=0`, `reading_order=35` | Strong headings/alt/PDF-UA; form/reading-order blocker. |
+| `v1-4427` | C | 79 | `pdf_ua_compliance=71`, `heading_structure=78` | Near-pass PDF/UA plus partial heading evidence. |
+| `v1-4453` | D | 69 | `table_markup=16`, `alt_text=20`, `pdf_ua_compliance=63` | Mixed table/alt/PDF-UA residual. |
+| `v1-4503` | B | 80 | `alt_text=20`, `table_markup=72` | Near-pass table/alt residual. |
+| `v1-4519` | F | 59 | `heading_structure=0`, `reading_order=0`, `pdf_ua_compliance=57` | Native shell heading/reading-order failure. |
+| `v1-4583` | C | 79 | near-pass aggregate | No single reported category under `80`; inspect weighted/rounding and accepted timeline later. |
+| `v1-4690` | D | 66 | `table_markup=6`, `alt_text=20`, `title_language=50` | Table/alt plus title/language residual. |
+| `v1-4694` | F | 53 | `table_markup=10`, `alt_text=20`, `heading_structure=45`, `reading_order=45`, `pdf_ua_compliance=57` | Mixed heading/table/alt/PDF-UA residual. |
+| `v1-4730` | B | 87 | `text_extractability=62`, `pdf_ua_compliance=71` | Runtime tail; single job dominated wall time. |
+| `v1-4735` | D | 69 | `table_markup=35`, `alt_text=60` | Table/alt residual. |
+| `v1-4748` | B | 82 | `alt_text=20` | Stable low-alt residual. |
+| `v1-4761` | C | 79 | `alt_text=60`, `pdf_ua_compliance=71` | Near-pass alt/PDF-UA residual. |
