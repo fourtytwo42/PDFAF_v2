@@ -65,3 +65,33 @@ Below-A rows:
 | `v1-4735` | D | 69 | `table_markup=35`, `alt_text=60` | Table/alt residual. |
 | `v1-4748` | B | 82 | `alt_text=20` | Stable low-alt residual. |
 | `v1-4761` | C | 79 | `alt_text=60`, `pdf_ua_compliance=71` | Near-pass alt/PDF-UA residual. |
+
+## 2026-05-03 - All Remaining Unique Current Engine Parallel-8
+
+- Run: `Output/all-remaining-current-engine/run-current-engine-parallel8-2026-05-03-r1`
+- Batch: `/tmp/pdfaf-all-remaining-current-engine-manifest-2026-05-03.json`
+- Scope: `203` unique PDFs from remaining unprocessed `Input/` manifests, deduped by SHA-256 against the current-engine batches already run.
+- Result: `187 A / 2 B / 4 C / 4 D / 6 F`, mean `94.69`, median `97`, false-positive applied `0`
+- Before result: `0 A / 3 B / 2 C / 7 D / 191 F`, mean `32.63`, median `34`
+- Parallelism note: per-file `xargs -P 8`; no PDFs written. Parallel 8 completed without OOM; root disk stayed tight but stable, `/tmp` stayed safe, and OCR-heavy rows dominated wall time. Pipeline p95 was `214802 ms`; max was `v1_evolve_4-3513` at `668669 ms`.
+
+Below-A rows:
+
+| Row | Grade | Score | Main blockers | Notes |
+| --- | ---: | ---: | --- | --- |
+| `v1_edge_mix_2-4171` | D | 69 | `heading_structure=45`, `reading_order=45`, `alt_text=60`, `pdf_ua_compliance=67` | Mixed partial heading/reading-order plus alt/PDF-UA residual. |
+| `v1_edge_mix-4145` | C | 78 | `alt_text=20` | Stable low-alt residual after earlier figure/alt gains. |
+| `v1_edge_mix-4567` | D | 66 | `heading_structure=45`, `reading_order=45`, `alt_text=20`, `pdf_ua_compliance=67` | Mixed partial heading/reading-order plus alt/PDF-UA residual. |
+| `v1_evolve_2-3451` | F | 59 | `heading_structure=0` | Parked OCR/manual no-safe-title-owner style residual. |
+| `v1_evolve_2-3459` | F | 59 | `heading_structure=0` | Parked OCR/manual no-safe-title-owner style residual. |
+| `v1_evolve_2-4614` | C | 79 | `heading_structure=78` | Near-pass partial heading residual. |
+| `v1_evolve_3-4635` | F | 59 | `heading_structure=0`, `title_language=50` | Native/tagged zero-heading plus title/language residual. |
+| `v1_evolve_4-3602` | F | 59 | `heading_structure=0` | Parked OCR/manual no-safe-title-owner style residual. |
+| `v1_hard_1-4213` | F | 59 | `alt_text=0` | Known mixed alt/table/PDF-UA ordered-transaction debt; heading is no longer the blocker. |
+| `v1_hard_1-4767` | B | 82 | `alt_text=20`, `pdf_ua_compliance=71` | Near-pass low-alt/PDF-UA residual. |
+| `v1_hard_2-4105` | D | 68 | `table_markup=0`, `alt_text=20` | Known parked table/alt analyzer-debt row after Stage 184 heading lift. |
+| `v1_holdout_4-holdout4-03-2c974ae2` | F | 45 | `heading_structure=0`, `reading_order=0` | Native shell heading/reading-order residual. |
+| `v1_holdout_4-holdout4-04-27f9d243` | C | 76 | `heading_structure=45`, `reading_order=45` | Partial heading/reading-order residual. |
+| `v1_holdout_4-holdout4-05-ad762d4a` | C | 76 | `heading_structure=76`, `alt_text=20` | Mixed heading/alt residual. |
+| `v1_holdout_4-holdout4-11-5c9522ae` | D | 66 | `table_markup=0`, `alt_text=20`, `pdf_ua_compliance=56` | Mixed table/alt/PDF-UA residual. |
+| `v1_holdout_5-4760` | B | 89 | `heading_structure=78` | Improved from former F; remaining partial heading evidence keeps it below A. |
