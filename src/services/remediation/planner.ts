@@ -62,6 +62,10 @@ import {
   classifyStage170NativeTitleOwnerBridge,
   selectNativeTitleOwnerBridgeCandidate,
 } from './nativeTitleOwnerBridge.js';
+import {
+  selectStage187TaggedHeadingTopupCandidate,
+  shouldTryStage187TaggedHeadingTopupRecovery,
+} from './stage187HeadingReadingTail.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -1511,7 +1515,7 @@ export function planForRemediation(
     }
     if (
       toolName === 'create_heading_from_tagged_visible_anchor' &&
-      !(shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) && headingNeedsRepair)
+      !((shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) || shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)) && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1868,7 +1872,8 @@ export function planForRemediation(
       !toolSet.has(toolName) &&
       (
         shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) ||
-        shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot)
+        shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot) ||
+        shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
       ) &&
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
@@ -1885,6 +1890,8 @@ export function planForRemediation(
           params,
           rationale: shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot)
             ? 'Stage 149 partial-heading reachability recovery from a proven first-page content anchor.'
+            : shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
+              ? 'Stage 187 tagged heading topup from a proven first-page content anchor.'
             : 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
           route: 'post_bootstrap_heading_convergence',
         });
@@ -2312,7 +2319,7 @@ export function buildDefaultParams(
         ? selectPartialHeadingReachabilityCandidate(analysis, snapshot)
         : shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot)
           ? selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot)
-          : null;
+          : selectStage187TaggedHeadingTopupCandidate(analysis, snapshot);
       if (!candidate) return {};
       return {
         page: candidate.page,
@@ -2324,6 +2331,9 @@ export function buildDefaultParams(
         source: candidate.source,
         confidenceScore: candidate.score,
         ...(partialReachability ? { allowExistingHeadingRolesForPartialReachability: true } : {}),
+        ...(!partialReachability && shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
+          ? { allowExistingHeadingRolesForPartialReachability: true, stage187HeadingTopup: true }
+          : {}),
       };
     }
     case 'bridge_native_title_text_owner': {
