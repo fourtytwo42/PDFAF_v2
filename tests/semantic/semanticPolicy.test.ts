@@ -180,6 +180,78 @@ describe('semanticPolicy', () => {
     expect(result.changeStatus).toBe('applied');
   });
 
+  it('reverts semantic figure mutations when the alt category does not improve even if candidates drop', () => {
+    const before = withCategoryScore(makeAnalysis({ score: 59 }), 'alt_text', 0);
+    const after = withCategoryScore(makeAnalysis({ score: 59 }), 'alt_text', 0);
+
+    const result = evaluateSemanticMutation({
+      lane: 'figures',
+      beforeAnalysis: before,
+      afterAnalysis: after,
+      beforeSnapshot: makeSnapshot(),
+      afterSnapshot: makeSnapshot(),
+      targetCategoryKey: 'alt_text',
+      candidateCountBefore: 3,
+      candidateCountAfter: 0,
+      proposalsAccepted: 3,
+      proposalsRejected: 0,
+      batches: [],
+      durationMs: 10,
+      regressionTolerance: 1,
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(result.skippedReason).toBe('no_target_improvement');
+    expect(result.changeStatus).toBe('reverted');
+    expect(result.errorMessage).toBe('semantic_no_target_category_improvement');
+  });
+
+  it('reverts semantic figure mutations when a core non-target category drops', () => {
+    const before = makeAnalysis({
+      score: 82,
+      categories: [
+        ...makeAnalysis().categories,
+        {
+          key: 'pdf_ua_compliance',
+          applicable: true,
+          score: 83,
+          weight: 0.13,
+          severity: 'minor',
+          evidence: 'verified',
+          verificationLevel: 'verified',
+          findings: [],
+        },
+      ],
+    });
+    const after = withCategoryScore({
+      ...before,
+      score: 100,
+      categories: before.categories.map(category =>
+        category.key === 'pdf_ua_compliance' ? { ...category, score: 71 } : category,
+      ),
+    }, 'alt_text', 100);
+
+    const result = evaluateSemanticMutation({
+      lane: 'figures',
+      beforeAnalysis: before,
+      afterAnalysis: after,
+      beforeSnapshot: makeSnapshot(),
+      afterSnapshot: makeSnapshot(),
+      targetCategoryKey: 'alt_text',
+      candidateCountBefore: 24,
+      candidateCountAfter: 0,
+      proposalsAccepted: 14,
+      proposalsRejected: 0,
+      batches: [],
+      durationMs: 10,
+      regressionTolerance: 1,
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(result.skippedReason).toBe('regression_reverted');
+    expect(result.errorMessage).toBe('semantic_core_category_regressed:pdf_ua_compliance:83->71');
+  });
+
   it('downgrades semantic-only verified categories to mixed trust', () => {
     const before = makeAnalysis();
     const after = withCategoryScore(makeAnalysis({ score: 85 }), 'alt_text', 90);

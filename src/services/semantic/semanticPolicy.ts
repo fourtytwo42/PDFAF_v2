@@ -16,6 +16,42 @@ function categoryScore(
   return analysis.categories.find(category => category.key === key)?.score ?? null;
 }
 
+const SEMANTIC_FIGURE_CORE_CATEGORIES: CategoryKey[] = [
+  'heading_structure',
+  'reading_order',
+  'table_markup',
+  'pdf_ua_compliance',
+  'link_quality',
+];
+
+function figureCoreRegressionReason(input: {
+  beforeAnalysis: AnalysisResult;
+  afterAnalysis: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+}): string | null {
+  for (const key of SEMANTIC_FIGURE_CORE_CATEGORIES) {
+    const before = categoryScore(input.beforeAnalysis, key);
+    const after = categoryScore(input.afterAnalysis, key);
+    if (before !== null && after !== null && after < before) {
+      return `semantic_core_category_regressed:${key}:${before}->${after}`;
+    }
+  }
+  if (input.afterAnalysis.pageCount !== input.beforeAnalysis.pageCount) {
+    return `semantic_page_count_regressed:${input.beforeAnalysis.pageCount}->${input.afterAnalysis.pageCount}`;
+  }
+  if (input.afterSnapshot.pageCount !== input.beforeSnapshot.pageCount) {
+    return `semantic_snapshot_page_count_regressed:${input.beforeSnapshot.pageCount}->${input.afterSnapshot.pageCount}`;
+  }
+  if (input.afterSnapshot.textCharCount < input.beforeSnapshot.textCharCount) {
+    return `semantic_text_count_regressed:${input.beforeSnapshot.textCharCount}->${input.afterSnapshot.textCharCount}`;
+  }
+  if (input.afterSnapshot.isTagged !== input.beforeSnapshot.isTagged) {
+    return `semantic_tagged_state_regressed:${input.beforeSnapshot.isTagged}->${input.afterSnapshot.isTagged}`;
+  }
+  return null;
+}
+
 export function buildSemanticGateSummary(input: {
   passed: boolean;
   reason: string;
@@ -100,6 +136,8 @@ export function evaluateSemanticMutation(input: {
     && targetScoreAfter > targetScoreBefore;
   const candidateReduced = input.candidateCountAfter < input.candidateCountBefore;
   const overallImproved = input.afterAnalysis.score > input.beforeAnalysis.score;
+  const figureLane = input.lane === 'figures';
+  const coreRegression = figureLane ? figureCoreRegressionReason(input) : null;
 
   if (input.afterAnalysis.score < input.beforeAnalysis.score - input.regressionTolerance) {
     return {
@@ -130,6 +168,47 @@ export function evaluateSemanticMutation(input: {
         passed: true,
         reason: 'semantic_structural_confidence_reverted',
         details: [confidence.reason ?? 'structural_confidence_regressed'],
+        candidateCountBefore: input.candidateCountBefore,
+        candidateCountAfter: input.candidateCountAfter,
+        targetCategoryKey: input.targetCategoryKey,
+        targetCategoryScoreBefore: targetScoreBefore,
+        targetCategoryScoreAfter: targetScoreAfter,
+      }),
+    };
+  }
+
+  if (coreRegression) {
+    return {
+      accepted: false,
+      skippedReason: 'regression_reverted',
+      changeStatus: 'reverted',
+      errorMessage: coreRegression,
+      gate: buildSemanticGateSummary({
+        passed: true,
+        reason: 'semantic_core_category_regressed',
+        details: [coreRegression],
+        candidateCountBefore: input.candidateCountBefore,
+        candidateCountAfter: input.candidateCountAfter,
+        targetCategoryKey: input.targetCategoryKey,
+        targetCategoryScoreBefore: targetScoreBefore,
+        targetCategoryScoreAfter: targetScoreAfter,
+      }),
+    };
+  }
+
+  if (figureLane && !categoryImproved) {
+    return {
+      accepted: false,
+      skippedReason: 'no_target_improvement',
+      changeStatus: 'reverted',
+      errorMessage: 'semantic_no_target_category_improvement',
+      gate: buildSemanticGateSummary({
+        passed: true,
+        reason: 'semantic_no_target_category_improvement',
+        details: [
+          `category:${targetScoreBefore ?? 'n/a'}->${targetScoreAfter ?? 'n/a'}`,
+          `candidates:${input.candidateCountBefore}->${input.candidateCountAfter}`,
+        ],
         candidateCountBefore: input.candidateCountBefore,
         candidateCountAfter: input.candidateCountAfter,
         targetCategoryKey: input.targetCategoryKey,
