@@ -156,6 +156,19 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
       measured: false,
       lowContrastTextRunCount: 0,
       uncertainTextRunCount: 0,
+      sampledPageCount: 0,
+      confidenceReason: 'disabled',
+    },
+    structureSyntaxAudit: {
+      missingStructureTypeCount: 0,
+      missingRoleCount: 0,
+      missingParentCount: 0,
+      wrongParentCount: 0,
+      invalidChildRoleCount: 0,
+      invalidMcrObjrCount: 0,
+      circularRoleMapCount: 0,
+      standardRoleRemappedCount: 0,
+      unmappedNonstandardRoleCount: 0,
     },
     tocNoteAudit: {
       tocItemMissingLinkCount: 0,
@@ -163,23 +176,28 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
       noteMissingIdCount: 0,
       duplicateNoteIdCount: 0,
       noteMissingLabelOrReferenceCount: 0,
+      tocItemsChecked: 0,
+      notesChecked: 0,
     },
     optionalContentAudit: {
       optionalContentConfigMissingNameCount: 0,
       optionalContentAsInvalidCount: 0,
       embeddedFileMissingFOrUfCount: 0,
       dynamicXfaPresent: false,
+      printerMarkOrTrapNetTaggedCount: 0,
     },
     linkReachabilityAudit: {
       checked: false,
       unreachableUriCount: 0,
       unsafeUriCount: 0,
+      checkedUriCount: 0,
     },
     aiVisualTagAudit: {
       evaluated: false,
       falsePositiveTagCount: 0,
       falseNegativeTagCount: 0,
       likelyMisclassifiedTagCount: 0,
+      evaluationReason: 'disabled',
     },
     pdfClass: 'native_tagged',
     imageToTextRatio: 0,
@@ -209,6 +227,7 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.structure.struct_tree_present').status).toBe('pass');
     expect(byId(rows, 'pdfua.content.orphan_mcids_absent').status).toBe('pass');
     expect(byId(rows, 'pdfua.parent_tree.present').status).toBe('pass');
+    expect(byId(rows, 'pdfua.structure.syntax_roles_present').status).toBe('pass');
     expect(byId(rows, 'pdfua.font.to_unicode_cmap_present').status).toBe('pass');
   });
 
@@ -459,6 +478,7 @@ describe('buildPacRuleEvidence', () => {
         outlineLanguageInvalidCount: 1,
         expansionTextLanguageInvalidCount: 0,
         structureLangInvalidCount: 1,
+        textObjectLanguageInvalidCount: 1,
       },
     }));
 
@@ -468,8 +488,31 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.font.truetype_encoding_consistent').status).toBe('warn');
     expect(byId(rows, 'pdfua.font.wmode_consistent').status).toBe('fail');
     expect(byId(rows, 'pdfua.language.alt_text_lang_valid').status).toBe('fail');
+    expect(byId(rows, 'pdfua.language.text_object_lang_valid').status).toBe('fail');
     expect(byId(rows, 'pdfua.language.form_tu_lang_valid').status).toBe('fail');
     expect(byId(rows, 'pdfua.language.outline_lang_valid').status).toBe('fail');
+  });
+
+  it('fails structure syntax and RoleMap catalog evidence', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      structureSyntaxAudit: {
+        missingStructureTypeCount: 1,
+        missingRoleCount: 2,
+        missingParentCount: 3,
+        wrongParentCount: 4,
+        invalidChildRoleCount: 5,
+        invalidMcrObjrCount: 6,
+        circularRoleMapCount: 1,
+        standardRoleRemappedCount: 1,
+        unmappedNonstandardRoleCount: 1,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.structure.syntax_roles_present')).toMatchObject({ status: 'fail', count: 3 });
+    expect(byId(rows, 'pdfua.structure.parent_links_valid')).toMatchObject({ status: 'fail', count: 7 });
+    expect(byId(rows, 'pdfua.structure.child_roles_valid')).toMatchObject({ status: 'fail', count: 5 });
+    expect(byId(rows, 'pdfua.structure.mcr_objr_valid')).toMatchObject({ status: 'fail', count: 6 });
+    expect(byId(rows, 'pdfua.structure.rolemap_valid')).toMatchObject({ status: 'fail', count: 3 });
   });
 
   it('keeps rendered contrast, link reachability, and AI checks diagnostic until measured/evaluated', () => {
@@ -506,18 +549,21 @@ describe('buildPacRuleEvidence', () => {
         noteMissingIdCount: 1,
         duplicateNoteIdCount: 1,
         noteMissingLabelOrReferenceCount: 1,
+        tocItemsChecked: 2,
+        notesChecked: 2,
       },
       optionalContentAudit: {
         optionalContentConfigMissingNameCount: 1,
         optionalContentAsInvalidCount: 1,
         embeddedFileMissingFOrUfCount: 2,
         dynamicXfaPresent: true,
+        printerMarkOrTrapNetTaggedCount: 1,
       },
     }));
 
     expect(byId(rows, 'pdfua.toc.toci_links_valid')).toMatchObject({ status: 'fail', count: 2 });
     expect(byId(rows, 'pdfua.note.ids_unique')).toMatchObject({ status: 'fail', count: 3 });
-    expect(byId(rows, 'pdfua.optional_content.config_valid')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.optional_content.config_valid')).toMatchObject({ status: 'fail', count: 3 });
     expect(byId(rows, 'pdfua.filespec.f_and_uf_present')).toMatchObject({ status: 'fail', count: 2 });
     expect(byId(rows, 'pdfua.xfa.dynamic_absent').status).toBe('fail');
   });

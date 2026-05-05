@@ -416,12 +416,27 @@ export interface DocumentSnapshot {
     outlineLanguageInvalidCount: number;
     expansionTextLanguageInvalidCount: number;
     structureLangInvalidCount: number;
+    textObjectLanguageInvalidCount?: number;
   };
   /** Optional rendered-contrast evidence. Disabled/not measured by default. */
   renderedContrastAudit?: {
     measured: boolean;
     lowContrastTextRunCount: number;
     uncertainTextRunCount: number;
+    sampledPageCount?: number;
+    confidenceReason?: string;
+  };
+  /** Structure syntax and RoleMap catalog evidence. Diagnostic-only unless promoted later. */
+  structureSyntaxAudit?: {
+    missingStructureTypeCount: number;
+    missingRoleCount: number;
+    missingParentCount: number;
+    wrongParentCount: number;
+    invalidChildRoleCount: number;
+    invalidMcrObjrCount: number;
+    circularRoleMapCount: number;
+    standardRoleRemappedCount: number;
+    unmappedNonstandardRoleCount: number;
   };
   /** Structural TOC/Note evidence. */
   tocNoteAudit?: {
@@ -430,6 +445,8 @@ export interface DocumentSnapshot {
     noteMissingIdCount: number;
     duplicateNoteIdCount: number;
     noteMissingLabelOrReferenceCount: number;
+    tocItemsChecked?: number;
+    notesChecked?: number;
   };
   /** Optional content and embedded file-spec evidence. */
   optionalContentAudit?: {
@@ -437,12 +454,14 @@ export interface DocumentSnapshot {
     optionalContentAsInvalidCount: number;
     embeddedFileMissingFOrUfCount: number;
     dynamicXfaPresent: boolean;
+    printerMarkOrTrapNetTaggedCount?: number;
   };
   /** Opt-in URI reachability evidence. Disabled/not checked by default. */
   linkReachabilityAudit?: {
     checked: boolean;
     unreachableUriCount: number;
     unsafeUriCount: number;
+    checkedUriCount?: number;
   };
   /** Non-mutating AI visual-vs-structure mismatch diagnostics. Disabled by default. */
   aiVisualTagAudit?: {
@@ -450,6 +469,7 @@ export interface DocumentSnapshot {
     falsePositiveTagCount: number;
     falseNegativeTagCount: number;
     likelyMisclassifiedTagCount: number;
+    evaluationReason?: string;
   };
   fonts: Array<{
     name: string;
@@ -638,6 +658,7 @@ export interface PythonAnalysisResult {
   fontSyntaxAudit?: DocumentSnapshot['fontSyntaxAudit'];
   languageAudit?: DocumentSnapshot['languageAudit'];
   renderedContrastAudit?: DocumentSnapshot['renderedContrastAudit'];
+  structureSyntaxAudit?: DocumentSnapshot['structureSyntaxAudit'];
   tocNoteAudit?: DocumentSnapshot['tocNoteAudit'];
   optionalContentAudit?: DocumentSnapshot['optionalContentAudit'];
   linkReachabilityAudit?: DocumentSnapshot['linkReachabilityAudit'];

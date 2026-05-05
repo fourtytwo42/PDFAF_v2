@@ -22,6 +22,7 @@ function rule(overrides: Partial<PacRuleEvidence>): PacRuleEvidence {
 describe('poc strong areas diagnostic helpers', () => {
   it('selects only POC strong-area PAC rules', () => {
     expect(isPocStrongAreaRule('pdfua.parent_tree.present')).toBe(true);
+    expect(isPocStrongAreaRule('pdfua.structure.rolemap_valid')).toBe(true);
     expect(isPocStrongAreaRule('pdfua.font.to_unicode_cmap_present')).toBe(true);
     expect(isPocStrongAreaRule('wcag.contrast.text_contrast_measured')).toBe(true);
     expect(isPocStrongAreaRule('pdfua.metadata.title_present')).toBe(false);
@@ -82,22 +83,30 @@ describe('poc strong areas diagnostic helpers', () => {
             category: 'reading_order',
             message: 'text debt',
           }),
+          rule({
+            ruleId: 'pdfua.structure.rolemap_valid',
+            status: 'fail',
+            category: 'pdf_ua_compliance',
+            message: 'rolemap debt',
+          }),
         ],
       },
     ];
 
     const summary = buildPocStrongAreaSummary(rows);
 
-    expect(summary.statusDistribution).toMatchObject({ fail: 2, warn: 1, pass: 0, not_applicable: 0 });
+    expect(summary.statusDistribution).toMatchObject({ fail: 3, warn: 1, pass: 0, not_applicable: 0 });
     expect(summary.categoryPassPacFailGaps.map(row => row.ruleId)).toEqual(['pdfua.parent_tree.present']);
     expect(summary.noisyEvidence.map(row => row.ruleId)).toEqual(['pdfua.font.cid_to_gidmap_valid']);
     expect(summary.familySummaries.map(row => `${row.family}:${row.fail}:${row.warn}`)).toEqual([
       'content_tagging:1:0',
       'fonts_cmap:0:1',
       'parent_tree:1:0',
+      'structure_syntax_rolemap:1:0',
     ]);
     expect(summary.promotionCandidates.map(row => `${row.classification}:${row.ruleId}`)).toEqual([
       'ready_for_scoring_candidate:pdfua.parent_tree.present',
+      'ready_for_gate_candidate:pdfua.structure.rolemap_valid',
       'ready_for_gate_candidate:pdfua.content.text_tagged_or_artifacted',
     ]);
   });

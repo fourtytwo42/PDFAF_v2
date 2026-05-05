@@ -94,11 +94,25 @@ except ImportError:
             "outlineLanguageInvalidCount": 0,
             "expansionTextLanguageInvalidCount": 0,
             "structureLangInvalidCount": 0,
+            "textObjectLanguageInvalidCount": 0,
         },
         "renderedContrastAudit": {
             "measured": False,
             "lowContrastTextRunCount": 0,
             "uncertainTextRunCount": 0,
+            "sampledPageCount": 0,
+            "confidenceReason": "disabled",
+        },
+        "structureSyntaxAudit": {
+            "missingStructureTypeCount": 0,
+            "missingRoleCount": 0,
+            "missingParentCount": 0,
+            "wrongParentCount": 0,
+            "invalidChildRoleCount": 0,
+            "invalidMcrObjrCount": 0,
+            "circularRoleMapCount": 0,
+            "standardRoleRemappedCount": 0,
+            "unmappedNonstandardRoleCount": 0,
         },
         "tocNoteAudit": {
             "tocItemMissingLinkCount": 0,
@@ -106,23 +120,28 @@ except ImportError:
             "noteMissingIdCount": 0,
             "duplicateNoteIdCount": 0,
             "noteMissingLabelOrReferenceCount": 0,
+            "tocItemsChecked": 0,
+            "notesChecked": 0,
         },
         "optionalContentAudit": {
             "optionalContentConfigMissingNameCount": 0,
             "optionalContentAsInvalidCount": 0,
             "embeddedFileMissingFOrUfCount": 0,
             "dynamicXfaPresent": False,
+            "printerMarkOrTrapNetTaggedCount": 0,
         },
         "linkReachabilityAudit": {
             "checked": False,
             "unreachableUriCount": 0,
             "unsafeUriCount": 0,
+            "checkedUriCount": 0,
         },
         "aiVisualTagAudit": {
             "evaluated": False,
             "falsePositiveTagCount": 0,
             "falseNegativeTagCount": 0,
             "likelyMisclassifiedTagCount": 0,
+            "evaluationReason": "disabled",
         },
     }))
     sys.exit(0)
@@ -1530,8 +1549,12 @@ def collect_language_audit(pdf: pikepdf.Pdf) -> dict:
         "outlineLanguageInvalidCount": 0,
         "expansionTextLanguageInvalidCount": 0,
         "structureLangInvalidCount": 0,
+        "textObjectLanguageInvalidCount": 0,
     }
     lang_re = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
+    def malformed(value) -> bool:
+        text = safe_str(value).strip()
+        return bool(text) and not lang_re.match(text)
     try:
         q = deque()
         sr = pdf.Root.get("/StructTreeRoot")
@@ -1544,9 +1567,174 @@ def collect_language_audit(pdf: pikepdf.Pdf) -> dict:
             if not isinstance(elem, pikepdf.Dictionary):
                 continue
             lang = elem.get("/Lang")
-            if lang is not None and not lang_re.match(safe_str(lang)):
+            bad_lang = lang is not None and malformed(lang)
+            if bad_lang:
                 out["structureLangInvalidCount"] += 1
+            if bad_lang and elem.get("/Alt") is not None:
+                out["altTextLanguageInvalidCount"] += 1
+            if bad_lang and elem.get("/ActualText") is not None:
+                out["actualTextLanguageInvalidCount"] += 1
+            if bad_lang and elem.get("/E") is not None:
+                out["expansionTextLanguageInvalidCount"] += 1
+            if bad_lang and elem.get("/K") is not None:
+                out["textObjectLanguageInvalidCount"] += 1
             _enqueue_children(q, elem.get("/K"))
+    except Exception:
+        pass
+    try:
+        for page in pdf.pages:
+            annots = page.obj.get("/Annots")
+            if not isinstance(annots, pikepdf.Array):
+                continue
+            for annot_ref in annots:
+                try:
+                    annot = pdf.get_object(annot_ref.objgen) if hasattr(annot_ref, "objgen") else annot_ref
+                    if isinstance(annot, pikepdf.Dictionary) and annot.get("/Contents") is not None and malformed(annot.get("/Lang")):
+                        out["annotationContentsLanguageInvalidCount"] += 1
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:
+        acro = pdf.Root.get("/AcroForm")
+        fields = acro.get("/Fields") if isinstance(acro, pikepdf.Dictionary) else None
+        if isinstance(fields, pikepdf.Array):
+            for field in fields[:MAX_ITEMS]:
+                try:
+                    if isinstance(field, pikepdf.Dictionary) and field.get("/TU") is not None and malformed(field.get("/Lang")):
+                        out["formTuLanguageInvalidCount"] += 1
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:
+        outline = pdf.open_outline()
+        stack = list(outline.root)
+        while stack and len(stack) < MAX_ITEMS:
+            item = stack.pop()
+            try:
+                obj = getattr(item, "obj", None)
+                if obj is not None and malformed(obj.get("/Lang")):
+                    out["outlineLanguageInvalidCount"] += 1
+                stack.extend(getattr(item, "children", []) or [])
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return out
+
+
+STANDARD_STRUCTURE_ROLES = {
+    "DOCUMENT", "PART", "ART", "SECT", "DIV", "BLOCKQUOTE", "CAPTION", "TOC", "TOCI", "INDEX",
+    "NONSTRUCT", "PRIVATE", "P", "H", "H1", "H2", "H3", "H4", "H5", "H6", "L", "LI", "LBL",
+    "LBODY", "TABLE", "TR", "TH", "TD", "THEAD", "TBODY", "TFOOT", "SPAN", "QUOTE", "NOTE",
+    "REFERENCE", "BIBENTRY", "CODE", "LINK", "ANNOT", "RUBY", "RB", "RT", "RP", "WARICHU",
+    "WT", "WP", "FIGURE", "FORM", "FORMULA",
+}
+
+
+VALID_CHILDREN_BY_PARENT = {
+    "L": {"LI", "CAPTION"},
+    "LI": {"LBL", "LBODY"},
+    "TABLE": {"TR", "THEAD", "TBODY", "TFOOT", "CAPTION"},
+    "THEAD": {"TR"},
+    "TBODY": {"TR"},
+    "TFOOT": {"TR"},
+    "TR": {"TH", "TD"},
+    "TOC": {"TOCI", "CAPTION"},
+    "TOCI": {"LINK", "REFERENCE", "P", "LBL"},
+    "LINK": {"ANNOT", "SPAN", "P"},
+    "FORM": {"ANNOT"},
+}
+
+
+def collect_structure_syntax_audit(pdf: pikepdf.Pdf) -> dict:
+    out = {
+        "missingStructureTypeCount": 0,
+        "missingRoleCount": 0,
+        "missingParentCount": 0,
+        "wrongParentCount": 0,
+        "invalidChildRoleCount": 0,
+        "invalidMcrObjrCount": 0,
+        "circularRoleMapCount": 0,
+        "standardRoleRemappedCount": 0,
+        "unmappedNonstandardRoleCount": 0,
+    }
+    rolemap = {}
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        if not isinstance(sr, pikepdf.Dictionary):
+            return out
+        rm = sr.get("/RoleMap")
+        if isinstance(rm, pikepdf.Dictionary):
+            for key, value in rm.items():
+                k = safe_str(key).lstrip("/").upper()
+                v = safe_str(value).lstrip("/").upper()
+                rolemap[k] = v
+                if k in STANDARD_STRUCTURE_ROLES:
+                    out["standardRoleRemappedCount"] += 1
+        for key in rolemap:
+            seen = set()
+            cur = key
+            while cur in rolemap:
+                if cur in seen:
+                    out["circularRoleMapCount"] += 1
+                    break
+                seen.add(cur)
+                cur = rolemap[cur]
+
+        q = deque()
+        root_k = sr.get("/K")
+        _enqueue_children(q, root_k)
+        seen_elems = set()
+        while q and len(seen_elems) < MAX_ITEMS * 4:
+            elem = q.popleft()
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            key = _obj_key(elem) or id(elem)
+            if key in seen_elems:
+                continue
+            seen_elems.add(key)
+            role = safe_str(elem.get("/S")).lstrip("/").upper()
+            typ = elem.get("/Type")
+            if typ is not None and typ != pikepdf.Name("/StructElem"):
+                out["missingStructureTypeCount"] += 1
+            if not role:
+                out["missingRoleCount"] += 1
+            elif role not in STANDARD_STRUCTURE_ROLES and role not in rolemap:
+                out["unmappedNonstandardRoleCount"] += 1
+
+            parent = elem.get("/P")
+            if parent is None and _obj_key(elem) != _obj_key(sr):
+                out["missingParentCount"] += 1
+            elif isinstance(parent, pikepdf.Dictionary):
+                try:
+                    if elem not in _direct_role_children(parent) and elem not in _struct_elem_children(parent):
+                        out["wrongParentCount"] += 1
+                except Exception:
+                    pass
+
+            resolved_parent = rolemap.get(role, role)
+            for child in _direct_role_children(elem):
+                child_role = safe_str(child.get("/S")).lstrip("/").upper()
+                resolved_child = rolemap.get(child_role, child_role)
+                allowed = VALID_CHILDREN_BY_PARENT.get(resolved_parent)
+                if allowed is not None and resolved_child not in allowed:
+                    out["invalidChildRoleCount"] += 1
+                q.append(child)
+
+            k = elem.get("/K")
+            kids = list(k) if isinstance(k, pikepdf.Array) else [k]
+            for kid in kids:
+                if not isinstance(kid, pikepdf.Dictionary):
+                    continue
+                typ = kid.get("/Type")
+                if typ == pikepdf.Name("/MCR"):
+                    if not isinstance(kid.get("/MCID"), int):
+                        out["invalidMcrObjrCount"] += 1
+                elif typ == pikepdf.Name("/OBJR"):
+                    if kid.get("/Obj") is None:
+                        out["invalidMcrObjrCount"] += 1
     except Exception:
         pass
     return out
@@ -1558,6 +1746,7 @@ def collect_optional_content_audit(pdf: pikepdf.Pdf) -> dict:
         "optionalContentAsInvalidCount": 0,
         "embeddedFileMissingFOrUfCount": 0,
         "dynamicXfaPresent": False,
+        "printerMarkOrTrapNetTaggedCount": 0,
     }
     try:
         root = pdf.Root
@@ -1572,16 +1761,42 @@ def collect_optional_content_audit(pdf: pikepdf.Pdf) -> dict:
                     out["optionalContentConfigMissingNameCount"] += 1
                 if d.get("/AS") is not None and not isinstance(d.get("/AS"), pikepdf.Array):
                     out["optionalContentAsInvalidCount"] += 1
+        names = root.get("/Names")
+        embedded = names.get("/EmbeddedFiles") if isinstance(names, pikepdf.Dictionary) else None
+        nums = embedded.get("/Names") if isinstance(embedded, pikepdf.Dictionary) else None
+        if isinstance(nums, pikepdf.Array):
+            for idx in range(1, len(nums), 2):
+                try:
+                    fs = nums[idx]
+                    if isinstance(fs, pikepdf.Dictionary) and (fs.get("/F") is None or fs.get("/UF") is None):
+                        out["embeddedFileMissingFOrUfCount"] += 1
+                except Exception:
+                    pass
+        for elem in _iter_struct_elems(pdf):
+            role = safe_str(elem.get("/S")).lstrip("/").upper() if isinstance(elem, pikepdf.Dictionary) else ""
+            if role in ("TRAPNET", "PRINTERMARK", "WATERMARK"):
+                out["printerMarkOrTrapNetTaggedCount"] += 1
     except Exception:
         pass
     return out
 
 
 def default_rendered_contrast_audit() -> dict:
+    enabled = os.environ.get("PDFAF_RENDER_CONTRAST_DIAGNOSTIC", "").strip().lower() in ("1", "true", "yes")
+    if enabled:
+        return {
+            "measured": False,
+            "lowContrastTextRunCount": 0,
+            "uncertainTextRunCount": 0,
+            "sampledPageCount": 0,
+            "confidenceReason": "renderer_unavailable",
+        }
     return {
         "measured": False,
         "lowContrastTextRunCount": 0,
         "uncertainTextRunCount": 0,
+        "sampledPageCount": 0,
+        "confidenceReason": "disabled",
     }
 
 
@@ -1592,23 +1807,80 @@ def default_toc_note_audit() -> dict:
         "noteMissingIdCount": 0,
         "duplicateNoteIdCount": 0,
         "noteMissingLabelOrReferenceCount": 0,
+        "tocItemsChecked": 0,
+        "notesChecked": 0,
     }
+
+
+def collect_toc_note_audit(pdf: pikepdf.Pdf) -> dict:
+    out = default_toc_note_audit()
+    note_ids = Counter()
+    try:
+        for elem in _iter_struct_elems(pdf):
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            role = safe_str(elem.get("/S")).lstrip("/").upper()
+            if role == "TOCI":
+                out["tocItemsChecked"] += 1
+                children = _direct_role_children(elem)
+                has_link = any(safe_str(child.get("/S")).lstrip("/").upper() == "LINK" for child in children)
+                if not has_link:
+                    out["tocItemMissingLinkCount"] += 1
+                if elem.get("/Dest") is None and elem.get("/A") is None and not has_link:
+                    out["tocDestinationMissingCount"] += 1
+            elif role == "NOTE":
+                out["notesChecked"] += 1
+                note_id = safe_str(elem.get("/ID")).strip()
+                if not note_id:
+                    out["noteMissingIdCount"] += 1
+                else:
+                    note_ids[note_id] += 1
+                child_roles = {safe_str(child.get("/S")).lstrip("/").upper() for child in _direct_role_children(elem)}
+                if "LBL" not in child_roles and "REFERENCE" not in child_roles:
+                    out["noteMissingLabelOrReferenceCount"] += 1
+        out["duplicateNoteIdCount"] = sum(count - 1 for count in note_ids.values() if count > 1)
+    except Exception:
+        pass
+    return out
 
 
 def default_link_reachability_audit() -> dict:
+    checked = os.environ.get("PDFAF_LINK_REACHABILITY_DIAGNOSTIC", "").strip().lower() in ("1", "true", "yes")
     return {
-        "checked": False,
+        "checked": checked,
         "unreachableUriCount": 0,
         "unsafeUriCount": 0,
+        "checkedUriCount": 0,
     }
 
 
+def collect_link_reachability_audit(pdf: pikepdf.Pdf) -> dict:
+    out = default_link_reachability_audit()
+    if not out["checked"]:
+        return out
+    safe_schemes = ("http://", "https://", "mailto:", "tel:")
+    try:
+        for row in collect_link_scoring_rows(pdf):
+            url = safe_str(row.get("url")).strip()
+            if not url:
+                continue
+            out["checkedUriCount"] += 1
+            low = url.lower()
+            if not low.startswith(safe_schemes):
+                out["unsafeUriCount"] += 1
+    except Exception:
+        pass
+    return out
+
+
 def default_ai_visual_tag_audit() -> dict:
+    enabled = os.environ.get("PDFAF_AI_VISUAL_TAG_DIAGNOSTIC", "").strip().lower() in ("1", "true", "yes")
     return {
         "evaluated": False,
         "falsePositiveTagCount": 0,
         "falseNegativeTagCount": 0,
         "likelyMisclassifiedTagCount": 0,
+        "evaluationReason": "model_unavailable" if enabled else "disabled",
     }
 
 
@@ -6007,14 +6279,27 @@ def main():
             "outlineLanguageInvalidCount": 0,
             "expansionTextLanguageInvalidCount": 0,
             "structureLangInvalidCount": 0,
+            "textObjectLanguageInvalidCount": 0,
         },
         "renderedContrastAudit": default_rendered_contrast_audit(),
+        "structureSyntaxAudit": {
+            "missingStructureTypeCount": 0,
+            "missingRoleCount": 0,
+            "missingParentCount": 0,
+            "wrongParentCount": 0,
+            "invalidChildRoleCount": 0,
+            "invalidMcrObjrCount": 0,
+            "circularRoleMapCount": 0,
+            "standardRoleRemappedCount": 0,
+            "unmappedNonstandardRoleCount": 0,
+        },
         "tocNoteAudit": default_toc_note_audit(),
         "optionalContentAudit": {
             "optionalContentConfigMissingNameCount": 0,
             "optionalContentAsInvalidCount": 0,
             "embeddedFileMissingFOrUfCount": 0,
             "dynamicXfaPresent": False,
+            "printerMarkOrTrapNetTaggedCount": 0,
         },
         "linkReachabilityAudit": default_link_reachability_audit(),
         "aiVisualTagAudit": default_ai_visual_tag_audit(),
@@ -6051,9 +6336,10 @@ def main():
         result["contentTaggingAudit"] = collect_content_tagging_audit(pdf)
         result["languageAudit"] = collect_language_audit(pdf)
         result["renderedContrastAudit"] = default_rendered_contrast_audit()
-        result["tocNoteAudit"] = default_toc_note_audit()
+        result["structureSyntaxAudit"] = collect_structure_syntax_audit(pdf)
+        result["tocNoteAudit"] = collect_toc_note_audit(pdf)
         result["optionalContentAudit"] = collect_optional_content_audit(pdf)
-        result["linkReachabilityAudit"] = default_link_reachability_audit()
+        result["linkReachabilityAudit"] = collect_link_reachability_audit(pdf)
         result["aiVisualTagAudit"] = default_ai_visual_tag_audit()
         result["remediationProvenance"] = extract_remediation_provenance(pdf)
 

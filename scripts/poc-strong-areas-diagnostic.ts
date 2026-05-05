@@ -15,6 +15,11 @@ const STRONG_AREA_PREFIXES = [
   'pdfua.content.text_',
   'pdfua.content.image_',
   'pdfua.content.artifact_',
+  'pdfua.structure.syntax_',
+  'pdfua.structure.parent_links_',
+  'pdfua.structure.child_roles_',
+  'pdfua.structure.mcr_objr_',
+  'pdfua.structure.rolemap_',
   'pdfua.table.header_',
   'pdfua.font.',
   'pdfua.language.alt_text_',
@@ -23,6 +28,7 @@ const STRONG_AREA_PREFIXES = [
   'pdfua.language.form_tu_',
   'pdfua.language.outline_',
   'pdfua.language.structure_',
+  'pdfua.language.text_object_',
   'wcag.contrast.',
   'pdfua.toc.',
   'pdfua.note.',
@@ -36,6 +42,7 @@ const STRONG_AREA_PREFIXES = [
 const GATE_CANDIDATE_PREFIXES = [
   'pdfua.parent_tree.',
   'pdfua.content.',
+  'pdfua.structure.',
   'pdfua.table.header_',
 ];
 
@@ -77,6 +84,7 @@ export type PocStrongAreaPromotionReadiness =
 export type PocStrongAreaFamily =
   | 'parent_tree'
   | 'content_tagging'
+  | 'structure_syntax_rolemap'
   | 'table_headers'
   | 'fonts_cmap'
   | 'language'
@@ -130,6 +138,13 @@ function categoryForRule(rule: PacRuleEvidence, categories: StrongAreaCategorySn
 export function familyForPocStrongAreaRule(ruleId: string): PocStrongAreaFamily {
   if (ruleId.startsWith('pdfua.parent_tree.')) return 'parent_tree';
   if (ruleId.startsWith('pdfua.content.')) return 'content_tagging';
+  if (
+    ruleId.startsWith('pdfua.structure.syntax_') ||
+    ruleId.startsWith('pdfua.structure.parent_links_') ||
+    ruleId.startsWith('pdfua.structure.child_roles_') ||
+    ruleId.startsWith('pdfua.structure.mcr_objr_') ||
+    ruleId.startsWith('pdfua.structure.rolemap_')
+  ) return 'structure_syntax_rolemap';
   if (ruleId.startsWith('pdfua.table.header_')) return 'table_headers';
   if (ruleId.startsWith('pdfua.font.')) return 'fonts_cmap';
   if (ruleId.startsWith('pdfua.language.')) return 'language';

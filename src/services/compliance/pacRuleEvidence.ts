@@ -683,6 +683,7 @@ function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
 function expandedLanguageRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const audit = snapshot.languageAudit;
   const rows: Array<[string, CategoryKey, keyof NonNullable<DocumentSnapshot['languageAudit']>, string]> = [
+    ['pdfua.language.text_object_lang_valid', 'pdf_ua_compliance', 'textObjectLanguageInvalidCount', 'text object'],
     ['pdfua.language.alt_text_lang_valid', 'alt_text', 'altTextLanguageInvalidCount', 'alternate text'],
     ['pdfua.language.actual_text_lang_valid', 'pdf_ua_compliance', 'actualTextLanguageInvalidCount', 'ActualText'],
     ['pdfua.language.annotation_contents_lang_valid', 'link_quality', 'annotationContentsLanguageInvalidCount', 'annotation contents'],
@@ -699,10 +700,81 @@ function expandedLanguageRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: count > 0
         ? `${count} ${label} language value(s) appear malformed.`
         : `No malformed ${label} language values were detected.`,
-      confidence: audit ? 'heuristic' : 'manual_review_required',
+      confidence: key === 'structureLangInvalidCount' ? (audit ? 'verified' : 'manual_review_required') : audit ? 'heuristic' : 'manual_review_required',
       count,
     });
   });
+}
+
+function structureSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  if (!hasStructure(snapshot)) {
+    return [
+      noStructureRule('pdfua.structure.syntax_roles_present', 'pdf_ua_compliance', 'Structure syntax evidence requires a structure tree.'),
+      noStructureRule('pdfua.structure.parent_links_valid', 'reading_order', 'Structure parent-link evidence requires a structure tree.'),
+      noStructureRule('pdfua.structure.child_roles_valid', 'pdf_ua_compliance', 'Structure child-role evidence requires a structure tree.'),
+      noStructureRule('pdfua.structure.mcr_objr_valid', 'pdf_ua_compliance', 'MCR/OBJR evidence requires a structure tree.'),
+      noStructureRule('pdfua.structure.rolemap_valid', 'pdf_ua_compliance', 'RoleMap evidence requires a structure tree.'),
+    ];
+  }
+  const audit = snapshot.structureSyntaxAudit;
+  const roleDebt = (audit?.missingStructureTypeCount ?? 0) + (audit?.missingRoleCount ?? 0);
+  const parentDebt = (audit?.missingParentCount ?? 0) + (audit?.wrongParentCount ?? 0);
+  const roleMapDebt =
+    (audit?.circularRoleMapCount ?? 0) +
+    (audit?.standardRoleRemappedCount ?? 0) +
+    (audit?.unmappedNonstandardRoleCount ?? 0);
+  return [
+    rule({
+      ruleId: 'pdfua.structure.syntax_roles_present',
+      status: roleDebt > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: roleDebt > 0
+        ? `${roleDebt} structure element role/type syntax issue(s) were detected.`
+        : 'No missing structure type or role syntax issue was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: roleDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.structure.parent_links_valid',
+      status: parentDebt > 0 ? 'fail' : 'pass',
+      category: 'reading_order',
+      message: parentDebt > 0
+        ? `${parentDebt} structure parent-link issue(s) were detected.`
+        : 'No missing or mismatched structure parent links were detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: parentDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.structure.child_roles_valid',
+      status: (audit?.invalidChildRoleCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: (audit?.invalidChildRoleCount ?? 0) > 0
+        ? `${audit!.invalidChildRoleCount} invalid structure child-role relationship(s) were detected.`
+        : 'No invalid structure child-role relationship was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.invalidChildRoleCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.structure.mcr_objr_valid',
+      status: (audit?.invalidMcrObjrCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: (audit?.invalidMcrObjrCount ?? 0) > 0
+        ? `${audit!.invalidMcrObjrCount} invalid MCR/OBJR reference issue(s) were detected.`
+        : 'No invalid MCR/OBJR reference issue was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.invalidMcrObjrCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.structure.rolemap_valid',
+      status: roleMapDebt > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: roleMapDebt > 0
+        ? `${roleMapDebt} RoleMap issue(s) were detected.`
+        : 'No circular, standard-role, or unmapped non-standard RoleMap issue was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: roleMapDebt,
+    }),
+  ];
 }
 
 function optionalDiagnosticRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
@@ -713,7 +785,10 @@ function optionalDiagnosticRules(snapshot: DocumentSnapshot): PacRuleEvidence[] 
   const ai = snapshot.aiVisualTagAudit;
   const tocDebt = (toc?.tocItemMissingLinkCount ?? 0) + (toc?.tocDestinationMissingCount ?? 0);
   const noteDebt = (toc?.noteMissingIdCount ?? 0) + (toc?.duplicateNoteIdCount ?? 0) + (toc?.noteMissingLabelOrReferenceCount ?? 0);
-  const ocDebt = (optional?.optionalContentConfigMissingNameCount ?? 0) + (optional?.optionalContentAsInvalidCount ?? 0);
+  const ocDebt =
+    (optional?.optionalContentConfigMissingNameCount ?? 0) +
+    (optional?.optionalContentAsInvalidCount ?? 0) +
+    (optional?.printerMarkOrTrapNetTaggedCount ?? 0);
   const uriDebt = (link?.unreachableUriCount ?? 0) + (link?.unsafeUriCount ?? 0);
   const aiDebt = (ai?.falsePositiveTagCount ?? 0) + (ai?.falseNegativeTagCount ?? 0) + (ai?.likelyMisclassifiedTagCount ?? 0);
   return [
@@ -722,7 +797,7 @@ function optionalDiagnosticRules(snapshot: DocumentSnapshot): PacRuleEvidence[] 
       status: !contrast?.measured ? 'warn' : contrast.lowContrastTextRunCount > 0 ? 'fail' : 'pass',
       category: 'color_contrast',
       message: !contrast?.measured
-        ? 'Rendered contrast was not measured in this diagnostic run.'
+        ? `Rendered contrast was not measured in this diagnostic run${contrast?.confidenceReason ? ` (${contrast.confidenceReason})` : ''}.`
         : contrast.lowContrastTextRunCount > 0
           ? `${contrast.lowContrastTextRunCount} low-contrast rendered text run(s) were detected.`
           : 'Rendered contrast evidence did not find low-contrast text runs.',
@@ -844,6 +919,7 @@ export function buildPacRuleEvidence(snapshot: DocumentSnapshot): PacRuleEvidenc
     ...tableHeaderAuditRules(snapshot),
     ...fontSyntaxRules(snapshot),
     ...expandedLanguageRules(snapshot),
+    ...structureSyntaxRules(snapshot),
     ...optionalDiagnosticRules(snapshot),
     ...qualityRules(snapshot),
   ];
