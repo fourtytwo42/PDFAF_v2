@@ -1,4 +1,5 @@
 import { REMEDIATION_CATEGORY_THRESHOLD } from '../../config.js';
+import type { PacRuleEvidence, PacRuleStatus } from '../compliance/pacRuleEvidence.js';
 import type {
   AnalysisResult,
   AppliedRemediationTool,
@@ -20,6 +21,7 @@ export interface HtmlReportOptions {
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary | null;
   remediationOutcomeSummary?: RemediationOutcomeSummary | null;
   semanticSummaries?: SemanticRemediationSummary[];
+  pacRuleEvidence?: PacRuleEvidence[];
 }
 
 function esc(s: string): string {
@@ -197,6 +199,58 @@ function semanticBullets(summaries?: SemanticRemediationSummary[]): string {
   return lines.join('');
 }
 
+function pacRuleSummaryCounts(rows: PacRuleEvidence[]): Record<PacRuleStatus, number> {
+  return rows.reduce<Record<PacRuleStatus, number>>(
+    (acc, row) => {
+      acc[row.status] += 1;
+      return acc;
+    },
+    { pass: 0, warn: 0, fail: 0, not_applicable: 0 },
+  );
+}
+
+function pacRuleSourceText(row: PacRuleEvidence): string {
+  if (!row.source) return '';
+  const parts = [
+    row.source.page !== undefined ? `page ${row.source.page}` : '',
+    row.source.structRef ? `struct ${row.source.structRef}` : '',
+    row.source.objectRef ? `object ${row.source.objectRef}` : '',
+    row.source.details ? row.source.details : '',
+  ].filter(Boolean);
+  return parts.join(' | ');
+}
+
+function pacRuleEvidenceSection(rows?: PacRuleEvidence[]): string {
+  if (!rows) return '';
+  const counts = pacRuleSummaryCounts(rows);
+  const priority: Record<PacRuleStatus, number> = { fail: 0, warn: 1, not_applicable: 2, pass: 3 };
+  const visibleRows = rows
+    .filter(row => row.status === 'fail' || row.status === 'warn')
+    .sort((a, b) =>
+      priority[a.status] - priority[b.status] ||
+      a.category.localeCompare(b.category) ||
+      a.ruleId.localeCompare(b.ruleId)
+    )
+    .slice(0, 25);
+  const omitted = rows.filter(row => row.status === 'fail' || row.status === 'warn').length - visibleRows.length;
+  const tableRows = visibleRows.length === 0
+    ? '<tr><td colspan="7">No PAC-style failures or warnings were derived from the final snapshot.</td></tr>'
+    : visibleRows.map(row => {
+      const source = pacRuleSourceText(row);
+      return `<tr><td><code>${esc(row.ruleId)}</code></td><td>${esc(row.status)}</td><td>${esc(row.category)}</td><td>${esc(row.confidence)}</td><td>${row.count ?? ''}</td><td>${esc(row.message)}</td><td>${esc(source || 'n/a')}</td></tr>`;
+    }).join('');
+  return `
+  <section>
+    <h2>PDF/UA rule checks</h2>
+    <p>Diagnostic-only PAC-style evidence: <strong>${counts.fail}</strong> fail, <strong>${counts.warn}</strong> warn, <strong>${counts.pass}</strong> pass, <strong>${counts.not_applicable}</strong> not applicable.</p>
+    <table>
+      <thead><tr><th>Rule</th><th>Status</th><th>Category</th><th>Confidence</th><th>Count</th><th>Message</th><th>Source</th></tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    ${omitted > 0 ? `<p class="muted">${omitted} additional failure/warning rule row(s) omitted from this compact report.</p>` : ''}
+  </section>`;
+}
+
 /**
  * Self-contained HTML accessibility summary (inline CSS, no CDN).
  * Safe for embedding: filenames and messages are escaped.
@@ -347,6 +401,7 @@ export function generateHtmlReport(
     <h2>Semantic passes</h2>
     <ul>${semanticBullets(options?.semanticSummaries) || '<li>No Stage 6 semantic metadata present.</li>'}</ul>
   </section>
+  ${pacRuleEvidenceSection(options?.pacRuleEvidence)}
   <section>
     <h2>Category scores</h2>
     <table>

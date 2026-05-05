@@ -26,6 +26,7 @@ import { analyzePdf } from '../services/pdfAnalyzer.js';
 import { remediatePdf } from '../services/remediation/orchestrator.js';
 import { applyPostRemediationAltRepair } from '../services/remediation/altStructureRepair.js';
 import { buildRemediationOutcomeSummary } from '../services/remediation/outcomeSummary.js';
+import { buildPacRuleEvidence } from '../services/compliance/pacRuleEvidence.js';
 import { applySemanticRepairs } from '../services/semantic/semanticService.js';
 import { applySemanticHeadingRepairs } from '../services/semantic/headingSemantic.js';
 import { applySemanticPromoteHeadingRepairs } from '../services/semantic/promoteHeadingSemantic.js';
@@ -626,6 +627,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           structuralConfidenceGuard: remediation.structuralConfidenceGuard,
           remediationOutcomeSummary: body.remediationOutcomeSummary,
           semanticSummaries,
+          pacRuleEvidence: buildPacRuleEvidence(outSnapshot),
         },
       );
       const maxReport = 512 * 1024;

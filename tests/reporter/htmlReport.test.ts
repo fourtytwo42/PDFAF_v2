@@ -257,4 +257,70 @@ describe('generateHtmlReport', () => {
     expect(html).toContain('Test OCR guidance');
     expect(html).toContain('&lt;script&gt;');
   });
+
+  it('includes compact PAC rule checks when evidence is supplied', () => {
+    const a = baseAnalysis();
+    const html = generateHtmlReport(a, a, [], {
+      pacRuleEvidence: [
+        {
+          ruleId: 'pdfua.figure.alt_present',
+          status: 'fail',
+          severity: 'failure',
+          category: 'alt_text',
+          message: 'Figure <missing> alt',
+          confidence: 'verified',
+          count: 2,
+          source: {
+            page: 3,
+            structRef: '12 <0>',
+            objectRef: '18 0 R',
+            details: 'sample <detail>',
+          },
+        },
+        {
+          ruleId: 'pdfua.metadata.xmp_present',
+          status: 'warn',
+          severity: 'warning',
+          category: 'pdf_ua_compliance',
+          message: 'XMP uncertain',
+          confidence: 'heuristic',
+        },
+        {
+          ruleId: 'pdfua.settings.marked_true',
+          status: 'pass',
+          severity: 'pass',
+          category: 'pdf_ua_compliance',
+          message: 'Marked true',
+          confidence: 'verified',
+        },
+        {
+          ruleId: 'pdfua.table.headers_present',
+          status: 'not_applicable',
+          severity: 'pass',
+          category: 'table_markup',
+          message: 'No tables',
+          confidence: 'verified',
+        },
+      ],
+    });
+
+    expect(html).toContain('PDF/UA rule checks');
+    expect(html).toContain('<strong>1</strong> fail');
+    expect(html).toContain('<strong>1</strong> warn');
+    expect(html).toContain('<strong>1</strong> pass');
+    expect(html).toContain('<strong>1</strong> not applicable');
+    expect(html).toContain('pdfua.figure.alt_present');
+    expect(html).toContain('pdfua.metadata.xmp_present');
+    expect(html).toContain('Figure &lt;missing&gt; alt');
+    expect(html).toContain('struct 12 &lt;0&gt;');
+    expect(html).toContain('sample &lt;detail&gt;');
+    expect(html).not.toContain('pdfua.settings.marked_true</code></td>');
+  });
+
+  it('does not include PAC rule checks when evidence is omitted', () => {
+    const a = baseAnalysis();
+    const html = generateHtmlReport(a, a, [], {});
+
+    expect(html).not.toContain('PDF/UA rule checks');
+  });
 });
