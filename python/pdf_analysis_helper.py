@@ -55,11 +55,15 @@ except ImportError:
             "objectReferenceMismatchCount": 0,
         },
         "contentTaggingAudit": {
+            "pageStreamsChecked": 0,
+            "totalPageStreams": 0,
+            "formXObjectsChecked": 0,
             "textOutsideMarkedContentOrArtifact": 0,
             "imageOutsideMarkedContentOrArtifact": 0,
             "pathOutsideMarkedContentOrArtifact": 0,
             "artifactInsideTaggedContent": 0,
             "taggedContentInsideArtifact": 0,
+            "malformedMarkedContentStack": 0,
             "contentOutsidePageBounds": 0,
         },
         "tableHeaderAudit": {
@@ -67,15 +71,20 @@ except ImportError:
             "headerAssociationMissingCount": 0,
             "orphanHeaderCellCount": 0,
             "dataCellsWithoutHeaderCount": 0,
+            "headerCellsWithScopeCount": 0,
+            "headerCellsWithIdCount": 0,
+            "dataCellsWithHeadersCount": 0,
         },
         "fontSyntaxAudit": {
             "fontsChecked": 0,
             "missingToUnicodeCMapCount": 0,
             "invalidToUnicodeCMapCount": 0,
+            "emptyToUnicodeCMapCount": 0,
             "cidToGidMapRiskCount": 0,
             "trueTypeEncodingMismatchCount": 0,
             "wModeMismatchCount": 0,
             "externalCMapReferenceCount": 0,
+            "type0DescendantFontRiskCount": 0,
         },
         "languageAudit": {
             "altTextLanguageInvalidCount": 0,
@@ -969,6 +978,77 @@ def collect_tagged_content_audit(pdf: pikepdf.Pdf) -> dict:
     }
 
 
+def _obj_key(obj) -> tuple | None:
+    try:
+        n, g = obj.objgen
+        return (int(n), int(g))
+    except Exception:
+        return None
+
+
+def _page_ref_key_from_mcr(mcr) -> tuple | None:
+    try:
+        pg = mcr.get("/Pg")
+        if pg is not None:
+            return _obj_key(pg)
+    except Exception:
+        pass
+    return None
+
+
+def _flatten_parent_tree_nums(node) -> dict[int, object]:
+    out: dict[int, object] = {}
+    q = deque([node])
+    seen = set()
+    while q and len(out) < MAX_ITEMS * 4:
+        cur = q.popleft()
+        key = _obj_key(cur)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        nums = cur.get("/Nums")
+        if isinstance(nums, pikepdf.Array):
+            for idx in range(0, len(nums) - 1, 2):
+                try:
+                    k = nums[idx]
+                    v = nums[idx + 1]
+                    if isinstance(k, int):
+                        out[int(k)] = v
+                except Exception:
+                    pass
+        kids = cur.get("/Kids")
+        if isinstance(kids, pikepdf.Array):
+            for kid in kids:
+                if isinstance(kid, pikepdf.Dictionary):
+                    q.append(kid)
+    return out
+
+
+def _iter_struct_content_refs(pdf: pikepdf.Pdf):
+    try:
+        for elem in _iter_struct_elems(pdf):
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            k = elem.get("/K")
+            items = list(k) if isinstance(k, pikepdf.Array) else [k]
+            for item in items:
+                if isinstance(item, int):
+                    yield elem, {"type": "mcid", "mcid": int(item), "pageRef": _obj_key(elem.get("/Pg"))}
+                elif isinstance(item, pikepdf.Dictionary):
+                    typ = item.get("/Type")
+                    if typ == pikepdf.Name("/MCR"):
+                        mid = item.get("/MCID")
+                        if isinstance(mid, int):
+                            yield elem, {"type": "mcid", "mcid": int(mid), "pageRef": _page_ref_key_from_mcr(item) or _obj_key(elem.get("/Pg"))}
+                    elif typ == pikepdf.Name("/OBJR"):
+                        yield elem, {"type": "objr", "obj": item.get("/Obj")}
+    except Exception:
+        return
+
+
 def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
     out = {
         "missingParentTree": False,
@@ -985,21 +1065,29 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
             return out
         pt = sr.get("/ParentTree")
         out["missingParentTree"] = not isinstance(pt, pikepdf.Dictionary)
+        parent_entries = _flatten_parent_tree_nums(pt) if isinstance(pt, pikepdf.Dictionary) else {}
+        page_key_by_ref = {}
         for page in pdf.pages:
             try:
+                struct_parent = page.obj.get("/StructParents")
+                if isinstance(struct_parent, int):
+                    page_key_by_ref[_obj_key(page.obj)] = int(struct_parent)
                 raw = _read_page_contents_raw(page.obj)
                 has_mcid = bool(MCID_OP_RE.search(raw))
                 annots = page.obj.get("/Annots")
                 has_annots = isinstance(annots, pikepdf.Array) and len(annots) > 0
-                if (has_mcid or has_annots) and page.obj.get("/StructParents") is None:
+                if (has_mcid or has_annots) and struct_parent is None:
                     out["pagesMissingStructParents"] += 1
+                elif isinstance(struct_parent, int) and has_mcid and struct_parent not in parent_entries:
+                    out["missingMcidParentTreeEntries"] += 1
             except Exception:
                 pass
         if isinstance(pt, pikepdf.Dictionary):
             nums = pt.get("/Nums")
-            if not isinstance(nums, pikepdf.Array):
+            kids = pt.get("/Kids")
+            if not isinstance(nums, pikepdf.Array) and not isinstance(kids, pikepdf.Array):
                 out["invalidParentTreeEntries"] += 1
-            else:
+            if isinstance(nums, pikepdf.Array):
                 if len(nums) % 2 != 0:
                     out["invalidParentTreeEntries"] += 1
                 for idx in range(0, len(nums) - 1, 2):
@@ -1010,6 +1098,56 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
                             out["invalidParentTreeEntries"] += 1
                     except Exception:
                         out["invalidParentTreeEntries"] += 1
+        for elem, ref in _iter_struct_content_refs(pdf):
+            try:
+                if ref["type"] == "mcid":
+                    page_ref = ref.get("pageRef")
+                    page_key = page_key_by_ref.get(page_ref)
+                    if page_key is None:
+                        out["missingMcidParentTreeEntries"] += 1
+                        continue
+                    entry = parent_entries.get(page_key)
+                    mcid = int(ref["mcid"])
+                    if not isinstance(entry, pikepdf.Array) or mcid < 0 or mcid >= len(entry) or entry[mcid] is None:
+                        out["missingMcidParentTreeEntries"] += 1
+                    elif _obj_key(entry[mcid]) != _obj_key(elem):
+                        out["objectReferenceMismatchCount"] += 1
+                elif ref["type"] == "objr":
+                    obj = ref.get("obj")
+                    if not isinstance(obj, pikepdf.Dictionary):
+                        out["invalidParentTreeEntries"] += 1
+            except Exception:
+                out["invalidParentTreeEntries"] += 1
+        for page in pdf.pages:
+            try:
+                annots = page.obj.get("/Annots")
+                if not isinstance(annots, pikepdf.Array):
+                    continue
+                for annot_ref in annots:
+                    try:
+                        annot = pdf.get_object(annot_ref.objgen) if hasattr(annot_ref, "objgen") else annot_ref
+                        if not isinstance(annot, pikepdf.Dictionary):
+                            continue
+                        sp = annot.get("/StructParent")
+                        if not isinstance(sp, int):
+                            continue
+                        entry = parent_entries.get(int(sp))
+                        if not isinstance(entry, pikepdf.Dictionary):
+                            out["annotationReferenceMismatchCount"] += 1
+                            continue
+                        found = False
+                        for elem, ref in _iter_struct_content_refs(pdf):
+                            if ref.get("type") == "objr" and _obj_key(ref.get("obj")) == _obj_key(annot):
+                                found = True
+                                if _obj_key(elem) != _obj_key(entry):
+                                    out["annotationReferenceMismatchCount"] += 1
+                                break
+                        if not found:
+                            out["annotationReferenceMismatchCount"] += 1
+                    except Exception:
+                        out["annotationReferenceMismatchCount"] += 1
+            except Exception:
+                pass
     except Exception:
         pass
     return out
@@ -1017,55 +1155,87 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
 
 def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
     out = {
+        "pageStreamsChecked": 0,
+        "totalPageStreams": len(pdf.pages),
+        "formXObjectsChecked": 0,
         "textOutsideMarkedContentOrArtifact": 0,
         "imageOutsideMarkedContentOrArtifact": 0,
-        "pathOutsideMarkedContentOrArtifact": _count_path_paint_outside_mcid_bdc(pdf, max_pages=12, max_hits=200),
+        "pathOutsideMarkedContentOrArtifact": 0,
         "artifactInsideTaggedContent": 0,
         "taggedContentInsideArtifact": 0,
+        "malformedMarkedContentStack": 0,
         "contentOutsidePageBounds": 0,
     }
     text_ops = {"Tj", "TJ", "'", '"'}
     image_ops = {"Do", "EI"}
     path_ops = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "sh"}
+
+    def inc(key: str, amount: int = 1) -> None:
+        out[key] = min(200, int(out.get(key, 0)) + amount)
+
+    def role_from_inst(inst) -> str:
+        try:
+            return safe_str(inst.operands[0]) if inst.operands else ""
+        except Exception:
+            return ""
+
+    def walk_instructions(instructions) -> None:
+        stack: list[str] = []
+        for inst in instructions:
+            op = str(inst.operator)
+            if op in ("BDC", "BMC"):
+                role = role_from_inst(inst)
+                if role == "/Artifact":
+                    if any(item != "/Artifact" for item in stack):
+                        inc("artifactInsideTaggedContent")
+                    stack.append("/Artifact")
+                else:
+                    if any(item == "/Artifact" for item in stack):
+                        inc("taggedContentInsideArtifact")
+                    stack.append(role or "/MarkedContent")
+                continue
+            if op == "EMC":
+                if stack:
+                    stack.pop()
+                else:
+                    inc("malformedMarkedContentStack")
+                continue
+            if stack:
+                continue
+            if op in text_ops:
+                inc("textOutsideMarkedContentOrArtifact")
+            elif op in image_ops:
+                inc("imageOutsideMarkedContentOrArtifact")
+            elif op in path_ops:
+                inc("pathOutsideMarkedContentOrArtifact")
+        if stack:
+            inc("malformedMarkedContentStack", len(stack))
+
     try:
         for page in pdf.pages[:12]:
-            if (
-                out["textOutsideMarkedContentOrArtifact"] >= 200
-                and out["imageOutsideMarkedContentOrArtifact"] >= 200
-                and out["artifactInsideTaggedContent"] >= 200
-                and out["taggedContentInsideArtifact"] >= 200
-            ):
+            if all(out[key] >= 200 for key in (
+                "textOutsideMarkedContentOrArtifact",
+                "imageOutsideMarkedContentOrArtifact",
+                "pathOutsideMarkedContentOrArtifact",
+                "artifactInsideTaggedContent",
+                "taggedContentInsideArtifact",
+                "malformedMarkedContentStack",
+            )):
                 break
             try:
-                depth = 0
-                artifact_depth = 0
-                tag_depth = 0
-                for inst in pikepdf.parse_content_stream(page.obj):
-                    op = str(inst.operator)
-                    if op in ("BDC", "BMC"):
-                        depth += 1
-                        role = safe_str(inst.operands[0]) if inst.operands else ""
-                        if role == "/Artifact":
-                            artifact_depth += 1
-                            if tag_depth > 0:
-                                out["artifactInsideTaggedContent"] = min(200, out["artifactInsideTaggedContent"] + 1)
-                        else:
-                            tag_depth += 1
-                            if artifact_depth > 0:
-                                out["taggedContentInsideArtifact"] = min(200, out["taggedContentInsideArtifact"] + 1)
-                    elif op == "EMC":
-                        if artifact_depth > 0:
-                            artifact_depth -= 1
-                        elif tag_depth > 0:
-                            tag_depth -= 1
-                        depth = max(0, depth - 1)
-                    elif depth == 0:
-                        if op in text_ops:
-                            out["textOutsideMarkedContentOrArtifact"] = min(200, out["textOutsideMarkedContentOrArtifact"] + 1)
-                        elif op in image_ops:
-                            out["imageOutsideMarkedContentOrArtifact"] = min(200, out["imageOutsideMarkedContentOrArtifact"] + 1)
-                        elif op in path_ops:
-                            # Keep detailed path count from the existing bounded helper.
+                walk_instructions(pikepdf.parse_content_stream(page.obj))
+                out["pageStreamsChecked"] += 1
+                resources = page.obj.get("/Resources")
+                xobjects = resources.get("/XObject") if isinstance(resources, pikepdf.Dictionary) else None
+                if isinstance(xobjects, pikepdf.Dictionary):
+                    for name in list(xobjects.keys())[:25]:
+                        try:
+                            xobj = xobjects[name]
+                            if not isinstance(xobj, pikepdf.Stream) or xobj.get("/Subtype") != pikepdf.Name("/Form"):
+                                continue
+                            walk_instructions(pikepdf.parse_content_stream(xobj))
+                            out["formXObjectsChecked"] += 1
+                        except Exception:
                             pass
             except Exception:
                 pass
@@ -1093,7 +1263,115 @@ def collect_table_header_audit_from_tables(tables: list) -> dict:
         "headerAssociationMissingCount": missing_header_assoc,
         "orphanHeaderCellCount": orphan_headers,
         "dataCellsWithoutHeaderCount": data_without_headers,
+        "headerCellsWithScopeCount": 0,
+        "headerCellsWithIdCount": 0,
+        "dataCellsWithHeadersCount": 0,
     }
+
+
+def _table_cell_id(cell) -> str:
+    for key in ("/ID", "/Headers"):
+        try:
+            value = cell.get(key)
+            if value is None:
+                continue
+            if isinstance(value, pikepdf.Array):
+                return " ".join(safe_str(v).strip() for v in value if safe_str(v).strip())
+            text = safe_str(value).strip()
+            if text:
+                return text
+        except Exception:
+            pass
+    return ""
+
+
+def collect_table_header_audit(pdf: pikepdf.Pdf, fallback_tables: list) -> dict:
+    out = collect_table_header_audit_from_tables(fallback_tables)
+    try:
+        tables = list(_iter_table_struct_elems(pdf))[:MAX_ITEMS]
+    except Exception:
+        tables = []
+    if not tables:
+        return out
+    out = {
+        "tablesChecked": len(tables),
+        "headerAssociationMissingCount": 0,
+        "orphanHeaderCellCount": 0,
+        "dataCellsWithoutHeaderCount": 0,
+        "headerCellsWithScopeCount": 0,
+        "headerCellsWithIdCount": 0,
+        "dataCellsWithHeadersCount": 0,
+    }
+    for table in tables:
+        try:
+            th_ids = set()
+            table_headers = []
+            data_cells = []
+            rows = _iter_table_rows(table)
+            for row_index, row in enumerate(rows):
+                for cell_index, cell in enumerate(_direct_role_children(row)):
+                    tag = (get_name(cell) or "").lstrip("/").upper()
+                    if tag not in ("TH", "TD"):
+                        continue
+                    if tag == "TH":
+                        table_headers.append((row_index, cell_index, cell))
+                        scope = safe_str(cell.get("/Scope")).strip().lstrip("/")
+                        if scope:
+                            out["headerCellsWithScopeCount"] += 1
+                        cid = safe_str(cell.get("/ID")).strip()
+                        if cid:
+                            th_ids.add(cid)
+                            out["headerCellsWithIdCount"] += 1
+                    else:
+                        data_cells.append((row_index, cell_index, cell))
+
+            if not table_headers and data_cells:
+                out["headerAssociationMissingCount"] += 1
+                out["dataCellsWithoutHeaderCount"] += len(data_cells)
+                continue
+
+            associated_headers = set()
+            table_missing_data_header = False
+            for row_index, cell_index, th in table_headers:
+                scope = safe_str(th.get("/Scope")).strip().lstrip("/").lower()
+                if scope in ("row", "both"):
+                    for td_row, td_col, td in data_cells:
+                        if td_row == row_index:
+                            associated_headers.add(_obj_key(th))
+                if scope in ("column", "col", "both"):
+                    for td_row, td_col, td in data_cells:
+                        if td_col == cell_index:
+                            associated_headers.add(_obj_key(th))
+
+            for row_index, cell_index, td in data_cells:
+                headers = td.get("/Headers")
+                has_explicit = False
+                if isinstance(headers, pikepdf.Array):
+                    has_explicit = any(safe_str(h).strip() in th_ids for h in headers)
+                elif headers is not None:
+                    has_explicit = safe_str(headers).strip() in th_ids
+                has_scope = any(
+                    ((safe_str(th.get("/Scope")).strip().lstrip("/").lower() in ("row", "both") and th_row == row_index) or
+                     (safe_str(th.get("/Scope")).strip().lstrip("/").lower() in ("column", "col", "both") and th_col == cell_index))
+                    for th_row, th_col, th in table_headers
+                )
+                if has_explicit or has_scope:
+                    out["dataCellsWithHeadersCount"] += 1
+                else:
+                    out["dataCellsWithoutHeaderCount"] += 1
+                    table_missing_data_header = True
+
+            for _, _, th in table_headers:
+                key = _obj_key(th)
+                has_scope = bool(safe_str(th.get("/Scope")).strip())
+                has_id = bool(safe_str(th.get("/ID")).strip())
+                if not has_scope and not has_id and key not in associated_headers:
+                    out["orphanHeaderCellCount"] += 1
+            if data_cells and table_missing_data_header:
+                out["headerAssociationMissingCount"] += 1
+        except Exception:
+            pass
+    return out
 
 
 def collect_font_syntax_audit_from_fonts(fonts: list) -> dict:
@@ -1101,10 +1379,12 @@ def collect_font_syntax_audit_from_fonts(fonts: list) -> dict:
         "fontsChecked": len(fonts or []),
         "missingToUnicodeCMapCount": 0,
         "invalidToUnicodeCMapCount": 0,
+        "emptyToUnicodeCMapCount": 0,
         "cidToGidMapRiskCount": 0,
         "trueTypeEncodingMismatchCount": 0,
         "wModeMismatchCount": 0,
         "externalCMapReferenceCount": 0,
+        "type0DescendantFontRiskCount": 0,
     }
     for font in fonts or []:
         try:
@@ -1117,6 +1397,127 @@ def collect_font_syntax_audit_from_fonts(fonts: list) -> dict:
                 out["cidToGidMapRiskCount"] += 1
         except Exception:
             pass
+    return out
+
+
+def _font_descriptor_flags(font) -> int:
+    try:
+        desc = font.get("/FontDescriptor")
+        if isinstance(desc, pikepdf.Dictionary):
+            return int(desc.get("/Flags") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def _to_unicode_status(font) -> str:
+    try:
+        cmap = font.get("/ToUnicode")
+        if cmap is None:
+            return "missing"
+        if not isinstance(cmap, pikepdf.Stream):
+            return "invalid"
+        raw = cmap.read_bytes()
+        if not raw or len(raw.strip()) == 0:
+            return "empty"
+        text = raw.decode("latin-1", errors="ignore")
+        if "begincmap" not in text or "endcmap" not in text:
+            return "invalid"
+        if "beginbfchar" not in text and "beginbfrange" not in text:
+            return "empty"
+        if text.count("beginbfchar") != text.count("endbfchar"):
+            return "invalid"
+        if text.count("beginbfrange") != text.count("endbfrange"):
+            return "invalid"
+        return "valid"
+    except Exception:
+        return "invalid"
+
+
+def _iter_page_fonts(pdf: pikepdf.Pdf):
+    seen = set()
+    for page in pdf.pages:
+        try:
+            resources = page.get("/Resources")
+            font_dict = resources.get("/Font") if isinstance(resources, pikepdf.Dictionary) else None
+            if not isinstance(font_dict, pikepdf.Dictionary):
+                continue
+            for key in font_dict.keys():
+                try:
+                    font = font_dict[key]
+                    obj_key = _obj_key(font) or (safe_str(font.get("/BaseFont")), safe_str(font.get("/Subtype")), safe_str(key))
+                    if obj_key in seen:
+                        continue
+                    seen.add(obj_key)
+                    yield font
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def collect_font_syntax_audit(pdf: pikepdf.Pdf, fallback_fonts: list) -> dict:
+    out = {
+        "fontsChecked": 0,
+        "missingToUnicodeCMapCount": 0,
+        "invalidToUnicodeCMapCount": 0,
+        "emptyToUnicodeCMapCount": 0,
+        "cidToGidMapRiskCount": 0,
+        "trueTypeEncodingMismatchCount": 0,
+        "wModeMismatchCount": 0,
+        "externalCMapReferenceCount": 0,
+        "type0DescendantFontRiskCount": 0,
+    }
+    fonts = list(_iter_page_fonts(pdf))[:MAX_ITEMS]
+    if not fonts:
+        return collect_font_syntax_audit_from_fonts(fallback_fonts)
+    out["fontsChecked"] = len(fonts)
+    for font in fonts:
+        try:
+            subtype = safe_str(font.get("/Subtype")).lstrip("/")
+            status = _to_unicode_status(font)
+            if status == "missing":
+                out["missingToUnicodeCMapCount"] += 1
+            elif status == "empty":
+                out["emptyToUnicodeCMapCount"] += 1
+            elif status == "invalid":
+                out["invalidToUnicodeCMapCount"] += 1
+
+            if subtype == "Type0":
+                descendants = font.get("/DescendantFonts")
+                if not isinstance(descendants, pikepdf.Array) or len(descendants) == 0:
+                    out["type0DescendantFontRiskCount"] += 1
+                else:
+                    for descendant in descendants[:4]:
+                        if not isinstance(descendant, pikepdf.Dictionary):
+                            out["type0DescendantFontRiskCount"] += 1
+                            continue
+                        dsub = safe_str(descendant.get("/Subtype")).lstrip("/")
+                        if dsub.startswith("CIDFont"):
+                            cid_map = descendant.get("/CIDToGIDMap")
+                            if cid_map is None or (isinstance(cid_map, pikepdf.Name) and safe_str(cid_map) not in ("/Identity", "/Identity-H", "/Identity-V")):
+                                out["cidToGidMapRiskCount"] += 1
+                        if int(descendant.get("/WMode") or font.get("/WMode") or 0) not in (0, 1):
+                            out["wModeMismatchCount"] += 1
+
+            encoding = font.get("/Encoding")
+            if subtype == "Type0" and isinstance(encoding, pikepdf.Name):
+                enc = safe_str(encoding)
+                if enc not in ("/Identity-H", "/Identity-V"):
+                    out["externalCMapReferenceCount"] += 1
+            if subtype == "TrueType":
+                flags = _font_descriptor_flags(font)
+                symbolic = bool(flags & 4)
+                nonsymbolic = bool(flags & 32)
+                enc = safe_str(encoding)
+                if symbolic and nonsymbolic:
+                    out["trueTypeEncodingMismatchCount"] += 1
+                elif symbolic and enc in ("/WinAnsiEncoding", "/MacRomanEncoding"):
+                    out["trueTypeEncodingMismatchCount"] += 1
+                elif nonsymbolic and enc in ("/SymbolEncoding",):
+                    out["trueTypeEncodingMismatchCount"] += 1
+        except Exception:
+            out["invalidToUnicodeCMapCount"] += 1
     return out
 
 
@@ -5567,11 +5968,15 @@ def main():
             "objectReferenceMismatchCount": 0,
         },
         "contentTaggingAudit": {
+            "pageStreamsChecked": 0,
+            "totalPageStreams": 0,
+            "formXObjectsChecked": 0,
             "textOutsideMarkedContentOrArtifact": 0,
             "imageOutsideMarkedContentOrArtifact": 0,
             "pathOutsideMarkedContentOrArtifact": 0,
             "artifactInsideTaggedContent": 0,
             "taggedContentInsideArtifact": 0,
+            "malformedMarkedContentStack": 0,
             "contentOutsidePageBounds": 0,
         },
         "tableHeaderAudit": {
@@ -5579,15 +5984,20 @@ def main():
             "headerAssociationMissingCount": 0,
             "orphanHeaderCellCount": 0,
             "dataCellsWithoutHeaderCount": 0,
+            "headerCellsWithScopeCount": 0,
+            "headerCellsWithIdCount": 0,
+            "dataCellsWithHeadersCount": 0,
         },
         "fontSyntaxAudit": {
             "fontsChecked": 0,
             "missingToUnicodeCMapCount": 0,
             "invalidToUnicodeCMapCount": 0,
+            "emptyToUnicodeCMapCount": 0,
             "cidToGidMapRiskCount": 0,
             "trueTypeEncodingMismatchCount": 0,
             "wModeMismatchCount": 0,
             "externalCMapReferenceCount": 0,
+            "type0DescendantFontRiskCount": 0,
         },
         "languageAudit": {
             "altTextLanguageInvalidCount": 0,
@@ -5679,11 +6089,11 @@ def main():
 
         # Fonts
         result["fonts"] = extract_fonts(pdf)
-        result["fontSyntaxAudit"] = collect_font_syntax_audit_from_fonts(result["fonts"])
+        result["fontSyntaxAudit"] = collect_font_syntax_audit(pdf, result["fonts"])
 
         # Bookmarks
         result["bookmarks"] = extract_bookmarks(pdf)
-        result["tableHeaderAudit"] = collect_table_header_audit_from_tables(result["tables"])
+        result["tableHeaderAudit"] = collect_table_header_audit(pdf, result["tables"])
 
         # AcroForm fields (supplement tagged form fields)
         acro = extract_acroform_fields(pdf)

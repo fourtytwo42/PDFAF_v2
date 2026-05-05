@@ -112,11 +112,15 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
       objectReferenceMismatchCount: 0,
     },
     contentTaggingAudit: {
+      pageStreamsChecked: 3,
+      totalPageStreams: 3,
+      formXObjectsChecked: 0,
       textOutsideMarkedContentOrArtifact: 0,
       imageOutsideMarkedContentOrArtifact: 0,
       pathOutsideMarkedContentOrArtifact: 0,
       artifactInsideTaggedContent: 0,
       taggedContentInsideArtifact: 0,
+      malformedMarkedContentStack: 0,
       contentOutsidePageBounds: 0,
     },
     tableHeaderAudit: {
@@ -124,15 +128,20 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
       headerAssociationMissingCount: 0,
       orphanHeaderCellCount: 0,
       dataCellsWithoutHeaderCount: 0,
+      headerCellsWithScopeCount: 0,
+      headerCellsWithIdCount: 0,
+      dataCellsWithHeadersCount: 0,
     },
     fontSyntaxAudit: {
       fontsChecked: 1,
       missingToUnicodeCMapCount: 0,
       invalidToUnicodeCMapCount: 0,
+      emptyToUnicodeCMapCount: 0,
       cidToGidMapRiskCount: 0,
       trueTypeEncodingMismatchCount: 0,
       wModeMismatchCount: 0,
       externalCMapReferenceCount: 0,
+      type0DescendantFontRiskCount: 0,
     },
     languageAudit: {
       altTextLanguageInvalidCount: 0,
@@ -392,11 +401,15 @@ describe('buildPacRuleEvidence', () => {
   it('fails bounded content tagging and artifact boundary debt', () => {
     const rows = buildPacRuleEvidence(makeSnap({
       contentTaggingAudit: {
+        pageStreamsChecked: 3,
+        totalPageStreams: 3,
+        formXObjectsChecked: 0,
         textOutsideMarkedContentOrArtifact: 3,
         imageOutsideMarkedContentOrArtifact: 2,
         pathOutsideMarkedContentOrArtifact: 1,
         artifactInsideTaggedContent: 1,
         taggedContentInsideArtifact: 2,
+        malformedMarkedContentStack: 1,
         contentOutsidePageBounds: 0,
       },
     }));
@@ -404,7 +417,7 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.content.text_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 3 });
     expect(byId(rows, 'pdfua.content.image_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 2 });
     expect(byId(rows, 'pdfua.content.path_paint_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 1 });
-    expect(byId(rows, 'pdfua.content.artifact_tag_boundary_valid')).toMatchObject({ status: 'fail', count: 3 });
+    expect(byId(rows, 'pdfua.content.artifact_tag_boundary_valid')).toMatchObject({ status: 'fail', count: 4, confidence: 'verified' });
   });
 
   it('fails table header association audit debt', () => {
@@ -415,11 +428,14 @@ describe('buildPacRuleEvidence', () => {
         headerAssociationMissingCount: 2,
         orphanHeaderCellCount: 1,
         dataCellsWithoutHeaderCount: 3,
+        headerCellsWithScopeCount: 1,
+        headerCellsWithIdCount: 1,
+        dataCellsWithHeadersCount: 1,
       },
     }));
 
-    expect(byId(rows, 'pdfua.table.header_association_present')).toMatchObject({ status: 'fail', count: 5 });
-    expect(byId(rows, 'pdfua.table.header_cells_associated')).toMatchObject({ status: 'fail', count: 1 });
+    expect(byId(rows, 'pdfua.table.header_association_present')).toMatchObject({ status: 'fail', count: 3, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.table.header_cells_associated')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
   });
 
   it('emits font and expanded language audit rows', () => {
@@ -428,10 +444,12 @@ describe('buildPacRuleEvidence', () => {
         fontsChecked: 2,
         missingToUnicodeCMapCount: 1,
         invalidToUnicodeCMapCount: 1,
+        emptyToUnicodeCMapCount: 1,
         cidToGidMapRiskCount: 1,
         trueTypeEncodingMismatchCount: 1,
         wModeMismatchCount: 1,
         externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 1,
       },
       languageAudit: {
         altTextLanguageInvalidCount: 1,
@@ -445,8 +463,8 @@ describe('buildPacRuleEvidence', () => {
     }));
 
     expect(byId(rows, 'pdfua.font.to_unicode_cmap_present').status).toBe('fail');
-    expect(byId(rows, 'pdfua.font.to_unicode_cmap_valid').status).toBe('fail');
-    expect(byId(rows, 'pdfua.font.cid_to_gidmap_valid').status).toBe('warn');
+    expect(byId(rows, 'pdfua.font.to_unicode_cmap_valid')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.font.cid_to_gidmap_valid')).toMatchObject({ status: 'warn', count: 2 });
     expect(byId(rows, 'pdfua.font.truetype_encoding_consistent').status).toBe('warn');
     expect(byId(rows, 'pdfua.font.wmode_consistent').status).toBe('fail');
     expect(byId(rows, 'pdfua.language.alt_text_lang_valid').status).toBe('fail');

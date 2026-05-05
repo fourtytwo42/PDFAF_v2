@@ -63,14 +63,39 @@ export interface PocStrongAreaPromotionCandidate {
   ruleId: string;
   status: PacRuleEvidence['status'];
   confidence: PacRuleEvidence['confidence'];
-  classification: 'scoring_candidate' | 'gate_candidate' | 'diagnostic_only';
+  family: PocStrongAreaFamily;
+  classification: PocStrongAreaPromotionReadiness;
   message: string;
+}
+
+export type PocStrongAreaPromotionReadiness =
+  | 'ready_for_scoring_candidate'
+  | 'ready_for_gate_candidate'
+  | 'needs_more_evidence'
+  | 'diagnostic_only_optional';
+
+export type PocStrongAreaFamily =
+  | 'parent_tree'
+  | 'content_tagging'
+  | 'table_headers'
+  | 'fonts_cmap'
+  | 'language'
+  | 'contrast_link_ai_placeholders'
+  | 'other';
+
+export interface PocStrongAreaFamilySummary {
+  family: PocStrongAreaFamily;
+  pass: number;
+  warn: number;
+  fail: number;
+  not_applicable: number;
 }
 
 export interface PocStrongAreaSummary {
   generatedAt: string;
   fileCount: number;
   statusDistribution: Record<PacRuleStatus, number>;
+  familySummaries: PocStrongAreaFamilySummary[];
   categoryPassPacFailGaps: PocStrongAreaPromotionCandidate[];
   noisyEvidence: PocStrongAreaPromotionCandidate[];
   promotionCandidates: PocStrongAreaPromotionCandidate[];
@@ -102,11 +127,29 @@ function categoryForRule(rule: PacRuleEvidence, categories: StrongAreaCategorySn
   return categories.find(category => category.key === rule.category);
 }
 
+export function familyForPocStrongAreaRule(ruleId: string): PocStrongAreaFamily {
+  if (ruleId.startsWith('pdfua.parent_tree.')) return 'parent_tree';
+  if (ruleId.startsWith('pdfua.content.')) return 'content_tagging';
+  if (ruleId.startsWith('pdfua.table.header_')) return 'table_headers';
+  if (ruleId.startsWith('pdfua.font.')) return 'fonts_cmap';
+  if (ruleId.startsWith('pdfua.language.')) return 'language';
+  if (
+    ruleId.startsWith('wcag.contrast.') ||
+    ruleId.startsWith('pdfua.link.uri_') ||
+    ruleId.startsWith('pdfua.ai.')
+  ) return 'contrast_link_ai_placeholders';
+  return 'other';
+}
+
 export function classifyPocStrongAreaRule(
   rule: PacRuleEvidence,
   categories: StrongAreaCategorySnapshot[],
-): PocStrongAreaPromotionCandidate['classification'] {
-  if (rule.status !== 'fail') return 'diagnostic_only';
+): PocStrongAreaPromotionReadiness {
+  if (rule.status !== 'fail') {
+    return rule.status === 'warn' || rule.confidence !== 'verified'
+      ? 'needs_more_evidence'
+      : 'diagnostic_only_optional';
+  }
   const category = categoryForRule(rule, categories);
   const passingCategory = Boolean(
     category &&
@@ -114,15 +157,16 @@ export function classifyPocStrongAreaRule(
     typeof category.score === 'number' &&
     category.score >= REMEDIATION_CATEGORY_THRESHOLD,
   );
-  if (rule.confidence === 'verified' && passingCategory) return 'scoring_candidate';
+  if (rule.confidence === 'verified' && passingCategory) return 'ready_for_scoring_candidate';
   if (rule.confidence === 'verified' && GATE_CANDIDATE_PREFIXES.some(prefix => rule.ruleId.startsWith(prefix))) {
-    return 'gate_candidate';
+    return 'ready_for_gate_candidate';
   }
-  return 'diagnostic_only';
+  return 'needs_more_evidence';
 }
 
 export function buildPocStrongAreaSummary(rows: PocStrongAreaFileRow[]): PocStrongAreaSummary {
   const statusDistribution = emptyStatusCounts();
+  const familyMap = new Map<PocStrongAreaFamily, PocStrongAreaFamilySummary>();
   const gaps: PocStrongAreaPromotionCandidate[] = [];
   const noisy: PocStrongAreaPromotionCandidate[] = [];
   const promotion: PocStrongAreaPromotionCandidate[] = [];
@@ -130,6 +174,10 @@ export function buildPocStrongAreaSummary(rows: PocStrongAreaFileRow[]): PocStro
   for (const file of rows) {
     for (const rule of file.rules.filter(row => isPocStrongAreaRule(row.ruleId))) {
       statusDistribution[rule.status] += 1;
+      const family = familyForPocStrongAreaRule(rule.ruleId);
+      const familySummary = familyMap.get(family) ?? { family, ...emptyStatusCounts() };
+      familySummary[rule.status] += 1;
+      familyMap.set(family, familySummary);
       const category = categoryForRule(rule, file.categories);
       const candidate: PocStrongAreaPromotionCandidate = {
         fileId: file.id,
@@ -139,6 +187,7 @@ export function buildPocStrongAreaSummary(rows: PocStrongAreaFileRow[]): PocStro
         ruleId: rule.ruleId,
         status: rule.status,
         confidence: rule.confidence,
+        family,
         classification: classifyPocStrongAreaRule(rule, file.categories),
         message: rule.message,
       };
@@ -151,7 +200,9 @@ export function buildPocStrongAreaSummary(rows: PocStrongAreaFileRow[]): PocStro
         gaps.push(candidate);
       }
       if (rule.status === 'warn' || rule.confidence !== 'verified') noisy.push(candidate);
-      if (candidate.classification !== 'diagnostic_only') promotion.push(candidate);
+      if (candidate.classification === 'ready_for_scoring_candidate' || candidate.classification === 'ready_for_gate_candidate') {
+        promotion.push(candidate);
+      }
     }
   }
 
@@ -167,6 +218,7 @@ export function buildPocStrongAreaSummary(rows: PocStrongAreaFileRow[]): PocStro
     generatedAt: new Date().toISOString(),
     fileCount: rows.length,
     statusDistribution,
+    familySummaries: [...familyMap.values()].sort((a, b) => a.family.localeCompare(b.family)),
     categoryPassPacFailGaps: gaps,
     noisyEvidence: noisy,
     promotionCandidates: promotion,
@@ -190,6 +242,17 @@ export function renderPocStrongAreaMarkdown(summary: PocStrongAreaSummary): stri
     '',
   ];
   appendCandidateTable(lines, summary.categoryPassPacFailGaps, 'No strong-area category-pass / PAC-fail gaps found.');
+  lines.push('## Rule Family Summary', '');
+  if (summary.familySummaries.length === 0) {
+    lines.push('No strong-area rule evidence found.', '');
+  } else {
+    lines.push('| Family | Fail | Warn | Pass | N/A |');
+    lines.push('| --- | ---: | ---: | ---: | ---: |');
+    for (const family of summary.familySummaries) {
+      lines.push(`| ${family.family} | ${family.fail} | ${family.warn} | ${family.pass} | ${family.not_applicable} |`);
+    }
+    lines.push('');
+  }
   lines.push('## Promotion Candidates', '');
   appendCandidateTable(lines, summary.promotionCandidates, 'No scoring or gate candidates found. Repairs remain diagnostic-only.');
   lines.push('## Noisy Or Incomplete Evidence', '');
@@ -202,10 +265,10 @@ function appendCandidateTable(lines: string[], rows: PocStrongAreaPromotionCandi
     lines.push(emptyMessage, '');
     return;
   }
-  lines.push('| File | Category | Score | Rule | Status | Confidence | Classification | Message |');
-  lines.push('| --- | --- | ---: | --- | --- | --- | --- | --- |');
+  lines.push('| File | Family | Category | Score | Rule | Status | Confidence | Readiness | Message |');
+  lines.push('| --- | --- | --- | ---: | --- | --- | --- | --- | --- |');
   for (const row of rows) {
-    lines.push(`| ${row.fileId} | ${row.category} | ${row.categoryScore ?? ''} | \`${row.ruleId}\` | ${row.status} | ${row.confidence} | ${row.classification} | ${row.message.replace(/\|/g, '\\|')} |`);
+    lines.push(`| ${row.fileId} | ${row.family} | ${row.category} | ${row.categoryScore ?? ''} | \`${row.ruleId}\` | ${row.status} | ${row.confidence} | ${row.classification} | ${row.message.replace(/\|/g, '\\|')} |`);
   }
   lines.push('');
 }

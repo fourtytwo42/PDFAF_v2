@@ -30,20 +30,20 @@ describe('poc strong areas diagnostic helpers', () => {
   it('classifies verified fails against passing categories as scoring candidates', () => {
     const categories = [{ key: 'pdf_ua_compliance' as const, score: 95, applicable: true }];
 
-    expect(classifyPocStrongAreaRule(rule({ status: 'fail' }), categories)).toBe('scoring_candidate');
-    expect(classifyPocStrongAreaRule(rule({ status: 'fail', confidence: 'heuristic' }), categories)).toBe('diagnostic_only');
-    expect(classifyPocStrongAreaRule(rule({ status: 'warn' }), categories)).toBe('diagnostic_only');
+    expect(classifyPocStrongAreaRule(rule({ status: 'fail' }), categories)).toBe('ready_for_scoring_candidate');
+    expect(classifyPocStrongAreaRule(rule({ status: 'fail', confidence: 'heuristic' }), categories)).toBe('needs_more_evidence');
+    expect(classifyPocStrongAreaRule(rule({ status: 'warn' }), categories)).toBe('needs_more_evidence');
   });
 
   it('classifies verified structural fails below category threshold as gate candidates', () => {
     const categories = [{ key: 'pdf_ua_compliance' as const, score: 60, applicable: true }];
 
-    expect(classifyPocStrongAreaRule(rule({ status: 'fail' }), categories)).toBe('gate_candidate');
+    expect(classifyPocStrongAreaRule(rule({ status: 'fail' }), categories)).toBe('ready_for_gate_candidate');
     expect(classifyPocStrongAreaRule(rule({
       ruleId: 'pdfua.font.to_unicode_cmap_present',
       status: 'fail',
       category: 'text_extractability',
-    }), [{ key: 'text_extractability' as const, score: 60, applicable: true }])).toBe('diagnostic_only');
+    }), [{ key: 'text_extractability' as const, score: 60, applicable: true }])).toBe('needs_more_evidence');
   });
 
   it('builds deterministic gap, noisy, and promotion summaries', () => {
@@ -91,9 +91,14 @@ describe('poc strong areas diagnostic helpers', () => {
     expect(summary.statusDistribution).toMatchObject({ fail: 2, warn: 1, pass: 0, not_applicable: 0 });
     expect(summary.categoryPassPacFailGaps.map(row => row.ruleId)).toEqual(['pdfua.parent_tree.present']);
     expect(summary.noisyEvidence.map(row => row.ruleId)).toEqual(['pdfua.font.cid_to_gidmap_valid']);
+    expect(summary.familySummaries.map(row => `${row.family}:${row.fail}:${row.warn}`)).toEqual([
+      'content_tagging:1:0',
+      'fonts_cmap:0:1',
+      'parent_tree:1:0',
+    ]);
     expect(summary.promotionCandidates.map(row => `${row.classification}:${row.ruleId}`)).toEqual([
-      'scoring_candidate:pdfua.parent_tree.present',
-      'gate_candidate:pdfua.content.text_tagged_or_artifacted',
+      'ready_for_scoring_candidate:pdfua.parent_tree.present',
+      'ready_for_gate_candidate:pdfua.content.text_tagged_or_artifacted',
     ]);
   });
 });

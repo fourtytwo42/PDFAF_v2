@@ -463,7 +463,18 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const textOutside = tagging?.textOutsideMarkedContentOrArtifact ?? 0;
   const imageOutside = tagging?.imageOutsideMarkedContentOrArtifact ?? 0;
   const pathOutside = Math.max(signals.suspectedPathPaintOutsideMc, tagging?.pathOutsideMarkedContentOrArtifact ?? 0);
-  const boundaryDebt = (tagging?.artifactInsideTaggedContent ?? 0) + (tagging?.taggedContentInsideArtifact ?? 0);
+  const boundaryDebt =
+    (tagging?.artifactInsideTaggedContent ?? 0) +
+    (tagging?.taggedContentInsideArtifact ?? 0) +
+    (tagging?.malformedMarkedContentStack ?? 0);
+  const contentConfidence: PacRuleConfidence = tagging
+    ? (tagging.pageStreamsChecked !== undefined &&
+        tagging.totalPageStreams !== undefined &&
+        tagging.pageStreamsChecked >= tagging.totalPageStreams &&
+        (tagging.formXObjectsChecked ?? 0) === 0
+      ? 'verified'
+      : 'heuristic')
+    : 'manual_review_required';
   return [
     rule({
       ruleId: 'pdfua.content.orphan_mcids_absent',
@@ -481,7 +492,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: pathOutside > 0
         ? `${pathOutside} path-paint operator(s) appear outside marked-content blocks.`
         : 'No path-paint outside marked-content debt was detected.',
-      confidence: 'heuristic',
+      confidence: contentConfidence,
       count: pathOutside,
     }),
     rule({
@@ -491,7 +502,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: textOutside > 0
         ? `${textOutside} text-rendering operator(s) appear outside marked-content or artifact blocks.`
         : 'No text outside marked-content/artifact blocks was detected.',
-      confidence: tagging ? 'heuristic' : 'manual_review_required',
+      confidence: contentConfidence,
       count: textOutside,
     }),
     rule({
@@ -501,7 +512,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: imageOutside > 0
         ? `${imageOutside} image-paint operator(s) appear outside marked-content or artifact blocks.`
         : 'No image paint outside marked-content/artifact blocks was detected.',
-      confidence: tagging ? 'heuristic' : 'manual_review_required',
+      confidence: contentConfidence,
       count: imageOutside,
     }),
     rule({
@@ -511,7 +522,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: boundaryDebt > 0
         ? `${boundaryDebt} nested artifact/tag boundary issue(s) were detected.`
         : 'No nested artifact/tag boundary issue was detected.',
-      confidence: tagging ? 'heuristic' : 'manual_review_required',
+      confidence: contentConfidence,
       count: boundaryDebt,
     }),
   ];
@@ -578,7 +589,7 @@ function tableHeaderAuditRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       noStructureRule('pdfua.table.header_cells_associated', 'table_markup', 'No table evidence is present.'),
     ];
   }
-  const headerAssociationDebt = (audit?.headerAssociationMissingCount ?? 0) + (audit?.dataCellsWithoutHeaderCount ?? 0);
+  const headerAssociationDebt = audit?.dataCellsWithoutHeaderCount ?? audit?.headerAssociationMissingCount ?? 0;
   const orphanHeaderDebt = audit?.orphanHeaderCellCount ?? 0;
   return [
     rule({
@@ -588,7 +599,7 @@ function tableHeaderAuditRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: headerAssociationDebt > 0
         ? `${headerAssociationDebt} table header-association issue(s) were detected.`
         : 'No table header-association debt was detected.',
-      confidence: audit ? 'heuristic' : 'manual_review_required',
+      confidence: audit ? 'verified' : 'manual_review_required',
       count: headerAssociationDebt,
     }),
     rule({
@@ -598,7 +609,7 @@ function tableHeaderAuditRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       message: orphanHeaderDebt > 0
         ? `${orphanHeaderDebt} orphan table header cell(s) were detected.`
         : 'No orphan table header cells were detected.',
-      confidence: audit ? 'heuristic' : 'manual_review_required',
+      confidence: audit ? 'verified' : 'manual_review_required',
       count: orphanHeaderDebt,
     }),
   ];
@@ -628,23 +639,23 @@ function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     }),
     rule({
       ruleId: 'pdfua.font.to_unicode_cmap_valid',
-      status: (audit?.invalidToUnicodeCMapCount ?? 0) > 0 ? 'fail' : 'pass',
+      status: ((audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)) > 0 ? 'fail' : 'pass',
       category: 'text_extractability',
-      message: (audit?.invalidToUnicodeCMapCount ?? 0) > 0
-        ? `${audit!.invalidToUnicodeCMapCount} invalid /ToUnicode CMap issue(s) were detected.`
+      message: ((audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)) > 0
+        ? `${(audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)} invalid or empty /ToUnicode CMap issue(s) were detected.`
         : 'No invalid /ToUnicode CMap syntax was detected.',
       confidence: audit ? 'verified' : 'manual_review_required',
-      count: audit?.invalidToUnicodeCMapCount ?? 0,
+      count: (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0),
     }),
     rule({
       ruleId: 'pdfua.font.cid_to_gidmap_valid',
-      status: (audit?.cidToGidMapRiskCount ?? 0) > 0 ? 'warn' : 'pass',
+      status: ((audit?.cidToGidMapRiskCount ?? 0) + (audit?.type0DescendantFontRiskCount ?? 0)) > 0 ? 'warn' : 'pass',
       category: 'text_extractability',
-      message: (audit?.cidToGidMapRiskCount ?? 0) > 0
-        ? `${audit!.cidToGidMapRiskCount} CID font mapping risk(s) need checker/manual review.`
+      message: ((audit?.cidToGidMapRiskCount ?? 0) + (audit?.type0DescendantFontRiskCount ?? 0)) > 0
+        ? `${(audit?.cidToGidMapRiskCount ?? 0) + (audit?.type0DescendantFontRiskCount ?? 0)} CID font mapping or descendant-font risk(s) need checker/manual review.`
         : 'No CIDToGIDMap risk was detected.',
       confidence: audit ? 'heuristic' : 'manual_review_required',
-      count: audit?.cidToGidMapRiskCount ?? 0,
+      count: (audit?.cidToGidMapRiskCount ?? 0) + (audit?.type0DescendantFontRiskCount ?? 0),
     }),
     rule({
       ruleId: 'pdfua.font.truetype_encoding_consistent',

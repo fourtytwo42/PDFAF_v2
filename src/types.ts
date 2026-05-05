@@ -374,11 +374,15 @@ export interface DocumentSnapshot {
   };
   /** Bounded content-stream tagging/artifact evidence. Diagnostic-only unless promoted later. */
   contentTaggingAudit?: {
+    pageStreamsChecked?: number;
+    totalPageStreams?: number;
+    formXObjectsChecked?: number;
     textOutsideMarkedContentOrArtifact: number;
     imageOutsideMarkedContentOrArtifact: number;
     pathOutsideMarkedContentOrArtifact: number;
     artifactInsideTaggedContent: number;
     taggedContentInsideArtifact: number;
+    malformedMarkedContentStack?: number;
     contentOutsidePageBounds: number;
   };
   /** Table-header association evidence beyond basic TH/TD presence. */
@@ -387,16 +391,21 @@ export interface DocumentSnapshot {
     headerAssociationMissingCount: number;
     orphanHeaderCellCount: number;
     dataCellsWithoutHeaderCount: number;
+    headerCellsWithScopeCount?: number;
+    headerCellsWithIdCount?: number;
+    dataCellsWithHeadersCount?: number;
   };
   /** Low-level font/CMap/Unicode syntax evidence from pikepdf/font inspection. */
   fontSyntaxAudit?: {
     fontsChecked: number;
     missingToUnicodeCMapCount: number;
     invalidToUnicodeCMapCount: number;
+    emptyToUnicodeCMapCount?: number;
     cidToGidMapRiskCount: number;
     trueTypeEncodingMismatchCount: number;
     wModeMismatchCount: number;
     externalCMapReferenceCount: number;
+    type0DescendantFontRiskCount?: number;
   };
   /** Natural-language syntax coverage for element-level text alternatives and labels. */
   languageAudit?: {
