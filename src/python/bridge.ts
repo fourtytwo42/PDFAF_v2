@@ -56,6 +56,7 @@ export interface BatchMutationResult {
 const EMPTY_RESULT: PythonAnalysisResult = {
   isTagged:      false,
   markInfo:      null,
+  viewerPreferences: { displayDocTitle: null },
   lang:          null,
   pdfUaVersion:  null,
   headings:      [],

@@ -409,6 +409,7 @@ export const REMEDIATION_TOOL_STAGE_ORDER: Record<string, number> = {
   // orchestrator cannot erase their score contribution when bundled with sparse bootstrap output.
   // (Original stage number was 1; bumped to 0 so they land ahead of the rest of stage 1/2 work.)
   set_pdfua_identification:            1,
+  normalize_pdfua_catalog_settings:    1,
   set_document_title:                  1,
   set_document_language:               1,
   synthesize_basic_structure_from_layout: 2,
@@ -458,7 +459,7 @@ export const REMEDIATION_TOOL_STAGE_ORDER: Record<string, number> = {
 /** Failing category (key) → ordered tool names (see generalization rules in PRD). */
 export const REMEDIATION_CRITERION_TOOL_MAP: Record<string, readonly string[]> = {
   title_language:       ['set_document_title', 'set_document_language'],
-  pdf_ua_compliance:    ['set_pdfua_identification', 'synthesize_basic_structure_from_layout', 'bootstrap_struct_tree', 'repair_structure_conformance', 'substitute_legacy_fonts_in_place', 'finalize_substituted_font_conformance', 'repair_list_li_wrong_parent', 'wrap_singleton_orphan_mcid', 'remap_orphan_mcids_as_artifacts', 'tag_unowned_annotations', 'repair_annotation_alt_text', 'tag_native_text_blocks', 'tag_ocr_text_blocks', 'recover_ocr_text_ownership', 'mark_untagged_content_as_artifact', 'artifact_repeating_page_furniture'],
+  pdf_ua_compliance:    ['set_pdfua_identification', 'normalize_pdfua_catalog_settings', 'synthesize_basic_structure_from_layout', 'bootstrap_struct_tree', 'repair_structure_conformance', 'substitute_legacy_fonts_in_place', 'finalize_substituted_font_conformance', 'repair_list_li_wrong_parent', 'wrap_singleton_orphan_mcid', 'remap_orphan_mcids_as_artifacts', 'tag_unowned_annotations', 'repair_annotation_alt_text', 'tag_native_text_blocks', 'tag_ocr_text_blocks', 'recover_ocr_text_ownership', 'mark_untagged_content_as_artifact', 'artifact_repeating_page_furniture'],
   alt_text:             ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'set_figure_alt_text', 'mark_figure_decorative', 'repair_alt_text_structure', 'repair_annotation_alt_text', 'retag_as_figure'],
   heading_structure:    ['synthesize_basic_structure_from_layout', 'create_structure_from_degenerate_native_anchor', 'create_heading_from_visible_text_anchor', 'create_heading_from_tagged_visible_anchor', 'bridge_native_title_text_owner', 'recover_ocr_text_ownership', 'create_heading_from_ocr_page_shell_anchor', 'create_heading_from_ocr_collection_title_anchor', 'create_heading_from_candidate', 'normalize_heading_hierarchy', 'artifact_repeating_page_furniture'],
   table_markup:         ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'],
@@ -475,6 +476,7 @@ export const REMEDIATION_IMPLEMENTED_TOOLS: readonly string[] = [
   'set_document_title',
   'set_document_language',
   'set_pdfua_identification',
+  'normalize_pdfua_catalog_settings',
   'synthesize_basic_structure_from_layout',
   'bootstrap_struct_tree',
   'repair_structure_conformance',

@@ -284,6 +284,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     // pikepdf
     isTagged:      struct.isTagged,
     markInfo:      struct.markInfo,
+    viewerPreferences: struct.viewerPreferences,
     lang:          struct.lang,
     pdfUaVersion:  struct.pdfUaVersion,
     structTitle:   struct.title,

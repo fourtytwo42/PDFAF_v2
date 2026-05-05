@@ -245,6 +245,56 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('set_pdfua_identification');
   });
 
+  it('plans PAC catalog settings normalization when only POC-exposed catalog evidence fails', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      textCharCount: 1200,
+      textByPage: ['Program report body text'],
+      metadata: { title: 'Program Report', language: 'en-US', author: '', subject: '' },
+      isTagged: true,
+      markInfo: { Marked: true, Suspects: true },
+      viewerPreferences: { displayDocTitle: false },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      structTitle: 'Program Report',
+      headings: [{ level: 1, text: 'Program Report', page: 0 }],
+      fonts: [{ name: 'Arial', isEmbedded: true, hasUnicode: true }],
+      structureTree: { type: 'Document', children: [{ type: 'H1', children: [] }, { type: 'P', children: [] }] },
+      pdfClass: 'native_tagged',
+    };
+    const analysis = {
+      ...score(snap, META),
+      score: 98,
+      categories: score(snap, META).categories.map(category => ({ ...category, score: 98 })),
+    };
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+
+    expect(names).toContain('normalize_pdfua_catalog_settings');
+    expect(names).not.toContain('set_pdfua_identification');
+  });
+
+  it('does not plan PAC catalog settings normalization when targeted evidence is already clean', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      metadata: { title: 'Program Report', language: 'en-US', author: '', subject: '' },
+      isTagged: true,
+      markInfo: { Marked: true, Suspects: false },
+      viewerPreferences: { displayDocTitle: true },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      structTitle: 'Program Report',
+      headings: [{ level: 1, text: 'Program Report', page: 0 }],
+      structureTree: { type: 'Document', children: [{ type: 'H1', children: [] }] },
+      pdfClass: 'native_tagged',
+    };
+    const analysis = { ...score(snap, META), score: 98 };
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+
+    expect(names).not.toContain('normalize_pdfua_catalog_settings');
+  });
+
   it('retries annotation ownership repair when debt appears after an earlier zero-debt no-effect', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -1713,6 +1763,8 @@ describe('planForRemediation', () => {
       isTagged: true,
       structureTree: { type: 'Document', children: [] },
       metadata: { title: 'Doc', language: 'en', author: '', subject: '' },
+      markInfo: { Marked: true, Suspects: false },
+      viewerPreferences: { displayDocTitle: true },
       lang: 'en',
       pdfUaVersion: '1',
     };

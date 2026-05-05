@@ -130,6 +130,8 @@ function taggedContentSignals(snapshot: DocumentSnapshot): {
 
 function metadataRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const title = snapshot.metadata.title?.trim() || snapshot.structTitle?.trim() || '';
+  const suspects = snapshot.markInfo?.Suspects;
+  const displayDocTitle = snapshot.viewerPreferences?.displayDocTitle;
   return [
     rule({
       ruleId: 'pdfua.metadata.xmp_present',
@@ -164,17 +166,23 @@ function metadataRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     }),
     rule({
       ruleId: 'pdfua.settings.suspects_absent_or_false',
-      status: 'warn',
+      status: suspects === true ? 'fail' : 'pass',
       category: 'pdf_ua_compliance',
-      message: '/MarkInfo /Suspects is not exposed in the current snapshot; verify when analyzer support is added.',
-      confidence: 'heuristic',
+      message: suspects === true
+        ? '/MarkInfo /Suspects is true.'
+        : '/MarkInfo /Suspects is absent or false.',
+      confidence: 'verified',
     }),
     rule({
       ruleId: 'pdfua.settings.display_doc_title_present_or_unknown',
-      status: 'warn',
+      status: !title ? 'not_applicable' : displayDocTitle === true ? 'pass' : 'fail',
       category: 'title_language',
-      message: '/ViewerPreferences /DisplayDocTitle is not exposed in the current snapshot; verify when analyzer support is added.',
-      confidence: 'heuristic',
+      message: !title
+        ? 'DisplayDocTitle is not checked because document title metadata is missing.'
+        : displayDocTitle === true
+          ? '/ViewerPreferences /DisplayDocTitle is true.'
+          : '/ViewerPreferences /DisplayDocTitle is missing or not true.',
+      confidence: 'verified',
     }),
   ];
 }

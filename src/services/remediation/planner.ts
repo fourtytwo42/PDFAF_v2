@@ -29,6 +29,7 @@ import type { ToolOutcomeStore } from '../learning/toolOutcomes.js';
 import { buildPlanningSummary, deriveRoutingDecision, type RoutingFailureDisposition } from './routingDecision.js';
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { isFilenameLikeTitle } from '../compliance/icjiaParity.js';
+import { shouldTryStage5PacCatalogSettings } from './stage5PacCatalogSettings.js';
 import {
   buildEligibleHeadingBootstrapCandidates,
   selectHeadingBootstrapCandidate,
@@ -1305,7 +1306,9 @@ export function planForRemediation(
   toolOutcomeStore?: ToolOutcomeStore,
   includeOptionalRemediation = false,
 ): RemediationPlan {
-  if (analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot)) {
+  const stage5PacCatalogCandidate = shouldTryStage5PacCatalogSettings(analysis, snapshot)
+    && !alreadyApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings' && row.outcome === 'applied');
+  if (analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot) && !stage5PacCatalogCandidate) {
     return {
       stages: [],
       planningSummary: buildPlanningSummary({
@@ -1761,6 +1764,19 @@ export function planForRemediation(
         rationale: `Run deterministic route "${route}" for ${routing.triggeringSignals.join(', ') || 'residual debt'}.`,
         route,
       });
+    }
+  }
+
+  if (stage5PacCatalogCandidate && !toolSet.has('normalize_pdfua_catalog_settings')) {
+    const params = buildDefaultParams('normalize_pdfua_catalog_settings', analysis, snapshot, alreadyApplied);
+    if (!hasPriorNoEffectSignature(alreadyApplied, 'normalize_pdfua_catalog_settings', params)) {
+      toolSet.set('normalize_pdfua_catalog_settings', {
+        toolName: 'normalize_pdfua_catalog_settings',
+        params,
+        rationale: 'Normalize PAC-facing PDF/UA catalog settings exposed by POC checker parity.',
+      });
+    } else {
+      addSkipped('normalize_pdfua_catalog_settings', 'missing_precondition');
     }
   }
 
@@ -2233,6 +2249,8 @@ export function buildDefaultParams(
         part: 1,
         language: (meta.language?.trim() || snapshot.lang?.trim() || 'en-US').slice(0, 32),
       };
+    case 'normalize_pdfua_catalog_settings':
+      return {};
     case 'ocr_scanned_pdf':
       return {
         languages: ocrmypdfLanguagesForSnapshot(snapshot),

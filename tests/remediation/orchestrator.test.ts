@@ -610,6 +610,55 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('accepts PAC catalog settings normalization when targeted PAC evidence improves without score gain', () => {
+    const beforeSnapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 2 }),
+      markInfo: { Marked: true, Suspects: true },
+      viewerPreferences: { displayDocTitle: false },
+    };
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      markInfo: { Marked: true, Suspects: false },
+      viewerPreferences: { displayDocTitle: true },
+    };
+
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 96, confidence: 'medium', categories: { title_language: 96, pdf_ua_compliance: 96 } }),
+      after: makeAnalysis({ score: 96, confidence: 'medium', categories: { title_language: 96, pdf_ua_compliance: 96 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('normalize_pdfua_catalog_settings'),
+      stageApplied: makeApplied('normalize_pdfua_catalog_settings'),
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('rejects PAC catalog settings normalization when targeted PAC evidence does not improve', () => {
+    const beforeSnapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 2 }),
+      markInfo: { Marked: true, Suspects: true },
+      viewerPreferences: { displayDocTitle: false },
+    };
+
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 96, confidence: 'medium', categories: { title_language: 96, pdf_ua_compliance: 96 } }),
+      after: makeAnalysis({ score: 96, confidence: 'medium', categories: { title_language: 96, pdf_ua_compliance: 96 } }),
+      beforeSnapshot,
+      afterSnapshot: beforeSnapshot,
+      stage: makeStage('normalize_pdfua_catalog_settings'),
+      stageApplied: makeApplied('normalize_pdfua_catalog_settings'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage5_pac_catalog_settings_no_evidence_improvement',
+    });
+  });
+
   it('rejects score-improving stages with unexplained protected category regressions', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 89, table_markup: 35 } }),

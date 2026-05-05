@@ -26,6 +26,7 @@ except ImportError:
     print(json.dumps({
         "error": "pikepdf not installed",
         "isTagged": False, "markInfo": None, "lang": None,
+        "viewerPreferences": {"displayDocTitle": None},
         "pdfUaVersion": None, "headings": [], "figures": [], "checkerFigureTargets": [],
         "tables": [], "fonts": [], "bookmarks": [], "formFields": [],
         "paragraphStructElems": [],
@@ -1489,7 +1490,8 @@ def normalize_heading_level(tag: str) -> int | None:
 def extract_metadata(pdf: pikepdf.Pdf) -> dict:
     result = {"title": None, "author": None, "subject": None,
               "lang": None, "pdfUaVersion": None,
-              "isTagged": False, "markInfo": None}
+              "isTagged": False, "markInfo": None,
+              "viewerPreferences": {"displayDocTitle": None}}
     try:
         root = pdf.Root
         # Language
@@ -1500,13 +1502,26 @@ def extract_metadata(pdf: pikepdf.Pdf) -> dict:
         mi = root.get("/MarkInfo")
         if mi is not None:
             marked = mi.get("/Marked")
-            result["markInfo"] = {"Marked": bool(marked) and str(marked) != "false"}
+            suspects = mi.get("/Suspects")
+            result["markInfo"] = {
+                "Marked": bool(marked) and str(marked) != "false",
+                "Suspects": bool(suspects) and str(suspects) != "false" if suspects is not None else None,
+            }
+
+        vp = root.get("/ViewerPreferences")
+        if isinstance(vp, pikepdf.Dictionary):
+            display_doc_title = vp.get("/DisplayDocTitle")
+            result["viewerPreferences"] = {
+                "displayDocTitle": bool(display_doc_title) and str(display_doc_title) != "false" if display_doc_title is not None else False
+            }
+        else:
+            result["viewerPreferences"] = {"displayDocTitle": False}
 
         # Tagged PDF (WCAG / external auditors): require /StructTreeRoot, not MarkInfo alone
         sr_meta = root.get("/StructTreeRoot")
         result["isTagged"] = isinstance(sr_meta, pikepdf.Dictionary)
         if result["isTagged"] and result["markInfo"] is None:
-            result["markInfo"] = {"Marked": True}
+            result["markInfo"] = {"Marked": True, "Suspects": None}
 
         # Info dict
         try:
@@ -5053,6 +5068,34 @@ def _op_set_pdfua_identification(pdf: pikepdf.Pdf, params: dict) -> bool:
     return changed
 
 
+def _op_normalize_pdfua_catalog_settings(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """Set only PAC-facing catalog settings: /MarkInfo /Suspects false and /DisplayDocTitle true."""
+    changed = False
+    root = pdf.Root
+    try:
+        mark_info = root.get("/MarkInfo")
+        if isinstance(mark_info, pikepdf.Dictionary):
+            if mark_info.get("/Suspects") is not False:
+                mark_info["/Suspects"] = False
+                changed = True
+    except Exception:
+        pass
+
+    try:
+        vp = root.get("/ViewerPreferences")
+        if vp is None:
+            root["/ViewerPreferences"] = pikepdf.Dictionary(DisplayDocTitle=True)
+            changed = True
+        elif isinstance(vp, pikepdf.Dictionary):
+            if vp.get("/DisplayDocTitle") is not True:
+                vp["/DisplayDocTitle"] = True
+                changed = True
+    except Exception:
+        pass
+
+    return changed
+
+
 def _op_repair_native_link_structure(pdf: pikepdf.Pdf, _params: dict) -> bool:
     return _mut_repair_native_link_structure(pdf)
 
@@ -5173,6 +5216,7 @@ def main():
     result = {
         "isTagged": False,
         "markInfo": None,
+        "viewerPreferences": {"displayDocTitle": None},
         "lang": None,
         "pdfUaVersion": None,
         "title": None,
@@ -10696,6 +10740,7 @@ MUTATORS = {
     "set_document_title": _op_set_document_title,
     "set_document_language": _op_set_document_language,
     "set_pdfua_identification": _op_set_pdfua_identification,
+    "normalize_pdfua_catalog_settings": _op_normalize_pdfua_catalog_settings,
     "synthesize_basic_structure_from_layout": _op_synthesize_basic_structure_from_layout,
     "create_structure_from_degenerate_native_anchor": _op_create_structure_from_degenerate_native_anchor,
     "artifact_repeating_page_furniture": _op_artifact_repeating_page_furniture,

@@ -37,3 +37,13 @@ export async function setPdfUaIdentification(buffer: Buffer, language: string): 
   }
   return out;
 }
+
+export async function normalizePdfUaCatalogSettings(buffer: Buffer): Promise<Buffer> {
+  const { buffer: out, result } = await runPythonMutationBatch(buffer, [
+    { op: 'normalize_pdfua_catalog_settings', params: {} },
+  ]);
+  if (!result.success || result.applied.length === 0) {
+    return buffer;
+  }
+  return out;
+}

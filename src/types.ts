@@ -202,7 +202,10 @@ export interface DocumentSnapshot {
 
   // --- from pikepdf (pdf_analysis_helper.py) ---
   isTagged: boolean;
-  markInfo: { Marked: boolean } | null;
+  markInfo: { Marked: boolean; Suspects?: boolean | null } | null;
+  viewerPreferences?: {
+    displayDocTitle?: boolean | null;
+  };
   lang: string | null;              // /Root/Lang
   pdfUaVersion: string | null;      // XMP pdfuaid:part value (e.g. "1")
   structTitle?: string;             // /Info /Title from PDF dict
@@ -515,7 +518,8 @@ export interface PdfjsResult {
 
 export interface PythonAnalysisResult {
   isTagged: boolean;
-  markInfo: { Marked: boolean } | null;
+  markInfo: { Marked: boolean; Suspects?: boolean | null } | null;
+  viewerPreferences?: DocumentSnapshot['viewerPreferences'];
   lang: string | null;
   pdfUaVersion: string | null;
   title?: string;

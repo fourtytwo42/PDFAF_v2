@@ -72,7 +72,8 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
     links: [],
     formFieldsFromPdfjs: [],
     isTagged: true,
-    markInfo: { Marked: true },
+    markInfo: { Marked: true, Suspects: false },
+    viewerPreferences: { displayDocTitle: true },
     lang: 'en-US',
     pdfUaVersion: '1',
     structTitle: 'Quarterly Accessibility Report',
@@ -123,6 +124,8 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.metadata.title_present').status).toBe('pass');
     expect(byId(rows, 'pdfua.metadata.pdfua_identifier_present').status).toBe('pass');
     expect(byId(rows, 'pdfua.settings.marked_true').status).toBe('pass');
+    expect(byId(rows, 'pdfua.settings.suspects_absent_or_false').status).toBe('pass');
+    expect(byId(rows, 'pdfua.settings.display_doc_title_present_or_unknown').status).toBe('pass');
     expect(byId(rows, 'pdfua.language.document_lang_present').status).toBe('pass');
     expect(byId(rows, 'pdfua.language.document_lang_syntax_valid').status).toBe('pass');
     expect(byId(rows, 'pdfua.structure.struct_tree_present').status).toBe('pass');
@@ -133,6 +136,33 @@ describe('buildPacRuleEvidence', () => {
     const rows = buildPacRuleEvidence(makeSnap({ pdfUaVersion: null }));
 
     expect(byId(rows, 'pdfua.metadata.pdfua_identifier_present').status).toBe('fail');
+  });
+
+  it('fails PAC catalog settings when Suspects is true or DisplayDocTitle is missing', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      markInfo: { Marked: true, Suspects: true },
+      viewerPreferences: { displayDocTitle: false },
+    }));
+
+    expect(byId(rows, 'pdfua.settings.suspects_absent_or_false')).toMatchObject({
+      status: 'fail',
+      confidence: 'verified',
+    });
+    expect(byId(rows, 'pdfua.settings.display_doc_title_present_or_unknown')).toMatchObject({
+      status: 'fail',
+      confidence: 'verified',
+    });
+  });
+
+  it('marks DisplayDocTitle not applicable when title is missing', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      metadata: { ...makeSnap().metadata, title: '' },
+      structTitle: '',
+      viewerPreferences: { displayDocTitle: false },
+    }));
+
+    expect(byId(rows, 'pdfua.metadata.title_present').status).toBe('fail');
+    expect(byId(rows, 'pdfua.settings.display_doc_title_present_or_unknown').status).toBe('not_applicable');
   });
 
   it('fails missing and malformed document language evidence', () => {

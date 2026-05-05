@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import { extractStructure } from '../../src/services/structureService.js';
-import { setDocumentTitle, setDocumentLanguage, setPdfUaIdentification } from '../../src/services/remediation/tools/metadata.js';
+import { normalizePdfUaCatalogSettings, setDocumentTitle, setDocumentLanguage, setPdfUaIdentification } from '../../src/services/remediation/tools/metadata.js';
 
 async function minimalPdfBuffer(): Promise<Buffer> {
   const doc = await PDFDocument.create();
@@ -58,6 +58,30 @@ describe('metadata remediation tools', () => {
     try {
       const struct = await extractStructure(p);
       expect(struct.pdfUaVersion).toBeTruthy();
+    } finally {
+      await unlink(p).catch(() => {});
+    }
+  });
+
+  it('normalizes only PDF/UA catalog settings for PAC-style checks', async () => {
+    const titled = await setDocumentTitle(await minimalPdfBuffer(), 'Catalog Settings');
+    const beforeDoc = await PDFDocument.load(titled);
+    beforeDoc.catalog.set(PDFName.of('MarkInfo'), beforeDoc.context.obj({ Marked: true, Suspects: true }));
+    beforeDoc.catalog.set(PDFName.of('Lang'), beforeDoc.context.obj('en-US'));
+    const before = Buffer.from(await beforeDoc.save({ useObjectStreams: false }));
+    const after = await normalizePdfUaCatalogSettings(before);
+    expect(after.equals(before)).toBe(false);
+
+    const p = join(tmpdir(), `pdfaf-catalog-settings-${randomUUID()}.pdf`);
+    await writeFile(p, after);
+    try {
+      const struct = await extractStructure(p);
+      expect(struct.markInfo?.Marked).toBe(true);
+      expect(struct.markInfo?.Suspects).toBe(false);
+      expect(struct.viewerPreferences?.displayDocTitle).toBe(true);
+      expect(struct.lang).toBe('en-US');
+      expect(struct.pdfUaVersion).toBeFalsy();
+      expect(struct.structureTree).toBeNull();
     } finally {
       await unlink(p).catch(() => {});
     }

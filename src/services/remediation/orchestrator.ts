@@ -85,6 +85,7 @@ import {
   pacRuleAcceptanceGate,
   pacRuleAcceptanceGateForAppliedTools,
 } from './pacRuleAcceptanceGate.js';
+import { stage5PacCatalogSettingsImproved } from './stage5PacCatalogSettings.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -1401,6 +1402,14 @@ export function shouldRejectStageResult(input: {
       reject: true,
       reason: 'stage_no_gain_orphan_artifact_mutation',
     };
+  }
+  if (input.stageApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings')) {
+    if (!input.beforeSnapshot || !input.afterSnapshot || !stage5PacCatalogSettingsImproved(input.beforeSnapshot, input.afterSnapshot)) {
+      return {
+        reject: true,
+        reason: 'stage5_pac_catalog_settings_no_evidence_improvement',
+      };
+    }
   }
   if (input.after.score < input.before.score && ocrBypass && protectedBaselineRecoveryActive(input.protectedBaseline, input.before)) {
     return {
@@ -3655,6 +3664,28 @@ export async function runSingleTool(
           buffer: next,
           outcome: 'applied',
           details: pythonMutationDetails(result, 'set_pdfua_identification'),
+          durationMs: performance.now() - started,
+        };
+      }
+      case 'normalize_pdfua_catalog_settings': {
+        const { buffer: next, result } = await runPythonMutationBatch(buffer, [
+          { op: 'normalize_pdfua_catalog_settings', params: {} },
+        ]);
+        if (!result.success) {
+          return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
+        }
+        if (result.applied.length === 0) {
+          return {
+            buffer,
+            outcome: 'no_effect',
+            details: pythonMutationDetails(result, 'normalize_pdfua_catalog_settings'),
+            durationMs: performance.now() - started,
+          };
+        }
+        return {
+          buffer: next,
+          outcome: 'applied',
+          details: pythonMutationDetails(result, 'normalize_pdfua_catalog_settings'),
           durationMs: performance.now() - started,
         };
       }
