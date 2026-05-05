@@ -46,6 +46,75 @@ except ImportError:
             "nonLinkAnnotationsMissingStructParent": 0,
         },
         "linkScoringRows": [],
+        "parentTreeAudit": {
+            "missingParentTree": False,
+            "pagesMissingStructParents": 0,
+            "missingMcidParentTreeEntries": 0,
+            "invalidParentTreeEntries": 0,
+            "annotationReferenceMismatchCount": 0,
+            "objectReferenceMismatchCount": 0,
+        },
+        "contentTaggingAudit": {
+            "textOutsideMarkedContentOrArtifact": 0,
+            "imageOutsideMarkedContentOrArtifact": 0,
+            "pathOutsideMarkedContentOrArtifact": 0,
+            "artifactInsideTaggedContent": 0,
+            "taggedContentInsideArtifact": 0,
+            "contentOutsidePageBounds": 0,
+        },
+        "tableHeaderAudit": {
+            "tablesChecked": 0,
+            "headerAssociationMissingCount": 0,
+            "orphanHeaderCellCount": 0,
+            "dataCellsWithoutHeaderCount": 0,
+        },
+        "fontSyntaxAudit": {
+            "fontsChecked": 0,
+            "missingToUnicodeCMapCount": 0,
+            "invalidToUnicodeCMapCount": 0,
+            "cidToGidMapRiskCount": 0,
+            "trueTypeEncodingMismatchCount": 0,
+            "wModeMismatchCount": 0,
+            "externalCMapReferenceCount": 0,
+        },
+        "languageAudit": {
+            "altTextLanguageInvalidCount": 0,
+            "actualTextLanguageInvalidCount": 0,
+            "annotationContentsLanguageInvalidCount": 0,
+            "formTuLanguageInvalidCount": 0,
+            "outlineLanguageInvalidCount": 0,
+            "expansionTextLanguageInvalidCount": 0,
+            "structureLangInvalidCount": 0,
+        },
+        "renderedContrastAudit": {
+            "measured": False,
+            "lowContrastTextRunCount": 0,
+            "uncertainTextRunCount": 0,
+        },
+        "tocNoteAudit": {
+            "tocItemMissingLinkCount": 0,
+            "tocDestinationMissingCount": 0,
+            "noteMissingIdCount": 0,
+            "duplicateNoteIdCount": 0,
+            "noteMissingLabelOrReferenceCount": 0,
+        },
+        "optionalContentAudit": {
+            "optionalContentConfigMissingNameCount": 0,
+            "optionalContentAsInvalidCount": 0,
+            "embeddedFileMissingFOrUfCount": 0,
+            "dynamicXfaPresent": False,
+        },
+        "linkReachabilityAudit": {
+            "checked": False,
+            "unreachableUriCount": 0,
+            "unsafeUriCount": 0,
+        },
+        "aiVisualTagAudit": {
+            "evaluated": False,
+            "falsePositiveTagCount": 0,
+            "falseNegativeTagCount": 0,
+            "likelyMisclassifiedTagCount": 0,
+        },
     }))
     sys.exit(0)
 
@@ -897,6 +966,248 @@ def collect_tagged_content_audit(pdf: pikepdf.Pdf) -> dict:
         "orphanMcidCount": len(orphans),
         "mcidTextSpanCount": len(spans),
         "suspectedPathPaintOutsideMc": _count_path_paint_outside_mcid_bdc(pdf, max_pages=12, max_hits=200),
+    }
+
+
+def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
+    out = {
+        "missingParentTree": False,
+        "pagesMissingStructParents": 0,
+        "missingMcidParentTreeEntries": 0,
+        "invalidParentTreeEntries": 0,
+        "annotationReferenceMismatchCount": 0,
+        "objectReferenceMismatchCount": 0,
+    }
+    try:
+        root = pdf.Root
+        sr = root.get("/StructTreeRoot")
+        if not isinstance(sr, pikepdf.Dictionary):
+            return out
+        pt = sr.get("/ParentTree")
+        out["missingParentTree"] = not isinstance(pt, pikepdf.Dictionary)
+        for page in pdf.pages:
+            try:
+                raw = _read_page_contents_raw(page.obj)
+                has_mcid = bool(MCID_OP_RE.search(raw))
+                annots = page.obj.get("/Annots")
+                has_annots = isinstance(annots, pikepdf.Array) and len(annots) > 0
+                if (has_mcid or has_annots) and page.obj.get("/StructParents") is None:
+                    out["pagesMissingStructParents"] += 1
+            except Exception:
+                pass
+        if isinstance(pt, pikepdf.Dictionary):
+            nums = pt.get("/Nums")
+            if not isinstance(nums, pikepdf.Array):
+                out["invalidParentTreeEntries"] += 1
+            else:
+                if len(nums) % 2 != 0:
+                    out["invalidParentTreeEntries"] += 1
+                for idx in range(0, len(nums) - 1, 2):
+                    try:
+                        key = nums[idx]
+                        value = nums[idx + 1]
+                        if not isinstance(key, int) or not isinstance(value, (pikepdf.Array, pikepdf.Dictionary)):
+                            out["invalidParentTreeEntries"] += 1
+                    except Exception:
+                        out["invalidParentTreeEntries"] += 1
+    except Exception:
+        pass
+    return out
+
+
+def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
+    out = {
+        "textOutsideMarkedContentOrArtifact": 0,
+        "imageOutsideMarkedContentOrArtifact": 0,
+        "pathOutsideMarkedContentOrArtifact": _count_path_paint_outside_mcid_bdc(pdf, max_pages=12, max_hits=200),
+        "artifactInsideTaggedContent": 0,
+        "taggedContentInsideArtifact": 0,
+        "contentOutsidePageBounds": 0,
+    }
+    text_ops = {"Tj", "TJ", "'", '"'}
+    image_ops = {"Do", "EI"}
+    path_ops = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "sh"}
+    try:
+        for page in pdf.pages[:12]:
+            if (
+                out["textOutsideMarkedContentOrArtifact"] >= 200
+                and out["imageOutsideMarkedContentOrArtifact"] >= 200
+                and out["artifactInsideTaggedContent"] >= 200
+                and out["taggedContentInsideArtifact"] >= 200
+            ):
+                break
+            try:
+                depth = 0
+                artifact_depth = 0
+                tag_depth = 0
+                for inst in pikepdf.parse_content_stream(page.obj):
+                    op = str(inst.operator)
+                    if op in ("BDC", "BMC"):
+                        depth += 1
+                        role = safe_str(inst.operands[0]) if inst.operands else ""
+                        if role == "/Artifact":
+                            artifact_depth += 1
+                            if tag_depth > 0:
+                                out["artifactInsideTaggedContent"] = min(200, out["artifactInsideTaggedContent"] + 1)
+                        else:
+                            tag_depth += 1
+                            if artifact_depth > 0:
+                                out["taggedContentInsideArtifact"] = min(200, out["taggedContentInsideArtifact"] + 1)
+                    elif op == "EMC":
+                        if artifact_depth > 0:
+                            artifact_depth -= 1
+                        elif tag_depth > 0:
+                            tag_depth -= 1
+                        depth = max(0, depth - 1)
+                    elif depth == 0:
+                        if op in text_ops:
+                            out["textOutsideMarkedContentOrArtifact"] = min(200, out["textOutsideMarkedContentOrArtifact"] + 1)
+                        elif op in image_ops:
+                            out["imageOutsideMarkedContentOrArtifact"] = min(200, out["imageOutsideMarkedContentOrArtifact"] + 1)
+                        elif op in path_ops:
+                            # Keep detailed path count from the existing bounded helper.
+                            pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return out
+
+
+def collect_table_header_audit_from_tables(tables: list) -> dict:
+    tables_checked = len(tables or [])
+    missing_header_assoc = 0
+    orphan_headers = 0
+    data_without_headers = 0
+    for table in tables or []:
+        try:
+            total = int(table.get("totalCells") or 0)
+            headers = int(table.get("headerCount") or 0)
+            if total > 0 and headers <= 0:
+                missing_header_assoc += 1
+                data_without_headers += max(0, total)
+        except Exception:
+            pass
+    return {
+        "tablesChecked": tables_checked,
+        "headerAssociationMissingCount": missing_header_assoc,
+        "orphanHeaderCellCount": orphan_headers,
+        "dataCellsWithoutHeaderCount": data_without_headers,
+    }
+
+
+def collect_font_syntax_audit_from_fonts(fonts: list) -> dict:
+    out = {
+        "fontsChecked": len(fonts or []),
+        "missingToUnicodeCMapCount": 0,
+        "invalidToUnicodeCMapCount": 0,
+        "cidToGidMapRiskCount": 0,
+        "trueTypeEncodingMismatchCount": 0,
+        "wModeMismatchCount": 0,
+        "externalCMapReferenceCount": 0,
+    }
+    for font in fonts or []:
+        try:
+            subtype = safe_str(font.get("subtype") or "")
+            if font.get("hasUnicode") is not True:
+                out["missingToUnicodeCMapCount"] += 1
+            if font.get("encodingRisk") is True and subtype in ("TrueType", "Type1"):
+                out["trueTypeEncodingMismatchCount"] += 1
+            if font.get("encodingRisk") is True and subtype in ("CIDFontType0", "CIDFontType2", "Type0"):
+                out["cidToGidMapRiskCount"] += 1
+        except Exception:
+            pass
+    return out
+
+
+def collect_language_audit(pdf: pikepdf.Pdf) -> dict:
+    out = {
+        "altTextLanguageInvalidCount": 0,
+        "actualTextLanguageInvalidCount": 0,
+        "annotationContentsLanguageInvalidCount": 0,
+        "formTuLanguageInvalidCount": 0,
+        "outlineLanguageInvalidCount": 0,
+        "expansionTextLanguageInvalidCount": 0,
+        "structureLangInvalidCount": 0,
+    }
+    lang_re = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
+    try:
+        q = deque()
+        sr = pdf.Root.get("/StructTreeRoot")
+        if isinstance(sr, pikepdf.Dictionary):
+            _enqueue_children(q, sr.get("/K"))
+        seen = 0
+        while q and seen < MAX_ITEMS:
+            elem = q.popleft()
+            seen += 1
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            lang = elem.get("/Lang")
+            if lang is not None and not lang_re.match(safe_str(lang)):
+                out["structureLangInvalidCount"] += 1
+            _enqueue_children(q, elem.get("/K"))
+    except Exception:
+        pass
+    return out
+
+
+def collect_optional_content_audit(pdf: pikepdf.Pdf) -> dict:
+    out = {
+        "optionalContentConfigMissingNameCount": 0,
+        "optionalContentAsInvalidCount": 0,
+        "embeddedFileMissingFOrUfCount": 0,
+        "dynamicXfaPresent": False,
+    }
+    try:
+        root = pdf.Root
+        acro = root.get("/AcroForm")
+        if isinstance(acro, pikepdf.Dictionary) and acro.get("/XFA") is not None:
+            out["dynamicXfaPresent"] = True
+        oc = root.get("/OCProperties")
+        if isinstance(oc, pikepdf.Dictionary):
+            d = oc.get("/D")
+            if isinstance(d, pikepdf.Dictionary):
+                if d.get("/Name") is None:
+                    out["optionalContentConfigMissingNameCount"] += 1
+                if d.get("/AS") is not None and not isinstance(d.get("/AS"), pikepdf.Array):
+                    out["optionalContentAsInvalidCount"] += 1
+    except Exception:
+        pass
+    return out
+
+
+def default_rendered_contrast_audit() -> dict:
+    return {
+        "measured": False,
+        "lowContrastTextRunCount": 0,
+        "uncertainTextRunCount": 0,
+    }
+
+
+def default_toc_note_audit() -> dict:
+    return {
+        "tocItemMissingLinkCount": 0,
+        "tocDestinationMissingCount": 0,
+        "noteMissingIdCount": 0,
+        "duplicateNoteIdCount": 0,
+        "noteMissingLabelOrReferenceCount": 0,
+    }
+
+
+def default_link_reachability_audit() -> dict:
+    return {
+        "checked": False,
+        "unreachableUriCount": 0,
+        "unsafeUriCount": 0,
+    }
+
+
+def default_ai_visual_tag_audit() -> dict:
+    return {
+        "evaluated": False,
+        "falsePositiveTagCount": 0,
+        "falseNegativeTagCount": 0,
+        "likelyMisclassifiedTagCount": 0,
     }
 
 
@@ -5247,6 +5558,56 @@ def main():
         },
         "linkScoringRows": [],
         "taggedContentAudit": None,
+        "parentTreeAudit": {
+            "missingParentTree": False,
+            "pagesMissingStructParents": 0,
+            "missingMcidParentTreeEntries": 0,
+            "invalidParentTreeEntries": 0,
+            "annotationReferenceMismatchCount": 0,
+            "objectReferenceMismatchCount": 0,
+        },
+        "contentTaggingAudit": {
+            "textOutsideMarkedContentOrArtifact": 0,
+            "imageOutsideMarkedContentOrArtifact": 0,
+            "pathOutsideMarkedContentOrArtifact": 0,
+            "artifactInsideTaggedContent": 0,
+            "taggedContentInsideArtifact": 0,
+            "contentOutsidePageBounds": 0,
+        },
+        "tableHeaderAudit": {
+            "tablesChecked": 0,
+            "headerAssociationMissingCount": 0,
+            "orphanHeaderCellCount": 0,
+            "dataCellsWithoutHeaderCount": 0,
+        },
+        "fontSyntaxAudit": {
+            "fontsChecked": 0,
+            "missingToUnicodeCMapCount": 0,
+            "invalidToUnicodeCMapCount": 0,
+            "cidToGidMapRiskCount": 0,
+            "trueTypeEncodingMismatchCount": 0,
+            "wModeMismatchCount": 0,
+            "externalCMapReferenceCount": 0,
+        },
+        "languageAudit": {
+            "altTextLanguageInvalidCount": 0,
+            "actualTextLanguageInvalidCount": 0,
+            "annotationContentsLanguageInvalidCount": 0,
+            "formTuLanguageInvalidCount": 0,
+            "outlineLanguageInvalidCount": 0,
+            "expansionTextLanguageInvalidCount": 0,
+            "structureLangInvalidCount": 0,
+        },
+        "renderedContrastAudit": default_rendered_contrast_audit(),
+        "tocNoteAudit": default_toc_note_audit(),
+        "optionalContentAudit": {
+            "optionalContentConfigMissingNameCount": 0,
+            "optionalContentAsInvalidCount": 0,
+            "embeddedFileMissingFOrUfCount": 0,
+            "dynamicXfaPresent": False,
+        },
+        "linkReachabilityAudit": default_link_reachability_audit(),
+        "aiVisualTagAudit": default_ai_visual_tag_audit(),
         "listStructureAudit": {
             "listCount": 0,
             "listItemCount": 0,
@@ -5276,6 +5637,14 @@ def main():
         result["orphanMcids"] = collect_orphan_mcids(pdf)
         result["mcidTextSpans"] = collect_mcid_text_spans(pdf)
         result["taggedContentAudit"] = collect_tagged_content_audit(pdf)
+        result["parentTreeAudit"] = collect_parent_tree_audit(pdf)
+        result["contentTaggingAudit"] = collect_content_tagging_audit(pdf)
+        result["languageAudit"] = collect_language_audit(pdf)
+        result["renderedContrastAudit"] = default_rendered_contrast_audit()
+        result["tocNoteAudit"] = default_toc_note_audit()
+        result["optionalContentAudit"] = collect_optional_content_audit(pdf)
+        result["linkReachabilityAudit"] = default_link_reachability_audit()
+        result["aiVisualTagAudit"] = default_ai_visual_tag_audit()
         result["remediationProvenance"] = extract_remediation_provenance(pdf)
 
         try:
@@ -5310,9 +5679,11 @@ def main():
 
         # Fonts
         result["fonts"] = extract_fonts(pdf)
+        result["fontSyntaxAudit"] = collect_font_syntax_audit_from_fonts(result["fonts"])
 
         # Bookmarks
         result["bookmarks"] = extract_bookmarks(pdf)
+        result["tableHeaderAudit"] = collect_table_header_audit_from_tables(result["tables"])
 
         # AcroForm fields (supplement tagged form fields)
         acro = extract_acroform_fields(pdf)

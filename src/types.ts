@@ -363,6 +363,85 @@ export interface DocumentSnapshot {
     /** Visible non-link annots with no /StructParent. */
     nonLinkAnnotationsMissingStructParent: number;
   };
+  /** POC/PAC-style ParentTree integrity evidence. Diagnostic-only unless promoted later. */
+  parentTreeAudit?: {
+    missingParentTree: boolean;
+    pagesMissingStructParents: number;
+    missingMcidParentTreeEntries: number;
+    invalidParentTreeEntries: number;
+    annotationReferenceMismatchCount: number;
+    objectReferenceMismatchCount: number;
+  };
+  /** Bounded content-stream tagging/artifact evidence. Diagnostic-only unless promoted later. */
+  contentTaggingAudit?: {
+    textOutsideMarkedContentOrArtifact: number;
+    imageOutsideMarkedContentOrArtifact: number;
+    pathOutsideMarkedContentOrArtifact: number;
+    artifactInsideTaggedContent: number;
+    taggedContentInsideArtifact: number;
+    contentOutsidePageBounds: number;
+  };
+  /** Table-header association evidence beyond basic TH/TD presence. */
+  tableHeaderAudit?: {
+    tablesChecked: number;
+    headerAssociationMissingCount: number;
+    orphanHeaderCellCount: number;
+    dataCellsWithoutHeaderCount: number;
+  };
+  /** Low-level font/CMap/Unicode syntax evidence from pikepdf/font inspection. */
+  fontSyntaxAudit?: {
+    fontsChecked: number;
+    missingToUnicodeCMapCount: number;
+    invalidToUnicodeCMapCount: number;
+    cidToGidMapRiskCount: number;
+    trueTypeEncodingMismatchCount: number;
+    wModeMismatchCount: number;
+    externalCMapReferenceCount: number;
+  };
+  /** Natural-language syntax coverage for element-level text alternatives and labels. */
+  languageAudit?: {
+    altTextLanguageInvalidCount: number;
+    actualTextLanguageInvalidCount: number;
+    annotationContentsLanguageInvalidCount: number;
+    formTuLanguageInvalidCount: number;
+    outlineLanguageInvalidCount: number;
+    expansionTextLanguageInvalidCount: number;
+    structureLangInvalidCount: number;
+  };
+  /** Optional rendered-contrast evidence. Disabled/not measured by default. */
+  renderedContrastAudit?: {
+    measured: boolean;
+    lowContrastTextRunCount: number;
+    uncertainTextRunCount: number;
+  };
+  /** Structural TOC/Note evidence. */
+  tocNoteAudit?: {
+    tocItemMissingLinkCount: number;
+    tocDestinationMissingCount: number;
+    noteMissingIdCount: number;
+    duplicateNoteIdCount: number;
+    noteMissingLabelOrReferenceCount: number;
+  };
+  /** Optional content and embedded file-spec evidence. */
+  optionalContentAudit?: {
+    optionalContentConfigMissingNameCount: number;
+    optionalContentAsInvalidCount: number;
+    embeddedFileMissingFOrUfCount: number;
+    dynamicXfaPresent: boolean;
+  };
+  /** Opt-in URI reachability evidence. Disabled/not checked by default. */
+  linkReachabilityAudit?: {
+    checked: boolean;
+    unreachableUriCount: number;
+    unsafeUriCount: number;
+  };
+  /** Non-mutating AI visual-vs-structure mismatch diagnostics. Disabled by default. */
+  aiVisualTagAudit?: {
+    evaluated: boolean;
+    falsePositiveTagCount: number;
+    falseNegativeTagCount: number;
+    likelyMisclassifiedTagCount: number;
+  };
   fonts: Array<{
     name: string;
     isEmbedded: boolean;
@@ -544,6 +623,16 @@ export interface PythonAnalysisResult {
   /** Pikepdf scan of all pages’ /Link annotations for scorer (pdfjs samples pages). */
   linkScoringRows?: Array<{ page: number; url: string; effectiveText: string }>;
   taggedContentAudit?: DocumentSnapshot['taggedContentAudit'];
+  parentTreeAudit?: DocumentSnapshot['parentTreeAudit'];
+  contentTaggingAudit?: DocumentSnapshot['contentTaggingAudit'];
+  tableHeaderAudit?: DocumentSnapshot['tableHeaderAudit'];
+  fontSyntaxAudit?: DocumentSnapshot['fontSyntaxAudit'];
+  languageAudit?: DocumentSnapshot['languageAudit'];
+  renderedContrastAudit?: DocumentSnapshot['renderedContrastAudit'];
+  tocNoteAudit?: DocumentSnapshot['tocNoteAudit'];
+  optionalContentAudit?: DocumentSnapshot['optionalContentAudit'];
+  linkReachabilityAudit?: DocumentSnapshot['linkReachabilityAudit'];
+  aiVisualTagAudit?: DocumentSnapshot['aiVisualTagAudit'];
   listStructureAudit?: DocumentSnapshot['listStructureAudit'];
   acrobatStyleAltRisks?: DocumentSnapshot['acrobatStyleAltRisks'];
   structureBootstrapGate?: DocumentSnapshot['structureBootstrapGate'];

@@ -452,10 +452,18 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     return [
       noStructureRule('pdfua.content.orphan_mcids_absent', 'pdf_ua_compliance', 'Orphan MCID evidence requires a structure tree.'),
       noStructureRule('pdfua.content.path_paint_tagged_or_artifacted', 'pdf_ua_compliance', 'Path-paint tagging evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.text_tagged_or_artifacted', 'reading_order', 'Text tagging evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.image_tagged_or_artifacted', 'pdf_ua_compliance', 'Image tagging evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.artifact_tag_boundary_valid', 'pdf_ua_compliance', 'Artifact/tag boundary evidence requires a structure tree.'),
     ];
   }
 
   const signals = taggedContentSignals(snapshot);
+  const tagging = snapshot.contentTaggingAudit;
+  const textOutside = tagging?.textOutsideMarkedContentOrArtifact ?? 0;
+  const imageOutside = tagging?.imageOutsideMarkedContentOrArtifact ?? 0;
+  const pathOutside = Math.max(signals.suspectedPathPaintOutsideMc, tagging?.pathOutsideMarkedContentOrArtifact ?? 0);
+  const boundaryDebt = (tagging?.artifactInsideTaggedContent ?? 0) + (tagging?.taggedContentInsideArtifact ?? 0);
   return [
     rule({
       ruleId: 'pdfua.content.orphan_mcids_absent',
@@ -468,13 +476,312 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     }),
     rule({
       ruleId: 'pdfua.content.path_paint_tagged_or_artifacted',
-      status: signals.suspectedPathPaintOutsideMc > 0 ? 'fail' : 'pass',
+      status: pathOutside > 0 ? 'fail' : 'pass',
       category: 'pdf_ua_compliance',
-      message: signals.suspectedPathPaintOutsideMc > 0
-        ? `${signals.suspectedPathPaintOutsideMc} path-paint operator(s) appear outside marked-content blocks.`
+      message: pathOutside > 0
+        ? `${pathOutside} path-paint operator(s) appear outside marked-content blocks.`
         : 'No path-paint outside marked-content debt was detected.',
       confidence: 'heuristic',
-      count: signals.suspectedPathPaintOutsideMc,
+      count: pathOutside,
+    }),
+    rule({
+      ruleId: 'pdfua.content.text_tagged_or_artifacted',
+      status: textOutside > 0 ? 'fail' : 'pass',
+      category: 'reading_order',
+      message: textOutside > 0
+        ? `${textOutside} text-rendering operator(s) appear outside marked-content or artifact blocks.`
+        : 'No text outside marked-content/artifact blocks was detected.',
+      confidence: tagging ? 'heuristic' : 'manual_review_required',
+      count: textOutside,
+    }),
+    rule({
+      ruleId: 'pdfua.content.image_tagged_or_artifacted',
+      status: imageOutside > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: imageOutside > 0
+        ? `${imageOutside} image-paint operator(s) appear outside marked-content or artifact blocks.`
+        : 'No image paint outside marked-content/artifact blocks was detected.',
+      confidence: tagging ? 'heuristic' : 'manual_review_required',
+      count: imageOutside,
+    }),
+    rule({
+      ruleId: 'pdfua.content.artifact_tag_boundary_valid',
+      status: boundaryDebt > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: boundaryDebt > 0
+        ? `${boundaryDebt} nested artifact/tag boundary issue(s) were detected.`
+        : 'No nested artifact/tag boundary issue was detected.',
+      confidence: tagging ? 'heuristic' : 'manual_review_required',
+      count: boundaryDebt,
+    }),
+  ];
+}
+
+function parentTreeAuditRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  if (!hasStructure(snapshot)) {
+    return [
+      noStructureRule('pdfua.parent_tree.present', 'pdf_ua_compliance', 'ParentTree evidence requires a structure tree.'),
+      noStructureRule('pdfua.parent_tree.page_structparents_present', 'reading_order', 'Page StructParents evidence requires a structure tree.'),
+      noStructureRule('pdfua.parent_tree.mcid_entries_valid', 'pdf_ua_compliance', 'MCID ParentTree evidence requires a structure tree.'),
+      noStructureRule('pdfua.parent_tree.annotation_object_refs_consistent', 'link_quality', 'Object-reference evidence requires a structure tree.'),
+    ];
+  }
+  const audit = snapshot.parentTreeAudit;
+  const invalidMcid = (audit?.missingMcidParentTreeEntries ?? 0) + (audit?.invalidParentTreeEntries ?? 0);
+  const refDebt = (audit?.annotationReferenceMismatchCount ?? 0) + (audit?.objectReferenceMismatchCount ?? 0);
+  return [
+    rule({
+      ruleId: 'pdfua.parent_tree.present',
+      status: audit?.missingParentTree ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: audit?.missingParentTree ? 'Structure tree is missing /ParentTree.' : 'ParentTree is present or no direct missing-ParentTree debt was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+    }),
+    rule({
+      ruleId: 'pdfua.parent_tree.page_structparents_present',
+      status: (audit?.pagesMissingStructParents ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'reading_order',
+      message: (audit?.pagesMissingStructParents ?? 0) > 0
+        ? `${audit!.pagesMissingStructParents} page(s) with tagged content or annotations are missing /StructParents.`
+        : 'No page /StructParents debt was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.pagesMissingStructParents ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.parent_tree.mcid_entries_valid',
+      status: invalidMcid > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: invalidMcid > 0
+        ? `${invalidMcid} missing or invalid ParentTree MCID entr${invalidMcid === 1 ? 'y' : 'ies'} were detected.`
+        : 'No invalid ParentTree MCID entries were detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: invalidMcid,
+    }),
+    rule({
+      ruleId: 'pdfua.parent_tree.annotation_object_refs_consistent',
+      status: refDebt > 0 ? 'fail' : 'pass',
+      category: 'link_quality',
+      message: refDebt > 0
+        ? `${refDebt} annotation/object reference mismatch(es) were detected.`
+        : 'No annotation/object reference mismatch was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: refDebt,
+    }),
+  ];
+}
+
+function tableHeaderAuditRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  const audit = snapshot.tableHeaderAudit;
+  if ((audit?.tablesChecked ?? snapshot.tables.length) === 0) {
+    return [
+      noStructureRule('pdfua.table.header_association_present', 'table_markup', 'No table evidence is present.'),
+      noStructureRule('pdfua.table.header_cells_associated', 'table_markup', 'No table evidence is present.'),
+    ];
+  }
+  const headerAssociationDebt = (audit?.headerAssociationMissingCount ?? 0) + (audit?.dataCellsWithoutHeaderCount ?? 0);
+  const orphanHeaderDebt = audit?.orphanHeaderCellCount ?? 0;
+  return [
+    rule({
+      ruleId: 'pdfua.table.header_association_present',
+      status: headerAssociationDebt > 0 ? 'fail' : 'pass',
+      category: 'table_markup',
+      message: headerAssociationDebt > 0
+        ? `${headerAssociationDebt} table header-association issue(s) were detected.`
+        : 'No table header-association debt was detected.',
+      confidence: audit ? 'heuristic' : 'manual_review_required',
+      count: headerAssociationDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.table.header_cells_associated',
+      status: orphanHeaderDebt > 0 ? 'fail' : 'pass',
+      category: 'table_markup',
+      message: orphanHeaderDebt > 0
+        ? `${orphanHeaderDebt} orphan table header cell(s) were detected.`
+        : 'No orphan table header cells were detected.',
+      confidence: audit ? 'heuristic' : 'manual_review_required',
+      count: orphanHeaderDebt,
+    }),
+  ];
+}
+
+function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  const audit = snapshot.fontSyntaxAudit;
+  if ((audit?.fontsChecked ?? snapshot.fonts.length) === 0) {
+    return [
+      noStructureRule('pdfua.font.to_unicode_cmap_present', 'text_extractability', 'No font evidence is present.'),
+      noStructureRule('pdfua.font.to_unicode_cmap_valid', 'text_extractability', 'No font evidence is present.'),
+      noStructureRule('pdfua.font.cid_to_gidmap_valid', 'text_extractability', 'No font evidence is present.'),
+      noStructureRule('pdfua.font.truetype_encoding_consistent', 'text_extractability', 'No font evidence is present.'),
+      noStructureRule('pdfua.font.wmode_consistent', 'text_extractability', 'No font evidence is present.'),
+    ];
+  }
+  return [
+    rule({
+      ruleId: 'pdfua.font.to_unicode_cmap_present',
+      status: (audit?.missingToUnicodeCMapCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'text_extractability',
+      message: (audit?.missingToUnicodeCMapCount ?? 0) > 0
+        ? `${audit!.missingToUnicodeCMapCount} font(s) are missing /ToUnicode CMap evidence.`
+        : 'No missing /ToUnicode CMap debt was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.missingToUnicodeCMapCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.font.to_unicode_cmap_valid',
+      status: (audit?.invalidToUnicodeCMapCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'text_extractability',
+      message: (audit?.invalidToUnicodeCMapCount ?? 0) > 0
+        ? `${audit!.invalidToUnicodeCMapCount} invalid /ToUnicode CMap issue(s) were detected.`
+        : 'No invalid /ToUnicode CMap syntax was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.invalidToUnicodeCMapCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.font.cid_to_gidmap_valid',
+      status: (audit?.cidToGidMapRiskCount ?? 0) > 0 ? 'warn' : 'pass',
+      category: 'text_extractability',
+      message: (audit?.cidToGidMapRiskCount ?? 0) > 0
+        ? `${audit!.cidToGidMapRiskCount} CID font mapping risk(s) need checker/manual review.`
+        : 'No CIDToGIDMap risk was detected.',
+      confidence: audit ? 'heuristic' : 'manual_review_required',
+      count: audit?.cidToGidMapRiskCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.font.truetype_encoding_consistent',
+      status: (audit?.trueTypeEncodingMismatchCount ?? 0) > 0 ? 'warn' : 'pass',
+      category: 'text_extractability',
+      message: (audit?.trueTypeEncodingMismatchCount ?? 0) > 0
+        ? `${audit!.trueTypeEncodingMismatchCount} TrueType/encoding consistency risk(s) need review.`
+        : 'No TrueType encoding consistency risk was detected.',
+      confidence: audit ? 'heuristic' : 'manual_review_required',
+      count: audit?.trueTypeEncodingMismatchCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.font.wmode_consistent',
+      status: (audit?.wModeMismatchCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'text_extractability',
+      message: (audit?.wModeMismatchCount ?? 0) > 0
+        ? `${audit!.wModeMismatchCount} writing-mode mismatch(es) were detected.`
+        : 'No writing-mode mismatch was detected.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.wModeMismatchCount ?? 0,
+    }),
+  ];
+}
+
+function expandedLanguageRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  const audit = snapshot.languageAudit;
+  const rows: Array<[string, CategoryKey, keyof NonNullable<DocumentSnapshot['languageAudit']>, string]> = [
+    ['pdfua.language.alt_text_lang_valid', 'alt_text', 'altTextLanguageInvalidCount', 'alternate text'],
+    ['pdfua.language.actual_text_lang_valid', 'pdf_ua_compliance', 'actualTextLanguageInvalidCount', 'ActualText'],
+    ['pdfua.language.annotation_contents_lang_valid', 'link_quality', 'annotationContentsLanguageInvalidCount', 'annotation contents'],
+    ['pdfua.language.form_tu_lang_valid', 'form_accessibility', 'formTuLanguageInvalidCount', 'form alternate names'],
+    ['pdfua.language.outline_lang_valid', 'bookmarks', 'outlineLanguageInvalidCount', 'outline text'],
+    ['pdfua.language.structure_lang_valid', 'title_language', 'structureLangInvalidCount', 'structure language overrides'],
+  ];
+  return rows.map(([ruleId, category, key, label]) => {
+    const count = audit?.[key] ?? 0;
+    return rule({
+      ruleId,
+      status: count > 0 ? 'fail' : 'pass',
+      category,
+      message: count > 0
+        ? `${count} ${label} language value(s) appear malformed.`
+        : `No malformed ${label} language values were detected.`,
+      confidence: audit ? 'heuristic' : 'manual_review_required',
+      count,
+    });
+  });
+}
+
+function optionalDiagnosticRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  const contrast = snapshot.renderedContrastAudit;
+  const toc = snapshot.tocNoteAudit;
+  const optional = snapshot.optionalContentAudit;
+  const link = snapshot.linkReachabilityAudit;
+  const ai = snapshot.aiVisualTagAudit;
+  const tocDebt = (toc?.tocItemMissingLinkCount ?? 0) + (toc?.tocDestinationMissingCount ?? 0);
+  const noteDebt = (toc?.noteMissingIdCount ?? 0) + (toc?.duplicateNoteIdCount ?? 0) + (toc?.noteMissingLabelOrReferenceCount ?? 0);
+  const ocDebt = (optional?.optionalContentConfigMissingNameCount ?? 0) + (optional?.optionalContentAsInvalidCount ?? 0);
+  const uriDebt = (link?.unreachableUriCount ?? 0) + (link?.unsafeUriCount ?? 0);
+  const aiDebt = (ai?.falsePositiveTagCount ?? 0) + (ai?.falseNegativeTagCount ?? 0) + (ai?.likelyMisclassifiedTagCount ?? 0);
+  return [
+    rule({
+      ruleId: 'wcag.contrast.text_contrast_measured',
+      status: !contrast?.measured ? 'warn' : contrast.lowContrastTextRunCount > 0 ? 'fail' : 'pass',
+      category: 'color_contrast',
+      message: !contrast?.measured
+        ? 'Rendered contrast was not measured in this diagnostic run.'
+        : contrast.lowContrastTextRunCount > 0
+          ? `${contrast.lowContrastTextRunCount} low-contrast rendered text run(s) were detected.`
+          : 'Rendered contrast evidence did not find low-contrast text runs.',
+      confidence: contrast?.measured ? (contrast.uncertainTextRunCount > 0 ? 'manual_review_required' : 'verified') : 'manual_review_required',
+      count: contrast?.lowContrastTextRunCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.toc.toci_links_valid',
+      status: tocDebt > 0 ? 'fail' : 'pass',
+      category: 'bookmarks',
+      message: tocDebt > 0 ? `${tocDebt} TOC/TOCI link issue(s) were detected.` : 'No TOC/TOCI link issue was detected.',
+      confidence: toc ? 'heuristic' : 'manual_review_required',
+      count: tocDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.note.ids_unique',
+      status: noteDebt > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: noteDebt > 0 ? `${noteDebt} Note ID/label/reference issue(s) were detected.` : 'No Note ID/label/reference issue was detected.',
+      confidence: toc ? 'heuristic' : 'manual_review_required',
+      count: noteDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.optional_content.config_valid',
+      status: ocDebt > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: ocDebt > 0 ? `${ocDebt} optional-content configuration issue(s) were detected.` : 'No optional-content configuration issue was detected.',
+      confidence: optional ? 'verified' : 'manual_review_required',
+      count: ocDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.filespec.f_and_uf_present',
+      status: (optional?.embeddedFileMissingFOrUfCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: (optional?.embeddedFileMissingFOrUfCount ?? 0) > 0
+        ? `${optional!.embeddedFileMissingFOrUfCount} embedded file spec(s) are missing /F or /UF.`
+        : 'No embedded file-spec /F or /UF debt was detected.',
+      confidence: optional ? 'verified' : 'manual_review_required',
+      count: optional?.embeddedFileMissingFOrUfCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.xfa.dynamic_absent',
+      status: optional?.dynamicXfaPresent ? 'fail' : 'pass',
+      category: 'form_accessibility',
+      message: optional?.dynamicXfaPresent ? 'Dynamic XFA evidence is present.' : 'No dynamic XFA evidence was detected.',
+      confidence: optional ? 'verified' : 'manual_review_required',
+    }),
+    rule({
+      ruleId: 'pdfua.link.uri_reachability_checked',
+      status: !link?.checked ? 'warn' : uriDebt > 0 ? 'fail' : 'pass',
+      category: 'link_quality',
+      message: !link?.checked
+        ? 'URI reachability was not checked in this deterministic diagnostic run.'
+        : uriDebt > 0
+          ? `${uriDebt} unreachable or unsafe URI issue(s) were detected.`
+          : 'Checked URI targets did not show reachability debt.',
+      confidence: link?.checked ? 'verified' : 'manual_review_required',
+      count: uriDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.ai.visual_tag_mismatch_absent',
+      status: !ai?.evaluated ? 'warn' : aiDebt > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: !ai?.evaluated
+        ? 'AI visual-tag mismatch diagnostics were not evaluated.'
+        : aiDebt > 0
+          ? `${aiDebt} visual-vs-structure mismatch issue(s) were detected.`
+          : 'AI visual-tag diagnostics did not find mismatch evidence.',
+      confidence: ai?.evaluated ? 'heuristic' : 'manual_review_required',
+      count: aiDebt,
     }),
   ];
 }
@@ -522,6 +829,11 @@ export function buildPacRuleEvidence(snapshot: DocumentSnapshot): PacRuleEvidenc
     ...altRules(snapshot),
     ...tableRules(snapshot),
     ...contentRules(snapshot),
+    ...parentTreeAuditRules(snapshot),
+    ...tableHeaderAuditRules(snapshot),
+    ...fontSyntaxRules(snapshot),
+    ...expandedLanguageRules(snapshot),
+    ...optionalDiagnosticRules(snapshot),
     ...qualityRules(snapshot),
   ];
 }

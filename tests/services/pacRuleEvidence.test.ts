@@ -103,6 +103,75 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
       mcidTextSpanCount: 0,
       suspectedPathPaintOutsideMc: 0,
     },
+    parentTreeAudit: {
+      missingParentTree: false,
+      pagesMissingStructParents: 0,
+      missingMcidParentTreeEntries: 0,
+      invalidParentTreeEntries: 0,
+      annotationReferenceMismatchCount: 0,
+      objectReferenceMismatchCount: 0,
+    },
+    contentTaggingAudit: {
+      textOutsideMarkedContentOrArtifact: 0,
+      imageOutsideMarkedContentOrArtifact: 0,
+      pathOutsideMarkedContentOrArtifact: 0,
+      artifactInsideTaggedContent: 0,
+      taggedContentInsideArtifact: 0,
+      contentOutsidePageBounds: 0,
+    },
+    tableHeaderAudit: {
+      tablesChecked: 0,
+      headerAssociationMissingCount: 0,
+      orphanHeaderCellCount: 0,
+      dataCellsWithoutHeaderCount: 0,
+    },
+    fontSyntaxAudit: {
+      fontsChecked: 1,
+      missingToUnicodeCMapCount: 0,
+      invalidToUnicodeCMapCount: 0,
+      cidToGidMapRiskCount: 0,
+      trueTypeEncodingMismatchCount: 0,
+      wModeMismatchCount: 0,
+      externalCMapReferenceCount: 0,
+    },
+    languageAudit: {
+      altTextLanguageInvalidCount: 0,
+      actualTextLanguageInvalidCount: 0,
+      annotationContentsLanguageInvalidCount: 0,
+      formTuLanguageInvalidCount: 0,
+      outlineLanguageInvalidCount: 0,
+      expansionTextLanguageInvalidCount: 0,
+      structureLangInvalidCount: 0,
+    },
+    renderedContrastAudit: {
+      measured: false,
+      lowContrastTextRunCount: 0,
+      uncertainTextRunCount: 0,
+    },
+    tocNoteAudit: {
+      tocItemMissingLinkCount: 0,
+      tocDestinationMissingCount: 0,
+      noteMissingIdCount: 0,
+      duplicateNoteIdCount: 0,
+      noteMissingLabelOrReferenceCount: 0,
+    },
+    optionalContentAudit: {
+      optionalContentConfigMissingNameCount: 0,
+      optionalContentAsInvalidCount: 0,
+      embeddedFileMissingFOrUfCount: 0,
+      dynamicXfaPresent: false,
+    },
+    linkReachabilityAudit: {
+      checked: false,
+      unreachableUriCount: 0,
+      unsafeUriCount: 0,
+    },
+    aiVisualTagAudit: {
+      evaluated: false,
+      falsePositiveTagCount: 0,
+      falseNegativeTagCount: 0,
+      likelyMisclassifiedTagCount: 0,
+    },
     pdfClass: 'native_tagged',
     imageToTextRatio: 0,
     detectionProfile: baseDetectionProfile(),
@@ -130,6 +199,8 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.language.document_lang_syntax_valid').status).toBe('pass');
     expect(byId(rows, 'pdfua.structure.struct_tree_present').status).toBe('pass');
     expect(byId(rows, 'pdfua.content.orphan_mcids_absent').status).toBe('pass');
+    expect(byId(rows, 'pdfua.parent_tree.present').status).toBe('pass');
+    expect(byId(rows, 'pdfua.font.to_unicode_cmap_present').status).toBe('pass');
   });
 
   it('fails missing PDF/UA identifier', () => {
@@ -300,6 +371,139 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.content.path_paint_tagged_or_artifacted').status).toBe('fail');
   });
 
+  it('fails direct ParentTree audit debt', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      parentTreeAudit: {
+        missingParentTree: true,
+        pagesMissingStructParents: 2,
+        missingMcidParentTreeEntries: 3,
+        invalidParentTreeEntries: 1,
+        annotationReferenceMismatchCount: 4,
+        objectReferenceMismatchCount: 1,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.parent_tree.present')).toMatchObject({ status: 'fail', confidence: 'verified' });
+    expect(byId(rows, 'pdfua.parent_tree.page_structparents_present')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.parent_tree.mcid_entries_valid')).toMatchObject({ status: 'fail', count: 4 });
+    expect(byId(rows, 'pdfua.parent_tree.annotation_object_refs_consistent')).toMatchObject({ status: 'fail', count: 5 });
+  });
+
+  it('fails bounded content tagging and artifact boundary debt', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      contentTaggingAudit: {
+        textOutsideMarkedContentOrArtifact: 3,
+        imageOutsideMarkedContentOrArtifact: 2,
+        pathOutsideMarkedContentOrArtifact: 1,
+        artifactInsideTaggedContent: 1,
+        taggedContentInsideArtifact: 2,
+        contentOutsidePageBounds: 0,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.content.text_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 3 });
+    expect(byId(rows, 'pdfua.content.image_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.content.path_paint_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 1 });
+    expect(byId(rows, 'pdfua.content.artifact_tag_boundary_valid')).toMatchObject({ status: 'fail', count: 3 });
+  });
+
+  it('fails table header association audit debt', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      tables: [{ hasHeaders: true, headerCount: 1, totalCells: 4, page: 0 }],
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 2,
+        orphanHeaderCellCount: 1,
+        dataCellsWithoutHeaderCount: 3,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.table.header_association_present')).toMatchObject({ status: 'fail', count: 5 });
+    expect(byId(rows, 'pdfua.table.header_cells_associated')).toMatchObject({ status: 'fail', count: 1 });
+  });
+
+  it('emits font and expanded language audit rows', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      fontSyntaxAudit: {
+        fontsChecked: 2,
+        missingToUnicodeCMapCount: 1,
+        invalidToUnicodeCMapCount: 1,
+        cidToGidMapRiskCount: 1,
+        trueTypeEncodingMismatchCount: 1,
+        wModeMismatchCount: 1,
+        externalCMapReferenceCount: 0,
+      },
+      languageAudit: {
+        altTextLanguageInvalidCount: 1,
+        actualTextLanguageInvalidCount: 1,
+        annotationContentsLanguageInvalidCount: 1,
+        formTuLanguageInvalidCount: 1,
+        outlineLanguageInvalidCount: 1,
+        expansionTextLanguageInvalidCount: 0,
+        structureLangInvalidCount: 1,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.font.to_unicode_cmap_present').status).toBe('fail');
+    expect(byId(rows, 'pdfua.font.to_unicode_cmap_valid').status).toBe('fail');
+    expect(byId(rows, 'pdfua.font.cid_to_gidmap_valid').status).toBe('warn');
+    expect(byId(rows, 'pdfua.font.truetype_encoding_consistent').status).toBe('warn');
+    expect(byId(rows, 'pdfua.font.wmode_consistent').status).toBe('fail');
+    expect(byId(rows, 'pdfua.language.alt_text_lang_valid').status).toBe('fail');
+    expect(byId(rows, 'pdfua.language.form_tu_lang_valid').status).toBe('fail');
+    expect(byId(rows, 'pdfua.language.outline_lang_valid').status).toBe('fail');
+  });
+
+  it('keeps rendered contrast, link reachability, and AI checks diagnostic until measured/evaluated', () => {
+    const rows = buildPacRuleEvidence(makeSnap());
+
+    expect(byId(rows, 'wcag.contrast.text_contrast_measured')).toMatchObject({
+      status: 'warn',
+      confidence: 'manual_review_required',
+    });
+    expect(byId(rows, 'pdfua.link.uri_reachability_checked')).toMatchObject({
+      status: 'warn',
+      confidence: 'manual_review_required',
+    });
+    expect(byId(rows, 'pdfua.ai.visual_tag_mismatch_absent')).toMatchObject({
+      status: 'warn',
+      confidence: 'manual_review_required',
+    });
+
+    const measured = buildPacRuleEvidence(makeSnap({
+      renderedContrastAudit: { measured: true, lowContrastTextRunCount: 2, uncertainTextRunCount: 0 },
+      linkReachabilityAudit: { checked: true, unreachableUriCount: 1, unsafeUriCount: 1 },
+      aiVisualTagAudit: { evaluated: true, falsePositiveTagCount: 1, falseNegativeTagCount: 0, likelyMisclassifiedTagCount: 1 },
+    }));
+    expect(byId(measured, 'wcag.contrast.text_contrast_measured')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(measured, 'pdfua.link.uri_reachability_checked')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(measured, 'pdfua.ai.visual_tag_mismatch_absent')).toMatchObject({ status: 'fail', count: 2 });
+  });
+
+  it('fails TOC/Note, optional content, file-spec, and XFA evidence when direct debt exists', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      tocNoteAudit: {
+        tocItemMissingLinkCount: 1,
+        tocDestinationMissingCount: 1,
+        noteMissingIdCount: 1,
+        duplicateNoteIdCount: 1,
+        noteMissingLabelOrReferenceCount: 1,
+      },
+      optionalContentAudit: {
+        optionalContentConfigMissingNameCount: 1,
+        optionalContentAsInvalidCount: 1,
+        embeddedFileMissingFOrUfCount: 2,
+        dynamicXfaPresent: true,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.toc.toci_links_valid')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.note.ids_unique')).toMatchObject({ status: 'fail', count: 3 });
+    expect(byId(rows, 'pdfua.optional_content.config_valid')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.filespec.f_and_uf_present')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.xfa.dynamic_absent').status).toBe('fail');
+  });
+
   it('warns on filename-like title', () => {
     const rows = buildPacRuleEvidence(makeSnap({
       metadata: { ...makeSnap().metadata, title: 'report_final_v3.pdf' },
@@ -328,5 +532,7 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.parent_tree.annotation_struct_parent_present').status).toBe('not_applicable');
     expect(byId(rows, 'pdfua.annotations.tagged_annotations_present').status).toBe('not_applicable');
     expect(byId(rows, 'pdfua.content.orphan_mcids_absent').status).toBe('not_applicable');
+    expect(byId(rows, 'pdfua.parent_tree.present').status).toBe('not_applicable');
+    expect(byId(rows, 'pdfua.content.text_tagged_or_artifacted').status).toBe('not_applicable');
   });
 });
