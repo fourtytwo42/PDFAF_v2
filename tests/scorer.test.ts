@@ -1614,6 +1614,137 @@ describe('stage 1 evidence model', () => {
 });
 
 describe('phase 3 PAC scoring influence', () => {
+  it('caps high text extractability for a verified missing ToUnicode CMap failure', () => {
+    const snap = makeSnap({
+      fontSyntaxAudit: {
+        fontsChecked: 2,
+        missingToUnicodeCMapCount: 1,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('text_extractability', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.font.to_unicode_cmap_present',
+    ]);
+    expect(cat.evidence).toBe('manual_review_required');
+  });
+
+  it('caps high text extractability for a verified invalid ToUnicode CMap failure', () => {
+    const snap = makeSnap({
+      fontSyntaxAudit: {
+        fontsChecked: 2,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 1,
+        emptyToUnicodeCMapCount: 1,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('text_extractability', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.font.to_unicode_cmap_valid',
+    ]);
+  });
+
+  it('caps high table markup for a verified table header association failure', () => {
+    const snap = makeSnap({
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 0,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 2,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('table_markup', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.table.header_association_present',
+    ]);
+  });
+
+  it('does not lower already-low font or table categories for promoted PAC failures', () => {
+    const snap = makeSnap({
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 1,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+      },
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 1,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('text_extractability', 70),
+      scoredCategory('table_markup', 65),
+    ]);
+
+    expect(finalized.categories.find(c => c.key === 'text_extractability')?.score).toBe(70);
+    expect(finalized.categories.find(c => c.key === 'text_extractability')?.scoreCapsApplied).toBeUndefined();
+    expect(finalized.categories.find(c => c.key === 'table_markup')?.score).toBe(65);
+    expect(finalized.categories.find(c => c.key === 'table_markup')?.scoreCapsApplied).toBeUndefined();
+  });
+
+  it('does not cap for noisy non-promoted font evidence', () => {
+    const snap = makeSnap({
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 1,
+        trueTypeEncodingMismatchCount: 1,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('text_extractability', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.manualReviewRequired).toBe(false);
+  });
+
   it('caps a high applicable category when a selected verified PAC rule fails', () => {
     const snap = makeSnap({
       formFields: [{ name: 'approve', page: 0 }],

@@ -97,6 +97,62 @@ function missingFigureSnapshot(count: number): DocumentSnapshot {
   });
 }
 
+function tableHeaderDebtSnapshot(count: number): DocumentSnapshot {
+  return baseSnapshot({
+    tableHeaderAudit: {
+      tablesChecked: 1,
+      headerAssociationMissingCount: 0,
+      orphanHeaderCellCount: 0,
+      dataCellsWithoutHeaderCount: count,
+    },
+  });
+}
+
+function childRoleDebtSnapshot(count: number): DocumentSnapshot {
+  return baseSnapshot({
+    structureSyntaxAudit: {
+      missingStructureTypeCount: 0,
+      missingRoleCount: 0,
+      missingParentCount: 0,
+      wrongParentCount: 0,
+      invalidChildRoleCount: count,
+      invalidMcrObjrCount: 0,
+      circularRoleMapCount: 0,
+      standardRoleRemappedCount: 0,
+      unmappedNonstandardRoleCount: 0,
+    },
+  });
+}
+
+function parentTreeMcidDebtSnapshot(count: number): DocumentSnapshot {
+  return baseSnapshot({
+    parentTreeAudit: {
+      missingParentTree: false,
+      pagesMissingStructParents: 0,
+      missingMcidParentTreeEntries: count,
+      invalidParentTreeEntries: 0,
+      annotationReferenceMismatchCount: 0,
+      objectReferenceMismatchCount: 0,
+    },
+  });
+}
+
+function roleMapDebtSnapshot(count: number): DocumentSnapshot {
+  return baseSnapshot({
+    structureSyntaxAudit: {
+      missingStructureTypeCount: 0,
+      missingRoleCount: 0,
+      missingParentCount: 0,
+      wrongParentCount: 0,
+      invalidChildRoleCount: 0,
+      invalidMcrObjrCount: 0,
+      circularRoleMapCount: count,
+      standardRoleRemappedCount: 0,
+      unmappedNonstandardRoleCount: 0,
+    },
+  });
+}
+
 describe('pacRuleAcceptanceGate', () => {
   it('rejects selected PAC rules that change from non-fail to fail', () => {
     const decision = pacRuleAcceptanceGate({
@@ -179,5 +235,68 @@ describe('pacRuleAcceptanceGate', () => {
 
     expect(decision).toEqual({ reject: false, reason: null });
     expect(pacAcceptanceGateAppliesToTools(['set_document_title'])).toBe(false);
+  });
+
+  it('rejects table header association regressions', () => {
+    const decision = pacRuleAcceptanceGate({
+      beforeSnapshot: baseSnapshot(),
+      afterSnapshot: tableHeaderDebtSnapshot(2),
+      toolNames: ['normalize_table_structure'],
+    });
+
+    expect(decision.reject).toBe(true);
+    expect(decision.reason).toBe('pac_rule_regressed(pdfua.table.header_association_present)');
+    expect(JSON.parse(decision.details ?? '{}').pacRuleRegression).toMatchObject({
+      ruleId: 'pdfua.table.header_association_present',
+      beforeCount: 0,
+      afterCount: 2,
+    });
+  });
+
+  it('rejects structure child-role validity regressions', () => {
+    const decision = pacRuleAcceptanceGate({
+      beforeSnapshot: baseSnapshot(),
+      afterSnapshot: childRoleDebtSnapshot(3),
+      toolNames: ['normalize_heading_hierarchy'],
+    });
+
+    expect(decision.reject).toBe(true);
+    expect(decision.reason).toBe('pac_rule_regressed(pdfua.structure.child_roles_valid)');
+  });
+
+  it('rejects ParentTree MCID entry regressions', () => {
+    const decision = pacRuleAcceptanceGate({
+      beforeSnapshot: baseSnapshot(),
+      afterSnapshot: parentTreeMcidDebtSnapshot(1),
+      toolNames: ['remap_orphan_mcids_as_artifacts'],
+    });
+
+    expect(decision.reject).toBe(true);
+    expect(decision.reason).toBe('pac_rule_regressed(pdfua.parent_tree.mcid_entries_valid)');
+  });
+
+  it('rejects RoleMap validity regressions', () => {
+    const decision = pacRuleAcceptanceGate({
+      beforeSnapshot: baseSnapshot(),
+      afterSnapshot: roleMapDebtSnapshot(1),
+      toolNames: ['bootstrap_struct_tree'],
+    });
+
+    expect(decision.reject).toBe(true);
+    expect(decision.reason).toBe('pac_rule_regressed(pdfua.structure.rolemap_valid)');
+  });
+
+  it('does not reject promoted PAC gate failures with same or reduced counts', () => {
+    expect(pacRuleAcceptanceGate({
+      beforeSnapshot: tableHeaderDebtSnapshot(2),
+      afterSnapshot: tableHeaderDebtSnapshot(1),
+      toolNames: ['normalize_table_structure'],
+    })).toEqual({ reject: false, reason: null });
+
+    expect(pacRuleAcceptanceGate({
+      beforeSnapshot: roleMapDebtSnapshot(1),
+      afterSnapshot: roleMapDebtSnapshot(1),
+      toolNames: ['bootstrap_struct_tree'],
+    })).toEqual({ reject: false, reason: null });
   });
 });
