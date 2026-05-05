@@ -18,6 +18,7 @@ This file is durable context for agents working in this repository. Read it when
 
 ## Recent Stage Memory
 
+- Phase 4 PAC remediation acceptance gates are implemented as conservative regression-prevention only. Selected structural/checker-facing PAC rules now gate deterministic stage and guarded post-pass acceptance when a structural mutator creates a new verified failure or increases an existing failure count; scoring, API schema, planner scheduling, mutation behavior, semantic gates, and benchmark policy remain unchanged.
 - Phase 3 PAC scoring influence is implemented conservatively in scorer finalization. Only selected verified PAC `fail` rules can cap an applicable mapped category at `89`, add `PAC rule failure: <ruleId>` cap records, and downgrade that category to manual-review-required; no API schema, planner, remediation, mutation, gate, or diagnostic-script behavior was changed.
 - Phase 2 PAC evidence reporting/diagnostics is implemented. HTML remediation reports can include compact diagnostic-only PDF/UA rule checks from final `DocumentSnapshot` evidence, and `scripts/pac-parity-diagnostic.ts` writes local PAC rule matrix/summary artifacts without changing API JSON, scoring, planning, remediation, gates, or benchmark behavior.
 - Phase 1 PAC-style rule evidence is implemented in `src/services/compliance/pacRuleEvidence.ts` with focused tests in `tests/services/pacRuleEvidence.test.ts`. It is read-only over `DocumentSnapshot`, has no scorer/API/remediation integration, and Node 22 targeted test/lint passed before commit.

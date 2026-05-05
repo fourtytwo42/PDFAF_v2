@@ -81,6 +81,10 @@ import {
   stage181AltPlaceholder,
   type Stage181HiddenAltTarget,
 } from './stage181HiddenAlt.js';
+import {
+  pacRuleAcceptanceGate,
+  pacRuleAcceptanceGateForAppliedTools,
+} from './pacRuleAcceptanceGate.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -1380,8 +1384,18 @@ export function shouldRejectStageResult(input: {
   stage: RemediationStagePlan;
   stageApplied: AppliedRemediationTool[];
   protectedBaseline?: ProtectedBaselineFloor;
-}): { reject: boolean; reason: string | null } {
+}): { reject: boolean; reason: string | null; details?: string } {
   const ocrBypass = keepOcrStageDespiteScoreDrop(input.stage, input.stageApplied);
+  const pacGateDecision = (): { reject: boolean; reason: string | null; details?: string } => {
+    if (!input.beforeSnapshot || !input.afterSnapshot) {
+      return { reject: false, reason: null };
+    }
+    return pacRuleAcceptanceGateForAppliedTools({
+      beforeSnapshot: input.beforeSnapshot,
+      afterSnapshot: input.afterSnapshot,
+      appliedTools: input.stageApplied,
+    });
+  };
   if (noGainOrphanArtifactMutation(input)) {
     return {
       reject: true,
@@ -1412,6 +1426,10 @@ export function shouldRejectStageResult(input: {
         reject: true,
         reason: `figure_stage_regressed_without_alt_improvement(${input.after.score})`,
       };
+    }
+    const pacGate = pacGateDecision();
+    if (pacGate.reject) {
+      return pacGate;
     }
     if (
       input.before.score - input.after.score <= 10 &&
@@ -1486,6 +1504,10 @@ export function shouldRejectStageResult(input: {
         };
       }
     }
+  }
+  const pacGate = pacGateDecision();
+  if (pacGate.reject) {
+    return pacGate;
   }
   return {
     reject: false,
@@ -2879,6 +2901,44 @@ async function applyGuardedPostPass(args: {
       delta: 0,
       outcome: 'rejected',
       details: enrichDetailsWithReplayState(confidenceGuard.reason ?? 'stage_regressed_structural_confidence', {
+        beforeAnalysis: currentAnalysis,
+        beforeSnapshot: currentSnapshot,
+        afterAnalysis: analyzed.result,
+        afterSnapshot: analyzed.snapshot,
+      }),
+      durationMs,
+      source: 'post_pass',
+    });
+    runtimeSummary?.toolTimings.push({
+      toolName,
+      stage,
+      round,
+      source: 'post_pass',
+      durationMs,
+      outcome: 'rejected',
+    });
+    return {
+      buffer: currentBuffer,
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      accepted: false,
+    };
+  }
+  const pacGate = pacRuleAcceptanceGate({
+    beforeSnapshot: currentSnapshot,
+    afterSnapshot: analyzed.snapshot,
+    toolNames: [toolName],
+  });
+  if (pacGate.reject) {
+    appliedTools.push({
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: currentAnalysis.score,
+      delta: 0,
+      outcome: 'rejected',
+      details: enrichDetailsWithReplayState(pacGate.details ?? pacGate.reason ?? 'pac_rule_regressed', {
         beforeAnalysis: currentAnalysis,
         beforeSnapshot: currentSnapshot,
         afterAnalysis: analyzed.result,

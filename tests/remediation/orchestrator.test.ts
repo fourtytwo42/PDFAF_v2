@@ -544,6 +544,72 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects score-improving stages that create selected PAC structural failures', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        structRef: '12_0',
+        reachable: true,
+        directContent: true,
+      }],
+    };
+
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 100 } }),
+      after: makeAnalysis({ score: 86, confidence: 'medium', categories: { alt_text: 100 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: makeApplied('set_figure_alt_text'),
+    });
+
+    expect(result.reject).toBe(true);
+    expect(result.reason).toBe('pac_rule_regressed(pdfua.figure.alt_present)');
+    expect(JSON.parse(result.details ?? '{}').pacRuleRegression).toMatchObject({
+      ruleId: 'pdfua.figure.alt_present',
+      beforeCount: 0,
+      afterCount: 1,
+    });
+  });
+
+  it('does not reject stages when selected PAC failures are unchanged or lower', () => {
+    const beforeSnapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 2 }),
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        role: 'Figure',
+        structRef: '12_0',
+        reachable: true,
+        directContent: true,
+      }],
+    };
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      figures: [],
+    };
+
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 50 } }),
+      after: makeAnalysis({ score: 86, confidence: 'medium', categories: { alt_text: 60 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: makeApplied('set_figure_alt_text'),
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
   it('rejects score-improving stages with unexplained protected category regressions', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium', categories: { alt_text: 89, table_markup: 35 } }),
