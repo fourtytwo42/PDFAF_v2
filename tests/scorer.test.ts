@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { score, SCORING_WEIGHTS } from '../src/services/scorer/scorer.js';
+import { finalizeScoringEvidence } from '../src/services/scorer/finalizeEvidence.js';
 import { SCORE_TAGGED_MARKED_NO_EXTRACTABLE_TEXT } from '../src/config.js';
-import type { DocumentSnapshot } from '../src/types.js';
+import type { CategoryKey, DocumentSnapshot, ScoredCategory } from '../src/types.js';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,17 @@ function makeSnap(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
 }
 
 const META = { id: 'test-1', filename: 'test.pdf', timestamp: new Date().toISOString(), analysisDurationMs: 100 };
+
+function scoredCategory(key: CategoryKey, scoreValue = 100, applicable = true): ScoredCategory {
+  return {
+    key,
+    score: scoreValue,
+    weight: SCORING_WEIGHTS[key],
+    applicable,
+    severity: scoreValue >= 90 ? 'pass' : scoreValue >= 70 ? 'minor' : scoreValue >= 40 ? 'moderate' : 'critical',
+    findings: [],
+  };
+}
 
 // ─── Weight integrity ─────────────────────────────────────────────────────────
 
@@ -1598,5 +1610,146 @@ describe('stage 1 evidence model', () => {
     expect(cat.score).toBe(89);
     expect(cat.evidence).toBe('manual_review_required');
     expect(cat.manualReviewRequired).toBe(true);
+  });
+});
+
+describe('phase 3 PAC scoring influence', () => {
+  it('caps a high applicable category when a selected verified PAC rule fails', () => {
+    const snap = makeSnap({
+      formFields: [{ name: 'approve', page: 0 }],
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('form_accessibility', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.verificationLevel).toBe('manual_review_required');
+    expect(cat.manualReviewRequired).toBe(true);
+    expect(cat.scoreCapsApplied).toEqual([
+      {
+        category: 'form_accessibility',
+        cap: 89,
+        rawScore: 100,
+        finalScore: 89,
+        reason: 'PAC rule failure: pdfua.form.tu_present',
+      },
+    ]);
+    expect(finalized.manualReviewReasons).toContain('PAC rule failure requires manual review: pdfua.form.tu_present.');
+  });
+
+  it('does not lower an already-low category for a selected verified PAC failure', () => {
+    const snap = makeSnap({
+      formFields: [{ name: 'approve', page: 0 }],
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('form_accessibility', 70),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(70);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.manualReviewRequired).toBe(true);
+  });
+
+  it('does not cap from heuristic warning or incomplete PAC evidence', () => {
+    const snap = makeSnap({
+      metadata: { ...makeSnap().metadata, title: 'report_final_v3.pdf' },
+      structTitle: '',
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('title_language', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.evidence).toBe('verified');
+    expect(cat.manualReviewRequired).toBe(false);
+  });
+
+  it('does not cap non-applicable categories', () => {
+    const snap = makeSnap({
+      formFields: [{ name: 'approve', page: 0 }],
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('form_accessibility', 100, false),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.manualReviewRequired).toBe(false);
+  });
+
+  it('records multiple same-category PAC failures deterministically', () => {
+    const snap = makeSnap({
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, role: 'Figure' }],
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 2,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('alt_text', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.annotation.alt_or_contents_present',
+      'PAC rule failure: pdfua.annotations.nonlink_contents_present',
+      'PAC rule failure: pdfua.figure.alt_present',
+    ]);
+    expect(cat.manualReviewReasons).toEqual([
+      'PAC rule failure requires manual review: pdfua.annotation.alt_or_contents_present.',
+      'PAC rule failure requires manual review: pdfua.annotations.nonlink_contents_present.',
+      'PAC rule failure requires manual review: pdfua.figure.alt_present.',
+    ]);
+  });
+
+  it('preserves existing heuristic caps while adding PAC caps independently', () => {
+    const snap = makeSnap({
+      metadata: {
+        title: 'Test Doc',
+        language: 'en-US',
+        author: 'Author',
+        subject: 'Test',
+        producer: 'OCRmyPDF 17.0',
+      },
+      formFields: [{ name: 'approve', page: 0 }],
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('text_extractability', 100),
+      scoredCategory('form_accessibility', 100),
+    ]);
+    const text = finalized.categories.find(category => category.key === 'text_extractability')!;
+    const form = finalized.categories.find(category => category.key === 'form_accessibility')!;
+
+    expect(text.score).toBe(89);
+    expect(text.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'OCR-generated text layers cannot be treated as a full-confidence extractability pass.',
+    ]);
+    expect(form.score).toBe(89);
+    expect(form.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.form.tu_present',
+    ]);
+    expect(finalized.scoreCapsApplied.map(cap => cap.category)).toEqual([
+      'text_extractability',
+      'form_accessibility',
+    ]);
   });
 });

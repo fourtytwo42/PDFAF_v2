@@ -117,12 +117,12 @@ function taggedContentSignals(snapshot: DocumentSnapshot): {
 } {
   return {
     orphanMcidCount:
-      snapshot.detectionProfile?.pdfUaSignals.orphanMcidCount ??
+      snapshot.detectionProfile?.pdfUaSignals?.orphanMcidCount ??
       snapshot.taggedContentAudit?.orphanMcidCount ??
       snapshot.orphanMcids?.length ??
       0,
     suspectedPathPaintOutsideMc:
-      snapshot.detectionProfile?.pdfUaSignals.suspectedPathPaintOutsideMc ??
+      snapshot.detectionProfile?.pdfUaSignals?.suspectedPathPaintOutsideMc ??
       snapshot.taggedContentAudit?.suspectedPathPaintOutsideMc ??
       0,
   };
@@ -216,8 +216,8 @@ function structureRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     ];
   }
 
-  const nonFigureRoleCount = snapshot.detectionProfile?.figureSignals.nonFigureRoleCount ?? 0;
-  const degenerate = snapshot.detectionProfile?.readingOrderSignals.degenerateStructureTree === true;
+  const nonFigureRoleCount = snapshot.detectionProfile?.figureSignals?.nonFigureRoleCount ?? 0;
+  const degenerate = snapshot.detectionProfile?.readingOrderSignals?.degenerateStructureTree === true;
   return [
     rule({
       ruleId: 'pdfua.structure.struct_tree_present',

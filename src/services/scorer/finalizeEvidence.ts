@@ -8,9 +8,31 @@ import type {
   ScoredCategory,
   VerificationLevel,
 } from '../../types.js';
+import { buildPacRuleEvidence, type PacRuleEvidence } from '../compliance/pacRuleEvidence.js';
 import { qualifiesForEngineOwnedOcrExtractabilityCredit } from './remediationProvenance.js';
 
 const HEURISTIC_SCORE_CAP = 89;
+const PAC_RULE_SCORE_CAP = 89;
+const PAC_SCORING_RULE_IDS = new Set([
+  'pdfua.metadata.title_present',
+  'pdfua.metadata.pdfua_identifier_present',
+  'pdfua.settings.marked_true',
+  'pdfua.language.document_lang_present',
+  'pdfua.structure.struct_tree_present',
+  'pdfua.parent_tree.annotation_struct_parent_present',
+  'pdfua.annotations.tagged_annotations_present',
+  'pdfua.annotations.tab_order_structure',
+  'pdfua.annotations.nonlink_contents_present',
+  'pdfua.figure.alt_present',
+  'pdfua.figure.checker_visible_alt_present',
+  'pdfua.form.tu_present',
+  'pdfua.annotation.alt_or_contents_present',
+  'pdfua.table.headers_present',
+  'pdfua.table.cells_nested_under_rows',
+  'pdfua.table.rows_regular',
+  'pdfua.table.strong_regular_structure',
+  'pdfua.content.orphan_mcids_absent',
+]);
 
 interface CategoryPolicy {
   evidence: EvidenceLevel;
@@ -27,6 +49,11 @@ interface FinalizeScoringResult {
   manualReviewRequired: boolean;
   manualReviewReasons: string[];
   scoreCapsApplied: ScoreCapApplied[];
+}
+
+interface PacCategoryInfluence {
+  rules: PacRuleEvidence[];
+  manualReviewReasons: string[];
 }
 
 function metadataSuggestsOcrEngine(snap: DocumentSnapshot): boolean {
@@ -172,7 +199,29 @@ function attachFindingMetadata(
   }));
 }
 
-function finalizeCategory(snap: DocumentSnapshot, category: ScoredCategory): ScoredCategory {
+function pacInfluenceByCategory(snap: DocumentSnapshot): Map<CategoryKey, PacCategoryInfluence> {
+  const out = new Map<CategoryKey, PacCategoryInfluence>();
+  const selected = buildPacRuleEvidence(snap)
+    .filter(rule =>
+      PAC_SCORING_RULE_IDS.has(rule.ruleId) &&
+      rule.status === 'fail' &&
+      rule.confidence === 'verified'
+    )
+    .sort((a, b) => a.category.localeCompare(b.category) || a.ruleId.localeCompare(b.ruleId));
+  for (const rule of selected) {
+    const existing = out.get(rule.category) ?? { rules: [], manualReviewReasons: [] };
+    existing.rules.push(rule);
+    existing.manualReviewReasons.push(`PAC rule failure requires manual review: ${rule.ruleId}.`);
+    out.set(rule.category, existing);
+  }
+  return out;
+}
+
+function finalizeCategory(
+  snap: DocumentSnapshot,
+  category: ScoredCategory,
+  pacInfluence?: PacCategoryInfluence,
+): ScoredCategory {
   const policy = policyForCategory(snap, category);
   const scoreCapsApplied: ScoreCapApplied[] = [];
   let finalScore = category.score;
@@ -186,11 +235,38 @@ function finalizeCategory(snap: DocumentSnapshot, category: ScoredCategory): Sco
       reason: policy.capReason ?? 'Stage 1 heuristic evidence cap applied.',
     });
   }
+  const applicablePacInfluence = category.applicable && pacInfluence ? pacInfluence : undefined;
+  if (
+    applicablePacInfluence &&
+    typeof category.score === 'number' &&
+    category.score > PAC_RULE_SCORE_CAP
+  ) {
+    finalScore = Math.min(finalScore ?? PAC_RULE_SCORE_CAP, PAC_RULE_SCORE_CAP);
+    for (const pacRule of applicablePacInfluence.rules) {
+      scoreCapsApplied.push({
+        category: category.key,
+        cap: PAC_RULE_SCORE_CAP,
+        rawScore: category.score,
+        finalScore: PAC_RULE_SCORE_CAP,
+        reason: `PAC rule failure: ${pacRule.ruleId}`,
+      });
+    }
+  }
+
+  const manualReviewRequired = policy.manualReviewRequired || Boolean(applicablePacInfluence);
+  const manualReviewReasons = uniq([
+    ...policy.manualReviewReasons,
+    ...(applicablePacInfluence?.manualReviewReasons ?? []),
+  ]);
+  const evidence: EvidenceLevel =
+    applicablePacInfluence
+      ? 'manual_review_required'
+      : policy.evidence;
 
   const verificationLevel: VerificationLevel =
-    policy.manualReviewRequired
+    manualReviewRequired
       ? 'manual_review_required'
-      : policy.evidence === 'verified'
+      : evidence === 'verified'
         ? 'verified'
         : 'heuristic';
 
@@ -199,14 +275,14 @@ function finalizeCategory(snap: DocumentSnapshot, category: ScoredCategory): Sco
     score: finalScore,
     findings: attachFindingMetadata(
       category.findings,
-      policy.evidence,
-      policy.manualReviewRequired,
-      policy.manualReviewReasons,
+      evidence,
+      manualReviewRequired,
+      manualReviewReasons,
     ),
-    evidence: policy.evidence,
+    evidence,
     verificationLevel,
-    manualReviewRequired: policy.manualReviewRequired,
-    manualReviewReasons: policy.manualReviewReasons,
+    manualReviewRequired,
+    manualReviewReasons,
     ...(scoreCapsApplied.length > 0 ? { scoreCapsApplied } : {}),
   };
 }
@@ -238,7 +314,8 @@ export function finalizeScoringEvidence(
   snap: DocumentSnapshot,
   categories: ScoredCategory[],
 ): FinalizeScoringResult {
-  const finalizedCategories = categories.map(category => finalizeCategory(snap, category));
+  const pacByCategory = pacInfluenceByCategory(snap);
+  const finalizedCategories = categories.map(category => finalizeCategory(snap, category, pacByCategory.get(category.key)));
   const findings = finalizedCategories
     .flatMap(category => category.findings)
     .sort(findingSortOrder);
