@@ -18,6 +18,7 @@ This file is durable context for agents working in this repository. Read it when
 
 ## Recent Stage Memory
 
+- POC-decompiled review is documented in `docs/poc-decompiled-checker-map.md`. The POC under `Research/POC-decompiled` is a PAC-style event-driven checker with broad PDF/UA rule fidelity; PDFAF remains stronger at guarded remediation, corpus validation, semantic alt, rollback, and visual/protected acceptance. Best improvement candidates are a rule-id catalog layer, rendered contrast, deeper font/CMap/natural-language/ParentTree/table-header/content-tagging diagnostics, and optional AI visual-tag mismatch checks.
 - Stage 162 is a kept targeted quality win. Commit `4b554de` added near-pass PDF/UA cleanup. It lifted active-tail `v1-v1-3468` and `v1-v1-4766` to A-grade in focused validation, kept `false_positive_applied = 0`, preserved Stage 75 font gains, and improved original-50 mean/median/F count, but its formal gate still had protected regressions.
 - Stage 163 is diagnostic-only. Commit `80d2e4c` added `scripts/stage163-protected-regression-closeout.ts` and tests. No remediation behavior was kept.
 - Stage 163 focused diagnostics found same-buffer floor-safe repeats for `long-4516`, `short-4214`, `short-4176`, and sometimes `long-4683`; Stage 162 annotation retry did not fire on these protected blockers.
