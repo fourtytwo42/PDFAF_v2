@@ -334,6 +334,7 @@ async function listPdfFiles(inputPath: string): Promise<string[]> {
 }
 
 function manifestRows(manifest: ManifestLike): unknown[] {
+  if (Array.isArray(manifest)) return manifest;
   return manifest.rows ?? manifest.entries ?? manifest.files ?? [];
 }
 
