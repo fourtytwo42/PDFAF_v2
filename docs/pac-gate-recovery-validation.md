@@ -109,3 +109,47 @@ Next recommendation:
 - Keep the two-tier timeout plumbing.
 - Do not raise the default remediation analysis budget above 45s.
 - Open a narrow runtime-tail/analyzer stage for `structure-4438` and `long-4516`, plus a separate PAC gate recovery stage for the remaining true-regression blockers.
+
+## Runtime Tail And PAC Gate Isolation
+
+Implemented as diagnostic-only after the two-tier budget validation:
+
+- Runtime diagnostic: `scripts/pac-runtime-tail-diagnostic.ts`
+- PAC gate blocker diagnostic: `scripts/pac-gate-blocker-diagnostic.ts`
+- Runtime artifacts: `Output/experiment-corpus-baseline/pac-runtime-tail-diagnostic-2026-05-06-r1`
+- PAC blocker artifacts: `Output/experiment-corpus-baseline/pac-gate-blocker-diagnostic-2026-05-06-r1`
+
+Runtime findings:
+
+- Runtime tail rows classified: `4`
+- Per-PDF timeout rows: `long-4516`, `structure-4438`
+- `structure-4076`: `repeated_no_gain_tool_churn`
+  - candidate wall `226245ms`
+  - `18` applied-tool rows
+  - `7` rejected, `7` no-effect
+  - same-state no-gain early exits: `2`
+- `long-4683`: `reanalysis_heavy_large_document`
+  - candidate wall `282182ms`
+  - stage reanalysis `102769ms`
+  - mutation tool time `133028ms`
+- `long-4680` was p95-adjacent but classified `not_runtime_tail` by the current diagnostic thresholds.
+
+PAC gate blocker findings:
+
+- PAC gate rows: `114`
+- Focus gate rows: `114`
+- Candidate policy-review rows: `2`
+- Real harmful regressions: `9`
+- Estimated recoverable files under the strict policy-review filter: `1`
+- Top focus rule remains `pdfua.content.orphan_mcids_absent`: `80` rows across `22` files.
+- The two policy-review candidates are both `repair_alt_text_structure` blocked by orphan-MCID count increases while same-category PDF/UA evidence improved:
+  - `structure-3661`: rejected `86 -> 98`, PDF/UA `57 -> 67`, final `86`, estimated recovery `12`
+  - `figure-4188`: rejected `46 -> 59`, PDF/UA `57 -> 67`, final `59`, no estimated final recovery under current final-score model
+
+Decision:
+
+- No behavior change is kept from this isolation stage.
+- The evidence is not broad enough to safely narrow orphan-MCID PAC gates globally.
+- Keep true PAC gate rejection behavior as-is.
+- Next runtime work should target `structure-4438` and `long-4516` timeout attribution first, then `structure-4076` no-gain churn.
+- Next PAC gate work, if pursued, should be a tightly scoped `repair_alt_text_structure` + orphan-MCID same-category-improvement experiment with `structure-3661` and `figure-4188` as primary targets and harmful-regression rows as controls.
