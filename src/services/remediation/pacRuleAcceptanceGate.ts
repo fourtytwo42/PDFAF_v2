@@ -16,9 +16,7 @@ export const PAC_ACCEPTANCE_RULE_IDS = [
   'pdfua.table.strong_regular_structure',
   'pdfua.content.orphan_mcids_absent',
   'pdfua.table.header_association_present',
-  'pdfua.structure.child_roles_valid',
   'pdfua.parent_tree.mcid_entries_valid',
-  'pdfua.structure.rolemap_valid',
 ] as const;
 
 const PAC_ACCEPTANCE_RULE_ID_SET = new Set<string>(PAC_ACCEPTANCE_RULE_IDS);

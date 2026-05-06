@@ -12,6 +12,8 @@ Generated from local validation runs on 2026-05-05 and 2026-05-06.
 - Narrowed scoring gate/report: `Output/experiment-corpus-baseline/pac-promotion-stage1-narrowed-gate-2026-05-06-r1`, `Output/experiment-corpus-baseline/pac-promotion-stage1-narrowed-validation-2026-05-06-r1`
 - Scoring-reverted run: `Output/experiment-corpus-baseline/run-pac-promotion-stage1-scoring-reverted-2026-05-06-r1`
 - Scoring-reverted gate/report: `Output/experiment-corpus-baseline/pac-promotion-stage1-scoring-reverted-gate-2026-05-06-r1`, `Output/experiment-corpus-baseline/pac-promotion-stage1-scoring-reverted-validation-2026-05-06-r1`
+- Gate-narrowing run: `Output/experiment-corpus-baseline/run-pac-gate-narrowing-stage1-2026-05-06-r1`
+- Gate-narrowing gate/report: `Output/experiment-corpus-baseline/pac-gate-narrowing-stage1-gate-2026-05-06-r1`, `Output/experiment-corpus-baseline/pac-gate-narrowing-stage1-validation-2026-05-06-r1`
 
 Generated artifacts remain local under `Output/` and are not source-controlled.
 
@@ -51,6 +53,20 @@ Scoring-reverted final run:
 
 The final run still failed the same hard gates, but the comparator attributed no drops to Stage 1 promoted scoring caps.
 
+Gate-narrowed run:
+
+- Gate: fail
+- Mean: `86.9 -> 76.50`
+- Median: `92 -> 74`
+- F count: `6 -> 15`
+- Protected file regressions: `0 -> 23`
+- p95 wall runtime: `84056.89ms -> 280411.46ms`
+- Median wall runtime: `10594.99ms -> 16223.07ms`
+- Attempts: `843 -> 1024`
+- False-positive applied: `0`
+
+The gate-narrowed run removed all promoted Stage 1 PAC gate rejections, but it did not recover the benchmark gate. Remaining failures are driven by pre-existing PAC gates, route/analyzer volatility, and runtime-tail debt.
+
 ## PAC Cap Findings
 
 The validation found `73` newly observed PAC score caps versus the pre-promotion comparison run. `71` came from the Stage 1 promoted rule set.
@@ -80,6 +96,13 @@ No promoted `pdfua.structure.child_roles_valid` or `pdfua.parent_tree.mcid_entri
 
 The promoted gate count is not the scoring-cap blast-radius driver, but it is now the main remaining PAC-promotion risk. In the scoring-reverted final run, `promotedPacGateRejectionCount = 14`, all from `pdfua.structure.rolemap_valid` and `pdfua.structure.child_roles_valid`. The broader rejection volume is mostly from pre-existing PAC gate rules such as orphan MCID, annotation ParentTree, tagged annotation, figure alt, tab order, and table header basics.
 
+After gate narrowing, `pdfua.structure.rolemap_valid` and `pdfua.structure.child_roles_valid` no longer reject remediation. The comparator showed:
+
+- `promotedPacGateRejectionCount = 0`
+- `pacGateRejectionCount = 192`
+- Top remaining gate families: orphan MCIDs (`101`), annotation StructParent (`30`), tagged annotations (`28`), figure alt (`19`), tab order (`11`)
+- `pdfua.table.header_association_present` and `pdfua.parent_tree.mcid_entries_valid` produced no promoted gate rejections in this run
+
 ## Score Movement
 
 The comparator found `42` post-promotion score drops versus `run-stage187-full-2026-05-03-r1`.
@@ -100,18 +123,19 @@ Representative cap-attributable drops:
 
 ## Final Recommendation
 
-The next stage should be PAC gate/runtime narrowing, not another scoring promotion or new repair.
+The next stage should be pre-existing PAC gate churn isolation, not another scoring promotion or new repair.
 
 Completed in this stage:
 
 - Removed `pdfua.font.to_unicode_cmap_valid`, `pdfua.font.to_unicode_cmap_present`, and `pdfua.table.header_association_present` from Stage 1 scoring influence.
 - Kept font/CMap and table-header PAC evidence diagnostic-only.
-- Kept Stage 1 regression-only gates active for now.
+- Removed `pdfua.structure.rolemap_valid` and `pdfua.structure.child_roles_valid` from acceptance gating.
+- Kept only the lower-noise promoted gates under observation: `pdfua.table.header_association_present` and `pdfua.parent_tree.mcid_entries_valid`.
 
 Recommended next implementation:
 
-- Investigate whether `pdfua.structure.rolemap_valid` and `pdfua.structure.child_roles_valid` gates are too broad for deterministic acceptance, because they are the only promoted gate rules that fired in the final scoring-reverted run.
-- Reduce PAC gate rejection attempt churn before any further benchmark acceptance claim.
+- Isolate the pre-existing PAC gate families now driving rejection churn: orphan MCIDs, annotation StructParent, tagged annotations, figure alt, and tab order.
+- Reduce PAC gate rejection attempt churn and runtime tail before any further benchmark acceptance claim.
 - Keep all Stage 1 scoring caps out until a new corpus run shows a narrow candidate with no score, protected, runtime, or attempt regression.
 - Do not add more PAC scoring caps, gates, repairs, or planner routing until this stage validates cleanly.
 

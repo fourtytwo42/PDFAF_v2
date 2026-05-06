@@ -253,15 +253,14 @@ describe('pacRuleAcceptanceGate', () => {
     });
   });
 
-  it('rejects structure child-role validity regressions', () => {
+  it('does not reject structure child-role validity regressions after gate narrowing', () => {
     const decision = pacRuleAcceptanceGate({
       beforeSnapshot: baseSnapshot(),
       afterSnapshot: childRoleDebtSnapshot(3),
       toolNames: ['normalize_heading_hierarchy'],
     });
 
-    expect(decision.reject).toBe(true);
-    expect(decision.reason).toBe('pac_rule_regressed(pdfua.structure.child_roles_valid)');
+    expect(decision).toEqual({ reject: false, reason: null });
   });
 
   it('rejects ParentTree MCID entry regressions', () => {
@@ -275,15 +274,14 @@ describe('pacRuleAcceptanceGate', () => {
     expect(decision.reason).toBe('pac_rule_regressed(pdfua.parent_tree.mcid_entries_valid)');
   });
 
-  it('rejects RoleMap validity regressions', () => {
+  it('does not reject RoleMap validity regressions after gate narrowing', () => {
     const decision = pacRuleAcceptanceGate({
       beforeSnapshot: baseSnapshot(),
       afterSnapshot: roleMapDebtSnapshot(1),
       toolNames: ['bootstrap_struct_tree'],
     });
 
-    expect(decision.reject).toBe(true);
-    expect(decision.reason).toBe('pac_rule_regressed(pdfua.structure.rolemap_valid)');
+    expect(decision).toEqual({ reject: false, reason: null });
   });
 
   it('does not reject promoted PAC gate failures with same or reduced counts', () => {
@@ -294,9 +292,9 @@ describe('pacRuleAcceptanceGate', () => {
     })).toEqual({ reject: false, reason: null });
 
     expect(pacRuleAcceptanceGate({
-      beforeSnapshot: roleMapDebtSnapshot(1),
-      afterSnapshot: roleMapDebtSnapshot(1),
-      toolNames: ['bootstrap_struct_tree'],
+      beforeSnapshot: parentTreeMcidDebtSnapshot(2),
+      afterSnapshot: parentTreeMcidDebtSnapshot(1),
+      toolNames: ['remap_orphan_mcids_as_artifacts'],
     })).toEqual({ reject: false, reason: null });
   });
 });

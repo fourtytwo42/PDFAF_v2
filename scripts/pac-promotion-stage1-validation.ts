@@ -11,9 +11,7 @@ const PAC_GATE_REASON_RE = /pac_rule_regressed\(([^)]+)\)/;
 const STAGE1_PROMOTED_SCORING_RULES = new Set<string>();
 const STAGE1_PROMOTED_GATE_RULES = new Set([
   'pdfua.table.header_association_present',
-  'pdfua.structure.child_roles_valid',
   'pdfua.parent_tree.mcid_entries_valid',
-  'pdfua.structure.rolemap_valid',
 ]);
 
 export interface PacPromotionValidationInput {
