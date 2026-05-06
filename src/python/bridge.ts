@@ -190,7 +190,11 @@ const EMPTY_RESULT: PythonAnalysisResult = {
   listStructureAudit: undefined,
 };
 
-export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysisResult> {
+export async function runPythonAnalysis(
+  pdfPath: string,
+  options?: { timeoutMs?: number },
+): Promise<PythonAnalysisResult> {
+  const timeoutMs = Math.max(1, options?.timeoutMs ?? PYTHON_TIMEOUT_MS);
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -213,11 +217,11 @@ export async function runPythonAnalysis(pdfPath: string): Promise<PythonAnalysis
 
     const timer = setTimeout(() => {
       if (!settled) {
-        console.error(`[bridge] python analysis timed out after ${PYTHON_TIMEOUT_MS}ms for: ${pdfPath}`);
+        console.error(`[bridge] python analysis timed out after ${timeoutMs}ms for: ${pdfPath}`);
         proc.kill('SIGKILL');
         done(EMPTY_RESULT);
       }
-    }, PYTHON_TIMEOUT_MS);
+    }, timeoutMs);
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });

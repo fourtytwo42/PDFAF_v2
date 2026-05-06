@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import {
+  REMEDIATION_PDF_TIMEOUT_MS,
   REMEDIATION_TARGET_SCORE,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
   SEMANTIC_REMEDIATE_PROMOTE_PASSES,
@@ -455,6 +456,7 @@ async function runSemanticSequence(input: {
   buffer: Buffer;
   analysis: AnalysisResult;
   snapshot: DocumentSnapshot;
+  signal?: AbortSignal;
 }): Promise<{
   buffer: Buffer;
   analysis: AnalysisResult;
@@ -467,7 +469,8 @@ async function runSemanticSequence(input: {
   let currentBuffer = input.buffer;
   let currentAnalysis = input.analysis;
   let currentSnapshot = input.snapshot;
-  const signal = AbortSignal.timeout(600_000);
+  const signal = input.signal;
+  const semanticTimeoutMs = REMEDIATION_PDF_TIMEOUT_MS > 0 ? REMEDIATION_PDF_TIMEOUT_MS : undefined;
 
   const emptySummary = (
     lane: SemanticRemediationSummary['lane'],
@@ -510,7 +513,7 @@ async function runSemanticSequence(input: {
       filename: input.entry.filename,
       analysis: currentAnalysis,
       snapshot: currentSnapshot,
-      options: { timeoutMs: 600_000, signal },
+      options: { timeoutMs: semanticTimeoutMs, signal },
     });
     figureParts.push(semantic.summary);
     currentBuffer = semantic.buffer;
@@ -529,7 +532,7 @@ async function runSemanticSequence(input: {
       filename: input.entry.filename,
       analysis: currentAnalysis,
       snapshot: currentSnapshot,
-      options: { timeoutMs: 600_000, signal },
+      options: { timeoutMs: semanticTimeoutMs, signal },
     });
     promoteParts.push(promote.summary);
     currentBuffer = promote.buffer;
@@ -545,7 +548,7 @@ async function runSemanticSequence(input: {
     filename: input.entry.filename,
     analysis: currentAnalysis,
     snapshot: currentSnapshot,
-    options: { timeoutMs: 600_000, signal },
+    options: { timeoutMs: semanticTimeoutMs, signal },
   });
   currentBuffer = heading.buffer;
   currentAnalysis = heading.analysis;
@@ -556,7 +559,7 @@ async function runSemanticSequence(input: {
     filename: input.entry.filename,
     analysis: currentAnalysis,
     snapshot: currentSnapshot,
-    options: { timeoutMs: 600_000, signal },
+    options: { timeoutMs: semanticTimeoutMs, signal },
   });
   currentBuffer = untagged.buffer;
   currentAnalysis = untagged.analysis;
@@ -633,6 +636,10 @@ async function runRemediationStep(
   initSchema(db);
 
   try {
+    const remediationSignal =
+      REMEDIATION_PDF_TIMEOUT_MS > 0
+        ? AbortSignal.timeout(REMEDIATION_PDF_TIMEOUT_MS)
+        : undefined;
     const playbookStore = createPlaybookStore(db);
     const toolOutcomeStore = createToolOutcomeStore(db);
     const protectedDebugStateCaptures: ProtectedDebugStateArtifact[] = [];
@@ -686,6 +693,7 @@ async function runRemediationStep(
       snapshot,
       {
         maxRounds: 10,
+        ...(remediationSignal ? { signal: remediationSignal } : {}),
         playbookStore,
         toolOutcomeStore,
         ...(writeProtectedDebugStates && protectedBaseline ? { onProtectedDebugState: writeProtectedDebugState } : {}),
@@ -715,6 +723,7 @@ async function runRemediationStep(
         buffer: finalBuffer,
         analysis: finalAnalysis,
         snapshot: finalSnapshot,
+        ...(remediationSignal ? { signal: remediationSignal } : {}),
       });
       finalBuffer = semanticRun.buffer;
       finalAnalysis = semanticRun.analysis;

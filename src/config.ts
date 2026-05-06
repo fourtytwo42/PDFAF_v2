@@ -170,8 +170,21 @@ export const LINK_QUALITY_MISSING_STRUCT_PARENT_MAX_DEDUCTION = 12;
 
 // Concurrency / resource limits
 export const MAX_CONCURRENT_ANALYSES = parseInt(process.env['MAX_CONCURRENT_ANALYSES'] ?? '5', 10);
-export const PDFJS_TIMEOUT_MS        = 60_000;
-export const PYTHON_TIMEOUT_MS       = 45_000;
+/** Default wall-clock guard for check/analyze-only PDF extraction. */
+export const CHECK_ANALYSIS_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_CHECK_ANALYSIS_TIMEOUT_MS']
+    ?? process.env['REQUEST_TIMEOUT_ANALYZE_MS']
+    ?? '15000',
+  10,
+);
+export const PDFJS_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_PDFJS_TIMEOUT_MS'] ?? process.env['PDFJS_TIMEOUT_MS'] ?? String(CHECK_ANALYSIS_TIMEOUT_MS),
+  10,
+);
+export const PYTHON_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_PYTHON_ANALYSIS_TIMEOUT_MS'] ?? process.env['PYTHON_TIMEOUT_MS'] ?? String(CHECK_ANALYSIS_TIMEOUT_MS),
+  10,
+);
 export const QPDF_TIMEOUT_MS         = parseInt(process.env['QPDF_TIMEOUT_MS'] ?? '60000', 10);
 export const MAX_FILE_SIZE_MB        = parseInt(process.env['MAX_FILE_SIZE_MB'] ?? '100', 10);
 
@@ -221,6 +234,14 @@ export const PYTHON_MUTATION_TIMEOUT_MS = parseInt(
 /** `ocr_scanned_pdf` uses ocrmypdf + Tesseract; large scans need a much higher ceiling than normal mutations. */
 export const OCR_MUTATION_TIMEOUT_MS = parseInt(
   process.env['PDFAF_OCR_MUTATION_TIMEOUT_MS'] ?? String(45 * 60 * 1000),
+  10,
+);
+
+/** Per-PDF remediation wall-clock guard. Raise with env only for deliberate special runs. */
+export const REMEDIATION_PDF_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_REMEDIATION_PDF_TIMEOUT_MS']
+    ?? process.env['REQUEST_TIMEOUT_REMEDIATE_MS']
+    ?? String(5 * 60 * 1000),
   10,
 );
 
@@ -791,13 +812,13 @@ export const RATE_LIMIT_REMEDIATE_WINDOW_MS = parseInt(
 
 /** Wall-clock guard for analyze handler (ms); 0 disables. */
 export const REQUEST_TIMEOUT_ANALYZE_MS = parseInt(
-  process.env['REQUEST_TIMEOUT_ANALYZE_MS'] ?? '120000',
+  process.env['REQUEST_TIMEOUT_ANALYZE_MS'] ?? String(CHECK_ANALYSIS_TIMEOUT_MS),
   10,
 );
 
 /** Wall-clock guard for remediate handler (ms); 0 disables. */
 export const REQUEST_TIMEOUT_REMEDIATE_MS = parseInt(
-  process.env['REQUEST_TIMEOUT_REMEDIATE_MS'] ?? '300000',
+  process.env['REQUEST_TIMEOUT_REMEDIATE_MS'] ?? String(REMEDIATION_PDF_TIMEOUT_MS),
   10,
 );
 

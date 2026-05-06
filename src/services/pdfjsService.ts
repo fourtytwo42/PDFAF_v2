@@ -27,8 +27,12 @@ function buildWorkerOptions(): { workerPath: string; options: ConstructorParamet
   };
 }
 
-export async function extractWithPdfjs(pdfPath: string): Promise<PdfjsResult> {
+export async function extractWithPdfjs(
+  pdfPath: string,
+  timeoutOptions?: { timeoutMs?: number },
+): Promise<PdfjsResult> {
   const { workerPath, options } = buildWorkerOptions();
+  const timeoutMs = Math.max(1, timeoutOptions?.timeoutMs ?? PDFJS_TIMEOUT_MS);
 
   return new Promise((resolve, reject) => {
     const worker = new Worker(workerPath, {
@@ -38,8 +42,8 @@ export async function extractWithPdfjs(pdfPath: string): Promise<PdfjsResult> {
 
     const timer = setTimeout(() => {
       worker.terminate();
-      reject(new Error(`pdfjs timed out after ${PDFJS_TIMEOUT_MS}ms`));
-    }, PDFJS_TIMEOUT_MS);
+      reject(new Error(`pdfjs timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     worker.on('message', (msg: { ok: boolean; result?: PdfjsResult; error?: string }) => {
       clearTimeout(timer);

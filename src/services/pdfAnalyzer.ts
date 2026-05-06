@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
+  CHECK_ANALYSIS_TIMEOUT_MS,
   MAX_CONCURRENT_ANALYSES,
   ANALYSIS_CACHE_TTL_MS,
   SCANNED_PAGE_RATIO_THRESHOLD,
@@ -74,6 +75,8 @@ export interface AnalyzePdfOutcome {
 export interface AnalyzePdfOptions {
   /** When true, always run pdfjs + Python (benchmarks / regression timing). */
   bypassCache?: boolean;
+  /** Per-extractor timeout for check/analyze work. */
+  timeoutMs?: number;
 }
 
 export async function analyzePdf(
@@ -86,6 +89,7 @@ export async function analyzePdf(
   }
 
   const startMs = Date.now();
+  const timeoutMs = Math.max(1, options?.timeoutMs ?? CHECK_ANALYSIS_TIMEOUT_MS);
 
   try {
     // Check cache by file content hash
@@ -125,7 +129,7 @@ export async function analyzePdf(
       (async () => {
         const started = performance.now();
         try {
-          return await extractWithPdfjs(pdfPath);
+          return await extractWithPdfjs(pdfPath, { timeoutMs });
         } catch (err) {
           console.error(`[analyzer] pdfjs failed for ${filename}: ${(err as Error).message}`);
           return emptyPdfjsResult();
@@ -136,7 +140,7 @@ export async function analyzePdf(
       (async () => {
         const started = performance.now();
         try {
-          return await extractStructure(pdfPath);
+          return await extractStructure(pdfPath, { timeoutMs });
         } catch (err) {
           console.error(`[analyzer] pikepdf failed for ${filename}: ${(err as Error).message}`);
           return emptyPythonResult();

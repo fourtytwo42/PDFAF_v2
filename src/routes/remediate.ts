@@ -8,6 +8,7 @@ import {
   getOpenAiCompatBaseUrl,
   MAX_FILE_SIZE_MB,
   REMEDIATION_MAX_BASE64_MB,
+  REQUEST_TIMEOUT_REMEDIATE_MS,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
   SEMANTIC_REMEDIATE_PROMOTE_PASSES,
   semanticDebugLogEnabled,
@@ -166,6 +167,13 @@ function encodePdfBase64(buffer: Buffer): Pick<RemediationResult, 'remediatedPdf
   return { remediatedPdfBase64: null, remediatedPdfTooLarge: true };
 }
 
+function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
+  const active = signals.filter(signal => !signal.aborted);
+  if (active.length === 0) return signals[0]!;
+  if (active.length === 1) return active[0]!;
+  return AbortSignal.any(active);
+}
+
 remediateRouter.get('/progress/:jobId', (req, res) => {
   const jobId = String(req.params.jobId ?? '').trim();
   if (!jobId) {
@@ -241,6 +249,13 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
   };
 
   const semanticAbort = new AbortController();
+  const timeoutSignal =
+    REQUEST_TIMEOUT_REMEDIATE_MS > 0
+      ? AbortSignal.timeout(REQUEST_TIMEOUT_REMEDIATE_MS)
+      : null;
+  const remediationSignal = timeoutSignal
+    ? combineAbortSignals([semanticAbort.signal, timeoutSignal])
+    : semanticAbort.signal;
   const onClientClose = () => semanticAbort.abort();
   req.on('close', onClientClose);
 
@@ -275,6 +290,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         targetScore: parsedOptions.targetScore,
         maxRounds: parsedOptions.maxRounds,
         includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? false,
+        signal: remediationSignal,
         onProgress: update => reportProgress(update.percent, update.stage, update.detail),
       },
     );
@@ -334,7 +350,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
             snapshot: outSnapshot,
             options: {
               timeoutMs: figureTimeout,
-              signal: semanticAbort.signal,
+              signal: remediationSignal,
             },
           });
           figureParts.push(sem.summary);
@@ -383,7 +399,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
             filename,
             analysis: outAfter,
             snapshot: outSnapshot,
-            options: { timeoutMs: promoteTimeout, signal: semanticAbort.signal },
+            options: { timeoutMs: promoteTimeout, signal: remediationSignal },
           });
           promoteParts.push(promote.summary);
           outBuffer = promote.buffer;
@@ -423,7 +439,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           filename,
           analysis: outAfter,
           snapshot: outSnapshot,
-          options: { timeoutMs: headingTimeout, signal: semanticAbort.signal },
+          options: { timeoutMs: headingTimeout, signal: remediationSignal },
         });
         outBuffer = head.buffer;
         outAfter = head.analysis;
@@ -459,7 +475,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           filename,
           analysis: outAfter,
           snapshot: outSnapshot,
-          options: { timeoutMs: untaggedTimeout, signal: semanticAbort.signal },
+          options: { timeoutMs: untaggedTimeout, signal: remediationSignal },
         });
         outBuffer = untag.buffer;
         outAfter = untag.analysis;
@@ -656,6 +672,15 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     const e = err as Error & { statusCode?: number };
     if (progressJobId) {
       failRemediationProgress(progressJobId, e.message || 'Remediation failed.');
+    }
+    if (remediationSignal.aborted || e.name === 'AbortError') {
+      sendApiError(
+        res,
+        504,
+        'REQUEST_TIMEOUT',
+        'Remediation exceeded the per-PDF timeout budget.',
+      );
+      return;
     }
     if (e.statusCode === 429) {
       sendApiError(

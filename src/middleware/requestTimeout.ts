@@ -1,15 +1,13 @@
 import type { RequestHandler } from 'express';
 import { sendApiError } from '../apiError.js';
 
-const ONE_HOUR_MS = 60 * 60 * 1000;
-
-/** Aborts the HTTP response if the handler has not finished within one hour. */
+/** Aborts the HTTP response if the handler has not finished within the configured budget. */
 export function requestTimeout(ms: number): RequestHandler {
   if (ms <= 0) {
     return (_req, _res, next) => next();
   }
   return (req, res, next) => {
-    const timeoutMs = ONE_HOUR_MS;
+    const timeoutMs = ms;
     const timer = setTimeout(() => {
       if (!res.headersSent) {
         sendApiError(

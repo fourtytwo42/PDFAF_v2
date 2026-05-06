@@ -3608,7 +3608,7 @@ export async function runSingleTool(
   buffer: Buffer,
   tool: PlannedRemediationTool,
   _snapshot: DocumentSnapshot,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ buffer: Buffer; outcome: AppliedRemediationTool['outcome']; details?: string; durationMs: number }> {
   const { toolName, params } = tool;
   const beforeHash = await bufferSha256(buffer);
@@ -3648,7 +3648,7 @@ export async function runSingleTool(
         const lang = String(params['language'] ?? 'en-US').trim();
         const { buffer: next, result } = await runPythonMutationBatch(buffer, [
           { op: 'set_pdfua_identification', params: { language: lang } },
-        ]);
+        ], { signal: options?.signal });
         if (!result.success) {
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
@@ -3670,7 +3670,7 @@ export async function runSingleTool(
       case 'normalize_pdfua_catalog_settings': {
         const { buffer: next, result } = await runPythonMutationBatch(buffer, [
           { op: 'normalize_pdfua_catalog_settings', params: {} },
-        ]);
+        ], { signal: options?.signal });
         if (!result.success) {
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
@@ -3691,7 +3691,10 @@ export async function runSingleTool(
       }
       case 'ocr_scanned_pdf': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
-        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations, { timeoutMs: options?.timeoutMs });
+        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations, {
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+        });
         if (!result.success) {
           return { buffer, outcome: 'failed', details: JSON.stringify(result.failed), durationMs: performance.now() - started };
         }
@@ -3751,7 +3754,9 @@ export async function runSingleTool(
       case 'fill_form_field_tooltips':
       case 'repair_native_table_headers': {
         const mutations: PythonMutation[] = [{ op: toolName, params }];
-        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations);
+        const { buffer: next, result } = await runPythonMutationBatch(buffer, mutations, {
+          signal: options?.signal,
+        });
         const details = pythonMutationDetails(result, toolName);
         const parsed = parseMutationDetails(details);
         if (!result.success) {
@@ -4907,6 +4912,7 @@ export async function executePlaybook(
   initialAnalysis: AnalysisResult,
   initialSnapshot: DocumentSnapshot,
   playbook: Playbook,
+  options?: { signal?: AbortSignal },
 ): Promise<RemediatePdfOutcome> {
   const started = Date.now();
   const before = initialAnalysis;
@@ -4919,6 +4925,7 @@ export async function executePlaybook(
   if (stages.length === 0) {
     const st0 = await applyAccessibilityStructureEnsure({
       filename,
+      signal: options?.signal,
       round: 1,
       currentBuffer,
       currentAnalysis,
@@ -4931,6 +4938,7 @@ export async function executePlaybook(
     currentSnapshot = st0.snapshot;
     const ocrHeading0 = await applyOcrPageShellHeadingPostPass({
       filename,
+      signal: options?.signal,
       round: 1,
       currentBuffer,
       currentAnalysis,
@@ -4943,6 +4951,7 @@ export async function executePlaybook(
     currentSnapshot = ocrHeading0.snapshot;
     const ocrCollectionHeading0 = await applyOcrCollectionCoverTitleHeadingPostPass({
       filename,
+      signal: options?.signal,
       round: 1,
       currentBuffer,
       currentAnalysis,
@@ -4955,6 +4964,7 @@ export async function executePlaybook(
     currentSnapshot = ocrCollectionHeading0.snapshot;
     const ocrReading0 = await applyOcrPageShellReadingOrderPostPass({
       filename,
+      signal: options?.signal,
       round: 1,
       currentBuffer,
       currentAnalysis,
@@ -4971,6 +4981,7 @@ export async function executePlaybook(
         filename,
         currentAnalysis,
         currentSnapshot,
+        { signal: options?.signal },
       );
       const altAccepted = await applyGuardedPostPass({
         filename,
@@ -4997,6 +5008,7 @@ export async function executePlaybook(
         state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
         appliedTools,
         runtimeSummary,
+        signal: options?.signal,
       });
       currentBuffer = state.buffer;
       currentAnalysis = state.analysis;
@@ -5009,6 +5021,7 @@ export async function executePlaybook(
         state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
         appliedTools,
         runtimeSummary,
+        signal: options?.signal,
       });
       currentBuffer = state.buffer;
       currentAnalysis = state.analysis;
@@ -5025,6 +5038,7 @@ export async function executePlaybook(
         state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
         appliedTools,
         runtimeSummary,
+        signal: options?.signal,
       });
       currentBuffer = link0.buffer;
       currentAnalysis = link0.analysis;
@@ -5038,6 +5052,7 @@ export async function executePlaybook(
       currentSnapshot,
       appliedTools,
       runtimeSummary,
+      signal: options?.signal,
     });
     currentBuffer = fin0.buffer;
     currentAnalysis = fin0.analysis;
@@ -5078,6 +5093,7 @@ export async function executePlaybook(
   }
 
   for (const stage of stages) {
+    options?.signal?.throwIfAborted();
     const stageStartBuffer = currentBuffer;
     const stageStartAnalysis = currentAnalysis;
     const stageStartSnapshot = currentSnapshot;
@@ -5087,12 +5103,15 @@ export async function executePlaybook(
 
     let buf = currentBuffer;
     for (const step of stage.tools) {
+      options?.signal?.throwIfAborted();
       const params = {
         ...buildDefaultParams(step.toolName, currentAnalysis, currentSnapshot),
         ...step.params,
       };
       const tool: PlannedRemediationTool = { ...step, params };
-      const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, tool, currentSnapshot);
+      const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, tool, currentSnapshot, {
+        signal: options?.signal,
+      });
       buf = next;
       stageApplied.push({
         toolName: tool.toolName,
@@ -5445,6 +5464,7 @@ export async function remediatePdf(
   let planningSummary: PlanningSummary | undefined;
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
+  options?.signal?.throwIfAborted();
   if (activePlaybook) {
     await reportProgress(24, 'Using a known fix plan', activePlaybook.id);
     const pb = await executePlaybook(
@@ -5453,6 +5473,7 @@ export async function remediatePdf(
       initialAnalysis,
       initialSnapshot,
       activePlaybook,
+      { signal: options?.signal },
     );
     recordToolOutcomes(toolOutcomeStore, before.pdfClass, pb.remediation.appliedTools);
       if (pb.remediation.improved) {
@@ -5467,6 +5488,7 @@ export async function remediatePdf(
   }
 
   for (let round = 1; round <= maxRounds; round++) {
+    options?.signal?.throwIfAborted();
     if (currentAnalysis.score >= targetScore && !hasExternalReadinessDebt(currentAnalysis, currentSnapshot)) {
       noteEarlyExit(runtimeSummary, 'target_score_reached');
       break;
@@ -5492,6 +5514,7 @@ export async function remediatePdf(
     await reportProgress(roundBase, 'Choosing fixes', `Pass ${round} of ${maxRounds}`);
 
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
+      options?.signal?.throwIfAborted();
       const stage = plan.stages[stageIndex]!;
       const stagePercent = roundBase + (((stageIndex + 0.35) / Math.max(1, plan.stages.length)) * roundSpan);
       await reportProgress(
@@ -5608,7 +5631,9 @@ export async function remediatePdf(
 
               runtimeSummary.boundedWork.headingConvergenceAttemptCount += 1;
               const headingTool: PlannedRemediationTool = { ...tool, params: headingParams };
-              const headingResult = await runSingleTool(buf, headingTool, workingSnapshot);
+              const headingResult = await runSingleTool(buf, headingTool, workingSnapshot, {
+                signal: options?.signal,
+              });
               const headingDetails = withHeadingTargetRef(headingResult.details, targetRef, headingResult.outcome);
               const headingOutcome = normalizeRecordedOutcomeForMutationTruth(headingResult.outcome, headingDetails);
               buf = headingResult.buffer;
@@ -5646,7 +5671,9 @@ export async function remediatePdf(
                 params: buildDefaultParams('normalize_heading_hierarchy', workingAnalysis, workingSnapshot, [...appliedTools, ...stageApplied]),
                 rationale: 'Protected zero-heading convergence bundle.',
               };
-              const normalizeResult = await runSingleTool(buf, normalizeTool, workingSnapshot);
+              const normalizeResult = await runSingleTool(buf, normalizeTool, workingSnapshot, {
+                signal: options?.signal,
+              });
               buf = normalizeResult.buffer;
               stageApplied.push({
                 toolName: normalizeTool.toolName,
@@ -5678,7 +5705,7 @@ export async function remediatePdf(
                 buf,
                 conformanceTool,
                 workingSnapshot,
-                { timeoutMs: ZERO_HEADING_CONFORMANCE_TIMEOUT_MS },
+                { signal: options?.signal, timeoutMs: ZERO_HEADING_CONFORMANCE_TIMEOUT_MS },
               );
               buf = conformanceResult.buffer;
               stageApplied.push({
@@ -5739,7 +5766,9 @@ export async function remediatePdf(
               if (structureConformanceTimedOutInStage) break;
             }
             for (const deferredTool of deferredProtectedTools) {
-              const deferredResult = await runSingleTool(buf, deferredTool, workingSnapshot);
+              const deferredResult = await runSingleTool(buf, deferredTool, workingSnapshot, {
+                signal: options?.signal,
+              });
               buf = deferredResult.buffer;
               stageApplied.push({
                 toolName: deferredTool.toolName,
@@ -5783,7 +5812,9 @@ export async function remediatePdf(
                 }
                 attemptedRefs.add(activeRef);
               }
-              const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, workingSnapshot);
+              const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeTool, workingSnapshot, {
+                signal: options?.signal,
+              });
               const activeDetails = activeTool.toolName === 'create_heading_from_candidate'
                 ? withHeadingTargetRef(details, activeRef, outcome)
                 : details;
@@ -5869,6 +5900,7 @@ export async function remediatePdf(
           }
         }
         if (skipLiveToolForMissingTarget) continue;
+        options?.signal?.throwIfAborted();
         const liveTool = tool.toolName === 'normalize_table_structure'
           || tool.toolName === 'set_table_header_cells'
           || tool.toolName === 'retag_as_figure'
@@ -5967,7 +5999,9 @@ export async function remediatePdf(
             const beforeFigureAnalysis = workingAnalysis;
             const beforeFigureSnapshot = workingSnapshot;
             const priorFigureAltAttemptCount = figureAltMutationAttemptCount([...appliedTools, ...stageApplied]);
-            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeFigureTool, workingSnapshot);
+            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeFigureTool, workingSnapshot, {
+              signal: options?.signal,
+            });
             const effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
             buf = next;
             stageApplied.push({
@@ -6055,7 +6089,9 @@ export async function remediatePdf(
           }
           continue;
         }
-        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot);
+        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot, {
+          signal: options?.signal,
+        });
         let effectiveNext = next;
         let effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
         let effectiveDetails = details;
