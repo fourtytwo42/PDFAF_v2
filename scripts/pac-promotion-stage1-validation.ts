@@ -8,11 +8,7 @@ import type { CategoryKey, ScoreCapApplied } from '../src/types.js';
 const DEFAULT_OUT = 'Output/experiment-corpus-baseline/pac-promotion-stage1-validation';
 const PAC_CAP_REASON_PREFIX = 'PAC rule failure: ';
 const PAC_GATE_REASON_RE = /pac_rule_regressed\(([^)]+)\)/;
-const STAGE1_PROMOTED_SCORING_RULES = new Set([
-  'pdfua.font.to_unicode_cmap_valid',
-  'pdfua.font.to_unicode_cmap_present',
-  'pdfua.table.header_association_present',
-]);
+const STAGE1_PROMOTED_SCORING_RULES = new Set<string>();
 const STAGE1_PROMOTED_GATE_RULES = new Set([
   'pdfua.table.header_association_present',
   'pdfua.structure.child_roles_valid',

@@ -1614,7 +1614,7 @@ describe('stage 1 evidence model', () => {
 });
 
 describe('phase 3 PAC scoring influence', () => {
-  it('caps high text extractability for a verified missing ToUnicode CMap failure', () => {
+  it('keeps verified missing ToUnicode CMap evidence diagnostic-only for scoring', () => {
     const snap = makeSnap({
       fontSyntaxAudit: {
         fontsChecked: 2,
@@ -1634,14 +1634,13 @@ describe('phase 3 PAC scoring influence', () => {
     ]);
     const cat = finalized.categories[0]!;
 
-    expect(cat.score).toBe(89);
-    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
-      'PAC rule failure: pdfua.font.to_unicode_cmap_present',
-    ]);
-    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.evidence).toBe('verified');
+    expect(cat.manualReviewRequired).toBe(false);
   });
 
-  it('caps high text extractability for a verified invalid ToUnicode CMap failure', () => {
+  it('keeps verified invalid ToUnicode CMap evidence diagnostic-only for scoring', () => {
     const snap = makeSnap({
       fontSyntaxAudit: {
         fontsChecked: 2,
@@ -1661,13 +1660,13 @@ describe('phase 3 PAC scoring influence', () => {
     ]);
     const cat = finalized.categories[0]!;
 
-    expect(cat.score).toBe(89);
-    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
-      'PAC rule failure: pdfua.font.to_unicode_cmap_valid',
-    ]);
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.evidence).toBe('verified');
+    expect(cat.manualReviewRequired).toBe(false);
   });
 
-  it('caps high table markup for a verified table header association failure', () => {
+  it('keeps verified table header association evidence diagnostic-only for scoring after Stage 1 narrowing', () => {
     const snap = makeSnap({
       tableHeaderAudit: {
         tablesChecked: 1,
@@ -1682,13 +1681,13 @@ describe('phase 3 PAC scoring influence', () => {
     ]);
     const cat = finalized.categories[0]!;
 
-    expect(cat.score).toBe(89);
-    expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
-      'PAC rule failure: pdfua.table.header_association_present',
-    ]);
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+    expect(cat.evidence).toBe('verified');
+    expect(cat.manualReviewRequired).toBe(false);
   });
 
-  it('does not lower already-low font or table categories for promoted PAC failures', () => {
+  it('does not lower already-low font or table categories for diagnostic-only PAC evidence', () => {
     const snap = makeSnap({
       fontSyntaxAudit: {
         fontsChecked: 1,

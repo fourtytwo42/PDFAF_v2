@@ -1,6 +1,6 @@
 # PAC Promotion Stage 1 Validation
 
-Generated from the local validation run on 2026-05-05.
+Generated from local validation runs on 2026-05-05 and 2026-05-06.
 
 ## Artifacts
 
@@ -8,16 +8,22 @@ Generated from the local validation run on 2026-05-05.
 - Fresh post-promotion run: `Output/experiment-corpus-baseline/run-pac-promotion-stage1-validation-2026-05-05-r1`
 - Stage 41 gate: `Output/experiment-corpus-baseline/pac-promotion-stage1-gate-2026-05-05-r1`
 - PAC validation report: `Output/experiment-corpus-baseline/pac-promotion-stage1-validation-2026-05-05-r1`
+- Narrowed scoring run: `Output/experiment-corpus-baseline/run-pac-promotion-stage1-narrowed-2026-05-06-r1`
+- Narrowed scoring gate/report: `Output/experiment-corpus-baseline/pac-promotion-stage1-narrowed-gate-2026-05-06-r1`, `Output/experiment-corpus-baseline/pac-promotion-stage1-narrowed-validation-2026-05-06-r1`
+- Scoring-reverted run: `Output/experiment-corpus-baseline/run-pac-promotion-stage1-scoring-reverted-2026-05-06-r1`
+- Scoring-reverted gate/report: `Output/experiment-corpus-baseline/pac-promotion-stage1-scoring-reverted-gate-2026-05-06-r1`, `Output/experiment-corpus-baseline/pac-promotion-stage1-scoring-reverted-validation-2026-05-06-r1`
 
 Generated artifacts remain local under `Output/` and are not source-controlled.
 
 ## Decision
 
-PAC Promotion Stage 1 should not be expanded. The validation recommends narrowing before treating this promotion as accepted.
+PAC Promotion Stage 1 scoring influence should be reverted completely. PAC evidence and regression-only gates can remain, but no Stage 1 promoted PAC rules should apply numeric score caps yet.
 
-The new behavior did preserve `false_positive_applied = 0`, but the original-50 validation failed the Stage 41 gate across score, grade, protected-regression, runtime, and attempt gates. The blast radius is larger than intended for a conservative promotion stage.
+The original promotion and the narrowed scoring rerun both failed the Stage 41 gate across score, grade, protected-regression, runtime, and attempt gates. Fully removing Stage 1 scoring influence reduced promoted PAC score caps to `0`, but the run still failed because of PAC gate/path/runtime debt. That means the immediate scoring-cap blast radius is fixed, while acceptance-gate breadth and runtime remain separate follow-up work.
 
 ## Stage 41 Gate Result
+
+Initial promoted scoring run:
 
 - Gate: fail
 - Mean: `86.9 -> 73.12`
@@ -30,6 +36,20 @@ The new behavior did preserve `false_positive_applied = 0`, but the original-50 
 - False-positive applied: `0`
 
 Failed hard gates were `score_mean_floor`, `score_median_floor`, `f_grade_count`, `protected_file_regressions`, `runtime_p95_wall`, `runtime_median_wall`, and `total_tool_attempts`.
+
+Scoring-reverted final run:
+
+- Gate: fail
+- Mean: `86.9 -> 77.04`
+- Median: `92 -> 90`
+- F count: `6 -> 14`
+- Protected file regressions: `0 -> 22`
+- p95 wall runtime: `84056.89ms -> 237568.24ms`
+- Median wall runtime: `10594.99ms -> 16375.89ms`
+- Attempts: `843 -> 1019`
+- False-positive applied: `0`
+
+The final run still failed the same hard gates, but the comparator attributed no drops to Stage 1 promoted scoring caps.
 
 ## PAC Cap Findings
 
@@ -45,6 +65,8 @@ The font caps are the main concern. They fired across many documents that previo
 
 The table-header cap fired much less often and looks closer to the intended scope, but it should still stay under validation until the font cap issue is resolved.
 
+After the narrowed rerun, table-header scoring still produced `6` promoted score caps and the Stage 41 gate still failed. The final implementation therefore removed table-header scoring influence too. In the scoring-reverted final run, `promotedPacScoreCapCount = 0`; the only remaining new PAC cap was an older Phase 3 form `/TU` cap on `short-4660`, not a Stage 1 promoted rule.
+
 ## PAC Gate Findings
 
 The validation found `208` newly observed PAC gate rejection rows, but only `16` came from Stage 1 promoted gate rules:
@@ -56,7 +78,7 @@ The validation found `208` newly observed PAC gate rejection rows, but only `16`
 
 No promoted `pdfua.structure.child_roles_valid` or `pdfua.parent_tree.mcid_entries_valid` gate rejections appeared in this run.
 
-The promoted gate count is not the main blast-radius driver. The broader rejection volume is mostly from pre-existing PAC gate rules such as orphan MCID, annotation ParentTree, tagged annotation, figure alt, tab order, and table header basics. The promoted gate rules should still be rechecked after scoring caps are narrowed because scoring/path changes can alter which tools are attempted.
+The promoted gate count is not the scoring-cap blast-radius driver, but it is now the main remaining PAC-promotion risk. In the scoring-reverted final run, `promotedPacGateRejectionCount = 14`, all from `pdfua.structure.rolemap_valid` and `pdfua.structure.child_roles_valid`. The broader rejection volume is mostly from pre-existing PAC gate rules such as orphan MCID, annotation ParentTree, tagged annotation, figure alt, tab order, and table header basics.
 
 ## Score Movement
 
@@ -76,15 +98,21 @@ Representative cap-attributable drops:
 | `font-4057` | `98/A` | `36/F` | cap-attributable | `pdfua.font.to_unicode_cmap_present`, `pdfua.font.to_unicode_cmap_valid` |
 | `short-4074` | `99/A` | `44/F` | cap-attributable | `pdfua.font.to_unicode_cmap_present` |
 
-## Recommendation
+## Final Recommendation
 
-The next stage should be a narrowing stage, not another promotion or new repair.
+The next stage should be PAC gate/runtime narrowing, not another scoring promotion or new repair.
+
+Completed in this stage:
+
+- Removed `pdfua.font.to_unicode_cmap_valid`, `pdfua.font.to_unicode_cmap_present`, and `pdfua.table.header_association_present` from Stage 1 scoring influence.
+- Kept font/CMap and table-header PAC evidence diagnostic-only.
+- Kept Stage 1 regression-only gates active for now.
 
 Recommended next implementation:
 
-- Remove or narrow `pdfua.font.to_unicode_cmap_valid` and `pdfua.font.to_unicode_cmap_present` from scoring influence until the evidence can distinguish severe user-facing extraction failures from common font syntax debt.
-- Keep `pdfua.table.header_association_present` under observation; it is lower-frequency and more aligned with the intended category-pass/PAC-fail contradiction model.
-- Re-run the same validation after narrowing, including Stage 41 gate and the PAC validation comparator.
+- Investigate whether `pdfua.structure.rolemap_valid` and `pdfua.structure.child_roles_valid` gates are too broad for deterministic acceptance, because they are the only promoted gate rules that fired in the final scoring-reverted run.
+- Reduce PAC gate rejection attempt churn before any further benchmark acceptance claim.
+- Keep all Stage 1 scoring caps out until a new corpus run shows a narrow candidate with no score, protected, runtime, or attempt regression.
 - Do not add more PAC scoring caps, gates, repairs, or planner routing until this stage validates cleanly.
 
 Rendered contrast, link reachability, and AI visual-tag mismatch remain diagnostic/manual-review only and were not part of this validation stage.

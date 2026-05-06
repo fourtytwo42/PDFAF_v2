@@ -32,9 +32,6 @@ const PAC_SCORING_RULE_IDS = new Set([
   'pdfua.table.rows_regular',
   'pdfua.table.strong_regular_structure',
   'pdfua.content.orphan_mcids_absent',
-  'pdfua.font.to_unicode_cmap_valid',
-  'pdfua.font.to_unicode_cmap_present',
-  'pdfua.table.header_association_present',
 ]);
 
 interface CategoryPolicy {
