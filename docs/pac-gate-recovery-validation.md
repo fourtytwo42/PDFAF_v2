@@ -181,3 +181,32 @@ Validation status:
     - `long-4516`: `stage_finish` after `mark_untagged_content_as_artifact`;
     - `long-4683`: `final_reanalysis_start` after `mark_untagged_content_as_artifact`.
 - Do not run the fixed 50-file benchmark from this pilot result; the next behavior stage should focus on reanalysis-heavy timeout rows, especially final/protected reanalysis after cheap late artifact tagging.
+
+## Reanalysis Tail Soft-Stop
+
+Implemented after the runtime-tail suppression pilot:
+
+- Runtime soft-stop helpers now detect low remaining wall-clock budget and cumulative deterministic reanalysis tails.
+- Soft-stop completion is quality-gated: the engine only keeps the current analyzed state when it has already reached the remediation target score.
+- Benchmark full-mode final reanalysis can be skipped near the deadline only for target-quality rows; skipped rows reuse the current verified final analysis and record `soft_deadline_before_final_reanalysis`.
+- PAC scoring, PAC gate allow-lists, planner routes, default timeout values, and repair behavior were not changed.
+
+Validation artifacts:
+
+- Broad first target run: `Output/experiment-corpus-baseline/run-reanalysis-tail-soft-stop-target-2026-05-06-r1`
+- Narrowed target run: `Output/experiment-corpus-baseline/run-reanalysis-tail-soft-stop-target-2026-05-06-r2`
+- Narrowed runtime diagnostic: `Output/experiment-corpus-baseline/reanalysis-tail-soft-stop-target-diagnostic-2026-05-06-r2`
+
+Narrowed target result:
+
+- `structure-4076`: completed at `70/C`, not worse than the runtime suppression pilot result.
+- `long-4683`: completed at `96/A`.
+- `structure-4438`: still hit the 5-minute wall; timeout trace ended at `stage_reanalysis_start` after `normalize_annotation_tab_order`.
+- `long-4516`: still hit the 5-minute wall; timeout trace ended at `stage_reanalysis_start` after `mark_untagged_content_as_artifact`.
+- Controls mostly recovered after quality-gating the soft-stop, but `figure-4188` remained volatile/low in the narrowed repeat (`59/F`).
+
+Decision:
+
+- Do not run the fixed 50-file benchmark from this result.
+- Keep the quality-gated soft-stop machinery as a defensive runtime mechanism, but do not treat it as acceptance progress.
+- The next runtime stage should target heavy stage reanalysis after cheap late artifact tagging, especially `long-4516` stage 9 and `structure-4438` stage 4, rather than accepting low partial states.

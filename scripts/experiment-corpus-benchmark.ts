@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import {
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_PDF_TIMEOUT_MS,
+  REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
   REMEDIATION_TARGET_SCORE,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
   SEMANTIC_REMEDIATE_PROMOTE_PASSES,
@@ -234,6 +235,37 @@ function runtimeCounts(values: string[]): RuntimeCountRow[] {
   return [...counts.entries()]
     .map(([key, count]) => ({ key, count }))
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function addDeterministicEarlyExit(
+  runtimeSummary: RemediationRuntimeSummary | undefined,
+  reason: string,
+): void {
+  if (!runtimeSummary) return;
+  const reasons = [
+    ...(runtimeSummary.boundedWork.deterministicEarlyExitReasons ?? [])
+      .flatMap(row => Array(row.count).fill(row.key)),
+    reason,
+  ];
+  runtimeSummary.boundedWork.deterministicEarlyExitCount = reasons.length;
+  runtimeSummary.boundedWork.deterministicEarlyExitReasons = runtimeCounts(reasons);
+}
+
+export function shouldSkipBenchmarkFinalReanalysis(input: {
+  startedAtMs: number;
+  score?: number | null;
+  targetScore?: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+  requiredRemainingMs?: number;
+}): boolean {
+  if ((input.score ?? 0) < (input.targetScore ?? REMEDIATION_TARGET_SCORE)) return false;
+  const wallTimeoutMs = input.wallTimeoutMs ?? REMEDIATION_PDF_TIMEOUT_MS;
+  if (!(wallTimeoutMs > 0)) return false;
+  const requiredRemainingMs = input.requiredRemainingMs ?? REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
+  const nowMs = input.nowMs ?? performance.now();
+  const elapsedMs = Math.max(0, nowMs - input.startedAtMs);
+  return Math.max(0, wallTimeoutMs - elapsedMs) < requiredRemainingMs;
 }
 
 function mergeRuntimeSummary(
@@ -872,20 +904,29 @@ async function runRemediationStep(
     let protectedReanalysisSelection: ProtectedReanalysisSelectionSummary | undefined;
     let analysisAfterMs: number | null = null;
     if (mode === 'full') {
-      runtimeTrace.mark('final_reanalysis_start');
-      const finalAnalyze = await selectProtectedFinalReanalysis({
-        buffer: finalBuffer,
-        filename: entry.filename,
-        protectedBaseline,
-        cache: protectedReanalysisCache,
-        signal: remediationSignal,
-      });
-      runtimeTrace.mark('final_reanalysis_finish');
-      reanalyzed = finalAnalyze.result;
-      reanalyzedSnapshot = finalAnalyze.snapshot;
-      reanalyzedParity = finalAnalyze.parity;
-      protectedReanalysisSelection = finalAnalyze.selection;
-      analysisAfterMs = finalAnalyze.result.analysisDurationMs;
+      if (shouldSkipBenchmarkFinalReanalysis({ startedAtMs: remediationStart, score: finalAnalysis.score })) {
+        runtimeTrace.mark('final_reanalysis_soft_stop');
+        addDeterministicEarlyExit(remediation.runtimeSummary, 'soft_deadline_before_final_reanalysis');
+        reanalyzed = finalAnalysis;
+        reanalyzedSnapshot = finalSnapshot;
+        reanalyzedParity = buildIcjiaParity(finalSnapshot);
+        analysisAfterMs = 0;
+      } else {
+        runtimeTrace.mark('final_reanalysis_start');
+        const finalAnalyze = await selectProtectedFinalReanalysis({
+          buffer: finalBuffer,
+          filename: entry.filename,
+          protectedBaseline,
+          cache: protectedReanalysisCache,
+          signal: remediationSignal,
+        });
+        runtimeTrace.mark('final_reanalysis_finish');
+        reanalyzed = finalAnalyze.result;
+        reanalyzedSnapshot = finalAnalyze.snapshot;
+        reanalyzedParity = finalAnalyze.parity;
+        protectedReanalysisSelection = finalAnalyze.selection;
+        analysisAfterMs = finalAnalyze.result.analysisDurationMs;
+      }
     }
 
     if (writePdfs) {

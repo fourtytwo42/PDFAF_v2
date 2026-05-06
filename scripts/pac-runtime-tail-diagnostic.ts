@@ -15,6 +15,7 @@ const REMEDIATION_WALL_TIMEOUT_MS = 300_000;
 
 export type RuntimeTailClassification =
   | 'per_pdf_timeout'
+  | 'soft_deadline_stop'
   | 'analyzer_starvation'
   | 'repeated_no_gain_tool_churn'
   | 'protected_reanalysis_churn'
@@ -173,6 +174,18 @@ function sameStateNoGainEarlyExitCount(row: RemediateBenchmarkRow): number {
     .reduce((sum, item) => sum + item.count, 0) ?? 0;
 }
 
+function softDeadlineEarlyExitCount(row: RemediateBenchmarkRow): number {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key.startsWith('soft_deadline_') || item.key.startsWith('reanalysis_tail_soft_cap_'))
+    .reduce((sum, item) => sum + item.count, 0) ?? 0;
+}
+
+function softDeadlineReasons(row: RemediateBenchmarkRow): string[] {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key.startsWith('soft_deadline_') || item.key.startsWith('reanalysis_tail_soft_cap_'))
+    .flatMap(item => Array(item.count).fill(item.key)) ?? [];
+}
+
 function stageReanalysis(row: RemediateBenchmarkRow): { count: number; ms: number } {
   const stageTimings = row.runtimeSummary?.stageTimings ?? [];
   return {
@@ -221,9 +234,11 @@ export function classifyRuntimeTail(input: {
   sameStateNoGainEarlyExitCount: number;
   protectedReanalysisPassCount: number;
   pacGateRejectionCount: number;
+  softDeadlineEarlyExitCount?: number;
 }): RuntimeTailClassification {
   const error = String(input.row.error ?? '');
   if (/timeout|aborted/i.test(error)) return 'per_pdf_timeout';
+  if ((input.softDeadlineEarlyExitCount ?? 0) > 0) return 'soft_deadline_stop';
   if ((input.row.analysisBeforeMs ?? 0) >= CHECK_TIMEOUT_MS * 0.9 && input.stageReanalysisMs === 0) {
     return 'analyzer_starvation';
   }
@@ -245,17 +260,19 @@ export function classifyRuntimeTail(input: {
 function rowSort(a: RuntimeTailRow, b: RuntimeTailRow): number {
   const rank = (row: RuntimeTailRow): number => row.classification === 'per_pdf_timeout'
     ? 0
-    : row.classification === 'repeated_no_gain_tool_churn'
+    : row.classification === 'soft_deadline_stop'
       ? 1
-      : row.classification === 'protected_reanalysis_churn'
+      : row.classification === 'repeated_no_gain_tool_churn'
         ? 2
-        : row.classification === 'reanalysis_heavy_large_document'
+        : row.classification === 'protected_reanalysis_churn'
           ? 3
-          : row.classification === 'mutation_heavy_large_document'
+          : row.classification === 'reanalysis_heavy_large_document'
             ? 4
-            : row.classification === 'analyzer_starvation'
+            : row.classification === 'mutation_heavy_large_document'
               ? 5
-              : 6;
+              : row.classification === 'analyzer_starvation'
+                ? 6
+                : 7;
   return (
     rank(a) - rank(b) ||
     (b.candidateWallMs ?? -1) - (a.candidateWallMs ?? -1) ||
@@ -302,6 +319,7 @@ export function buildRuntimeTailDiagnostic(input: {
       const toolDetails = appliedToolDetails(row);
       const pacCount = pacGateRejectionCount(row);
       const sameStateCount = sameStateNoGainEarlyExitCount(row);
+      const softDeadlineCount = softDeadlineEarlyExitCount(row);
       const protectedPasses = protectedReanalysisPassCount(row);
       const mutationMs = mutationToolMs(row);
       const timeoutTrace = input.timeoutTraces?.get(row.id) ?? null;
@@ -316,6 +334,7 @@ export function buildRuntimeTailDiagnostic(input: {
           sameStateNoGainEarlyExitCount: sameStateCount,
           protectedReanalysisPassCount: protectedPasses,
           pacGateRejectionCount: pacCount,
+          softDeadlineEarlyExitCount: softDeadlineCount,
         }),
         candidateWallMs,
         recoveryWallMs,
@@ -338,7 +357,7 @@ export function buildRuntimeTailDiagnostic(input: {
         mutationToolMs: mutationMs,
         protectedReanalysisPassCount: protectedPasses,
         timeoutTrace,
-        topStageKeys: topStageKeys(row),
+        topStageKeys: softDeadlineCount > 0 ? softDeadlineReasons(row) : topStageKeys(row),
         topToolKeys: topToolKeys(row),
       };
     })

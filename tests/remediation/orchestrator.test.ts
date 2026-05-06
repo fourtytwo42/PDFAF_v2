@@ -23,6 +23,9 @@ import {
   shouldRecordSameStateNoGainRuntimeAttempt,
   shouldRejectStageResult,
   shouldCaptureProtectedDebugState,
+  shouldKeepCurrentStateForRuntimeSoftStop,
+  shouldSoftStopForCumulativeReanalysis,
+  shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
   shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
@@ -370,6 +373,51 @@ describe('same-state no-gain runtime cap', () => {
       toolName: 'set_document_title',
       stateSignatureBefore: 'state-a',
       noGainAttempts: attempts,
+    })).toBe(false);
+  });
+});
+
+describe('remediation runtime soft stops', () => {
+  it('stops before starting new work when remaining wall budget is too low', () => {
+    expect(shouldSoftStopForRemediationDeadline({
+      startedAtMs: 0,
+      nowMs: 251_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toBe(true);
+  });
+
+  it('does not stop when one analysis budget plus buffer remains', () => {
+    expect(shouldSoftStopForRemediationDeadline({
+      startedAtMs: 0,
+      nowMs: 250_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toBe(false);
+  });
+
+  it('stops after the cumulative deterministic reanalysis cap is reached', () => {
+    expect(shouldSoftStopForCumulativeReanalysis({
+      cumulativeReanalysisMs: 135_000,
+      capMs: 135_000,
+    })).toBe(true);
+  });
+
+  it('allows work below the cumulative deterministic reanalysis cap', () => {
+    expect(shouldSoftStopForCumulativeReanalysis({
+      cumulativeReanalysisMs: 134_999,
+      capMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('only keeps target-quality states for runtime soft-stop completion', () => {
+    expect(shouldKeepCurrentStateForRuntimeSoftStop({
+      analysis: { score: 90 },
+      targetScore: 90,
+    })).toBe(true);
+    expect(shouldKeepCurrentStateForRuntimeSoftStop({
+      analysis: { score: 89 },
+      targetScore: 90,
     })).toBe(false);
   });
 });

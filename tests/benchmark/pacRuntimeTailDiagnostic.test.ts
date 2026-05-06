@@ -4,6 +4,7 @@ import {
   classifyRuntimeTail,
   parseRuntimeTimeoutTrace,
 } from '../../scripts/pac-runtime-tail-diagnostic.js';
+import { shouldSkipBenchmarkFinalReanalysis } from '../../scripts/experiment-corpus-benchmark.js';
 import type { RemediateBenchmarkRow } from '../../src/services/benchmark/experimentCorpus.js';
 
 function row(input: Partial<RemediateBenchmarkRow> & { id: string }): RemediateBenchmarkRow {
@@ -76,6 +77,33 @@ function runtime(input: {
 }
 
 describe('PAC runtime tail diagnostic helpers', () => {
+  it('uses a soft deadline before benchmark final reanalysis', () => {
+    expect(shouldSkipBenchmarkFinalReanalysis({
+      startedAtMs: 0,
+      score: 92,
+      targetScore: 90,
+      nowMs: 251_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toBe(true);
+    expect(shouldSkipBenchmarkFinalReanalysis({
+      startedAtMs: 0,
+      score: 92,
+      targetScore: 90,
+      nowMs: 250_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toBe(false);
+    expect(shouldSkipBenchmarkFinalReanalysis({
+      startedAtMs: 0,
+      score: 89,
+      targetScore: 90,
+      nowMs: 251_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toBe(false);
+  });
+
   it('classifies timeout rows separately from completed runtime tails', () => {
     expect(classifyRuntimeTail({
       row: row({ id: 'timeout', error: 'The operation was aborted due to timeout' }),
@@ -98,6 +126,22 @@ describe('PAC runtime tail diagnostic helpers', () => {
       protectedReanalysisPassCount: 0,
       pacGateRejectionCount: 0,
     })).toBe('repeated_no_gain_tool_churn');
+  });
+
+  it('classifies soft-stopped rows separately from hard timeouts', () => {
+    expect(classifyRuntimeTail({
+      row: row({
+        id: 'soft',
+        runtimeSummary: runtime({ earlyExit: 'soft_deadline_before_final_reanalysis' }),
+      }),
+      candidateWallMs: 260_000,
+      stageReanalysisMs: 120_000,
+      mutationToolMs: 10_000,
+      sameStateNoGainEarlyExitCount: 0,
+      protectedReanalysisPassCount: 0,
+      pacGateRejectionCount: 0,
+      softDeadlineEarlyExitCount: 1,
+    })).toBe('soft_deadline_stop');
   });
 
   it('builds deterministic rows from focus ids and p95 tails', () => {
@@ -159,6 +203,42 @@ describe('PAC runtime tail diagnostic helpers', () => {
     expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
       'a:per_pdf_timeout',
       'b:reanalysis_heavy_large_document',
+    ]);
+  });
+
+  it('does not count soft-stopped rows as timeout rows', () => {
+    const report = buildRuntimeTailDiagnostic({
+      referenceRunDir: 'ref',
+      recoveryRunDir: 'recovery',
+      candidateRunDir: 'candidate',
+      referenceRows: [],
+      recoveryRows: [],
+      candidateRows: [
+        row({
+          id: 'soft',
+          wallRemediateMs: 260_000,
+          runtimeSummary: runtime({
+            stageReanalyzeMs: [60_000, 80_000],
+            earlyExit: 'soft_deadline_before_final_reanalysis',
+          }),
+        }),
+        row({
+          id: 'timeout',
+          error: 'The operation was aborted due to timeout',
+          wallRemediateMs: null,
+        }),
+      ],
+      focusRows: ['soft', 'timeout'],
+      generatedAt: '2026-05-06T00:00:00.000Z',
+    });
+
+    expect(report.summary.timeoutRows).toEqual(['timeout']);
+    expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
+      'timeout:per_pdf_timeout',
+      'soft:soft_deadline_stop',
+    ]);
+    expect(report.rows.find(item => item.fileId === 'soft')?.topStageKeys).toEqual([
+      'soft_deadline_before_final_reanalysis',
     ]);
   });
 });

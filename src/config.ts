@@ -255,6 +255,18 @@ export const EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS = parseInt(
   10,
 );
 
+/** Stop scheduling more deterministic remediation work after this much cumulative stage reanalysis. */
+export const REMEDIATION_REANALYSIS_SOFT_CAP_MS = parseInt(
+  process.env['PDFAF_REMEDIATION_REANALYSIS_SOFT_CAP_MS'] ?? '135000',
+  10,
+);
+
+/** Remaining wall-clock budget required before starting optional remediation reanalysis work. */
+export const REMEDIATION_SOFT_DEADLINE_BUFFER_MS = parseInt(
+  process.env['PDFAF_REMEDIATION_SOFT_DEADLINE_BUFFER_MS'] ?? String(REMEDIATION_ANALYSIS_TIMEOUT_MS + 5000),
+  10,
+);
+
 /**
  * Allow `ocr_scanned_pdf` on `native_untagged` / `native_tagged` when pdf.js extracted at most this many
  * characters (image-only or flattened raster pages). Default `0` means only when there is no text at all.

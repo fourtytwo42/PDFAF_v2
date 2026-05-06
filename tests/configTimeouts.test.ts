@@ -24,6 +24,8 @@ describe('timeout configuration', () => {
       PDFAF_REMEDIATION_ANALYSIS_TIMEOUT_MS: undefined,
       PDFAF_REMEDIATION_PDF_TIMEOUT_MS: undefined,
       PDFAF_EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS: undefined,
+      PDFAF_REMEDIATION_REANALYSIS_SOFT_CAP_MS: undefined,
+      PDFAF_REMEDIATION_SOFT_DEADLINE_BUFFER_MS: undefined,
       REQUEST_TIMEOUT_ANALYZE_MS: '15000',
       REQUEST_TIMEOUT_REMEDIATE_MS: '300000',
     });
@@ -34,6 +36,8 @@ describe('timeout configuration', () => {
     expect(config.REMEDIATION_PDF_TIMEOUT_MS).toBe(300_000);
     expect(config.REQUEST_TIMEOUT_REMEDIATE_MS).toBe(300_000);
     expect(config.EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS).toBe(12_000);
+    expect(config.REMEDIATION_REANALYSIS_SOFT_CAP_MS).toBe(135_000);
+    expect(config.REMEDIATION_SOFT_DEADLINE_BUFFER_MS).toBe(50_000);
   });
 
   it('lets remediation analysis and whole-PDF remediation be raised independently', async () => {
@@ -42,6 +46,8 @@ describe('timeout configuration', () => {
       PDFAF_REMEDIATION_ANALYSIS_TIMEOUT_MS: '90000',
       PDFAF_REMEDIATION_PDF_TIMEOUT_MS: '600000',
       PDFAF_EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS: '25000',
+      PDFAF_REMEDIATION_REANALYSIS_SOFT_CAP_MS: '180000',
+      PDFAF_REMEDIATION_SOFT_DEADLINE_BUFFER_MS: '70000',
       REQUEST_TIMEOUT_ANALYZE_MS: undefined,
       REQUEST_TIMEOUT_REMEDIATE_MS: undefined,
     });
@@ -52,5 +58,7 @@ describe('timeout configuration', () => {
     expect(config.REMEDIATION_PDF_TIMEOUT_MS).toBe(600_000);
     expect(config.REQUEST_TIMEOUT_REMEDIATE_MS).toBe(600_000);
     expect(config.EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS).toBe(25_000);
+    expect(config.REMEDIATION_REANALYSIS_SOFT_CAP_MS).toBe(180_000);
+    expect(config.REMEDIATION_SOFT_DEADLINE_BUFFER_MS).toBe(70_000);
   });
 });

@@ -14,6 +14,9 @@ import {
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_MAX_ROUNDS,
   REMEDIATION_MIN_ROUND_IMPROVEMENT,
+  REMEDIATION_PDF_TIMEOUT_MS,
+  REMEDIATION_REANALYSIS_SOFT_CAP_MS,
+  REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
   REMEDIATION_TARGET_SCORE,
   ZERO_HEADING_CONFORMANCE_TIMEOUT_MS,
 } from '../../config.js';
@@ -1603,6 +1606,35 @@ function noteEarlyExit(runtimeSummary: RemediationRuntimeSummary, reason: string
   ];
   runtimeSummary.boundedWork.deterministicEarlyExitCount = reasons.length;
   runtimeSummary.boundedWork.deterministicEarlyExitReasons = frequencyRows(reasons);
+}
+
+export function shouldSoftStopForRemediationDeadline(input: {
+  startedAtMs: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+  requiredRemainingMs?: number;
+}): boolean {
+  const wallTimeoutMs = input.wallTimeoutMs ?? REMEDIATION_PDF_TIMEOUT_MS;
+  if (!(wallTimeoutMs > 0)) return false;
+  const requiredRemainingMs = input.requiredRemainingMs ?? REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
+  const nowMs = input.nowMs ?? Date.now();
+  const elapsedMs = Math.max(0, nowMs - input.startedAtMs);
+  return Math.max(0, wallTimeoutMs - elapsedMs) < requiredRemainingMs;
+}
+
+export function shouldSoftStopForCumulativeReanalysis(input: {
+  cumulativeReanalysisMs: number;
+  capMs?: number;
+}): boolean {
+  const capMs = input.capMs ?? REMEDIATION_REANALYSIS_SOFT_CAP_MS;
+  return capMs > 0 && input.cumulativeReanalysisMs >= capMs;
+}
+
+export function shouldKeepCurrentStateForRuntimeSoftStop(input: {
+  analysis: Pick<AnalysisResult, 'score'>;
+  targetScore?: number;
+}): boolean {
+  return input.analysis.score >= (input.targetScore ?? REMEDIATION_TARGET_SCORE);
 }
 
 function hasRemainingHeadingBootstrapAttempts(
@@ -5509,6 +5541,7 @@ export async function remediatePdf(
   const appliedTools: AppliedRemediationTool[] = [];
   const rounds: RemediationRoundSummary[] = [];
   const sameStateNoGainRuntimeAttempts = new Set<string>();
+  let cumulativeDeterministicReanalysisMs = 0;
   const protectedRunBestState: { current?: RemediationState & { appliedToolCount: number; reason: string } } = {};
   const captureProtectedDebugState = async (
     reason: string,
@@ -5620,6 +5653,20 @@ export async function remediatePdf(
 
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
       options?.signal?.throwIfAborted();
+      if (
+        shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
+        shouldSoftStopForRemediationDeadline({ startedAtMs: started })
+      ) {
+        noteEarlyExit(runtimeSummary, 'soft_deadline_before_stage');
+        break;
+      }
+      if (
+        shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
+        shouldSoftStopForCumulativeReanalysis({ cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs })
+      ) {
+        noteEarlyExit(runtimeSummary, 'reanalysis_tail_soft_cap_before_stage');
+        break;
+      }
       const stage = plan.stages[stageIndex]!;
       const stagePercent = roundBase + (((stageIndex + 0.35) / Math.max(1, plan.stages.length)) * roundSpan);
       await reportProgress(
@@ -6350,24 +6397,24 @@ export async function remediatePdf(
         recordSameStateNoGainRuntimeAttempt(row, sameStateNoGainRuntimeAttempts);
       }
       await rememberProtectedRunBestState(`stage_${stage.stageNumber}`);
+      const stageReanalysisMs = stageHadEffect
+        ? (analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs)
+        : 0;
+      cumulativeDeterministicReanalysisMs += stageReanalysisMs;
       pushStageTiming(runtimeSummary, {
         stageNumber: stage.stageNumber,
         round,
         source: 'planner',
         toolCount: stage.tools.length,
         totalMs: performance.now() - stageStarted,
-        reanalyzeMs: stageHadEffect
-          ? (analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs)
-          : 0,
+        reanalyzeMs: stageReanalysisMs,
       });
       await reportRuntimeTrace({
         kind: 'stage_finish',
         round,
         stageNumber: stage.stageNumber,
         outcomeCount: stageApplied.length,
-        reanalyzeMs: stageHadEffect
-          ? (analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs)
-          : 0,
+        reanalyzeMs: stageReanalysisMs,
         elapsedMs: Date.now() - started,
       });
       appliedTools.push(...stageApplied);
@@ -6404,6 +6451,22 @@ export async function remediatePdf(
     }
   }
 
+  const postPassesAllowedByRuntime =
+    !shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) ||
+    (
+      !shouldSoftStopForRemediationDeadline({ startedAtMs: started }) &&
+      !shouldSoftStopForCumulativeReanalysis({ cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs })
+    );
+  if (!postPassesAllowedByRuntime) {
+    noteEarlyExit(
+      runtimeSummary,
+      shouldSoftStopForRemediationDeadline({ startedAtMs: started })
+        ? 'soft_deadline_before_post_pass'
+        : 'reanalysis_tail_soft_cap_before_post_pass',
+    );
+  }
+
+  if (postPassesAllowedByRuntime) {
   {
     await reportProgress(70, 'Tidying document structure');
     const st = await applyAccessibilityStructureEnsure({
@@ -6593,6 +6656,7 @@ export async function remediatePdf(
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('protected_recovery_post_pass');
   }
+  }
 
   const protectedRunDecision = protectedBaselineRunCheckpointDecision({
     baseline: options?.protectedBaseline,
@@ -6645,17 +6709,24 @@ export async function remediatePdf(
       appliedToolCount: appliedTools.length,
     });
     if (finalReanalysisPolicy === 'run') {
-      const confirmed = await applyProtectedFinalReanalysisConfirmation({
-        filename,
-        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-        state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
-        bestState: protectedRunBestState.current ?? null,
-        appliedTools,
-        protectedBaseline: options?.protectedBaseline,
-      });
-      currentBuffer = confirmed.buffer;
-      currentAnalysis = confirmed.analysis;
-      currentSnapshot = confirmed.snapshot;
+      if (
+        shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
+        shouldSoftStopForRemediationDeadline({ startedAtMs: started })
+      ) {
+        noteEarlyExit(runtimeSummary, 'soft_deadline_before_final_reanalysis');
+      } else {
+        const confirmed = await applyProtectedFinalReanalysisConfirmation({
+          filename,
+          round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+          state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+          bestState: protectedRunBestState.current ?? null,
+          appliedTools,
+          protectedBaseline: options?.protectedBaseline,
+        });
+        currentBuffer = confirmed.buffer;
+        currentAnalysis = confirmed.analysis;
+        currentSnapshot = confirmed.snapshot;
+      }
     }
   }
 
