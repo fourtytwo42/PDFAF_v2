@@ -264,3 +264,48 @@ Decision:
 - Keep the narrow PAC recovery helper and the conservative late repeated-attempt guards.
 - Do not treat this as a clean checkpoint and do not run the fixed 50 yet.
 - Next work should target deadline-aware stage reanalysis admission itself: if a cheap late tool would require another 45s analysis and the current state is below target quality, the orchestrator should either skip the optional stage before mutation or require a target-quality verified state before starting that reanalysis.
+
+## Stage Reanalysis Admission Guard
+
+Implemented after the targeted runtime guards:
+
+- Added a narrow pre-reanalysis admission helper for deterministic stages.
+- The helper can roll back a stage and record `stage_reanalysis_admission_guard` when a low-score row would start another expensive reanalysis after only optional late cleanup.
+- Scope is intentionally limited to stages whose applied mutations are only `mark_untagged_content_as_artifact` or `tag_native_text_blocks`.
+- `mark_untagged_content_as_artifact` is guarded only when the row is near the wall budget; cumulative reanalysis alone is not enough because that broader shape regressed `fixture-inaccessible`.
+- `tag_native_text_blocks` can also be guarded after high cumulative deterministic reanalysis.
+- PAC scoring, PAC gate allow-lists, planner routes, repair tools, and timeout defaults were not changed.
+
+Validation artifacts:
+
+- Aborted broad first attempt: `Output/experiment-corpus-baseline/run-stage-reanalysis-admission-guard-target-2026-05-06-r1`
+- Targeted subset run: `Output/experiment-corpus-baseline/run-stage-reanalysis-admission-guard-target-2026-05-06-r2`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/stage-reanalysis-admission-guard-diagnostic-2026-05-06-r2`
+
+Targeted `r2` result:
+
+- Selected rows: `10`
+- Successful remediation rows: `7/10`
+- Timed-out rows: `structure-4438`, `long-4516`, `long-4683`
+- Successful-row mean after: `88.14`
+- Successful-row grades after: `5 A / 1 D / 1 F`
+- `fixture-inaccessible`, `fixture-teams-original`, `font-4035`, and `structure-3775` stayed A-grade.
+- `structure-3661` stayed recovered at `98/A`.
+- `figure-4188` remained unresolved at `59/F`.
+- `structure-4076` finished below the target control threshold (`69/D` in the run output).
+
+Runtime interpretation:
+
+- The fixed 50-file benchmark was not run.
+- The new admission guard did not materially recover the runtime tail in this validation.
+- Timeout traces shifted away from the originally targeted exact shapes:
+  - `structure-4438`: timed out at `stage_reanalysis_start` after `normalize_pdfua_catalog_settings`.
+  - `long-4516`: timed out after `repair_list_li_wrong_parent`.
+  - `long-4683`: timed out at `final_reanalysis_start` after artifact cleanup.
+- The runtime diagnostic still classified `3` per-PDF timeouts and `1` reanalysis-heavy large-document row.
+
+Decision:
+
+- Keep the helper and diagnostic classification as narrow defensive plumbing, but do not treat this stage as quality/runtime recovery.
+- Do not broaden the guard to catalog-only or list-repair tools without a separate control-safe proof.
+- The next useful work is a trace-driven admission redesign that considers final reanalysis and broader late-stage optional-tool admission, with explicit controls for `fixture-inaccessible` and `structure-4076`.

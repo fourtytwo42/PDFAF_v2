@@ -19,6 +19,7 @@ import {
   protectedStrongAltPreservationViolation,
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
+  shouldGuardStageReanalysisAdmission,
   shouldReplaceProtectedSafeCheckpoint,
   shouldRecordSameStateNoGainRuntimeAttempt,
   shouldRejectStageResult,
@@ -456,6 +457,106 @@ describe('late reanalysis runtime guards', () => {
       cumulativeReanalysisMs: 120_000,
       appliedTools: [],
       targetScore: 90,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('admits stage reanalysis for first useful structural stages with enough wall budget', () => {
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+      })],
+      currentScore: 72,
+      nearWallBudget: false,
+      cumulativeReanalysisMs: 10_000,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('guards late artifact stage reanalysis near the wall budget', () => {
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+      })],
+      currentScore: 72,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 10_000,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(true);
+  });
+
+  it('does not guard artifact stage reanalysis on cumulative cost alone', () => {
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+      })],
+      currentScore: 72,
+      nearWallBudget: false,
+      cumulativeReanalysisMs: 120_000,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('guards native text tagging stage reanalysis after high cumulative reanalysis', () => {
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'tag_native_text_blocks',
+        outcome: 'applied',
+      })],
+      currentScore: 72,
+      nearWallBudget: false,
+      cumulativeReanalysisMs: 120_000,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(true);
+  });
+
+  it('does not guard target-quality rows or cached analysis stages', () => {
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+      })],
+      currentScore: 90,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
+      targetScore: 90,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'tag_native_text_blocks',
+        outcome: 'applied',
+      })],
+      currentScore: 72,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
+      hasCachedAnalysisForStage: true,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('does not guard metadata or mixed-tool stages', () => {
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [runtimeToolRow({
+        toolName: 'set_document_title',
+        outcome: 'applied',
+      })],
+      currentScore: 72,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+    expect(shouldGuardStageReanalysisAdmission({
+      stageApplied: [
+        runtimeToolRow({ toolName: 'repair_native_reading_order', outcome: 'applied' }),
+        runtimeToolRow({ toolName: 'mark_untagged_content_as_artifact', outcome: 'applied' }),
+      ],
+      currentScore: 72,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
       reanalysisSoftCapMs: 135_000,
     })).toBe(false);
   });

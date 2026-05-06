@@ -1703,6 +1703,33 @@ export function shouldSkipLateTabOrderReanalysisGuard(input: {
   return input.nearWallBudget || isHighCumulativeReanalysis(input.cumulativeReanalysisMs, input.reanalysisSoftCapMs);
 }
 
+const STAGE_REANALYSIS_ADMISSION_GUARD_TOOLS = new Set([
+  'mark_untagged_content_as_artifact',
+  'tag_native_text_blocks',
+]);
+
+export function shouldGuardStageReanalysisAdmission(input: {
+  stageApplied: readonly AppliedRemediationTool[];
+  currentScore: number;
+  nearWallBudget: boolean;
+  cumulativeReanalysisMs: number;
+  hasCachedAnalysisForStage?: boolean;
+  targetScore?: number;
+  reanalysisSoftCapMs?: number;
+}): boolean {
+  if (input.hasCachedAnalysisForStage) return false;
+  if (input.currentScore >= (input.targetScore ?? REMEDIATION_TARGET_SCORE)) return false;
+  const appliedRows = input.stageApplied.filter(row => row.outcome === 'applied');
+  if (appliedRows.length === 0) return false;
+  const lastApplied = appliedRows[appliedRows.length - 1];
+  if (!lastApplied || !STAGE_REANALYSIS_ADMISSION_GUARD_TOOLS.has(lastApplied.toolName)) return false;
+  if (appliedRows.some(row => !STAGE_REANALYSIS_ADMISSION_GUARD_TOOLS.has(row.toolName))) return false;
+  if (lastApplied.toolName === 'mark_untagged_content_as_artifact') {
+    return input.nearWallBudget;
+  }
+  return input.nearWallBudget || isHighCumulativeReanalysis(input.cumulativeReanalysisMs, input.reanalysisSoftCapMs);
+}
+
 function hasRemainingHeadingBootstrapAttempts(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
@@ -6453,6 +6480,34 @@ export async function remediatePdf(
       const stageHadEffect = stageApplied.some(a => a.outcome === 'applied');
       let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
       if (stageHadEffect) {
+        if (shouldGuardStageReanalysisAdmission({
+          stageApplied,
+          currentScore: stageStartAnalysis.score,
+          nearWallBudget: shouldSoftStopForRemediationDeadline({ startedAtMs: started }),
+          cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs,
+          hasCachedAnalysisForStage: Boolean(lastStageAnalysis && buf.equals(lastAnalyzedBuffer)),
+        })) {
+          noteEarlyExit(runtimeSummary, 'stage_reanalysis_admission_guard');
+          for (const row of stageApplied) {
+            if (row.outcome === 'applied') {
+              row.outcome = 'rejected';
+              row.details = enrichDetailsWithReplayState('stage_reanalysis_admission_guard', {
+                beforeAnalysis: stageStartAnalysis,
+                beforeSnapshot: stageStartSnapshot,
+                afterAnalysis: stageStartAnalysis,
+                afterSnapshot: stageStartSnapshot,
+              });
+            }
+            row.scoreAfter = stageStartAnalysis.score;
+            row.delta = row.scoreAfter - row.scoreBefore;
+          }
+          buf = stageStartBuffer;
+          workingAnalysis = stageStartAnalysis;
+          workingSnapshot = stageStartSnapshot;
+          lastStageAnalysis = null;
+          lastAnalyzedBuffer = Buffer.alloc(0);
+          analyzed = { result: stageStartAnalysis, snapshot: stageStartSnapshot };
+        } else {
         await reportRuntimeTrace({
           kind: 'stage_reanalysis_start',
           round,
@@ -6472,6 +6527,7 @@ export async function remediatePdf(
           } finally {
             await unlink(tmp).catch(() => {});
           }
+        }
         }
       } else {
         analyzed = { result: currentAnalysis, snapshot: currentSnapshot };

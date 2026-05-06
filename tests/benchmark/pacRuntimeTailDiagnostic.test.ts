@@ -241,4 +241,32 @@ describe('PAC runtime tail diagnostic helpers', () => {
       'soft_deadline_before_final_reanalysis',
     ]);
   });
+
+  it('classifies stage reanalysis admission guards separately', () => {
+    const report = buildRuntimeTailDiagnostic({
+      referenceRunDir: 'ref',
+      recoveryRunDir: 'recovery',
+      candidateRunDir: 'candidate',
+      referenceRows: [],
+      recoveryRows: [],
+      candidateRows: [
+        row({
+          id: 'guarded',
+          wallRemediateMs: 120_000,
+          runtimeSummary: runtime({
+            stageReanalyzeMs: [40_000],
+            earlyExit: 'stage_reanalysis_admission_guard',
+          }),
+        }),
+      ],
+      focusRows: ['guarded'],
+      generatedAt: '2026-05-06T00:00:00.000Z',
+    });
+
+    expect(report.summary.timeoutRows).toEqual([]);
+    expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
+      'guarded:stage_reanalysis_guarded',
+    ]);
+    expect(report.rows[0]?.topStageKeys).toEqual(['stage_reanalysis_admission_guard']);
+  });
 });

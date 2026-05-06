@@ -16,6 +16,7 @@ const REMEDIATION_WALL_TIMEOUT_MS = 300_000;
 export type RuntimeTailClassification =
   | 'per_pdf_timeout'
   | 'soft_deadline_stop'
+  | 'stage_reanalysis_guarded'
   | 'analyzer_starvation'
   | 'repeated_no_gain_tool_churn'
   | 'protected_reanalysis_churn'
@@ -186,6 +187,12 @@ function softDeadlineReasons(row: RemediateBenchmarkRow): string[] {
     .flatMap(item => Array(item.count).fill(item.key)) ?? [];
 }
 
+function stageReanalysisAdmissionGuardCount(row: RemediateBenchmarkRow): number {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key === 'stage_reanalysis_admission_guard')
+    .reduce((sum, item) => sum + item.count, 0) ?? 0;
+}
+
 function stageReanalysis(row: RemediateBenchmarkRow): { count: number; ms: number } {
   const stageTimings = row.runtimeSummary?.stageTimings ?? [];
   return {
@@ -235,10 +242,12 @@ export function classifyRuntimeTail(input: {
   protectedReanalysisPassCount: number;
   pacGateRejectionCount: number;
   softDeadlineEarlyExitCount?: number;
+  stageReanalysisAdmissionGuardCount?: number;
 }): RuntimeTailClassification {
   const error = String(input.row.error ?? '');
   if (/timeout|aborted/i.test(error)) return 'per_pdf_timeout';
   if ((input.softDeadlineEarlyExitCount ?? 0) > 0) return 'soft_deadline_stop';
+  if ((input.stageReanalysisAdmissionGuardCount ?? 0) > 0) return 'stage_reanalysis_guarded';
   if ((input.row.analysisBeforeMs ?? 0) >= CHECK_TIMEOUT_MS * 0.9 && input.stageReanalysisMs === 0) {
     return 'analyzer_starvation';
   }
@@ -262,17 +271,19 @@ function rowSort(a: RuntimeTailRow, b: RuntimeTailRow): number {
     ? 0
     : row.classification === 'soft_deadline_stop'
       ? 1
-      : row.classification === 'repeated_no_gain_tool_churn'
+      : row.classification === 'stage_reanalysis_guarded'
         ? 2
-        : row.classification === 'protected_reanalysis_churn'
+        : row.classification === 'repeated_no_gain_tool_churn'
           ? 3
-          : row.classification === 'reanalysis_heavy_large_document'
+          : row.classification === 'protected_reanalysis_churn'
             ? 4
-            : row.classification === 'mutation_heavy_large_document'
+            : row.classification === 'reanalysis_heavy_large_document'
               ? 5
-              : row.classification === 'analyzer_starvation'
+              : row.classification === 'mutation_heavy_large_document'
                 ? 6
-                : 7;
+                : row.classification === 'analyzer_starvation'
+                  ? 7
+                  : 8;
   return (
     rank(a) - rank(b) ||
     (b.candidateWallMs ?? -1) - (a.candidateWallMs ?? -1) ||
@@ -320,6 +331,7 @@ export function buildRuntimeTailDiagnostic(input: {
       const pacCount = pacGateRejectionCount(row);
       const sameStateCount = sameStateNoGainEarlyExitCount(row);
       const softDeadlineCount = softDeadlineEarlyExitCount(row);
+      const stageAdmissionGuardCount = stageReanalysisAdmissionGuardCount(row);
       const protectedPasses = protectedReanalysisPassCount(row);
       const mutationMs = mutationToolMs(row);
       const timeoutTrace = input.timeoutTraces?.get(row.id) ?? null;
@@ -335,6 +347,7 @@ export function buildRuntimeTailDiagnostic(input: {
           protectedReanalysisPassCount: protectedPasses,
           pacGateRejectionCount: pacCount,
           softDeadlineEarlyExitCount: softDeadlineCount,
+          stageReanalysisAdmissionGuardCount: stageAdmissionGuardCount,
         }),
         candidateWallMs,
         recoveryWallMs,
@@ -357,7 +370,11 @@ export function buildRuntimeTailDiagnostic(input: {
         mutationToolMs: mutationMs,
         protectedReanalysisPassCount: protectedPasses,
         timeoutTrace,
-        topStageKeys: softDeadlineCount > 0 ? softDeadlineReasons(row) : topStageKeys(row),
+        topStageKeys: softDeadlineCount > 0
+          ? softDeadlineReasons(row)
+          : stageAdmissionGuardCount > 0
+            ? ['stage_reanalysis_admission_guard']
+            : topStageKeys(row),
         topToolKeys: topToolKeys(row),
       };
     })
