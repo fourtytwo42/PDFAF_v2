@@ -7,6 +7,7 @@ import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
   PLAYBOOK_LEARN_MIN_SCORE_DELTA,
+  REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_CATEGORY_THRESHOLD,
   REMEDIATION_IMPLEMENTED_TOOLS,
   REMEDIATION_MAX_BASE64_MB,
@@ -1990,12 +1991,15 @@ async function reanalyzeBufferForMutation(
   buf: Buffer,
   filename: string,
   prefix: string,
-  options: { bypassCache?: boolean; signal?: AbortSignal } = {},
+  options: { bypassCache?: boolean; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<Awaited<ReturnType<typeof analyzePdf>>> {
   const tmpPath = join(tmpdir(), `${prefix}-${randomUUID()}.pdf`);
   await writeFile(tmpPath, buf);
   try {
-    return await analyzePdf(tmpPath, filename, options);
+    return await analyzePdf(tmpPath, filename, {
+      ...options,
+      timeoutMs: options.timeoutMs ?? REMEDIATION_ANALYSIS_TIMEOUT_MS,
+    });
   } finally {
     await unlink(tmpPath).catch(() => {});
   }
@@ -2291,7 +2295,9 @@ async function applyProtectedMetadataTopup(args: {
     if (candidateBuffer.equals(liveBuffer)) {
       return;
     }
-    const analyzed = await reanalyzeBufferForMutation(candidateBuffer, filename, 'pdfaf-protected-metadata');
+    const analyzed = await reanalyzeBufferForMutation(candidateBuffer, filename, 'pdfaf-protected-metadata', {
+      signal,
+    });
     const decision = protectedMetadataTopupDecision({
       baseline: protectedBaseline,
       before: liveAnalysis,
@@ -2379,6 +2385,7 @@ async function applyGuardedPostPass(args: {
   runtimeSummary?: RemediationRuntimeSummary;
   tempPrefix: string;
   protectedBaseline?: ProtectedBaselineFloor;
+  signal?: AbortSignal;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
   const {
     filename,
@@ -2394,6 +2401,7 @@ async function applyGuardedPostPass(args: {
     runtimeSummary,
     tempPrefix,
     protectedBaseline,
+    signal,
   } = args;
   const started = performance.now();
   if (nextBuffer.equals(currentBuffer)) {
@@ -2405,7 +2413,7 @@ async function applyGuardedPostPass(args: {
     };
   }
 
-  const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix);
+  const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix, { signal });
   const durationMs = performance.now() - started;
   const localFontScoreLoss = toolName === 'embed_local_font_substitutes' && analyzed.result.score < currentAnalysis.score;
   if (
@@ -3071,7 +3079,10 @@ async function finalizeAnalyzedStage(args: {
     await writeFile(restorePath, stateBeforeStage.buffer);
     let restoredState: RemediationState;
     try {
-      const restored = await analyzePdf(restorePath, filename, { signal });
+      const restored = await analyzePdf(restorePath, filename, {
+        signal,
+        timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+      });
       restoredState = {
         buffer: stateBeforeStage.buffer,
         analysis: restored.result,
@@ -3862,6 +3873,7 @@ async function applyAccessibilityStructureEnsure(args: {
   if (fr.success && fr.applied.length > 0) {
     const accepted = await applyGuardedPostPass({
       filename,
+      signal,
       toolName: 'ensure_accessibility_tagging',
       stage: 11,
       round,
@@ -3930,6 +3942,7 @@ async function applyOcrPageShellHeadingPostPass(args: {
   }
   const accepted = await applyGuardedPostPass({
     filename,
+    signal,
     toolName,
     stage: 11,
     round,
@@ -4002,6 +4015,7 @@ async function applyOcrCollectionCoverTitleHeadingPostPass(args: {
   }
   const accepted = await applyGuardedPostPass({
     filename,
+    signal,
     toolName,
     stage: 11,
     round,
@@ -4065,6 +4079,7 @@ async function applyOcrPageShellReadingOrderPostPass(args: {
   }
   const accepted = await applyGuardedPostPass({
     filename,
+    signal,
     toolName,
     stage: 11,
     round,
@@ -4121,6 +4136,7 @@ async function applyIcjiaDocumentFinalization(args: {
     const next = await metadataTools.setDocumentTitle(currentBuffer, title);
     const accepted = await applyGuardedPostPass({
       filename,
+      signal,
       toolName: 'set_document_title',
       stage: 11,
       round,
@@ -4144,6 +4160,7 @@ async function applyIcjiaDocumentFinalization(args: {
     const next = await metadataTools.setDocumentLanguage(currentBuffer, 'en-US');
     const accepted = await applyGuardedPostPass({
       filename,
+      signal,
       toolName: 'set_document_language',
       stage: 11,
       round,
@@ -4191,6 +4208,7 @@ async function applyIcjiaDocumentFinalization(args: {
     if (bmApplied) {
       const accepted = await applyGuardedPostPass({
         filename,
+        signal,
         toolName: 'post_pass_bookmarks',
         stage: 11,
         round,
@@ -4219,6 +4237,7 @@ async function applyIcjiaDocumentFinalization(args: {
     if (urw.result.success && urw.result.applied.includes('embed_urw_type1_substitutes')) {
       const accepted = await applyGuardedPostPass({
         filename,
+        signal,
         toolName: 'embed_urw_type1_substitutes',
         stage: 11,
         round,
@@ -4250,6 +4269,7 @@ async function applyIcjiaDocumentFinalization(args: {
     if (localFonts.result.success && localFonts.result.applied.includes('embed_local_font_substitutes')) {
       const accepted = await applyGuardedPostPass({
         filename,
+        signal,
         toolName: 'embed_local_font_substitutes',
         stage: 11,
         round,
@@ -4273,6 +4293,7 @@ async function applyIcjiaDocumentFinalization(args: {
   if (gsBuf) {
     const accepted = await applyGuardedPostPass({
       filename,
+      signal,
       toolName: 'embed_fonts_ghostscript',
       stage: 12,
       round,
@@ -4319,9 +4340,13 @@ async function applyAltCleanupPostPass(args: {
   if (!(snapshot.isTagged || snapshot.structureTree !== null) || !hasAcrobatAltOwnershipRisk(snapshot)) {
     return args.state;
   }
-  const alt = await applyPostRemediationAltRepair(buffer, filename, analysis, snapshot, { signal });
+  const alt = await applyPostRemediationAltRepair(buffer, filename, analysis, snapshot, {
+    signal,
+    timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+  });
   const accepted = await applyGuardedPostPass({
     filename,
+    signal,
     toolName: 'repair_alt_text_structure',
     stage: 9,
     round,
@@ -4370,6 +4395,7 @@ async function applyTaggedCleanupPostPasses(args: {
     if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
       const accepted = await applyGuardedPostPass({
         filename,
+        signal,
         toolName: 'set_pdfua_identification',
         stage: 10,
         round,
@@ -4409,6 +4435,7 @@ async function applyTaggedCleanupPostPasses(args: {
     if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
     const accepted = await applyGuardedPostPass({
       filename,
+      signal,
       toolName: 'remap_orphan_mcids_as_artifacts',
       stage: 10,
       round,
@@ -4479,6 +4506,7 @@ async function applyLinkParentTreeRepairPostPass(args: {
   });
   const accepted = await applyGuardedPostPass({
     filename,
+    signal,
     toolName: 'repair_native_link_structure',
     stage: 10,
     round,
@@ -4538,6 +4566,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     });
     const accepted = await applyGuardedPostPass({
       filename,
+      signal,
       toolName: 'normalize_table_structure',
       stage: 10,
       round,
@@ -4586,6 +4615,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     if (result.success && result.applied.includes('remap_orphan_mcids_as_artifacts')) {
       const accepted = await applyGuardedPostPass({
         filename,
+        signal,
         toolName: 'remap_orphan_mcids_as_artifacts',
         stage: 10,
         round,
@@ -4661,6 +4691,7 @@ async function applyStage181HiddenAltPostPass(args: {
   });
   const accepted = await applyGuardedPostPass({
     filename,
+    signal,
     toolName,
     stage: 10,
     round,
@@ -4983,10 +5014,11 @@ export async function executePlaybook(
         filename,
         currentAnalysis,
         currentSnapshot,
-        { signal: options?.signal },
+        { signal: options?.signal, timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS },
       );
       const altAccepted = await applyGuardedPostPass({
         filename,
+        signal: options?.signal,
         toolName: 'repair_alt_text_structure',
         stage: 9,
         round: 1,
@@ -5141,7 +5173,10 @@ export async function executePlaybook(
     await writeFile(tmp, buf);
     let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
     try {
-      analyzed = await analyzePdf(tmp, filename, { signal: options?.signal });
+      analyzed = await analyzePdf(tmp, filename, {
+        signal: options?.signal,
+        timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+      });
     } finally {
       await unlink(tmp).catch(() => {});
     }
@@ -5876,7 +5911,10 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            const liveAnalysis = await analyzePdf(tmp, filename, { signal: options?.signal });
+            const liveAnalysis = await analyzePdf(tmp, filename, {
+              signal: options?.signal,
+              timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+            });
             if (tool.toolName === 'retag_as_figure') {
               const liveParams = buildDefaultParams(
                 tool.toolName,
@@ -6130,7 +6168,10 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            lastStageAnalysis = await analyzePdf(tmp, filename, { signal: options?.signal });
+            lastStageAnalysis = await analyzePdf(tmp, filename, {
+              signal: options?.signal,
+              timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+            });
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;
             workingSnapshot = lastStageAnalysis.snapshot;
@@ -6149,7 +6190,10 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            analyzed = await analyzePdf(tmp, filename, { signal: options?.signal });
+            analyzed = await analyzePdf(tmp, filename, {
+              signal: options?.signal,
+              timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+            });
           } finally {
             await unlink(tmp).catch(() => {});
           }

@@ -7,6 +7,7 @@ import {
   getDefaultRemediateSemanticOptions,
   getOpenAiCompatBaseUrl,
   MAX_FILE_SIZE_MB,
+  REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_MAX_BASE64_MB,
   REQUEST_TIMEOUT_REMEDIATE_MS,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
@@ -278,7 +279,10 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     });
 
     await reportProgress(10, 'Reading your PDF', filename);
-    const { result, snapshot } = await analyzePdf(tempPath, filename);
+    const { result, snapshot } = await analyzePdf(tempPath, filename, {
+      signal: remediationSignal,
+      timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+    });
     const buffer = await readFile(tempPath);
     await reportProgress(18, 'Getting fixes ready');
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(

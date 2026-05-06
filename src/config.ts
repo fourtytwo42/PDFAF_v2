@@ -235,6 +235,12 @@ export const OCR_MUTATION_TIMEOUT_MS = parseInt(
   10,
 );
 
+/** Per-extractor analysis budget for remediation-internal reanalysis. */
+export const REMEDIATION_ANALYSIS_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_REMEDIATION_ANALYSIS_TIMEOUT_MS'] ?? '45000',
+  10,
+);
+
 /** Per-PDF remediation wall-clock guard. Raise with env only for deliberate special runs. */
 export const REMEDIATION_PDF_TIMEOUT_MS = parseInt(
   process.env['PDFAF_REMEDIATION_PDF_TIMEOUT_MS']

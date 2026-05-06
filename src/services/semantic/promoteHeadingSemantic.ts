@@ -569,7 +569,10 @@ export async function applySemanticPromoteHeadingRepairs(
   let nextAnalysis: AnalysisResult;
   let nextSnapshot: DocumentSnapshot;
   try {
-    const out = await analyzePdf(tmpPath, filename);
+    const out = await analyzePdf(tmpPath, filename, {
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    });
     nextAnalysis = out.result;
     nextSnapshot = out.snapshot;
   } finally {

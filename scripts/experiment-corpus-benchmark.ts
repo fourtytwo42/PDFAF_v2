@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import {
+  REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_PDF_TIMEOUT_MS,
   REMEDIATION_TARGET_SCORE,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
@@ -320,7 +321,11 @@ async function reanalyzeBuffer(
   await writeFile(tempPath, buffer);
   const wallStart = performance.now();
   try {
-    const analyzed = await analyzePdf(tempPath, filename, { bypassCache: true, signal });
+    const analyzed = await analyzePdf(tempPath, filename, {
+      bypassCache: true,
+      signal,
+      timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+    });
     return {
       ...analyzed,
       wallMs: performance.now() - wallStart,
@@ -573,7 +578,7 @@ async function runSemanticSequence(input: {
       input.entry.filename,
       currentAnalysis,
       currentSnapshot,
-      { signal },
+      { signal, timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS },
     );
     currentBuffer = alt.buffer;
     currentAnalysis = alt.analysis;
@@ -621,8 +626,8 @@ async function runAnalyzeStep(entry: ExperimentCorpusEntry): Promise<{
 
 async function runRemediationStep(
   entry: ExperimentCorpusEntry,
-  before: AnalysisResult,
-  snapshot: DocumentSnapshot,
+  _before: AnalysisResult,
+  _snapshot: DocumentSnapshot,
   semanticEnabled: boolean,
   mode: BenchmarkMode,
   writePdfs: boolean,
@@ -688,11 +693,17 @@ async function runRemediationStep(
       });
     };
 
+    const remediationInput = await analyzePdf(entry.absolutePath, entry.filename, {
+      bypassCache: true,
+      ...(remediationSignal ? { signal: remediationSignal } : {}),
+      timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+    });
+
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
       buffer,
       entry.filename,
-      before,
-      snapshot,
+      remediationInput.result,
+      remediationInput.snapshot,
       {
         maxRounds: 10,
         ...(remediationSignal ? { signal: remediationSignal } : {}),
@@ -800,7 +811,7 @@ async function runRemediationStep(
       beforeStructuralClassification: remediation.before.structuralClassification ?? null,
       beforeFailureProfile: remediation.before.failureProfile ?? null,
       beforeDetectionProfile: remediation.before.detectionProfile ?? null,
-      beforeIcjiaParity: buildIcjiaParity(snapshot),
+      beforeIcjiaParity: buildIcjiaParity(remediationInput.snapshot),
       afterScore: effectiveAfter.score,
       afterGrade: effectiveAfter.grade,
       afterPdfClass: effectiveAfter.pdfClass,

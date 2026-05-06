@@ -327,7 +327,10 @@ export async function applySemanticUntaggedHeadingRepairs(
       const insTmp = join(tmpdir(), `pdfaf-orph-insert-${randomUUID()}.pdf`);
       await writeFile(insTmp, workBuffer);
       try {
-        const out = await analyzePdf(insTmp, filename);
+        const out = await analyzePdf(insTmp, filename, {
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+        });
         workSnapshot = out.snapshot;
       } finally {
         await unlink(insTmp).catch(() => {});
@@ -516,7 +519,10 @@ export async function applySemanticUntaggedHeadingRepairs(
   let nextAnalysis: AnalysisResult;
   let nextSnapshot: DocumentSnapshot;
   try {
-    const out = await analyzePdf(tmpPath, filename);
+    const out = await analyzePdf(tmpPath, filename, {
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    });
     nextAnalysis = out.result;
     nextSnapshot = out.snapshot;
   } finally {

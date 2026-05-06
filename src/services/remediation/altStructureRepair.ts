@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { PYTHON_MUTATION_TIMEOUT_MS } from '../../config.js';
+import { PYTHON_MUTATION_TIMEOUT_MS, REMEDIATION_ANALYSIS_TIMEOUT_MS } from '../../config.js';
 import { runPythonMutationBatch } from '../../python/bridge.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
 import type { AnalysisResult, DocumentSnapshot } from '../../types.js';
@@ -22,7 +22,7 @@ export async function applyPostRemediationAltRepair(
   filename: string,
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
   if (analysis.pdfClass === 'scanned') {
     return { buffer, analysis, snapshot };
@@ -54,7 +54,10 @@ export async function applyPostRemediationAltRepair(
   const tmp = join(tmpdir(), `pdfaf-altfix-${randomUUID()}.pdf`);
   await writeFile(tmp, nextBuf);
   try {
-    const out = await analyzePdf(tmp, filename);
+    const out = await analyzePdf(tmp, filename, {
+      signal: opts?.signal,
+      timeoutMs: opts?.timeoutMs ?? REMEDIATION_ANALYSIS_TIMEOUT_MS,
+    });
     return { buffer: nextBuf, analysis: out.result, snapshot: out.snapshot };
   } finally {
     await unlink(tmp).catch(() => {});

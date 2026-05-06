@@ -59,3 +59,53 @@ Add a two-tier analysis budget:
 - remediation internal reanalysis gets a bounded larger per-analysis budget, such as 45s, while the whole PDF remains capped at 5 minutes.
 
 Then rerun the same fixed 50-file validation. This should preserve the user-requested fast checking behavior without starving remediation evidence on complex PDFs.
+
+## Two-Tier Analysis Budget Validation
+
+Implemented after the recovery candidate:
+
+- `CHECK_ANALYSIS_TIMEOUT_MS` remains `15000`.
+- `REMEDIATION_ANALYSIS_TIMEOUT_MS` defaults to `45000`.
+- `REMEDIATION_PDF_TIMEOUT_MS` remains `300000`.
+- `/v1/remediate`, orchestrator reanalysis, guarded post-pass analysis, semantic verification analysis, and the remediation benchmark path use the remediation analysis budget.
+- `/v1/analyze` and benchmark analyze-only rows keep the 15s check budget.
+
+Validation artifacts:
+
+- Candidate run: `Output/experiment-corpus-baseline/run-pac-analysis-budget-2026-05-06-r1`
+- Stage 41 gate: `Output/experiment-corpus-baseline/pac-analysis-budget-gate-2026-05-06-r1`
+- PAC diagnostic: `Output/experiment-corpus-baseline/pac-analysis-budget-diagnostic-2026-05-06-r1`
+
+Results:
+
+- Completed remediation rows: `48/50`
+- Timed-out rows: `structure-4438`, `long-4516`
+- Mean after remediation: `87.04`
+- Median after remediation: `96`
+- Reanalyzed mean: `86.69`
+- Reanalyzed median: `94`
+- Grades after/reanalyzed: `31 A / 6 B / 2 C / 1 D / 8 F`
+- p95 wall: `104411ms`
+- max wall: `282182ms`
+- total attempts: `933`
+- false-positive applied: `0`
+- PAC gate rejections: `114`
+- Newly evaluable debt rejections: `0`
+- Blocked useful repairs: `90`
+
+Stage 41 gate decision: `FAIL`.
+
+Failed gates: `analyze_success`, `remediate_success`, `route_summary_coverage`, `f_grade_count`, `protected_file_regressions`, `runtime_p95_wall`, `total_tool_attempts`.
+
+Interpretation:
+
+- The timeout split is mechanically correct: check-only analysis still times out at 15s, remediation analysis uses 45s, and the 5-minute per-PDF wall aborts long remediation rows.
+- It improves the quality envelope versus the prior recovery candidate (`84.45` mean / `10 F`) but is not an acceptance checkpoint.
+- `structure-4438` and `long-4516` need a runtime-tail/analyzer strategy rather than a broader default timeout increase.
+- Remaining protected regressions and blocked useful repairs are still driven by true PAC gate rejections, especially orphan-MCID-related debt, not newly evaluable debt.
+
+Next recommendation:
+
+- Keep the two-tier timeout plumbing.
+- Do not raise the default remediation analysis budget above 45s.
+- Open a narrow runtime-tail/analyzer stage for `structure-4438` and `long-4516`, plus a separate PAC gate recovery stage for the remaining true-regression blockers.
