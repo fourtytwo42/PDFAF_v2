@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   pacAcceptanceGateAppliesToTools,
   pacRuleAcceptanceGate,
+  pacRuleUsefulRepairRecovery,
 } from '../../src/services/remediation/pacRuleAcceptanceGate.js';
 import type { DocumentSnapshot } from '../../src/types.js';
 
@@ -164,6 +165,20 @@ function roleMapDebtSnapshot(count: number): DocumentSnapshot {
   });
 }
 
+function orphanMcidDebtSnapshot(count: number): DocumentSnapshot {
+  return baseSnapshot({
+    orphanMcids: Array.from({ length: count }, (_, index) => ({ page: 0, mcid: index })),
+    detectionProfile: {
+      ...baseSnapshot().detectionProfile!,
+      pdfUaSignals: {
+        orphanMcidCount: count,
+        suspectedPathPaintOutsideMc: 0,
+        taggedAnnotationRiskCount: 0,
+      },
+    },
+  });
+}
+
 describe('pacRuleAcceptanceGate', () => {
   it('does not reject selected PAC rules that change from not-applicable to fail', () => {
     const decision = pacRuleAcceptanceGate({
@@ -316,5 +331,56 @@ describe('pacRuleAcceptanceGate', () => {
       afterSnapshot: parentTreeMcidDebtSnapshot(1),
       toolNames: ['remap_orphan_mcids_as_artifacts'],
     })).toEqual({ reject: false, reason: null });
+  });
+
+  it('allows narrow alt-structure recovery for orphan-MCID count increases with score movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['repair_alt_text_structure'],
+      beforeScore: 86,
+      afterScore: 98,
+      beforePdfUaScore: 60,
+      afterPdfUaScore: 60,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
+    });
+  });
+
+  it('does not recover orphan-MCID increases without score or PDF/UA category movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['repair_alt_text_structure'],
+      beforeScore: 86,
+      afterScore: 86,
+      beforePdfUaScore: 60,
+      afterPdfUaScore: 60,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover orphan-MCID increases for unrelated tools', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['remap_orphan_mcids_as_artifacts'],
+      beforeScore: 86,
+      afterScore: 98,
+      beforePdfUaScore: 60,
+      afterPdfUaScore: 60,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover non-orphan PAC regressions even when score moves', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: tableHeaderPassSnapshot(),
+      afterSnapshot: tableHeaderDebtSnapshot(1),
+      toolNames: ['repair_alt_text_structure'],
+      beforeScore: 86,
+      afterScore: 98,
+      beforePdfUaScore: 60,
+      afterPdfUaScore: 70,
+    })).toEqual({ recover: false, reason: null });
   });
 });

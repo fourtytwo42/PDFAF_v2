@@ -210,3 +210,57 @@ Decision:
 - Do not run the fixed 50-file benchmark from this result.
 - Keep the quality-gated soft-stop machinery as a defensive runtime mechanism, but do not treat it as acceptance progress.
 - The next runtime stage should target heavy stage reanalysis after cheap late artifact tagging, especially `long-4516` stage 9 and `structure-4438` stage 4, rather than accepting low partial states.
+
+## Mean Recovery With Targeted Runtime Guards
+
+Implemented after the reanalysis-tail soft-stop:
+
+- Added a targeted late repeated-attempt guard for `mark_untagged_content_as_artifact`.
+  - The guard skips only late round/high-reanalysis artifact attempts after the same tool has already produced no score movement in the same run.
+  - It does not skip first attempts or prior positive artifact-tagging movement.
+- Added a targeted late `normalize_annotation_tab_order` guard for low-score rows near the wall budget or high cumulative reanalysis.
+  - The guard avoids starting cheap tab-order work that would likely force another expensive reanalysis and still not produce a target-quality state.
+- Added a narrow PAC recovery override for `repair_alt_text_structure` blocked only by `pdfua.content.orphan_mcids_absent` count growth.
+  - Recovery applies only when total score or `pdf_ua_compliance` improves.
+  - Non-orphan PAC regressions, unrelated tools, and no-gain orphan-MCID increases still reject.
+- PAC scoring caps, PAC gate allow-lists, default timeout values, planner routes, and mutator behavior were not broadened.
+
+Validation artifacts:
+
+- Targeted subset run: `Output/experiment-corpus-baseline/run-mean-recovery-target-2026-05-06-r1`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/mean-recovery-target-diagnostic-2026-05-06-r1`
+- Aborted experimental rerun: `Output/experiment-corpus-baseline/run-mean-recovery-target-2026-05-06-r2`
+
+Targeted `r1` result:
+
+- Selected rows: `10`
+- Successful remediation rows: `7/10`
+- Timed-out rows: `structure-4438`, `long-4516`, `long-4683`
+- Successful-row mean after/reanalyzed: `88.29`
+- Successful-row grades after/reanalyzed: `5 A / 1 C / 1 F`
+- p95 wall on successful rows: `256955ms`
+- Bounded-work signal included `late_artifact_reanalysis_guard: 2`
+- `structure-3661` recovered to `98/A` through the narrow `repair_alt_text_structure` orphan-MCID recovery.
+- `figure-4188` accepted the same narrow recovery but only moved to `59/F`, so it remains unresolved.
+- `structure-4076` stayed at `70/C`, preserving the minimum target control quality from the prior soft-stop run.
+
+Runtime interpretation:
+
+- The late repeated-attempt guard fired, but it did not eliminate the hard timeout tail.
+- Timeout traces show the remaining failures are still stage-reanalysis dominated:
+  - `long-4516`: timed out after stage 9 `mark_untagged_content_as_artifact`, `completedStageReanalysisMs=117582`.
+  - `long-4683`: timed out after stage 6 `mark_untagged_content_as_artifact`, `completedStageReanalysisMs=81681`.
+  - `structure-4438`: timed out at `stage_reanalysis_start` after `tag_native_text_blocks`, `completedStageReanalysisMs=135133`.
+- Therefore the fixed 50-file benchmark was not run from this candidate.
+
+Rejected experiment:
+
+- A broader follow-up that converted late `mark_untagged_content_as_artifact` `no_structural_change` mutations to `no_effect` before stage reanalysis was tested briefly in targeted run `r2`.
+- It was stopped early because the harmful control `fixture-inaccessible` dropped to `79/C`.
+- That broader suppression was removed; do not reintroduce it without a row-specific proof that protected controls stay stable.
+
+Decision:
+
+- Keep the narrow PAC recovery helper and the conservative late repeated-attempt guards.
+- Do not treat this as a clean checkpoint and do not run the fixed 50 yet.
+- Next work should target deadline-aware stage reanalysis admission itself: if a cheap late tool would require another 45s analysis and the current state is below target quality, the orchestrator should either skip the optional stage before mutation or require a target-quality verified state before starting that reanalysis.

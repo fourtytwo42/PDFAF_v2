@@ -98,6 +98,35 @@ function regressionDetails(
   };
 }
 
+export function pacRuleAcceptanceRegressions(input: {
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+  toolNames?: readonly string[];
+}): PacRuleAcceptanceRegressionDetail[] {
+  if (input.toolNames && !pacAcceptanceGateAppliesToTools(input.toolNames)) {
+    return [];
+  }
+
+  const beforeRules = mapSelectedRules(input.beforeSnapshot);
+  const afterRules = mapSelectedRules(input.afterSnapshot);
+  const details: PacRuleAcceptanceRegressionDetail[] = [];
+  for (const ruleId of PAC_ACCEPTANCE_RULE_IDS) {
+    const after = afterRules.get(ruleId);
+    if (!after) continue;
+    const before = beforeRules.get(ruleId);
+    if (!before || before.status === 'not_applicable') {
+      continue;
+    }
+    const beforeFailed = before.status === 'fail';
+    const beforeCount = failedCount(before);
+    const afterCount = failedCount(after);
+    if (after.status === 'fail' && (!beforeFailed || afterCount > beforeCount)) {
+      details.push(regressionDetails(before, after));
+    }
+  }
+  return details;
+}
+
 export function pacAcceptanceGateAppliesToTools(toolNames: readonly string[]): boolean {
   return toolNames.some(toolName => PAC_STRUCTURAL_TOOL_NAMES.has(toolName));
 }
@@ -107,37 +136,70 @@ export function pacRuleAcceptanceGate(input: {
   afterSnapshot: DocumentSnapshot;
   toolNames?: readonly string[];
 }): PacRuleAcceptanceDecision {
-  if (input.toolNames && !pacAcceptanceGateAppliesToTools(input.toolNames)) {
-    return { reject: false, reason: null };
-  }
-
-  const beforeRules = mapSelectedRules(input.beforeSnapshot);
-  const afterRules = mapSelectedRules(input.afterSnapshot);
-  for (const ruleId of PAC_ACCEPTANCE_RULE_IDS) {
-    const after = afterRules.get(ruleId);
-    if (!after) continue;
-    const before = beforeRules.get(ruleId);
-    if (!before || before.status === 'not_applicable') {
-      continue;
-    }
-    const beforeFailed = before?.status === 'fail';
-    const beforeCount = failedCount(before);
-    const afterCount = failedCount(after);
-    if (after.status === 'fail' && (!beforeFailed || afterCount > beforeCount)) {
-      const reason = `pac_rule_regressed(${ruleId})`;
-      return {
-        reject: true,
-        reason,
-        details: JSON.stringify({
-          outcome: 'rejected',
-          note: reason,
-          pacRuleRegression: regressionDetails(before, after),
-        }),
-      };
-    }
+  const regressions = pacRuleAcceptanceRegressions(input);
+  const firstRegression = regressions[0];
+  if (firstRegression) {
+    const reason = `pac_rule_regressed(${firstRegression.ruleId})`;
+    return {
+      reject: true,
+      reason,
+      details: JSON.stringify({
+        outcome: 'rejected',
+        note: reason,
+        pacRuleRegression: firstRegression,
+        pacRuleRegressions: regressions,
+      }),
+    };
   }
 
   return { reject: false, reason: null };
+}
+
+export function pacRuleUsefulRepairRecovery(input: {
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+  toolNames: readonly string[];
+  beforeScore: number;
+  afterScore: number;
+  beforePdfUaScore?: number | null;
+  afterPdfUaScore?: number | null;
+}): { recover: boolean; reason: string | null; details?: string } {
+  if (!input.toolNames.includes('repair_alt_text_structure')) {
+    return { recover: false, reason: null };
+  }
+  const regressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.afterSnapshot,
+    toolNames: input.toolNames,
+  });
+  if (regressions.length === 0) {
+    return { recover: false, reason: null };
+  }
+  if (regressions.some(row => row.ruleId !== 'pdfua.content.orphan_mcids_absent')) {
+    return { recover: false, reason: null };
+  }
+  const scoreImproved = input.afterScore > input.beforeScore;
+  const pdfUaImproved = (
+    input.beforePdfUaScore != null &&
+    input.afterPdfUaScore != null &&
+    input.afterPdfUaScore > input.beforePdfUaScore
+  );
+  if (!scoreImproved && !pdfUaImproved) {
+    return { recover: false, reason: null };
+  }
+  return {
+    recover: true,
+    reason: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
+    details: JSON.stringify({
+      outcome: 'accepted',
+      note: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
+      pacRuleRegressions: regressions,
+      beforeScore: input.beforeScore,
+      afterScore: input.afterScore,
+      beforePdfUaScore: input.beforePdfUaScore ?? null,
+      afterPdfUaScore: input.afterPdfUaScore ?? null,
+    }),
+  };
 }
 
 export function pacRuleAcceptanceGateForAppliedTools(input: {

@@ -24,6 +24,8 @@ import {
   shouldRejectStageResult,
   shouldCaptureProtectedDebugState,
   shouldKeepCurrentStateForRuntimeSoftStop,
+  shouldSkipLateArtifactReanalysisGuard,
+  shouldSkipLateTabOrderReanalysisGuard,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -373,6 +375,88 @@ describe('same-state no-gain runtime cap', () => {
       toolName: 'set_document_title',
       stateSignatureBefore: 'state-a',
       noGainAttempts: attempts,
+    })).toBe(false);
+  });
+});
+
+function runtimeToolRow(input: {
+  toolName: string;
+  outcome?: AppliedRemediationTool['outcome'];
+  scoreBefore?: number;
+  scoreAfter?: number;
+  delta?: number;
+}): AppliedRemediationTool {
+  const scoreBefore = input.scoreBefore ?? 80;
+  const scoreAfter = input.scoreAfter ?? scoreBefore;
+  return {
+    toolName: input.toolName,
+    stage: 1,
+    round: 1,
+    scoreBefore,
+    scoreAfter,
+    delta: input.delta ?? (scoreAfter - scoreBefore),
+    outcome: input.outcome ?? 'no_effect',
+    source: 'planner',
+  };
+}
+
+describe('late reanalysis runtime guards', () => {
+  it('skips repeated late artifact tagging after a prior no-movement attempt', () => {
+    expect(shouldSkipLateArtifactReanalysisGuard({
+      toolName: 'mark_untagged_content_as_artifact',
+      round: 2,
+      cumulativeReanalysisMs: 10_000,
+      appliedTools: [runtimeToolRow({ toolName: 'mark_untagged_content_as_artifact' })],
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(true);
+  });
+
+  it('does not skip the first artifact tagging attempt', () => {
+    expect(shouldSkipLateArtifactReanalysisGuard({
+      toolName: 'mark_untagged_content_as_artifact',
+      round: 2,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: [],
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('does not skip artifact tagging after a prior positive movement', () => {
+    expect(shouldSkipLateArtifactReanalysisGuard({
+      toolName: 'mark_untagged_content_as_artifact',
+      round: 2,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 80,
+        scoreAfter: 82,
+      })],
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(false);
+  });
+
+  it('skips low-score tab-order work near the wall budget', () => {
+    expect(shouldSkipLateTabOrderReanalysisGuard({
+      toolName: 'normalize_annotation_tab_order',
+      currentScore: 72,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 10_000,
+      appliedTools: [],
+      targetScore: 90,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe(true);
+  });
+
+  it('lets target-quality tab-order rows use existing soft-stop behavior', () => {
+    expect(shouldSkipLateTabOrderReanalysisGuard({
+      toolName: 'normalize_annotation_tab_order',
+      currentScore: 90,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: [],
+      targetScore: 90,
+      reanalysisSoftCapMs: 135_000,
     })).toBe(false);
   });
 });

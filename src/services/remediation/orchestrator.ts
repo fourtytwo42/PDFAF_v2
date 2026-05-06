@@ -89,6 +89,7 @@ import {
 import {
   pacRuleAcceptanceGate,
   pacRuleAcceptanceGateForAppliedTools,
+  pacRuleUsefulRepairRecovery,
 } from './pacRuleAcceptanceGate.js';
 import { stage5PacCatalogSettingsImproved } from './stage5PacCatalogSettings.js';
 
@@ -1396,11 +1397,24 @@ export function shouldRejectStageResult(input: {
     if (!input.beforeSnapshot || !input.afterSnapshot) {
       return { reject: false, reason: null };
     }
-    return pacRuleAcceptanceGateForAppliedTools({
+    const decision = pacRuleAcceptanceGateForAppliedTools({
       beforeSnapshot: input.beforeSnapshot,
       afterSnapshot: input.afterSnapshot,
       appliedTools: input.stageApplied,
     });
+    if (!decision.reject) {
+      return decision;
+    }
+    const recovery = pacRuleUsefulRepairRecovery({
+      beforeSnapshot: input.beforeSnapshot,
+      afterSnapshot: input.afterSnapshot,
+      toolNames: input.stageApplied.map(row => row.toolName),
+      beforeScore: input.before.score,
+      afterScore: input.after.score,
+      beforePdfUaScore: categoryScore(input.before, 'pdf_ua_compliance'),
+      afterPdfUaScore: categoryScore(input.after, 'pdf_ua_compliance'),
+    });
+    return recovery.recover ? { reject: false, reason: null } : decision;
   };
   if (noGainOrphanArtifactMutation(input)) {
     return {
@@ -1635,6 +1649,58 @@ export function shouldKeepCurrentStateForRuntimeSoftStop(input: {
   targetScore?: number;
 }): boolean {
   return input.analysis.score >= (input.targetScore ?? REMEDIATION_TARGET_SCORE);
+}
+
+function priorNoMovementToolAttempt(toolName: string, appliedTools: readonly AppliedRemediationTool[]): boolean {
+  return appliedTools.some(row =>
+    row.toolName === toolName &&
+    (
+      row.outcome === 'no_effect' ||
+      row.outcome === 'rejected' ||
+      (row.outcome === 'applied' && row.delta <= 0)
+    )
+  );
+}
+
+function priorPositiveToolAttempt(toolName: string, appliedTools: readonly AppliedRemediationTool[]): boolean {
+  return appliedTools.some(row =>
+    row.toolName === toolName &&
+    row.outcome === 'applied' &&
+    row.delta > 0
+  );
+}
+
+function isHighCumulativeReanalysis(cumulativeReanalysisMs: number, reanalysisSoftCapMs = REMEDIATION_REANALYSIS_SOFT_CAP_MS): boolean {
+  if (!(reanalysisSoftCapMs > 0)) return false;
+  return cumulativeReanalysisMs >= Math.floor(reanalysisSoftCapMs * 0.67);
+}
+
+export function shouldSkipLateArtifactReanalysisGuard(input: {
+  toolName: string;
+  round: number;
+  cumulativeReanalysisMs: number;
+  appliedTools: readonly AppliedRemediationTool[];
+  reanalysisSoftCapMs?: number;
+}): boolean {
+  if (input.toolName !== 'mark_untagged_content_as_artifact') return false;
+  if (priorPositiveToolAttempt(input.toolName, input.appliedTools)) return false;
+  if (!priorNoMovementToolAttempt(input.toolName, input.appliedTools)) return false;
+  return input.round >= 2 || isHighCumulativeReanalysis(input.cumulativeReanalysisMs, input.reanalysisSoftCapMs);
+}
+
+export function shouldSkipLateTabOrderReanalysisGuard(input: {
+  toolName: string;
+  currentScore: number;
+  nearWallBudget: boolean;
+  cumulativeReanalysisMs: number;
+  appliedTools: readonly AppliedRemediationTool[];
+  targetScore?: number;
+  reanalysisSoftCapMs?: number;
+}): boolean {
+  if (input.toolName !== 'normalize_annotation_tab_order') return false;
+  if (input.currentScore >= (input.targetScore ?? REMEDIATION_TARGET_SCORE)) return false;
+  if (priorPositiveToolAttempt(input.toolName, input.appliedTools)) return false;
+  return input.nearWallBudget || isHighCumulativeReanalysis(input.cumulativeReanalysisMs, input.reanalysisSoftCapMs);
 }
 
 function hasRemainingHeadingBootstrapAttempts(
@@ -2468,6 +2534,7 @@ async function applyGuardedPostPass(args: {
 
   const analyzed = await reanalyzeBufferForMutation(nextBuffer, filename, tempPrefix, { signal });
   const durationMs = performance.now() - started;
+  let acceptedDetails = details;
   const localFontScoreLoss = toolName === 'embed_local_font_substitutes' && analyzed.result.score < currentAnalysis.score;
   if (
     analyzed.result.score < currentAnalysis.score
@@ -3000,37 +3067,55 @@ async function applyGuardedPostPass(args: {
     toolNames: [toolName],
   });
   if (pacGate.reject) {
-    appliedTools.push({
-      toolName,
-      stage,
-      round,
-      scoreBefore: currentAnalysis.score,
-      scoreAfter: currentAnalysis.score,
-      delta: 0,
-      outcome: 'rejected',
-      details: enrichDetailsWithReplayState(pacGate.details ?? pacGate.reason ?? 'pac_rule_regressed', {
-        beforeAnalysis: currentAnalysis,
-        beforeSnapshot: currentSnapshot,
-        afterAnalysis: analyzed.result,
-        afterSnapshot: analyzed.snapshot,
-      }),
-      durationMs,
-      source: 'post_pass',
+    const recovery = pacRuleUsefulRepairRecovery({
+      beforeSnapshot: currentSnapshot,
+      afterSnapshot: analyzed.snapshot,
+      toolNames: [toolName],
+      beforeScore: currentAnalysis.score,
+      afterScore: analyzed.result.score,
+      beforePdfUaScore: categoryScore(currentAnalysis, 'pdf_ua_compliance'),
+      afterPdfUaScore: categoryScore(analyzed.result, 'pdf_ua_compliance'),
     });
-    runtimeSummary?.toolTimings.push({
-      toolName,
-      stage,
-      round,
-      source: 'post_pass',
-      durationMs,
-      outcome: 'rejected',
-    });
-    return {
-      buffer: currentBuffer,
-      analysis: currentAnalysis,
-      snapshot: currentSnapshot,
-      accepted: false,
-    };
+    if (recovery.recover) {
+      acceptedDetails = JSON.stringify({
+        outcome: 'applied',
+        note: recovery.reason,
+        originalDetails: parseMutationDetails(details) ?? details,
+        pacRecovery: recovery.details ? JSON.parse(recovery.details) : null,
+      });
+    } else {
+      appliedTools.push({
+        toolName,
+        stage,
+        round,
+        scoreBefore: currentAnalysis.score,
+        scoreAfter: currentAnalysis.score,
+        delta: 0,
+        outcome: 'rejected',
+        details: enrichDetailsWithReplayState(pacGate.details ?? pacGate.reason ?? 'pac_rule_regressed', {
+          beforeAnalysis: currentAnalysis,
+          beforeSnapshot: currentSnapshot,
+          afterAnalysis: analyzed.result,
+          afterSnapshot: analyzed.snapshot,
+        }),
+        durationMs,
+        source: 'post_pass',
+      });
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'rejected',
+      });
+      return {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        accepted: false,
+      };
+    }
   }
 
   appliedTools.push({
@@ -3041,7 +3126,7 @@ async function applyGuardedPostPass(args: {
     scoreAfter: analyzed.result.score,
     delta: analyzed.result.score - currentAnalysis.score,
     outcome: 'applied',
-    details: enrichDetailsWithReplayState(details, {
+    details: enrichDetailsWithReplayState(acceptedDetails, {
       beforeAnalysis: currentAnalysis,
       beforeSnapshot: currentSnapshot,
       afterAnalysis: analyzed.result,
@@ -6122,6 +6207,26 @@ export async function remediatePdf(
           snapshot: workingSnapshot,
           params: liveTool.params,
         });
+        const priorRunTools = [...appliedTools, ...stageApplied];
+        if (shouldSkipLateArtifactReanalysisGuard({
+          toolName: liveTool.toolName,
+          round,
+          cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs,
+          appliedTools: priorRunTools,
+        })) {
+          noteEarlyExit(runtimeSummary, 'late_artifact_reanalysis_guard');
+          continue;
+        }
+        if (shouldSkipLateTabOrderReanalysisGuard({
+          toolName: liveTool.toolName,
+          currentScore: workingAnalysis.score,
+          nearWallBudget: shouldSoftStopForRemediationDeadline({ startedAtMs: started }),
+          cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs,
+          appliedTools: priorRunTools,
+        })) {
+          noteEarlyExit(runtimeSummary, 'late_tab_order_reanalysis_guard');
+          continue;
+        }
         if (shouldSkipSameStateNoGainRuntimeAttempt({
           toolName: liveTool.toolName,
           stateSignatureBefore: sameStateRuntimeSignature,
