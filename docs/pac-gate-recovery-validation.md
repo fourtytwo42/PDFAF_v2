@@ -309,3 +309,54 @@ Decision:
 - Keep the helper and diagnostic classification as narrow defensive plumbing, but do not treat this stage as quality/runtime recovery.
 - Do not broaden the guard to catalog-only or list-repair tools without a separate control-safe proof.
 - The next useful work is a trace-driven admission redesign that considers final reanalysis and broader late-stage optional-tool admission, with explicit controls for `fixture-inaccessible` and `structure-4076`.
+
+## Trace-Driven Final Reanalysis And Optional Tool Admission
+
+Implemented after the stage reanalysis admission guard:
+
+- Added a benchmark final-reanalysis decision helper.
+  - Target-quality rows near the remediation wall can skip final reanalysis and record `soft_deadline_before_final_reanalysis`.
+  - High-B rows (`>=85`) near the remediation wall can skip final reanalysis and record `bounded_final_reanalysis_guard`.
+  - Rows below `85` do not use the final-reanalysis guard; they keep the existing hard-timeout behavior rather than accepting poor partial states.
+- Added narrow late optional-tool admission guards for repeated tail-shape attempts.
+  - `normalize_pdfua_catalog_settings` can record `late_catalog_reanalysis_guard` only after a prior no-movement attempt for the same tool and near-wall or high cumulative reanalysis pressure.
+  - `repair_list_li_wrong_parent` can record `late_list_reanalysis_guard` under the same repeated/no-movement tail conditions.
+  - First attempts, prior positive movement, target-quality rows, planner routes, mutators, default timeouts, PAC scoring, and PAC gate allow-lists were not changed.
+- Extended the runtime-tail diagnostic to classify `bounded_final_reanalysis_guarded` and `late_optional_reanalysis_guarded` rows separately from hard timeouts and soft-stop rows.
+
+Validation artifacts:
+
+- Targeted subset run: `Output/experiment-corpus-baseline/run-trace-driven-final-reanalysis-target-2026-05-06-r2`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/trace-driven-final-reanalysis-diagnostic-2026-05-06-r2`
+- Earlier single-row route-volatility smokes: `Output/experiment-corpus-baseline/run-trace-driven-fixture-inaccessible-smoke-2026-05-06-r1` and `r2`
+
+Targeted `r2` result:
+
+- Selected rows: `10`
+- Successful remediation rows: `7/10`
+- Timed-out rows: `structure-4076`, `structure-4438`, `long-4516`
+- Successful-row mean after: `92.00`
+- Successful-row grades after: `6 A / 1 F`
+- Successful-row p95 wall: `262148ms`
+- `false_positive_applied = 0`
+- Controls `fixture-inaccessible`, `fixture-teams-original`, `font-4035`, and `structure-3775` finished A-grade in the completed targeted run.
+- `structure-3661` stayed recovered at `98/A`.
+- `figure-4188` remained unresolved at `59/F`.
+- `long-4683` completed at `96/A` and recorded `soft_deadline_before_final_reanalysis`.
+
+Runtime interpretation:
+
+- The fixed 50-file benchmark was not run.
+- The final-reanalysis protection was useful for `long-4683`, which avoided a hard timeout while preserving an A-grade state.
+- The new late catalog/list guards did not fire in the accepted targeted run; the remaining hard timeouts were still active stage/reanalysis tails:
+  - `structure-4076`: timed out after `synthesize_basic_structure_from_layout` with `structure_depth_not_improved`.
+  - `structure-4438`: timed out at `stage_reanalysis_start` after `normalize_pdfua_catalog_settings`.
+  - `long-4516`: timed out after `mark_untagged_content_as_artifact`.
+- `fixture-inaccessible` showed route volatility in two single-row smokes (`79/C`) but recovered to `97/A` in the completed targeted run; no new bounded-work reason fired on that row.
+
+Decision:
+
+- Keep the trace-driven final-reanalysis helper and diagnostic classifications as narrow defensive plumbing.
+- Do not treat this stage as mean/runtime recovery and do not run fixed 50 from this result.
+- The remaining blockers are not PAC policy. They are active long-row reanalysis/mutation tails on `structure-4076`, `structure-4438`, and `long-4516`.
+- The next stage should either isolate those active phases with finer timeout attribution or design a quality-preserving way to checkpoint/return the best verified current state for timed-out rows without masking low-score partial outcomes.

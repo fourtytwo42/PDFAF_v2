@@ -4,7 +4,10 @@ import {
   classifyRuntimeTail,
   parseRuntimeTimeoutTrace,
 } from '../../scripts/pac-runtime-tail-diagnostic.js';
-import { shouldSkipBenchmarkFinalReanalysis } from '../../scripts/experiment-corpus-benchmark.js';
+import {
+  benchmarkFinalReanalysisDecision,
+  shouldSkipBenchmarkFinalReanalysis,
+} from '../../scripts/experiment-corpus-benchmark.js';
 import type { RemediateBenchmarkRow } from '../../src/services/benchmark/experimentCorpus.js';
 
 function row(input: Partial<RemediateBenchmarkRow> & { id: string }): RemediateBenchmarkRow {
@@ -96,12 +99,47 @@ describe('PAC runtime tail diagnostic helpers', () => {
     })).toBe(false);
     expect(shouldSkipBenchmarkFinalReanalysis({
       startedAtMs: 0,
-      score: 89,
+      score: 84,
       targetScore: 90,
       nowMs: 251_000,
       wallTimeoutMs: 300_000,
       requiredRemainingMs: 50_000,
     })).toBe(false);
+    expect(benchmarkFinalReanalysisDecision({
+      startedAtMs: 0,
+      score: 92,
+      targetScore: 90,
+      nowMs: 251_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toEqual({ skip: true, reason: 'soft_deadline_before_final_reanalysis' });
+  });
+
+  it('uses bounded final reanalysis guard only for high-B rows', () => {
+    expect(benchmarkFinalReanalysisDecision({
+      startedAtMs: 0,
+      score: 85,
+      targetScore: 90,
+      nowMs: 251_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toEqual({ skip: true, reason: 'bounded_final_reanalysis_guard' });
+    expect(benchmarkFinalReanalysisDecision({
+      startedAtMs: 0,
+      score: 84,
+      targetScore: 90,
+      nowMs: 251_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toEqual({ skip: false, reason: null });
+    expect(benchmarkFinalReanalysisDecision({
+      startedAtMs: 0,
+      score: 85,
+      targetScore: 90,
+      nowMs: 250_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toEqual({ skip: false, reason: null });
   });
 
   it('classifies timeout rows separately from completed runtime tails', () => {
@@ -268,5 +306,53 @@ describe('PAC runtime tail diagnostic helpers', () => {
       'guarded:stage_reanalysis_guarded',
     ]);
     expect(report.rows[0]?.topStageKeys).toEqual(['stage_reanalysis_admission_guard']);
+  });
+
+  it('classifies bounded final reanalysis guards separately', () => {
+    const report = buildRuntimeTailDiagnostic({
+      referenceRunDir: 'ref',
+      recoveryRunDir: 'recovery',
+      candidateRunDir: 'candidate',
+      referenceRows: [],
+      recoveryRows: [],
+      candidateRows: [
+        row({
+          id: 'bounded-final',
+          wallRemediateMs: 120_000,
+          runtimeSummary: runtime({ earlyExit: 'bounded_final_reanalysis_guard' }),
+        }),
+      ],
+      focusRows: ['bounded-final'],
+      generatedAt: '2026-05-06T00:00:00.000Z',
+    });
+
+    expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
+      'bounded-final:bounded_final_reanalysis_guarded',
+    ]);
+    expect(report.rows[0]?.topStageKeys).toEqual(['bounded_final_reanalysis_guard']);
+  });
+
+  it('classifies late optional reanalysis guards separately', () => {
+    const report = buildRuntimeTailDiagnostic({
+      referenceRunDir: 'ref',
+      recoveryRunDir: 'recovery',
+      candidateRunDir: 'candidate',
+      referenceRows: [],
+      recoveryRows: [],
+      candidateRows: [
+        row({
+          id: 'late-list',
+          wallRemediateMs: 120_000,
+          runtimeSummary: runtime({ earlyExit: 'late_list_reanalysis_guard' }),
+        }),
+      ],
+      focusRows: ['late-list'],
+      generatedAt: '2026-05-06T00:00:00.000Z',
+    });
+
+    expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
+      'late-list:late_optional_reanalysis_guarded',
+    ]);
+    expect(report.rows[0]?.topStageKeys).toEqual(['late_list_reanalysis_guard']);
   });
 });

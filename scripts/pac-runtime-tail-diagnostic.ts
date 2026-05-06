@@ -16,6 +16,8 @@ const REMEDIATION_WALL_TIMEOUT_MS = 300_000;
 export type RuntimeTailClassification =
   | 'per_pdf_timeout'
   | 'soft_deadline_stop'
+  | 'bounded_final_reanalysis_guarded'
+  | 'late_optional_reanalysis_guarded'
   | 'stage_reanalysis_guarded'
   | 'analyzer_starvation'
   | 'repeated_no_gain_tool_churn'
@@ -193,6 +195,24 @@ function stageReanalysisAdmissionGuardCount(row: RemediateBenchmarkRow): number 
     .reduce((sum, item) => sum + item.count, 0) ?? 0;
 }
 
+function boundedFinalReanalysisGuardCount(row: RemediateBenchmarkRow): number {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key === 'bounded_final_reanalysis_guard')
+    .reduce((sum, item) => sum + item.count, 0) ?? 0;
+}
+
+function lateOptionalReanalysisGuardCount(row: RemediateBenchmarkRow): number {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key === 'late_catalog_reanalysis_guard' || item.key === 'late_list_reanalysis_guard')
+    .reduce((sum, item) => sum + item.count, 0) ?? 0;
+}
+
+function lateOptionalReanalysisReasons(row: RemediateBenchmarkRow): string[] {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key === 'late_catalog_reanalysis_guard' || item.key === 'late_list_reanalysis_guard')
+    .flatMap(item => Array(item.count).fill(item.key)) ?? [];
+}
+
 function stageReanalysis(row: RemediateBenchmarkRow): { count: number; ms: number } {
   const stageTimings = row.runtimeSummary?.stageTimings ?? [];
   return {
@@ -243,10 +263,14 @@ export function classifyRuntimeTail(input: {
   pacGateRejectionCount: number;
   softDeadlineEarlyExitCount?: number;
   stageReanalysisAdmissionGuardCount?: number;
+  boundedFinalReanalysisGuardCount?: number;
+  lateOptionalReanalysisGuardCount?: number;
 }): RuntimeTailClassification {
   const error = String(input.row.error ?? '');
   if (/timeout|aborted/i.test(error)) return 'per_pdf_timeout';
   if ((input.softDeadlineEarlyExitCount ?? 0) > 0) return 'soft_deadline_stop';
+  if ((input.boundedFinalReanalysisGuardCount ?? 0) > 0) return 'bounded_final_reanalysis_guarded';
+  if ((input.lateOptionalReanalysisGuardCount ?? 0) > 0) return 'late_optional_reanalysis_guarded';
   if ((input.stageReanalysisAdmissionGuardCount ?? 0) > 0) return 'stage_reanalysis_guarded';
   if ((input.row.analysisBeforeMs ?? 0) >= CHECK_TIMEOUT_MS * 0.9 && input.stageReanalysisMs === 0) {
     return 'analyzer_starvation';
@@ -271,19 +295,23 @@ function rowSort(a: RuntimeTailRow, b: RuntimeTailRow): number {
     ? 0
     : row.classification === 'soft_deadline_stop'
       ? 1
-      : row.classification === 'stage_reanalysis_guarded'
+      : row.classification === 'bounded_final_reanalysis_guarded'
         ? 2
-        : row.classification === 'repeated_no_gain_tool_churn'
+        : row.classification === 'late_optional_reanalysis_guarded'
           ? 3
-          : row.classification === 'protected_reanalysis_churn'
+          : row.classification === 'stage_reanalysis_guarded'
             ? 4
-            : row.classification === 'reanalysis_heavy_large_document'
+            : row.classification === 'repeated_no_gain_tool_churn'
               ? 5
-              : row.classification === 'mutation_heavy_large_document'
+              : row.classification === 'protected_reanalysis_churn'
                 ? 6
-                : row.classification === 'analyzer_starvation'
+                : row.classification === 'reanalysis_heavy_large_document'
                   ? 7
-                  : 8;
+                  : row.classification === 'mutation_heavy_large_document'
+                    ? 8
+                    : row.classification === 'analyzer_starvation'
+                      ? 9
+                      : 10;
   return (
     rank(a) - rank(b) ||
     (b.candidateWallMs ?? -1) - (a.candidateWallMs ?? -1) ||
@@ -332,6 +360,8 @@ export function buildRuntimeTailDiagnostic(input: {
       const sameStateCount = sameStateNoGainEarlyExitCount(row);
       const softDeadlineCount = softDeadlineEarlyExitCount(row);
       const stageAdmissionGuardCount = stageReanalysisAdmissionGuardCount(row);
+      const boundedFinalGuardCount = boundedFinalReanalysisGuardCount(row);
+      const lateOptionalGuardCount = lateOptionalReanalysisGuardCount(row);
       const protectedPasses = protectedReanalysisPassCount(row);
       const mutationMs = mutationToolMs(row);
       const timeoutTrace = input.timeoutTraces?.get(row.id) ?? null;
@@ -348,6 +378,8 @@ export function buildRuntimeTailDiagnostic(input: {
           pacGateRejectionCount: pacCount,
           softDeadlineEarlyExitCount: softDeadlineCount,
           stageReanalysisAdmissionGuardCount: stageAdmissionGuardCount,
+          boundedFinalReanalysisGuardCount: boundedFinalGuardCount,
+          lateOptionalReanalysisGuardCount: lateOptionalGuardCount,
         }),
         candidateWallMs,
         recoveryWallMs,
@@ -372,6 +404,10 @@ export function buildRuntimeTailDiagnostic(input: {
         timeoutTrace,
         topStageKeys: softDeadlineCount > 0
           ? softDeadlineReasons(row)
+          : boundedFinalGuardCount > 0
+            ? ['bounded_final_reanalysis_guard']
+            : lateOptionalGuardCount > 0
+              ? lateOptionalReanalysisReasons(row)
           : stageAdmissionGuardCount > 0
             ? ['stage_reanalysis_admission_guard']
             : topStageKeys(row),

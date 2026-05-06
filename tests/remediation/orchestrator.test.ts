@@ -19,6 +19,7 @@ import {
   protectedStrongAltPreservationViolation,
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
+  lateOptionalToolReanalysisGuardReason,
   shouldGuardStageReanalysisAdmission,
   shouldReplaceProtectedSafeCheckpoint,
   shouldRecordSameStateNoGainRuntimeAttempt,
@@ -559,6 +560,64 @@ describe('late reanalysis runtime guards', () => {
       cumulativeReanalysisMs: 120_000,
       reanalysisSoftCapMs: 135_000,
     })).toBe(false);
+  });
+
+  it('skips repeated late catalog cleanup only in the tail shape', () => {
+    const prior = [runtimeToolRow({ toolName: 'normalize_pdfua_catalog_settings' })];
+    expect(lateOptionalToolReanalysisGuardReason({
+      toolName: 'normalize_pdfua_catalog_settings',
+      currentScore: 72,
+      nearWallBudget: false,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: prior,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe('late_catalog_reanalysis_guard');
+    expect(lateOptionalToolReanalysisGuardReason({
+      toolName: 'normalize_pdfua_catalog_settings',
+      currentScore: 72,
+      nearWallBudget: false,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: [],
+      reanalysisSoftCapMs: 135_000,
+    })).toBeNull();
+  });
+
+  it('skips repeated late list repair only below target quality', () => {
+    const prior = [runtimeToolRow({ toolName: 'repair_list_li_wrong_parent' })];
+    expect(lateOptionalToolReanalysisGuardReason({
+      toolName: 'repair_list_li_wrong_parent',
+      currentScore: 84,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 10_000,
+      appliedTools: prior,
+      targetScore: 90,
+      reanalysisSoftCapMs: 135_000,
+    })).toBe('late_list_reanalysis_guard');
+    expect(lateOptionalToolReanalysisGuardReason({
+      toolName: 'repair_list_li_wrong_parent',
+      currentScore: 90,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: prior,
+      targetScore: 90,
+      reanalysisSoftCapMs: 135_000,
+    })).toBeNull();
+  });
+
+  it('does not skip catalog or list cleanup after prior positive movement', () => {
+    expect(lateOptionalToolReanalysisGuardReason({
+      toolName: 'repair_list_li_wrong_parent',
+      currentScore: 72,
+      nearWallBudget: true,
+      cumulativeReanalysisMs: 120_000,
+      appliedTools: [runtimeToolRow({
+        toolName: 'repair_list_li_wrong_parent',
+        outcome: 'applied',
+        scoreBefore: 80,
+        scoreAfter: 82,
+      })],
+      reanalysisSoftCapMs: 135_000,
+    })).toBeNull();
   });
 });
 

@@ -259,13 +259,33 @@ export function shouldSkipBenchmarkFinalReanalysis(input: {
   wallTimeoutMs?: number;
   requiredRemainingMs?: number;
 }): boolean {
-  if ((input.score ?? 0) < (input.targetScore ?? REMEDIATION_TARGET_SCORE)) return false;
+  return benchmarkFinalReanalysisDecision(input).skip;
+}
+
+export function benchmarkFinalReanalysisDecision(input: {
+  startedAtMs: number;
+  score?: number | null;
+  targetScore?: number;
+  highBScore?: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+  requiredRemainingMs?: number;
+}): { skip: boolean; reason: 'soft_deadline_before_final_reanalysis' | 'bounded_final_reanalysis_guard' | null } {
   const wallTimeoutMs = input.wallTimeoutMs ?? REMEDIATION_PDF_TIMEOUT_MS;
-  if (!(wallTimeoutMs > 0)) return false;
+  if (!(wallTimeoutMs > 0)) return { skip: false, reason: null };
   const requiredRemainingMs = input.requiredRemainingMs ?? REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
   const nowMs = input.nowMs ?? performance.now();
   const elapsedMs = Math.max(0, nowMs - input.startedAtMs);
-  return Math.max(0, wallTimeoutMs - elapsedMs) < requiredRemainingMs;
+  const nearDeadline = Math.max(0, wallTimeoutMs - elapsedMs) < requiredRemainingMs;
+  if (!nearDeadline) return { skip: false, reason: null };
+  const score = input.score ?? 0;
+  if (score >= (input.targetScore ?? REMEDIATION_TARGET_SCORE)) {
+    return { skip: true, reason: 'soft_deadline_before_final_reanalysis' };
+  }
+  if (score >= (input.highBScore ?? 85)) {
+    return { skip: true, reason: 'bounded_final_reanalysis_guard' };
+  }
+  return { skip: false, reason: null };
 }
 
 function mergeRuntimeSummary(
@@ -904,9 +924,16 @@ async function runRemediationStep(
     let protectedReanalysisSelection: ProtectedReanalysisSelectionSummary | undefined;
     let analysisAfterMs: number | null = null;
     if (mode === 'full') {
-      if (shouldSkipBenchmarkFinalReanalysis({ startedAtMs: remediationStart, score: finalAnalysis.score })) {
+      const finalReanalysisDecision = benchmarkFinalReanalysisDecision({
+        startedAtMs: remediationStart,
+        score: finalAnalysis.score,
+      });
+      if (finalReanalysisDecision.skip) {
         runtimeTrace.mark('final_reanalysis_soft_stop');
-        addDeterministicEarlyExit(remediation.runtimeSummary, 'soft_deadline_before_final_reanalysis');
+        addDeterministicEarlyExit(
+          remediation.runtimeSummary,
+          finalReanalysisDecision.reason ?? 'soft_deadline_before_final_reanalysis',
+        );
         reanalyzed = finalAnalysis;
         reanalyzedSnapshot = finalSnapshot;
         reanalyzedParity = buildIcjiaParity(finalSnapshot);

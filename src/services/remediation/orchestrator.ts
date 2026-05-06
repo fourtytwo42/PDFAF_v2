@@ -1703,6 +1703,25 @@ export function shouldSkipLateTabOrderReanalysisGuard(input: {
   return input.nearWallBudget || isHighCumulativeReanalysis(input.cumulativeReanalysisMs, input.reanalysisSoftCapMs);
 }
 
+export function lateOptionalToolReanalysisGuardReason(input: {
+  toolName: string;
+  currentScore: number;
+  nearWallBudget: boolean;
+  cumulativeReanalysisMs: number;
+  appliedTools: readonly AppliedRemediationTool[];
+  targetScore?: number;
+  reanalysisSoftCapMs?: number;
+}): 'late_catalog_reanalysis_guard' | 'late_list_reanalysis_guard' | null {
+  if (input.currentScore >= (input.targetScore ?? REMEDIATION_TARGET_SCORE)) return null;
+  if (priorPositiveToolAttempt(input.toolName, input.appliedTools)) return null;
+  if (!priorNoMovementToolAttempt(input.toolName, input.appliedTools)) return null;
+  const lateTail = input.nearWallBudget || isHighCumulativeReanalysis(input.cumulativeReanalysisMs, input.reanalysisSoftCapMs);
+  if (!lateTail) return null;
+  if (input.toolName === 'normalize_pdfua_catalog_settings') return 'late_catalog_reanalysis_guard';
+  if (input.toolName === 'repair_list_li_wrong_parent') return 'late_list_reanalysis_guard';
+  return null;
+}
+
 const STAGE_REANALYSIS_ADMISSION_GUARD_TOOLS = new Set([
   'mark_untagged_content_as_artifact',
   'tag_native_text_blocks',
@@ -6252,6 +6271,17 @@ export async function remediatePdf(
           appliedTools: priorRunTools,
         })) {
           noteEarlyExit(runtimeSummary, 'late_tab_order_reanalysis_guard');
+          continue;
+        }
+        const lateOptionalReason = lateOptionalToolReanalysisGuardReason({
+          toolName: liveTool.toolName,
+          currentScore: workingAnalysis.score,
+          nearWallBudget: shouldSoftStopForRemediationDeadline({ startedAtMs: started }),
+          cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs,
+          appliedTools: priorRunTools,
+        });
+        if (lateOptionalReason) {
+          noteEarlyExit(runtimeSummary, lateOptionalReason);
           continue;
         }
         if (shouldSkipSameStateNoGainRuntimeAttempt({
