@@ -3,7 +3,7 @@ import type { PythonAnalysisResult } from '../types.js';
 
 export async function extractStructure(
   pdfPath: string,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<PythonAnalysisResult> {
   return runPythonAnalysis(pdfPath, options);
 }

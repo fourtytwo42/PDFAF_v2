@@ -544,7 +544,7 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
-  it('rejects score-improving stages that create selected PAC structural failures', () => {
+  it('does not reject score-improving stages that make selected PAC debt newly evaluable', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     const afterSnapshot: DocumentSnapshot = {
       ...beforeSnapshot,
@@ -568,12 +568,44 @@ describe('shouldRejectStageResult', () => {
       stageApplied: makeApplied('set_figure_alt_text'),
     });
 
+    expect(result).toEqual({ reject: false, reason: null });
+  });
+
+  it('rejects score-improving stages that regress applicable selected PAC structural rules', () => {
+    const beforeSnapshot: DocumentSnapshot = {
+      ...makeSnapshot({ depth: 2 }),
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 0,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 0,
+      },
+    };
+    const afterSnapshot: DocumentSnapshot = {
+      ...beforeSnapshot,
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 0,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 2,
+      },
+    };
+
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 80, confidence: 'medium', categories: { table_markup: 100 } }),
+      after: makeAnalysis({ score: 86, confidence: 'medium', categories: { table_markup: 100 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('normalize_table_structure'),
+      stageApplied: makeApplied('normalize_table_structure'),
+    });
+
     expect(result.reject).toBe(true);
-    expect(result.reason).toBe('pac_rule_regressed(pdfua.figure.alt_present)');
+    expect(result.reason).toBe('pac_rule_regressed(pdfua.table.header_association_present)');
     expect(JSON.parse(result.details ?? '{}').pacRuleRegression).toMatchObject({
-      ruleId: 'pdfua.figure.alt_present',
+      ruleId: 'pdfua.table.header_association_present',
       beforeCount: 0,
-      afterCount: 1,
+      afterCount: 2,
     });
   });
 

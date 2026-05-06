@@ -117,6 +117,9 @@ export function pacRuleAcceptanceGate(input: {
     const after = afterRules.get(ruleId);
     if (!after) continue;
     const before = beforeRules.get(ruleId);
+    if (!before || before.status === 'not_applicable') {
+      continue;
+    }
     const beforeFailed = before?.status === 'fail';
     const beforeCount = failedCount(before);
     const afterCount = failedCount(after);

@@ -192,7 +192,7 @@ const EMPTY_RESULT: PythonAnalysisResult = {
 
 export async function runPythonAnalysis(
   pdfPath: string,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<PythonAnalysisResult> {
   const timeoutMs = Math.max(1, options?.timeoutMs ?? PYTHON_TIMEOUT_MS);
   return new Promise((resolve) => {
@@ -223,6 +223,17 @@ export async function runPythonAnalysis(
       }
     }, timeoutMs);
 
+    const onAbort = () => {
+      if (!settled) {
+        proc.kill('SIGKILL');
+        done(EMPTY_RESULT);
+      }
+    };
+    if (options?.signal) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
@@ -232,6 +243,7 @@ export async function runPythonAnalysis(
     });
 
     proc.on('close', (code) => {
+      options?.signal?.removeEventListener('abort', onAbort);
       if (stderr.trim()) {
         // Print warnings from the script but don't fail
         stderr.trim().split('\n').forEach(line =>

@@ -172,9 +172,7 @@ export const LINK_QUALITY_MISSING_STRUCT_PARENT_MAX_DEDUCTION = 12;
 export const MAX_CONCURRENT_ANALYSES = parseInt(process.env['MAX_CONCURRENT_ANALYSES'] ?? '5', 10);
 /** Default wall-clock guard for check/analyze-only PDF extraction. */
 export const CHECK_ANALYSIS_TIMEOUT_MS = parseInt(
-  process.env['PDFAF_CHECK_ANALYSIS_TIMEOUT_MS']
-    ?? process.env['REQUEST_TIMEOUT_ANALYZE_MS']
-    ?? '15000',
+  process.env['PDFAF_CHECK_ANALYSIS_TIMEOUT_MS'] ?? '15000',
   10,
 );
 export const PDFJS_TIMEOUT_MS = parseInt(

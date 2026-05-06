@@ -29,7 +29,7 @@ function buildWorkerOptions(): { workerPath: string; options: ConstructorParamet
 
 export async function extractWithPdfjs(
   pdfPath: string,
-  timeoutOptions?: { timeoutMs?: number },
+  timeoutOptions?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<PdfjsResult> {
   const { workerPath, options } = buildWorkerOptions();
   const timeoutMs = Math.max(1, timeoutOptions?.timeoutMs ?? PDFJS_TIMEOUT_MS);
@@ -45,8 +45,22 @@ export async function extractWithPdfjs(
       reject(new Error(`pdfjs timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
+    const onAbort = () => {
+      clearTimeout(timer);
+      worker.terminate();
+      reject(Object.assign(new Error('pdfjs extraction aborted'), { name: 'AbortError' }));
+    };
+    if (timeoutOptions?.signal) {
+      if (timeoutOptions.signal.aborted) {
+        onAbort();
+        return;
+      }
+      timeoutOptions.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
     worker.on('message', (msg: { ok: boolean; result?: PdfjsResult; error?: string }) => {
       clearTimeout(timer);
+      timeoutOptions?.signal?.removeEventListener('abort', onAbort);
       if (msg.ok && msg.result) {
         resolve(msg.result);
       } else {
@@ -56,11 +70,13 @@ export async function extractWithPdfjs(
 
     worker.on('error', (err) => {
       clearTimeout(timer);
+      timeoutOptions?.signal?.removeEventListener('abort', onAbort);
       reject(err);
     });
 
     worker.on('exit', (code) => {
       clearTimeout(timer);
+      timeoutOptions?.signal?.removeEventListener('abort', onAbort);
       if (code !== 0) {
         reject(new Error(`pdfjs worker exited with code ${code}`));
       }

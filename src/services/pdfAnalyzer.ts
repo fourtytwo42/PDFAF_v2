@@ -77,6 +77,8 @@ export interface AnalyzePdfOptions {
   bypassCache?: boolean;
   /** Per-extractor timeout for check/analyze work. */
   timeoutMs?: number;
+  /** Abort long-running extraction when remediation/request wall time expires. */
+  signal?: AbortSignal;
 }
 
 export async function analyzePdf(
@@ -92,6 +94,7 @@ export async function analyzePdf(
   const timeoutMs = Math.max(1, options?.timeoutMs ?? CHECK_ANALYSIS_TIMEOUT_MS);
 
   try {
+    options?.signal?.throwIfAborted();
     // Check cache by file content hash
     const fileHash = await hashFile(pdfPath);
     const cached = options?.bypassCache ? null : getCached(fileHash);
@@ -129,7 +132,7 @@ export async function analyzePdf(
       (async () => {
         const started = performance.now();
         try {
-          return await extractWithPdfjs(pdfPath, { timeoutMs });
+          return await extractWithPdfjs(pdfPath, { timeoutMs, signal: options?.signal });
         } catch (err) {
           console.error(`[analyzer] pdfjs failed for ${filename}: ${(err as Error).message}`);
           return emptyPdfjsResult();
@@ -140,7 +143,7 @@ export async function analyzePdf(
       (async () => {
         const started = performance.now();
         try {
-          return await extractStructure(pdfPath, { timeoutMs });
+          return await extractStructure(pdfPath, { timeoutMs, signal: options?.signal });
         } catch (err) {
           console.error(`[analyzer] pikepdf failed for ${filename}: ${(err as Error).message}`);
           return emptyPythonResult();
@@ -149,6 +152,7 @@ export async function analyzePdf(
         }
       })(),
     ]);
+    options?.signal?.throwIfAborted();
 
     const mergeStarted = performance.now();
     const snap = mergeSnapshot(pdfjsResult, structResult);

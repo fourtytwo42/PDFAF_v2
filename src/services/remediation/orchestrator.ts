@@ -1990,7 +1990,7 @@ async function reanalyzeBufferForMutation(
   buf: Buffer,
   filename: string,
   prefix: string,
-  options: { bypassCache?: boolean } = {},
+  options: { bypassCache?: boolean; signal?: AbortSignal } = {},
 ): Promise<Awaited<ReturnType<typeof analyzePdf>>> {
   const tmpPath = join(tmpdir(), `${prefix}-${randomUUID()}.pdf`);
   await writeFile(tmpPath, buf);
@@ -3043,6 +3043,7 @@ async function finalizeAnalyzedStage(args: {
   stageApplied: AppliedRemediationTool[];
   stageStartScore: number;
   protectedBaseline?: ProtectedBaselineFloor;
+  signal?: AbortSignal;
 }): Promise<RemediationState> {
   const {
     filename,
@@ -3052,6 +3053,7 @@ async function finalizeAnalyzedStage(args: {
     stageApplied,
     stageStartScore,
     protectedBaseline,
+    signal,
   } = args;
   const rejectionDecision = resolveStageRejectionDecision({
     filename,
@@ -3069,7 +3071,7 @@ async function finalizeAnalyzedStage(args: {
     await writeFile(restorePath, stateBeforeStage.buffer);
     let restoredState: RemediationState;
     try {
-      const restored = await analyzePdf(restorePath, filename);
+      const restored = await analyzePdf(restorePath, filename, { signal });
       restoredState = {
         buffer: stateBeforeStage.buffer,
         analysis: restored.result,
@@ -5139,7 +5141,7 @@ export async function executePlaybook(
     await writeFile(tmp, buf);
     let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
     try {
-      analyzed = await analyzePdf(tmp, filename);
+      analyzed = await analyzePdf(tmp, filename, { signal: options?.signal });
     } finally {
       await unlink(tmp).catch(() => {});
     }
@@ -5159,6 +5161,7 @@ export async function executePlaybook(
       stage,
       stageApplied,
       stageStartScore,
+      signal: options?.signal,
     });
     currentBuffer = finalizedState.buffer;
     currentAnalysis = finalizedState.analysis;
@@ -5873,7 +5876,7 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            const liveAnalysis = await analyzePdf(tmp, filename);
+            const liveAnalysis = await analyzePdf(tmp, filename, { signal: options?.signal });
             if (tool.toolName === 'retag_as_figure') {
               const liveParams = buildDefaultParams(
                 tool.toolName,
@@ -6030,7 +6033,9 @@ export async function remediatePdf(
               break;
             }
 
-            lastStageAnalysis = await reanalyzeBufferForMutation(buf, filename, 'pdfaf-figure-alt');
+            lastStageAnalysis = await reanalyzeBufferForMutation(buf, filename, 'pdfaf-figure-alt', {
+              signal: options?.signal,
+            });
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;
             workingSnapshot = lastStageAnalysis.snapshot;
@@ -6042,7 +6047,7 @@ export async function remediatePdf(
                 buf,
                 filename,
                 'pdfaf-stage178-protected-figure-alt',
-                { bypassCache: true },
+                { bypassCache: true, signal: options?.signal },
               );
               const beforeAlt = categoryScore(beforeFigureAnalysis, 'alt_text') ?? 0;
               const confirmedAlt = categoryScore(confirmed.result, 'alt_text') ?? beforeAlt;
@@ -6125,7 +6130,7 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            lastStageAnalysis = await analyzePdf(tmp, filename);
+            lastStageAnalysis = await analyzePdf(tmp, filename, { signal: options?.signal });
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;
             workingSnapshot = lastStageAnalysis.snapshot;
@@ -6144,7 +6149,7 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            analyzed = await analyzePdf(tmp, filename);
+            analyzed = await analyzePdf(tmp, filename, { signal: options?.signal });
           } finally {
             await unlink(tmp).catch(() => {});
           }
@@ -6169,6 +6174,7 @@ export async function remediatePdf(
         stageApplied,
         stageStartScore,
         protectedBaseline: options?.protectedBaseline,
+        signal: options?.signal,
       });
       currentBuffer = finalizedState.buffer;
       currentAnalysis = finalizedState.analysis;

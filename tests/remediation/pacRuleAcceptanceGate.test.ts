@@ -108,6 +108,17 @@ function tableHeaderDebtSnapshot(count: number): DocumentSnapshot {
   });
 }
 
+function tableHeaderPassSnapshot(): DocumentSnapshot {
+  return baseSnapshot({
+    tableHeaderAudit: {
+      tablesChecked: 1,
+      headerAssociationMissingCount: 0,
+      orphanHeaderCellCount: 0,
+      dataCellsWithoutHeaderCount: 0,
+    },
+  });
+}
+
 function childRoleDebtSnapshot(count: number): DocumentSnapshot {
   return baseSnapshot({
     structureSyntaxAudit: {
@@ -154,21 +165,30 @@ function roleMapDebtSnapshot(count: number): DocumentSnapshot {
 }
 
 describe('pacRuleAcceptanceGate', () => {
-  it('rejects selected PAC rules that change from non-fail to fail', () => {
+  it('does not reject selected PAC rules that change from not-applicable to fail', () => {
     const decision = pacRuleAcceptanceGate({
       beforeSnapshot: baseSnapshot(),
       afterSnapshot: missingFigureSnapshot(1),
       toolNames: ['set_figure_alt_text'],
     });
 
+    expect(decision).toEqual({ reject: false, reason: null });
+  });
+
+  it('rejects selected PAC rules that change from pass to fail', () => {
+    const decision = pacRuleAcceptanceGate({
+      beforeSnapshot: tableHeaderPassSnapshot(),
+      afterSnapshot: tableHeaderDebtSnapshot(1),
+      toolNames: ['normalize_table_structure'],
+    });
+
     expect(decision.reject).toBe(true);
-    expect(decision.reason).toBe('pac_rule_regressed(pdfua.figure.alt_present)');
+    expect(decision.reason).toBe('pac_rule_regressed(pdfua.table.header_association_present)');
     const details = JSON.parse(decision.details ?? '{}');
     expect(details.pacRuleRegression).toMatchObject({
-      ruleId: 'pdfua.figure.alt_present',
-      beforeStatus: 'not_applicable',
+      ruleId: 'pdfua.table.header_association_present',
+      beforeStatus: 'pass',
       afterStatus: 'fail',
-      beforeCount: 0,
       afterCount: 1,
     });
   });
@@ -239,7 +259,7 @@ describe('pacRuleAcceptanceGate', () => {
 
   it('rejects table header association regressions', () => {
     const decision = pacRuleAcceptanceGate({
-      beforeSnapshot: baseSnapshot(),
+      beforeSnapshot: tableHeaderPassSnapshot(),
       afterSnapshot: tableHeaderDebtSnapshot(2),
       toolNames: ['normalize_table_structure'],
     });

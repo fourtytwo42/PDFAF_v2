@@ -314,12 +314,13 @@ async function loadProtectedBaselineRows(runDir: string | undefined): Promise<Ma
 async function reanalyzeBuffer(
   buffer: Buffer,
   filename: string,
+  signal?: AbortSignal,
 ): Promise<{ result: AnalysisResult; snapshot: DocumentSnapshot; wallMs: number }> {
   const tempPath = join(tmpdir(), `pdfaf-experiment-corpus-${randomUUID()}.pdf`);
   await writeFile(tempPath, buffer);
   const wallStart = performance.now();
   try {
-    const analyzed = await analyzePdf(tempPath, filename, { bypassCache: true });
+    const analyzed = await analyzePdf(tempPath, filename, { bypassCache: true, signal });
     return {
       ...analyzed,
       wallMs: performance.now() - wallStart,
@@ -334,6 +335,7 @@ async function selectProtectedFinalReanalysis(input: {
   filename: string;
   protectedBaseline?: ProtectedBaselineRow;
   cache: Map<string, Promise<SelectedReanalysis>>;
+  signal?: AbortSignal;
 }): Promise<SelectedReanalysis> {
   const repeatCount = protectedReanalysisRepeatCount();
   const bufferSha256 = sha256Buffer(input.buffer);
@@ -348,7 +350,7 @@ async function selectProtectedFinalReanalysis(input: {
     const attempts: ReanalysisAttempt[] = [];
     const maxRepeats = input.protectedBaseline ? repeatCount : 1;
     for (let index = 1; index <= maxRepeats; index += 1) {
-      const analyzed = await reanalyzeBuffer(input.buffer, input.filename);
+      const analyzed = await reanalyzeBuffer(input.buffer, input.filename, input.signal);
       const attempt: ReanalysisAttempt = {
         index,
         bufferSha256,
@@ -745,6 +747,7 @@ async function runRemediationStep(
         filename: entry.filename,
         protectedBaseline,
         cache: protectedReanalysisCache,
+        signal: remediationSignal,
       });
       reanalyzed = finalAnalyze.result;
       reanalyzedSnapshot = finalAnalyze.snapshot;
