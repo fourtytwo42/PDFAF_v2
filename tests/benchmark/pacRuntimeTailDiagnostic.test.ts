@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRuntimeTailDiagnostic,
   classifyRuntimeTail,
+  parseRuntimeTimeoutTrace,
 } from '../../scripts/pac-runtime-tail-diagnostic.js';
 import type { RemediateBenchmarkRow } from '../../src/services/benchmark/experimentCorpus.js';
 
@@ -100,6 +101,24 @@ describe('PAC runtime tail diagnostic helpers', () => {
   });
 
   it('builds deterministic rows from focus ids and p95 tails', () => {
+    const timeoutTraces = new Map([
+      ['a', parseRuntimeTimeoutTrace({
+        rowId: 'a',
+        lastPhase: 'tool_start',
+        elapsedMs: 299_000,
+        lastStageNumber: 4,
+        lastRound: 2,
+        lastToolName: 'normalize_table_structure',
+        lastToolOutcome: null,
+        lastToolDurationMs: null,
+        lastStateSignatureBefore: 'state-a',
+        lastRejectedOrNoEffectReason: 'previous_no_effect',
+        completedToolCount: 6,
+        completedStageCount: 3,
+        completedStageReanalysisCount: 2,
+        completedStageReanalysisMs: 90_000,
+      })!],
+    ]);
     const report = buildRuntimeTailDiagnostic({
       referenceRunDir: 'ref',
       recoveryRunDir: 'recovery',
@@ -126,11 +145,17 @@ describe('PAC runtime tail diagnostic helpers', () => {
           wallRemediateMs: null,
         }),
       ],
+      timeoutTraces,
       focusRows: ['a'],
       generatedAt: '2026-05-06T00:00:00.000Z',
     });
 
     expect(report.summary.timeoutRows).toEqual(['a']);
+    expect(report.rows[0]?.timeoutTrace).toMatchObject({
+      lastPhase: 'tool_start',
+      lastToolName: 'normalize_table_structure',
+      completedStageReanalysisMs: 90_000,
+    });
     expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
       'a:per_pdf_timeout',
       'b:reanalysis_heavy_large_document',

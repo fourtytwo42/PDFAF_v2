@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { loadBenchmarkRowsFromRunDir } from '../src/services/benchmark/stage1Acceptance.js';
 import type { RemediateBenchmarkRow } from '../src/services/benchmark/experimentCorpus.js';
@@ -44,8 +44,25 @@ export interface RuntimeTailRow {
   stageReanalysisMs: number;
   mutationToolMs: number;
   protectedReanalysisPassCount: number;
+  timeoutTrace: RuntimeTimeoutTraceSummary | null;
   topStageKeys: string[];
   topToolKeys: string[];
+}
+
+export interface RuntimeTimeoutTraceSummary {
+  lastPhase: string;
+  elapsedMs: number;
+  lastStageNumber: number | null;
+  lastRound: number | null;
+  lastToolName: string | null;
+  lastToolOutcome: string | null;
+  lastToolDurationMs: number | null;
+  lastStateSignatureBefore: string | null;
+  lastRejectedOrNoEffectReason: string | null;
+  completedToolCount: number;
+  completedStageCount: number;
+  completedStageReanalysisCount: number;
+  completedStageReanalysisMs: number;
 }
 
 export interface RuntimeTailDiagnosticReport {
@@ -85,6 +102,58 @@ function wallFor(row?: RemediateBenchmarkRow): number | null {
 
 function mapRows(rows: RemediateBenchmarkRow[]): Map<string, RemediateBenchmarkRow> {
   return new Map(rows.map(row => [row.id, row]));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+export function parseRuntimeTimeoutTrace(value: unknown): RuntimeTimeoutTraceSummary | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const lastPhase = stringOrNull(record['lastPhase']);
+  if (!lastPhase) return null;
+  return {
+    lastPhase,
+    elapsedMs: numberOrNull(record['elapsedMs']) ?? 0,
+    lastStageNumber: numberOrNull(record['lastStageNumber']),
+    lastRound: numberOrNull(record['lastRound']),
+    lastToolName: stringOrNull(record['lastToolName']),
+    lastToolOutcome: stringOrNull(record['lastToolOutcome']),
+    lastToolDurationMs: numberOrNull(record['lastToolDurationMs']),
+    lastStateSignatureBefore: stringOrNull(record['lastStateSignatureBefore']),
+    lastRejectedOrNoEffectReason: stringOrNull(record['lastRejectedOrNoEffectReason']),
+    completedToolCount: numberOrNull(record['completedToolCount']) ?? 0,
+    completedStageCount: numberOrNull(record['completedStageCount']) ?? 0,
+    completedStageReanalysisCount: numberOrNull(record['completedStageReanalysisCount']) ?? 0,
+    completedStageReanalysisMs: numberOrNull(record['completedStageReanalysisMs']) ?? 0,
+  };
+}
+
+async function loadRuntimeTimeoutTraces(runDir: string): Promise<Map<string, RuntimeTimeoutTraceSummary>> {
+  const dir = join(runDir, 'runtime-timeouts');
+  const traces = new Map<string, RuntimeTimeoutTraceSummary>();
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return traces;
+  }
+  await Promise.all(names.filter(name => name.endsWith('.json')).map(async name => {
+    const raw = JSON.parse(await readFile(join(dir, name), 'utf8')) as unknown;
+    const parsed = parseRuntimeTimeoutTrace(raw);
+    const rowId = stringOrNull(asRecord(raw)?.['rowId']) ?? name.replace(/\.json$/, '');
+    if (parsed) traces.set(rowId, parsed);
+  }));
+  return traces;
 }
 
 function percentile(values: number[], p: number): number | null {
@@ -209,6 +278,7 @@ export function buildRuntimeTailDiagnostic(input: {
   referenceRows: RemediateBenchmarkRow[];
   recoveryRows: RemediateBenchmarkRow[];
   candidateRows: RemediateBenchmarkRow[];
+  timeoutTraces?: Map<string, RuntimeTimeoutTraceSummary>;
   focusRows?: string[];
   generatedAt?: string;
 }): RuntimeTailDiagnosticReport {
@@ -234,6 +304,7 @@ export function buildRuntimeTailDiagnostic(input: {
       const sameStateCount = sameStateNoGainEarlyExitCount(row);
       const protectedPasses = protectedReanalysisPassCount(row);
       const mutationMs = mutationToolMs(row);
+      const timeoutTrace = input.timeoutTraces?.get(row.id) ?? null;
       return {
         fileId: row.id,
         file: row.file,
@@ -266,6 +337,7 @@ export function buildRuntimeTailDiagnostic(input: {
         stageReanalysisMs: reanalysis.ms,
         mutationToolMs: mutationMs,
         protectedReanalysisPassCount: protectedPasses,
+        timeoutTrace,
         topStageKeys: topStageKeys(row),
         topToolKeys: topToolKeys(row),
       };
@@ -335,7 +407,9 @@ export function renderRuntimeTailMarkdown(report: RuntimeTailDiagnosticReport): 
       String(row.pacGateRejectionCount),
       `${row.stageReanalysisCount} / ${row.stageReanalysisMs}ms`,
       `${row.mutationToolMs}ms`,
-      row.topStageKeys.join('<br>'),
+      row.timeoutTrace
+        ? `${row.timeoutTrace.lastPhase}${row.timeoutTrace.lastToolName ? `:${row.timeoutTrace.lastToolName}` : ''}`
+        : row.topStageKeys.join('<br>'),
     ]),
   ));
   lines.push('');
@@ -360,10 +434,11 @@ async function main(): Promise<void> {
   }
   if (!reference || !recovery || !candidate || !out) throw new Error(usage());
 
-  const [referenceRows, recoveryRows, candidateRows] = await Promise.all([
+  const [referenceRows, recoveryRows, candidateRows, timeoutTraces] = await Promise.all([
     loadBenchmarkRowsFromRunDir(reference),
     loadBenchmarkRowsFromRunDir(recovery),
     loadBenchmarkRowsFromRunDir(candidate),
+    loadRuntimeTimeoutTraces(candidate),
   ]);
   const report = buildRuntimeTailDiagnostic({
     referenceRunDir: reference,
@@ -372,6 +447,7 @@ async function main(): Promise<void> {
     referenceRows: referenceRows.remediateResults,
     recoveryRows: recoveryRows.remediateResults,
     candidateRows: candidateRows.remediateResults,
+    timeoutTraces,
     focusRows: focus,
   });
   const outDir = resolve(out);

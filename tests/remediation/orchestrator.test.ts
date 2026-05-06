@@ -300,6 +300,7 @@ describe('same-state no-gain runtime cap', () => {
       outcome: 'no_effect',
       scoreBefore: 80,
       scoreAfter: 80,
+      durationMs: 12_000,
     })).toBe(true);
     attempts.add(`remap_orphan_mcids_as_artifacts:${stateSignatureBefore}`);
 
@@ -326,7 +327,41 @@ describe('same-state no-gain runtime cap', () => {
       outcome: 'applied',
       scoreBefore: 80,
       scoreAfter: 84,
+      durationMs: 12_000,
     })).toBe(false);
+  });
+
+  it('does not record cheap no-gain attempts for suppression', () => {
+    expect(shouldRecordSameStateNoGainRuntimeAttempt({
+      toolName: 'normalize_table_structure',
+      stateSignatureBefore: 'state-a',
+      outcome: 'rejected',
+      scoreBefore: 80,
+      scoreAfter: 80,
+      durationMs: 11_999,
+    })).toBe(false);
+  });
+
+  it('does not record attempts without a replay state', () => {
+    expect(shouldRecordSameStateNoGainRuntimeAttempt({
+      toolName: 'normalize_table_structure',
+      stateSignatureBefore: null,
+      outcome: 'rejected',
+      scoreBefore: 80,
+      scoreAfter: 80,
+      durationMs: 12_000,
+    })).toBe(false);
+  });
+
+  it('records expensive no-gain checker-facing attempts', () => {
+    expect(shouldRecordSameStateNoGainRuntimeAttempt({
+      toolName: 'canonicalize_figure_alt_ownership',
+      stateSignatureBefore: 'state-a',
+      outcome: 'rejected',
+      scoreBefore: 80,
+      scoreAfter: 80,
+      durationMs: 12_000,
+    })).toBe(true);
   });
 
   it('ignores tools outside the expensive structural cap list', () => {

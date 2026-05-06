@@ -249,6 +249,12 @@ export const REMEDIATION_PDF_TIMEOUT_MS = parseInt(
   10,
 );
 
+/** Minimum mutation duration before a same-state no-gain remediation attempt is suppressed. */
+export const EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS = parseInt(
+  process.env['PDFAF_EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS'] ?? '12000',
+  10,
+);
+
 /**
  * Allow `ocr_scanned_pdf` on `native_untagged` / `native_tagged` when pdf.js extracted at most this many
  * characters (image-only or flattened raster pages). Default `0` means only when there is no text at all.

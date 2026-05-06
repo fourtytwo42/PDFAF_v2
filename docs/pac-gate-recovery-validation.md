@@ -153,3 +153,31 @@ Decision:
 - Keep true PAC gate rejection behavior as-is.
 - Next runtime work should target `structure-4438` and `long-4516` timeout attribution first, then `structure-4076` no-gain churn.
 - Next PAC gate work, if pursued, should be a tightly scoped `repair_alt_text_structure` + orphan-MCID same-category-improvement experiment with `structure-3661` and `figure-4188` as primary targets and harmful-regression rows as controls.
+
+## Runtime Tail Suppression Pilot
+
+Implemented after the runtime/PAC blocker diagnostics:
+
+- Benchmark remediation runs now write diagnostic-only timeout traces under `runtime-timeouts/<row-id>.json` inside the run directory when a row aborts or times out.
+- Timeout traces capture the last known remediation phase, stage/round, tool, replay-state signature, rejected/no-effect reason, completed tool count, completed stage count, and completed reanalysis count/time.
+- `scripts/pac-runtime-tail-diagnostic.ts` now reads those timeout traces when present and includes them in the runtime-tail matrix.
+- Same-state runtime suppression is now limited to expensive no-gain work:
+  - only `rejected`/`no_effect` outcomes;
+  - only stable replay-state signatures;
+  - only configured structural/checker-facing tool families;
+  - only when tool duration is at least `PDFAF_EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS` (`12000ms` by default).
+- Metadata/title/language/catalog-only tools remain outside this suppression policy.
+- PAC scoring caps and PAC gate allow-lists were not changed.
+
+Validation status:
+
+- Focused unit coverage passed for the runtime suppression helper and PAC runtime-tail diagnostic helper.
+- Targeted 10-row validation ran at `Output/experiment-corpus-baseline/run-runtime-tail-suppression-target-2026-05-06-r1`; diagnostic output is `Output/experiment-corpus-baseline/runtime-tail-suppression-target-diagnostic-2026-05-06-r1`.
+- The target run is not a clean checkpoint:
+  - `structure-4076` completed and improved to `70/C`, but stayed runtime-heavy (`271347ms`) with no false-positive applied rows.
+  - `structure-4438`, `long-4516`, and `long-4683` hit the 5-minute wall timeout.
+  - Timeout traces were written for all three timeout rows and identified the last known phases:
+    - `structure-4438`: `stage_reanalysis_start` after `normalize_annotation_tab_order`;
+    - `long-4516`: `stage_finish` after `mark_untagged_content_as_artifact`;
+    - `long-4683`: `final_reanalysis_start` after `mark_untagged_content_as_artifact`.
+- Do not run the fixed 50-file benchmark from this pilot result; the next behavior stage should focus on reanalysis-heavy timeout rows, especially final/protected reanalysis after cheap late artifact tagging.

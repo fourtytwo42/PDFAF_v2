@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
+  EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS,
   PLAYBOOK_LEARN_MIN_SCORE_DELTA,
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_CATEGORY_THRESHOLD,
@@ -1908,12 +1909,27 @@ export function isStage35StructuralTool(toolName: string): boolean {
 }
 
 const SAME_STATE_NO_GAIN_RUNTIME_CAP_TOOLS = new Set([
+  'embed_local_font_substitutes',
   'remap_orphan_mcids_as_artifacts',
   'mark_untagged_content_as_artifact',
   'artifact_repeating_page_furniture',
   'normalize_heading_hierarchy',
   'normalize_annotation_tab_order',
   'repair_structure_conformance',
+  'synthesize_basic_structure_from_layout',
+  'normalize_nested_figure_containers',
+  'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
+  'set_figure_alt_text',
+  'mark_figure_decorative',
+  'repair_alt_text_structure',
+  'normalize_table_structure',
+  'repair_native_table_headers',
+  'set_table_header_cells',
+  'tag_unowned_annotations',
+  'repair_native_link_structure',
+  'set_link_annotation_contents',
+  'repair_annotation_alt_text',
 ]);
 
 function sameStateNoGainRuntimeKey(toolName: string, stateSignatureBefore: string): string | null {
@@ -1937,10 +1953,14 @@ export function shouldRecordSameStateNoGainRuntimeAttempt(input: {
   outcome: AppliedRemediationTool['outcome'];
   scoreBefore: number;
   scoreAfter: number;
+  durationMs?: number;
+  expensiveThresholdMs?: number;
 }): boolean {
   if (!input.stateSignatureBefore) return false;
   if (input.outcome !== 'rejected' && input.outcome !== 'no_effect') return false;
   if (input.scoreAfter > input.scoreBefore) return false;
+  const threshold = input.expensiveThresholdMs ?? EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS;
+  if ((input.durationMs ?? 0) < threshold) return false;
   return sameStateNoGainRuntimeKey(input.toolName, input.stateSignatureBefore) !== null;
 }
 
@@ -1980,6 +2000,7 @@ function recordSameStateNoGainRuntimeAttempt(
     outcome: row.outcome,
     scoreBefore: row.scoreBefore,
     scoreAfter: row.scoreAfter,
+    durationMs: row.durationMs,
   })) {
     return;
   }
@@ -5391,8 +5412,51 @@ export interface RemediatePdfOptions {
   playbookStore?: PlaybookStore;
   toolOutcomeStore?: ToolOutcomeStore;
   onProgress?: (update: { percent: number; stage: string; detail?: string }) => void | Promise<void>;
+  onRuntimeTrace?: (event: RemediationRuntimeTraceEvent) => void | Promise<void>;
   onProtectedDebugState?: (state: ProtectedDebugStateCapture) => void | Promise<void>;
 }
+
+export type RemediationRuntimeTraceEvent =
+  | {
+      kind: 'stage_start';
+      round: number;
+      stageNumber: number;
+      toolCount: number;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'tool_start';
+      round: number;
+      stageNumber: number;
+      toolName: string;
+      stateSignatureBefore: string;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'tool_finish';
+      round: number;
+      stageNumber: number;
+      toolName: string;
+      outcome: AppliedRemediationTool['outcome'];
+      durationMs: number;
+      stateSignatureBefore: string | null;
+      details?: string;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'stage_reanalysis_start';
+      round: number;
+      stageNumber: number;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'stage_finish';
+      round: number;
+      stageNumber: number;
+      outcomeCount: number;
+      reanalyzeMs: number;
+      elapsedMs: number;
+    };
 
 export interface ProtectedDebugStateCapture {
   reason: string;
@@ -5425,6 +5489,9 @@ export async function remediatePdf(
 ): Promise<RemediatePdfOutcome> {
   const reportProgress = async (percent: number, stage: string, detail?: string) => {
     await options?.onProgress?.({ percent, stage, detail });
+  };
+  const reportRuntimeTrace = async (event: RemediationRuntimeTraceEvent) => {
+    await options?.onRuntimeTrace?.(event);
   };
 
   const started = Date.now();
@@ -5566,6 +5633,13 @@ export async function remediatePdf(
       const stageStartScore = currentAnalysis.score;
       const stageApplied: AppliedRemediationTool[] = [];
       const stageStarted = performance.now();
+      await reportRuntimeTrace({
+        kind: 'stage_start',
+        round,
+        stageNumber: stage.stageNumber,
+        toolCount: stage.tools.length,
+        elapsedMs: Date.now() - started,
+      });
       const protectedZeroHeading = protectedZeroHeadingBundleActive(currentAnalysis, currentSnapshot, stage);
       const handledInProtectedBundle = new Set<string>();
       const deferredProtectedTools: PlannedRemediationTool[] = [];
@@ -6040,10 +6114,34 @@ export async function remediatePdf(
             const beforeFigureAnalysis = workingAnalysis;
             const beforeFigureSnapshot = workingSnapshot;
             const priorFigureAltAttemptCount = figureAltMutationAttemptCount([...appliedTools, ...stageApplied]);
+            const activeFigureStateSignature = buildCurrentReplayStateSignature({
+              analysis: workingAnalysis,
+              snapshot: workingSnapshot,
+              params: activeFigureTool.params,
+            });
+            await reportRuntimeTrace({
+              kind: 'tool_start',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: activeFigureTool.toolName,
+              stateSignatureBefore: activeFigureStateSignature,
+              elapsedMs: Date.now() - started,
+            });
             const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeFigureTool, workingSnapshot, {
               signal: options?.signal,
             });
             const effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
+            await reportRuntimeTrace({
+              kind: 'tool_finish',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: activeFigureTool.toolName,
+              outcome: effectiveOutcome,
+              durationMs,
+              stateSignatureBefore: activeFigureStateSignature,
+              ...(details ? { details } : {}),
+              elapsedMs: Date.now() - started,
+            });
             buf = next;
             stageApplied.push({
               toolName: activeFigureTool.toolName,
@@ -6132,12 +6230,31 @@ export async function remediatePdf(
           }
           continue;
         }
+        await reportRuntimeTrace({
+          kind: 'tool_start',
+          round,
+          stageNumber: stage.stageNumber,
+          toolName: liveTool.toolName,
+          stateSignatureBefore: sameStateRuntimeSignature,
+          elapsedMs: Date.now() - started,
+        });
         const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot, {
           signal: options?.signal,
         });
         let effectiveNext = next;
         let effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
         let effectiveDetails = details;
+        await reportRuntimeTrace({
+          kind: 'tool_finish',
+          round,
+          stageNumber: stage.stageNumber,
+          toolName: liveTool.toolName,
+          outcome: effectiveOutcome,
+          durationMs,
+          stateSignatureBefore: sameStateRuntimeSignature,
+          ...(effectiveDetails ? { details: effectiveDetails } : {}),
+          elapsedMs: Date.now() - started,
+        });
         buf = effectiveNext;
         stageApplied.push({
           toolName: liveTool.toolName,
@@ -6184,6 +6301,12 @@ export async function remediatePdf(
       const stageHadEffect = stageApplied.some(a => a.outcome === 'applied');
       let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
       if (stageHadEffect) {
+        await reportRuntimeTrace({
+          kind: 'stage_reanalysis_start',
+          round,
+          stageNumber: stage.stageNumber,
+          elapsedMs: Date.now() - started,
+        });
         if (lastStageAnalysis && buf.equals(lastAnalyzedBuffer)) {
           analyzed = lastStageAnalysis;
         } else {
@@ -6236,6 +6359,16 @@ export async function remediatePdf(
         reanalyzeMs: stageHadEffect
           ? (analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs)
           : 0,
+      });
+      await reportRuntimeTrace({
+        kind: 'stage_finish',
+        round,
+        stageNumber: stage.stageNumber,
+        outcomeCount: stageApplied.length,
+        reanalyzeMs: stageHadEffect
+          ? (analyzed.result.runtimeSummary?.totalMs ?? analyzed.result.analysisDurationMs)
+          : 0,
+        elapsedMs: Date.now() - started,
       });
       appliedTools.push(...stageApplied);
       recordToolOutcomes(toolOutcomeStore, before.pdfClass, stageApplied);

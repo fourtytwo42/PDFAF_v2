@@ -21,6 +21,7 @@ import {
   applyPostRemediationAltRepair,
   remediatePdf,
   type ProtectedDebugStateCapture,
+  type RemediationRuntimeTraceEvent,
 } from '../src/services/remediation/orchestrator.js';
 import { buildRemediationOutcomeSummary } from '../src/services/remediation/outcomeSummary.js';
 import { applySemanticHeadingRepairs } from '../src/services/semantic/headingSemantic.js';
@@ -111,6 +112,120 @@ interface SelectedReanalysis {
   parity: ReturnType<typeof buildIcjiaParity>;
   wallMs: number;
   selection?: ProtectedReanalysisSelectionSummary;
+}
+
+interface BenchmarkRuntimeTimeoutTrace {
+  rowId: string;
+  file: string;
+  generatedAt: string;
+  error: string;
+  elapsedMs: number;
+  lastPhase: string;
+  lastStageNumber: number | null;
+  lastRound: number | null;
+  lastToolName: string | null;
+  lastToolOutcome: string | null;
+  lastToolDurationMs: number | null;
+  lastStateSignatureBefore: string | null;
+  lastRejectedOrNoEffectReason: string | null;
+  completedToolCount: number;
+  completedStageCount: number;
+  completedStageReanalysisCount: number;
+  completedStageReanalysisMs: number;
+}
+
+function parseTraceReason(details: string | undefined): string | null {
+  if (!details) return null;
+  if (!details.startsWith('{')) return details;
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    const reason = parsed['reason'] ?? parsed['note'] ?? parsed['raw'];
+    return typeof reason === 'string' && reason.length > 0 ? reason : null;
+  } catch {
+    return details;
+  }
+}
+
+function createRuntimeTimeoutTrace(entry: ExperimentCorpusEntry, started: number) {
+  const state: BenchmarkRuntimeTimeoutTrace = {
+    rowId: entry.id,
+    file: entry.file,
+    generatedAt: new Date().toISOString(),
+    error: '',
+    elapsedMs: 0,
+    lastPhase: 'starting',
+    lastStageNumber: null,
+    lastRound: null,
+    lastToolName: null,
+    lastToolOutcome: null,
+    lastToolDurationMs: null,
+    lastStateSignatureBefore: null,
+    lastRejectedOrNoEffectReason: null,
+    completedToolCount: 0,
+    completedStageCount: 0,
+    completedStageReanalysisCount: 0,
+    completedStageReanalysisMs: 0,
+  };
+  const mark = (phase: string): void => {
+    state.lastPhase = phase;
+    state.elapsedMs = Math.round(performance.now() - started);
+  };
+  const event = (trace: RemediationRuntimeTraceEvent): void => {
+    state.elapsedMs = Math.round(trace.elapsedMs);
+    if ('stageNumber' in trace) state.lastStageNumber = trace.stageNumber;
+    if ('round' in trace) state.lastRound = trace.round;
+    switch (trace.kind) {
+      case 'stage_start':
+        state.lastPhase = 'stage_start';
+        break;
+      case 'tool_start':
+        state.lastPhase = 'tool_start';
+        state.lastToolName = trace.toolName;
+        state.lastToolOutcome = null;
+        state.lastToolDurationMs = null;
+        state.lastStateSignatureBefore = trace.stateSignatureBefore;
+        break;
+      case 'tool_finish':
+        state.lastPhase = 'tool_finish';
+        state.lastToolName = trace.toolName;
+        state.lastToolOutcome = trace.outcome;
+        state.lastToolDurationMs = Math.round(trace.durationMs);
+        state.lastStateSignatureBefore = trace.stateSignatureBefore;
+        state.completedToolCount += 1;
+        if (trace.outcome === 'rejected' || trace.outcome === 'no_effect') {
+          state.lastRejectedOrNoEffectReason = parseTraceReason(trace.details);
+        }
+        break;
+      case 'stage_reanalysis_start':
+        state.lastPhase = 'stage_reanalysis_start';
+        break;
+      case 'stage_finish':
+        state.lastPhase = 'stage_finish';
+        state.completedStageCount += 1;
+        if (trace.reanalyzeMs > 0) {
+          state.completedStageReanalysisCount += 1;
+          state.completedStageReanalysisMs += Math.round(trace.reanalyzeMs);
+        }
+        break;
+    }
+  };
+  const snapshot = (error: unknown): BenchmarkRuntimeTimeoutTrace => ({
+    ...state,
+    generatedAt: new Date().toISOString(),
+    error: sanitizeError(error),
+    elapsedMs: Math.round(performance.now() - started),
+  });
+  return { mark, event, snapshot };
+}
+
+async function writeRuntimeTimeoutTraceArtifact(
+  runDir: string,
+  trace: BenchmarkRuntimeTimeoutTrace,
+): Promise<void> {
+  if (!/timeout|aborted|abort/i.test(trace.error)) return;
+  const dir = join(runDir, 'runtime-timeouts');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${trace.rowId}.json`), JSON.stringify(trace, null, 2), 'utf8');
 }
 
 function runtimeCounts(values: string[]): RuntimeCountRow[] {
@@ -639,6 +754,7 @@ async function runRemediationStep(
   const buffer = await readFile(entry.absolutePath);
   const totalStart = performance.now();
   const remediationStart = performance.now();
+  const runtimeTrace = createRuntimeTimeoutTrace(entry, remediationStart);
   const db = new Database(':memory:');
   initSchema(db);
 
@@ -693,11 +809,13 @@ async function runRemediationStep(
       });
     };
 
+    runtimeTrace.mark('analysis_before_start');
     const remediationInput = await analyzePdf(entry.absolutePath, entry.filename, {
       bypassCache: true,
       ...(remediationSignal ? { signal: remediationSignal } : {}),
       timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
     });
+    runtimeTrace.mark('analysis_before_finish');
 
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
       buffer,
@@ -709,6 +827,7 @@ async function runRemediationStep(
         ...(remediationSignal ? { signal: remediationSignal } : {}),
         playbookStore,
         toolOutcomeStore,
+        onRuntimeTrace: runtimeTrace.event,
         ...(writeProtectedDebugStates && protectedBaseline ? { onProtectedDebugState: writeProtectedDebugState } : {}),
         ...(protectedBaseline
           ? {
@@ -753,6 +872,7 @@ async function runRemediationStep(
     let protectedReanalysisSelection: ProtectedReanalysisSelectionSummary | undefined;
     let analysisAfterMs: number | null = null;
     if (mode === 'full') {
+      runtimeTrace.mark('final_reanalysis_start');
       const finalAnalyze = await selectProtectedFinalReanalysis({
         buffer: finalBuffer,
         filename: entry.filename,
@@ -760,6 +880,7 @@ async function runRemediationStep(
         cache: protectedReanalysisCache,
         signal: remediationSignal,
       });
+      runtimeTrace.mark('final_reanalysis_finish');
       reanalyzed = finalAnalyze.result;
       reanalyzedSnapshot = finalAnalyze.snapshot;
       reanalyzedParity = finalAnalyze.parity;
@@ -863,6 +984,9 @@ async function runRemediationStep(
       analysisAfterMs,
       totalPipelineMs,
     };
+  } catch (error) {
+    await writeRuntimeTimeoutTraceArtifact(runDir, runtimeTrace.snapshot(error));
+    throw error;
   } finally {
     db.close();
   }
