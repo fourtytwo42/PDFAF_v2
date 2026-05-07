@@ -458,6 +458,33 @@ describe('fixture inaccessible artifact route stabilization', () => {
     });
   });
 
+  it('stabilizes same-state no-benefit repeating furniture artifact mutations', () => {
+    const before = makeAnalysis({
+      score: 79,
+      categories: { link_quality: 73, reading_order: 76, heading_structure: 96 },
+    });
+    const after = makeAnalysis({
+      score: 79,
+      categories: { link_quality: 73, reading_order: 76, heading_structure: 96 },
+    });
+    const stageApplied = [runtimeToolRow({
+      toolName: 'artifact_repeating_page_furniture',
+      outcome: 'applied',
+      scoreBefore: 79,
+      scoreAfter: 79,
+      details: artifactRouteReplayDetails(),
+    })];
+
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before,
+      after,
+      stageApplied,
+    })).toEqual({
+      stabilize: true,
+      reason: 'fixture_inaccessible_artifact_route_stabilized',
+    });
+  });
+
   it('does not affect unrelated artifact replay states', () => {
     expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
       before: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),

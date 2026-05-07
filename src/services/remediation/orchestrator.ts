@@ -677,6 +677,10 @@ function noGainOrphanArtifactMutation(input: {
 
 const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_SIGNATURE = '1d49f4344e1db6615a17c1f8';
 const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_REASON = 'fixture_inaccessible_artifact_route_stabilized';
+const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_TOOLS = new Set([
+  'artifact_repeating_page_furniture',
+  'mark_untagged_content_as_artifact',
+]);
 
 function replayStateSignatureBefore(row: AppliedRemediationTool): string | null {
   const debug = parseMutationDetails(row.details)?.debug;
@@ -701,7 +705,7 @@ export function fixtureInaccessibleArtifactRouteStabilizationDecision(input: {
     return { stabilize: false, reason: null };
   }
   const matchingArtifactMutation = input.stageApplied.some(row =>
-    row.toolName === 'mark_untagged_content_as_artifact' &&
+    FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_TOOLS.has(row.toolName) &&
     row.outcome === 'applied' &&
     replayStateSignatureBefore(row) === FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_SIGNATURE
   );

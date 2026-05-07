@@ -110,8 +110,25 @@ describe('PAC target route diagnostic helpers', () => {
     expect(firstTimelineDivergence(left, right)).toMatchObject({
       index: 1,
       reason: 'tool_outcome_changed',
+      classification: 'same_state_outcome_drift',
       left: { toolName: 'repair_native_link_structure', outcome: 'applied' },
       right: { toolName: 'repair_native_link_structure', outcome: 'rejected' },
+    });
+  });
+
+  it('distinguishes upstream state drift from same-state decision drift', () => {
+    const left = toolTimeline(row({
+      id: 'good',
+      appliedTools: [tool({ toolName: 'artifact_repeating_page_furniture', outcome: 'rejected', scoreAfter: 79, state: 'left-state' })],
+    }));
+    const right = toolTimeline(row({
+      id: 'bad',
+      appliedTools: [tool({ toolName: 'artifact_repeating_page_furniture', outcome: 'rejected', scoreAfter: 79, state: 'right-state' })],
+    }));
+
+    expect(firstTimelineDivergence(left, right)).toMatchObject({
+      reason: 'state_signature_changed',
+      classification: 'upstream_state_drift',
     });
   });
 
@@ -305,7 +322,9 @@ describe('PAC target route diagnostic helpers', () => {
       }),
     })).toMatchObject({
       classification: 'route_volatility',
-      firstDivergence: { reason: 'tool_outcome_changed' },
+      laterRecoveryBlocked: true,
+      divergenceClassification: 'same_state_outcome_drift',
+      firstDivergence: { reason: 'tool_outcome_changed', classification: 'same_state_outcome_drift' },
     });
 
     const tools = [tool({ toolName: 'set_pdfua_identification', outcome: 'applied', scoreAfter: 96, state: 'same' })];

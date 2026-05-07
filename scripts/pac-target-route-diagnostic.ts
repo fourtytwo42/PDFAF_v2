@@ -28,6 +28,7 @@ export interface TimelineDivergence {
   left: ToolTimelineEvent | null;
   right: ToolTimelineEvent | null;
   reason: string;
+  classification: 'same_state_outcome_drift' | 'upstream_state_drift' | 'tool_order_drift' | 'score_drift' | 'missing_event';
 }
 
 export interface FixtureRouteClassification {
@@ -86,6 +87,8 @@ export interface TargetRowRouteClassification {
   bestCheckpointScore: number | null;
   bestCheckpointEligibilityReason: string | null;
   pacRejectionCount: number;
+  laterRecoveryBlocked: boolean;
+  divergenceClassification: TimelineDivergence['classification'] | null;
   recommendation: string;
 }
 
@@ -174,13 +177,23 @@ export function firstTimelineDivergence(left: ToolTimelineEvent[], right: ToolTi
   for (let index = 0; index < max; index += 1) {
     const a = left[index] ?? null;
     const b = right[index] ?? null;
-    if (!a || !b) return { index, left: a, right: b, reason: 'tool_missing' };
-    if (a.toolName !== b.toolName) return { index, left: a, right: b, reason: 'tool_name_changed' };
-    if (a.outcome !== b.outcome) return { index, left: a, right: b, reason: 'tool_outcome_changed' };
-    if (a.stateSignatureBefore && b.stateSignatureBefore && a.stateSignatureBefore !== b.stateSignatureBefore) {
-      return { index, left: a, right: b, reason: 'state_signature_changed' };
+    if (!a || !b) return { index, left: a, right: b, reason: 'tool_missing', classification: 'missing_event' };
+    if (a.toolName !== b.toolName) return { index, left: a, right: b, reason: 'tool_name_changed', classification: 'tool_order_drift' };
+    if (a.outcome !== b.outcome) {
+      return {
+        index,
+        left: a,
+        right: b,
+        reason: 'tool_outcome_changed',
+        classification: a.stateSignatureBefore && b.stateSignatureBefore && a.stateSignatureBefore === b.stateSignatureBefore
+          ? 'same_state_outcome_drift'
+          : 'upstream_state_drift',
+      };
     }
-    if (a.scoreAfter !== b.scoreAfter) return { index, left: a, right: b, reason: 'score_after_changed' };
+    if (a.stateSignatureBefore && b.stateSignatureBefore && a.stateSignatureBefore !== b.stateSignatureBefore) {
+      return { index, left: a, right: b, reason: 'state_signature_changed', classification: 'upstream_state_drift' };
+    }
+    if (a.scoreAfter !== b.scoreAfter) return { index, left: a, right: b, reason: 'score_after_changed', classification: 'score_drift' };
   }
   return null;
 }
@@ -333,6 +346,9 @@ export function classifyTargetRowRoute(input: {
   const probeCheckpointFloor = input.probeCheckpointFloor ?? checkpointFloor ?? null;
   const candidateError = rowError(candidateRow);
   const pacCount = pacRejectionCount(candidateRow);
+  const goodLinkRepairOutcome = goodRow ? linkRepairOutcome(toolTimeline(goodRow)) : null;
+  const candidateLinkRepairOutcome = candidateRow ? linkRepairOutcome(toolTimeline(candidateRow)) : null;
+  const laterRecoveryBlocked = Boolean(goodLinkRepairOutcome === 'applied' && candidateLinkRepairOutcome !== 'applied');
   let classification: TargetRowClassification = 'missing_evidence';
   let recommendation = 'Collect a focused good/candidate comparison before changing behavior.';
 
@@ -372,6 +388,8 @@ export function classifyTargetRowRoute(input: {
     bestCheckpointScore: checkpoint?.score ?? null,
     bestCheckpointEligibilityReason: checkpoint?.eligibilityReason ?? input.timeoutTrace?.lastVerifiedCheckpointEligibilityReason ?? null,
     pacRejectionCount: pacCount,
+    laterRecoveryBlocked,
+    divergenceClassification: firstDivergence?.classification ?? null,
     recommendation,
   };
 }
@@ -453,6 +471,8 @@ function markdown(report: {
     lines.push(`- Best checkpoint score: \`${row.bestCheckpointScore ?? 'n/a'}\``);
     lines.push(`- Best checkpoint reason: \`${row.bestCheckpointEligibilityReason ?? 'n/a'}\``);
     lines.push(`- PAC rejection count: \`${row.pacRejectionCount}\``);
+    lines.push(`- Later recovery blocked: \`${row.laterRecoveryBlocked ? 'yes' : 'no'}\``);
+    lines.push(`- Divergence classification: \`${row.divergenceClassification ?? 'n/a'}\``);
     if (row.firstDivergence) {
       lines.push(`- First divergence: \`${row.firstDivergence.reason}\` at index \`${row.firstDivergence.index}\``);
       lines.push(`- Good event: \`${renderTool(row.firstDivergence.left)}\``);

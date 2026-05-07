@@ -662,3 +662,58 @@ Decision:
 - Do not run fixed 50 from this stage yet.
 - Do not add behavior for `structure-3775`, `long-4470`, or `font-4057` from this evidence.
 - Next work should focus on route volatility stabilization for `fixture-inaccessible` / `structure-3775` and recurring `structure-4076` drift before another fixed-50 run.
+
+## Route Volatility Stabilization Before Fixed-50
+
+Implemented after the `long-4683` checkpoint probe:
+
+- Generalized the proven fixture artifact-route guard to cover no-benefit artifact-family mutations at the same replay state:
+  - `artifact_repeating_page_furniture`
+  - `mark_untagged_content_as_artifact`
+- The guard still requires:
+  - replay-state signature `1d49f4344e1db6615a17c1f8`
+  - current score `79`
+  - no total-score improvement
+  - no link-quality improvement
+  - no checker-facing structural benefit
+- Extended `scripts/pac-target-route-diagnostic.ts` to distinguish:
+  - `same_state_outcome_drift`
+  - `upstream_state_drift`
+  - `tool_order_drift`
+  - `score_drift`
+  - `missing_event`
+- PAC scoring caps, PAC gate allow-lists, timeout defaults, checkpoint floors, planner breadth, and mutator behavior were not broadened.
+
+Diagnostic artifacts:
+
+- Pre-validation diagnostic: `Output/experiment-corpus-baseline/route-volatility-stabilization-diagnostic-2026-05-07-r1`
+- Post-validation diagnostic: `Output/experiment-corpus-baseline/route-volatility-stabilization-diagnostic-2026-05-07-r2`
+
+Targeted validation artifact:
+
+- `Output/experiment-corpus-baseline/run-route-volatility-stabilization-target-2026-05-07-r1`
+
+Targeted validation result:
+
+- Selected rows: `10 / 50`
+- Remediation success/errors: `8 / 2`
+- Reanalyzed mean/median: `88.5 / 96`
+- `false_positive_applied = 0`
+- `fixture-inaccessible`: `97/A`
+- `structure-3775`: `97/A`
+- `fixture-teams-original`: `98/A`
+- `font-4035`: `99/A`
+- `long-4470`: `96/A`
+- `long-4683`: `96/A`
+- `font-4057`: stable residual `69/D`
+- `structure-4076`: `69/D` in-run, `56/F` reanalyzed
+- `structure-4438`: hard timeout, best checkpoint `36/F`, below `90/A`
+- `long-4516`: hard timeout despite trace showing an eligible `82/B` checkpoint and a `return:before_stage180_post_pass` checkpoint event
+
+Decision:
+
+- Keep the artifact-family route guard because it preserved the known A-grade routes for `fixture-inaccessible` and `structure-3775` in targeted validation.
+- Do not run fixed 50 from this stage.
+- `structure-4076` remains the main quality blocker and should be isolated as route/analyzer drift before more broad validation.
+- `long-4516` now needs a separate checkpoint-finalization closeout: the trace proves an eligible checkpoint return occurred, but the row still ended as a hard timeout.
+- `structure-4438` remains parked because it still has no eligible checkpoint.
