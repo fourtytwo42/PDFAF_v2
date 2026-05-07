@@ -360,3 +360,47 @@ Decision:
 - Do not treat this stage as mean/runtime recovery and do not run fixed 50 from this result.
 - The remaining blockers are not PAC policy. They are active long-row reanalysis/mutation tails on `structure-4076`, `structure-4438`, and `long-4516`.
 - The next stage should either isolate those active phases with finer timeout attribution or design a quality-preserving way to checkpoint/return the best verified current state for timed-out rows without masking low-score partial outcomes.
+
+## Verified Checkpoint Timeout Recovery
+
+Implemented after trace-driven final reanalysis:
+
+- Added a remediation-internal verified checkpoint return path.
+  - The orchestrator records eligible verified checkpoints after successful stage and post-pass reanalysis.
+  - Near the 5-minute wall, it can restore the best eligible checkpoint, truncate later tool rows, and record `verified_checkpoint_timeout_return`.
+  - Default checkpoint floor is `85/B`.
+  - Targeted runtime-tail floors are `structure-4076 >=70/C`, `long-4516 >=80/B`, and `structure-4438 >=90/A`.
+- Checkpoint eligibility rejects unsafe states.
+  - No checkpoint return without score improvement over the input state.
+  - Page count, text count, tagged state, and structure tree must not regress.
+  - Applied mutation-truth contradictions are rejected as `false_positive_applied(...)`.
+  - Existing PAC acceptance gates must not detect harmful PAC regressions.
+- Runtime traces and `scripts/pac-runtime-tail-diagnostic.ts` now report verified checkpoint fields and classify `verified_checkpoint_timeout_returned` separately.
+- PAC scoring caps, PAC gate allow-lists, planner routes, mutators, and timeout defaults were not changed.
+
+Validation artifacts:
+
+- Targeted subset run: `Output/experiment-corpus-baseline/run-verified-checkpoint-timeout-recovery-target-2026-05-07-r1`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/verified-checkpoint-timeout-recovery-diagnostic-2026-05-07-r1`
+
+Targeted result:
+
+- Selected rows: `10`
+- Successful remediation rows: `9/10`
+- Timed-out rows: `structure-4438`
+- Successful-row mean after: `86.11`
+- Successful-row grades after: `4 A / 2 B / 2 C / 1 F`
+- `false_positive_applied = 0`
+- `structure-4076` completed at `70/C`, meeting its targeted floor.
+- `long-4516` completed at `89/B` with `verified_checkpoint_timeout_return`.
+- `long-4683` completed at `86/B` with `verified_checkpoint_timeout_return`.
+- `structure-4438` still timed out; the last verified checkpoint was only `36/F` and was correctly rejected as `checkpoint_below_floor(36<90)`.
+- Controls were mixed: `fixture-teams-original`, `font-4035`, and `structure-3775` stayed A-grade, but `fixture-inaccessible` took the known volatile `79/C` route.
+- `structure-3661` stayed recovered at `98/A`; `figure-4188` remained unresolved at `59/F`.
+
+Decision:
+
+- Do not run the fixed 50-file benchmark from this result.
+- Keep the verified checkpoint return mechanism because it recovered two hard timeout rows without false-positive-applied evidence.
+- The remaining blockers are `structure-4438` lack of any eligible checkpoint and `fixture-inaccessible` route volatility.
+- Next work should target `structure-4438` early-stage route/analyzer progress or checkpoint floor feasibility, plus a separate route-volatility isolation for `fixture-inaccessible`; do not lower the `structure-4438` checkpoint floor below `90/A` without explicit acceptance-policy approval.

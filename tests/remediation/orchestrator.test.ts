@@ -20,6 +20,7 @@ import {
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
   lateOptionalToolReanalysisGuardReason,
+  shouldReplaceVerifiedTimeoutCheckpoint,
   shouldGuardStageReanalysisAdmission,
   shouldReplaceProtectedSafeCheckpoint,
   shouldRecordSameStateNoGainRuntimeAttempt,
@@ -34,6 +35,7 @@ import {
   shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
   shouldStopProtectedHeadingCandidateAfterHardNoEffect,
+  verifiedTimeoutCheckpointEligibility,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
 import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnapshot, PlanningSummary, RemediationStagePlan } from '../../src/types.js';
@@ -387,6 +389,7 @@ function runtimeToolRow(input: {
   scoreBefore?: number;
   scoreAfter?: number;
   delta?: number;
+  details?: string;
 }): AppliedRemediationTool {
   const scoreBefore = input.scoreBefore ?? 80;
   const scoreAfter = input.scoreAfter ?? scoreBefore;
@@ -398,6 +401,7 @@ function runtimeToolRow(input: {
     scoreAfter,
     delta: input.delta ?? (scoreAfter - scoreBefore),
     outcome: input.outcome ?? 'no_effect',
+    ...(input.details ? { details: input.details } : {}),
     source: 'planner',
   };
 }
@@ -618,6 +622,105 @@ describe('late reanalysis runtime guards', () => {
       })],
       reanalysisSoftCapMs: 135_000,
     })).toBeNull();
+  });
+
+  it('allows a verified timeout checkpoint near the wall when it meets the floor', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const checkpointSnapshot = makeSnapshot({ depth: 2 });
+    const result = verifiedTimeoutCheckpointEligibility({
+      filename: '50-long-report-mixed/4516-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 48, categories: { heading_structure: 40 } }),
+      beforeSnapshot,
+      checkpoint: {
+        analysis: makeAnalysis({ score: 81, categories: { heading_structure: 80 } }),
+        snapshot: checkpointSnapshot,
+        appliedToolCount: 1,
+      },
+      appliedTools: [runtimeToolRow({ toolName: 'mark_untagged_content_as_artifact', outcome: 'applied' })],
+      nearWallBudget: true,
+    });
+
+    expect(result).toMatchObject({ eligible: true, floor: 80, reason: 'eligible' });
+  });
+
+  it('does not return a checkpoint below the allowed floor or without deadline pressure', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const checkpoint = {
+      analysis: makeAnalysis({ score: 69 }),
+      snapshot: makeSnapshot({ depth: 2 }),
+      appliedToolCount: 0,
+    };
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '30-structure-reading-order/4076-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 40 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [],
+      nearWallBudget: true,
+    })).toMatchObject({ eligible: false, reason: 'checkpoint_below_floor(69<70)' });
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '30-structure-reading-order/4076-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 40 }),
+      beforeSnapshot,
+      checkpoint: { ...checkpoint, analysis: makeAnalysis({ score: 70 }) },
+      appliedTools: [],
+      nearWallBudget: false,
+    })).toMatchObject({ eligible: false, reason: 'enough_wall_budget_remaining' });
+  });
+
+  it('rejects checkpoints with page text tag or mutation-truth regressions', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const textDropSnapshot = makeSnapshot({ depth: 2, textCharCount: 1000 });
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: 'fixture.pdf',
+      beforeAnalysis: makeAnalysis({ score: 40 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 90 }), snapshot: textDropSnapshot, appliedToolCount: 0 },
+      appliedTools: [],
+      nearWallBudget: true,
+    }).reason).toBe('text_dropped(2000->1000)');
+
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: 'fixture.pdf',
+      beforeAnalysis: makeAnalysis({ score: 40 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 90 }), snapshot: makeSnapshot({ depth: 2 }), appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({
+        toolName: 'set_figure_alt_text',
+        outcome: 'applied',
+        details: JSON.stringify({ outcome: 'applied', invariants: { targetReachable: false } }),
+      })],
+      nearWallBudget: true,
+    }).reason).toBe('false_positive_applied(set_figure_alt_text)');
+  });
+
+  it('rejects checkpoints with harmful PAC rule regression', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const afterSnapshot = makeSnapshot({ depth: 2 });
+    afterSnapshot.detectionProfile!.annotationSignals.pagesMissingTabsS = 2;
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: 'fixture.pdf',
+      beforeAnalysis: makeAnalysis({ score: 40 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 90 }), snapshot: afterSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'normalize_annotation_tab_order', outcome: 'applied' })],
+      nearWallBudget: true,
+    }).reason).toBe('pac_rule_regressed(pdfua.annotations.tab_order_structure)');
+  });
+
+  it('keeps the highest verified timeout checkpoint and earliest tie', () => {
+    expect(shouldReplaceVerifiedTimeoutCheckpoint({
+      current: null,
+      candidate: { analysis: makeAnalysis({ score: 85 }), appliedToolCount: 3, sequence: 2 },
+    })).toBe(true);
+    expect(shouldReplaceVerifiedTimeoutCheckpoint({
+      current: { analysis: makeAnalysis({ score: 90 }), appliedToolCount: 3, sequence: 2 },
+      candidate: { analysis: makeAnalysis({ score: 89 }), appliedToolCount: 1, sequence: 1 },
+    })).toBe(false);
+    expect(shouldReplaceVerifiedTimeoutCheckpoint({
+      current: { analysis: makeAnalysis({ score: 90 }), appliedToolCount: 3, sequence: 2 },
+      candidate: { analysis: makeAnalysis({ score: 90 }), appliedToolCount: 2, sequence: 4 },
+    })).toBe(true);
   });
 });
 

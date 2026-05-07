@@ -182,6 +182,59 @@ describe('PAC runtime tail diagnostic helpers', () => {
     })).toBe('soft_deadline_stop');
   });
 
+  it('classifies verified checkpoint returns separately from hard timeouts', () => {
+    expect(classifyRuntimeTail({
+      row: row({
+        id: 'checkpoint-return',
+        runtimeSummary: runtime({ earlyExit: 'verified_checkpoint_timeout_return' }),
+      }),
+      candidateWallMs: 250_000,
+      stageReanalysisMs: 100_000,
+      mutationToolMs: 10_000,
+      sameStateNoGainEarlyExitCount: 0,
+      protectedReanalysisPassCount: 0,
+      pacGateRejectionCount: 0,
+      verifiedCheckpointReturnCount: 1,
+      softDeadlineEarlyExitCount: 0,
+    })).toBe('verified_checkpoint_timeout_returned');
+  });
+
+  it('parses verified checkpoint fields while old traces remain valid', () => {
+    const parsed = parseRuntimeTimeoutTrace({
+      lastPhase: 'verified_checkpoint_return',
+      elapsedMs: 250_000,
+      completedToolCount: 3,
+      completedStageCount: 2,
+      completedStageReanalysisCount: 2,
+      completedStageReanalysisMs: 90_000,
+      lastVerifiedCheckpointScore: 91,
+      lastVerifiedCheckpointGrade: 'A',
+      lastVerifiedCheckpointReason: 'return:before_stage',
+      lastVerifiedCheckpointAppliedToolCount: 7,
+      lastVerifiedCheckpointEligible: true,
+      lastVerifiedCheckpointEligibilityReason: 'eligible',
+      lastVerifiedCheckpointReturned: true,
+      lastVerifiedCheckpointAgeMs: 1000,
+    });
+    expect(parsed).toMatchObject({
+      lastVerifiedCheckpointScore: 91,
+      lastVerifiedCheckpointGrade: 'A',
+      lastVerifiedCheckpointReason: 'return:before_stage',
+      lastVerifiedCheckpointAppliedToolCount: 7,
+      lastVerifiedCheckpointEligible: true,
+      lastVerifiedCheckpointEligibilityReason: 'eligible',
+      lastVerifiedCheckpointReturned: true,
+      lastVerifiedCheckpointAgeMs: 1000,
+    });
+    expect(parseRuntimeTimeoutTrace({
+      lastPhase: 'tool_start',
+      elapsedMs: 100,
+    })).toMatchObject({
+      lastVerifiedCheckpointScore: null,
+      lastVerifiedCheckpointReturned: false,
+    });
+  });
+
   it('builds deterministic rows from focus ids and p95 tails', () => {
     const timeoutTraces = new Map([
       ['a', parseRuntimeTimeoutTrace({

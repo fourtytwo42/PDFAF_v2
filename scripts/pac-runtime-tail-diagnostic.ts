@@ -16,6 +16,7 @@ const REMEDIATION_WALL_TIMEOUT_MS = 300_000;
 export type RuntimeTailClassification =
   | 'per_pdf_timeout'
   | 'soft_deadline_stop'
+  | 'verified_checkpoint_timeout_returned'
   | 'bounded_final_reanalysis_guarded'
   | 'late_optional_reanalysis_guarded'
   | 'stage_reanalysis_guarded'
@@ -67,6 +68,14 @@ export interface RuntimeTimeoutTraceSummary {
   completedStageCount: number;
   completedStageReanalysisCount: number;
   completedStageReanalysisMs: number;
+  lastVerifiedCheckpointScore: number | null;
+  lastVerifiedCheckpointGrade: string | null;
+  lastVerifiedCheckpointReason: string | null;
+  lastVerifiedCheckpointAppliedToolCount: number | null;
+  lastVerifiedCheckpointEligible: boolean | null;
+  lastVerifiedCheckpointEligibilityReason: string | null;
+  lastVerifiedCheckpointReturned: boolean;
+  lastVerifiedCheckpointAgeMs: number | null;
 }
 
 export interface RuntimeTailDiagnosticReport {
@@ -139,6 +148,14 @@ export function parseRuntimeTimeoutTrace(value: unknown): RuntimeTimeoutTraceSum
     completedStageCount: numberOrNull(record['completedStageCount']) ?? 0,
     completedStageReanalysisCount: numberOrNull(record['completedStageReanalysisCount']) ?? 0,
     completedStageReanalysisMs: numberOrNull(record['completedStageReanalysisMs']) ?? 0,
+    lastVerifiedCheckpointScore: numberOrNull(record['lastVerifiedCheckpointScore']),
+    lastVerifiedCheckpointGrade: stringOrNull(record['lastVerifiedCheckpointGrade']),
+    lastVerifiedCheckpointReason: stringOrNull(record['lastVerifiedCheckpointReason']),
+    lastVerifiedCheckpointAppliedToolCount: numberOrNull(record['lastVerifiedCheckpointAppliedToolCount']),
+    lastVerifiedCheckpointEligible: typeof record['lastVerifiedCheckpointEligible'] === 'boolean' ? record['lastVerifiedCheckpointEligible'] : null,
+    lastVerifiedCheckpointEligibilityReason: stringOrNull(record['lastVerifiedCheckpointEligibilityReason']),
+    lastVerifiedCheckpointReturned: record['lastVerifiedCheckpointReturned'] === true,
+    lastVerifiedCheckpointAgeMs: numberOrNull(record['lastVerifiedCheckpointAgeMs']),
   };
 }
 
@@ -213,6 +230,12 @@ function lateOptionalReanalysisReasons(row: RemediateBenchmarkRow): string[] {
     .flatMap(item => Array(item.count).fill(item.key)) ?? [];
 }
 
+function verifiedCheckpointReturnCount(row: RemediateBenchmarkRow): number {
+  return row.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons
+    ?.filter(item => item.key === 'verified_checkpoint_timeout_return')
+    .reduce((sum, item) => sum + item.count, 0) ?? 0;
+}
+
 function stageReanalysis(row: RemediateBenchmarkRow): { count: number; ms: number } {
   const stageTimings = row.runtimeSummary?.stageTimings ?? [];
   return {
@@ -265,9 +288,11 @@ export function classifyRuntimeTail(input: {
   stageReanalysisAdmissionGuardCount?: number;
   boundedFinalReanalysisGuardCount?: number;
   lateOptionalReanalysisGuardCount?: number;
+  verifiedCheckpointReturnCount?: number;
 }): RuntimeTailClassification {
   const error = String(input.row.error ?? '');
   if (/timeout|aborted/i.test(error)) return 'per_pdf_timeout';
+  if ((input.verifiedCheckpointReturnCount ?? 0) > 0) return 'verified_checkpoint_timeout_returned';
   if ((input.softDeadlineEarlyExitCount ?? 0) > 0) return 'soft_deadline_stop';
   if ((input.boundedFinalReanalysisGuardCount ?? 0) > 0) return 'bounded_final_reanalysis_guarded';
   if ((input.lateOptionalReanalysisGuardCount ?? 0) > 0) return 'late_optional_reanalysis_guarded';
@@ -293,25 +318,27 @@ export function classifyRuntimeTail(input: {
 function rowSort(a: RuntimeTailRow, b: RuntimeTailRow): number {
   const rank = (row: RuntimeTailRow): number => row.classification === 'per_pdf_timeout'
     ? 0
-    : row.classification === 'soft_deadline_stop'
+    : row.classification === 'verified_checkpoint_timeout_returned'
       ? 1
-      : row.classification === 'bounded_final_reanalysis_guarded'
+      : row.classification === 'soft_deadline_stop'
         ? 2
-        : row.classification === 'late_optional_reanalysis_guarded'
+        : row.classification === 'bounded_final_reanalysis_guarded'
           ? 3
-          : row.classification === 'stage_reanalysis_guarded'
+          : row.classification === 'late_optional_reanalysis_guarded'
             ? 4
-            : row.classification === 'repeated_no_gain_tool_churn'
+            : row.classification === 'stage_reanalysis_guarded'
               ? 5
-              : row.classification === 'protected_reanalysis_churn'
+              : row.classification === 'repeated_no_gain_tool_churn'
                 ? 6
-                : row.classification === 'reanalysis_heavy_large_document'
+                : row.classification === 'protected_reanalysis_churn'
                   ? 7
-                  : row.classification === 'mutation_heavy_large_document'
+                  : row.classification === 'reanalysis_heavy_large_document'
                     ? 8
-                    : row.classification === 'analyzer_starvation'
+                    : row.classification === 'mutation_heavy_large_document'
                       ? 9
-                      : 10;
+                      : row.classification === 'analyzer_starvation'
+                        ? 10
+                        : 11;
   return (
     rank(a) - rank(b) ||
     (b.candidateWallMs ?? -1) - (a.candidateWallMs ?? -1) ||
@@ -362,6 +389,7 @@ export function buildRuntimeTailDiagnostic(input: {
       const stageAdmissionGuardCount = stageReanalysisAdmissionGuardCount(row);
       const boundedFinalGuardCount = boundedFinalReanalysisGuardCount(row);
       const lateOptionalGuardCount = lateOptionalReanalysisGuardCount(row);
+      const verifiedCheckpointCount = verifiedCheckpointReturnCount(row);
       const protectedPasses = protectedReanalysisPassCount(row);
       const mutationMs = mutationToolMs(row);
       const timeoutTrace = input.timeoutTraces?.get(row.id) ?? null;
@@ -380,6 +408,7 @@ export function buildRuntimeTailDiagnostic(input: {
           stageReanalysisAdmissionGuardCount: stageAdmissionGuardCount,
           boundedFinalReanalysisGuardCount: boundedFinalGuardCount,
           lateOptionalReanalysisGuardCount: lateOptionalGuardCount,
+          verifiedCheckpointReturnCount: verifiedCheckpointCount,
         }),
         candidateWallMs,
         recoveryWallMs,
@@ -402,8 +431,10 @@ export function buildRuntimeTailDiagnostic(input: {
         mutationToolMs: mutationMs,
         protectedReanalysisPassCount: protectedPasses,
         timeoutTrace,
-        topStageKeys: softDeadlineCount > 0
-          ? softDeadlineReasons(row)
+        topStageKeys: verifiedCheckpointCount > 0
+          ? ['verified_checkpoint_timeout_return']
+          : softDeadlineCount > 0
+            ? softDeadlineReasons(row)
           : boundedFinalGuardCount > 0
             ? ['bounded_final_reanalysis_guard']
             : lateOptionalGuardCount > 0

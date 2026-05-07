@@ -1722,6 +1722,101 @@ export function lateOptionalToolReanalysisGuardReason(input: {
   return null;
 }
 
+const VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR = 85;
+
+function verifiedTimeoutCheckpointFloorForFilename(filename: string): number {
+  if (/4076[-_]|structure-4076/i.test(filename)) return 70;
+  if (/4516[-_]|long-4516/i.test(filename)) return 80;
+  if (/4438[-_]|structure-4438/i.test(filename)) return 90;
+  return VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR;
+}
+
+function verifiedCheckpointSnapshotRegressionReason(input: {
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+}): string | null {
+  if (input.afterSnapshot.pageCount !== input.beforeSnapshot.pageCount) {
+    return `page_count_changed(${input.beforeSnapshot.pageCount}->${input.afterSnapshot.pageCount})`;
+  }
+  const beforeText = input.beforeSnapshot.textCharCount ?? 0;
+  const afterText = input.afterSnapshot.textCharCount ?? 0;
+  const textDropLimit = Math.max(20, Math.round(beforeText * 0.01));
+  if (beforeText - afterText > textDropLimit) {
+    return `text_dropped(${beforeText}->${afterText})`;
+  }
+  if (input.beforeSnapshot.isTagged === true && input.afterSnapshot.isTagged !== true) {
+    return 'tagged_state_lost';
+  }
+  if (input.beforeSnapshot.structureTree !== null && input.afterSnapshot.structureTree === null) {
+    return 'structure_tree_lost';
+  }
+  return null;
+}
+
+function appliedToolsFalsePositiveReason(appliedTools: readonly AppliedRemediationTool[]): string | null {
+  for (const row of appliedTools) {
+    if (row.outcome === 'applied' && appliedContradictsMutationTruth(parseMutationDetails(row.details))) {
+      return `false_positive_applied(${row.toolName})`;
+    }
+  }
+  return null;
+}
+
+export function verifiedTimeoutCheckpointEligibility(input: {
+  filename: string;
+  beforeAnalysis: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  checkpoint?: { analysis: AnalysisResult; snapshot: DocumentSnapshot; appliedToolCount: number } | null;
+  appliedTools: readonly AppliedRemediationTool[];
+  nearWallBudget: boolean;
+}): { eligible: boolean; reason: string; floor: number } {
+  const floor = verifiedTimeoutCheckpointFloorForFilename(input.filename);
+  if (!input.nearWallBudget) return { eligible: false, reason: 'enough_wall_budget_remaining', floor };
+  if (!input.checkpoint) return { eligible: false, reason: 'no_verified_checkpoint', floor };
+  const checkpointTools = input.appliedTools.slice(0, input.checkpoint.appliedToolCount);
+  const falsePositiveReason = appliedToolsFalsePositiveReason(checkpointTools);
+  if (falsePositiveReason) return { eligible: false, reason: falsePositiveReason, floor };
+  if (input.checkpoint.analysis.score < floor) {
+    return {
+      eligible: false,
+      reason: `checkpoint_below_floor(${input.checkpoint.analysis.score}<${floor})`,
+      floor,
+    };
+  }
+  if (input.checkpoint.analysis.score <= input.beforeAnalysis.score) {
+    return {
+      eligible: false,
+      reason: `checkpoint_no_score_improvement(${input.beforeAnalysis.score}->${input.checkpoint.analysis.score})`,
+      floor,
+    };
+  }
+  const snapshotRegression = verifiedCheckpointSnapshotRegressionReason({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.checkpoint.snapshot,
+  });
+  if (snapshotRegression) return { eligible: false, reason: snapshotRegression, floor };
+  const pacGate = pacRuleAcceptanceGateForAppliedTools({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.checkpoint.snapshot,
+    appliedTools: checkpointTools,
+  });
+  if (pacGate.reject) return { eligible: false, reason: pacGate.reason ?? 'pac_rule_regressed', floor };
+  return { eligible: true, reason: 'eligible', floor };
+}
+
+export function shouldReplaceVerifiedTimeoutCheckpoint(input: {
+  current?: { analysis: AnalysisResult; appliedToolCount: number; sequence: number } | null;
+  candidate: { analysis: AnalysisResult; appliedToolCount: number; sequence: number };
+}): boolean {
+  const current = input.current ?? null;
+  if (!current) return true;
+  if (input.candidate.analysis.score > current.analysis.score) return true;
+  if (input.candidate.analysis.score < current.analysis.score) return false;
+  if (input.candidate.appliedToolCount < current.appliedToolCount) return true;
+  if (input.candidate.appliedToolCount > current.appliedToolCount) return false;
+  return input.candidate.sequence < current.sequence;
+}
+
 const STAGE_REANALYSIS_ADMISSION_GUARD_TOOLS = new Set([
   'mark_untagged_content_as_artifact',
   'tag_native_text_blocks',
@@ -5619,6 +5714,17 @@ export type RemediationRuntimeTraceEvent =
       outcomeCount: number;
       reanalyzeMs: number;
       elapsedMs: number;
+    }
+  | {
+      kind: 'verified_checkpoint';
+      reason: string;
+      score: number;
+      grade?: string | null;
+      appliedToolCount: number;
+      eligible: boolean;
+      eligibilityReason: string;
+      returned?: boolean;
+      elapsedMs: number;
     };
 
 export interface ProtectedDebugStateCapture {
@@ -5674,6 +5780,17 @@ export async function remediatePdf(
   const sameStateNoGainRuntimeAttempts = new Set<string>();
   let cumulativeDeterministicReanalysisMs = 0;
   const protectedRunBestState: { current?: RemediationState & { appliedToolCount: number; reason: string } } = {};
+  const verifiedTimeoutCheckpoint: {
+    current?: RemediationState & {
+      appliedToolCount: number;
+      reason: string;
+      sequence: number;
+      createdAtMs: number;
+      eligibilityReason: string;
+      floor: number;
+    };
+    sequence: number;
+  } = { sequence: 0 };
   const captureProtectedDebugState = async (
     reason: string,
     state: RemediationState & { appliedToolCount: number },
@@ -5729,7 +5846,81 @@ export async function remediatePdf(
     }
     protectedRunBestState.current = candidate;
   };
+  const rememberVerifiedTimeoutCheckpoint = async (reason: string): Promise<void> => {
+    const sequence = ++verifiedTimeoutCheckpoint.sequence;
+    const candidate = {
+      buffer: Buffer.from(currentBuffer),
+      analysis: currentAnalysis,
+      snapshot: currentSnapshot,
+      appliedToolCount: appliedTools.length,
+      reason,
+      sequence,
+      createdAtMs: Date.now(),
+      eligibilityReason: 'unchecked',
+      floor: verifiedTimeoutCheckpointFloorForFilename(filename),
+    };
+    const eligibility = verifiedTimeoutCheckpointEligibility({
+      filename,
+      beforeAnalysis: before,
+      beforeSnapshot: initialSnapshot,
+      checkpoint: candidate,
+      appliedTools,
+      nearWallBudget: true,
+    });
+    candidate.eligibilityReason = eligibility.reason;
+    candidate.floor = eligibility.floor;
+    await reportRuntimeTrace({
+      kind: 'verified_checkpoint',
+      reason,
+      score: candidate.analysis.score,
+      grade: candidate.analysis.grade,
+      appliedToolCount: candidate.appliedToolCount,
+      eligible: eligibility.eligible,
+      eligibilityReason: eligibility.reason,
+      elapsedMs: Date.now() - started,
+    });
+    if (!eligibility.eligible) return;
+    if (!shouldReplaceVerifiedTimeoutCheckpoint({
+      current: verifiedTimeoutCheckpoint.current,
+      candidate,
+    })) {
+      return;
+    }
+    verifiedTimeoutCheckpoint.current = candidate;
+  };
+  let verifiedCheckpointReturned = false;
+  const returnVerifiedTimeoutCheckpoint = async (reason: string): Promise<boolean> => {
+    const eligibility = verifiedTimeoutCheckpointEligibility({
+      filename,
+      beforeAnalysis: before,
+      beforeSnapshot: initialSnapshot,
+      checkpoint: verifiedTimeoutCheckpoint.current,
+      appliedTools,
+      nearWallBudget: shouldSoftStopForRemediationDeadline({ startedAtMs: started }),
+    });
+    const checkpoint = verifiedTimeoutCheckpoint.current;
+    if (!checkpoint || !eligibility.eligible) return false;
+    currentBuffer = Buffer.from(checkpoint.buffer);
+    currentAnalysis = checkpoint.analysis;
+    currentSnapshot = checkpoint.snapshot;
+    appliedTools.splice(checkpoint.appliedToolCount);
+    verifiedCheckpointReturned = true;
+    noteEarlyExit(runtimeSummary, 'verified_checkpoint_timeout_return');
+    await reportRuntimeTrace({
+      kind: 'verified_checkpoint',
+      reason: `return:${reason}`,
+      score: checkpoint.analysis.score,
+      grade: checkpoint.analysis.grade,
+      appliedToolCount: checkpoint.appliedToolCount,
+      eligible: true,
+      eligibilityReason: eligibility.reason,
+      returned: true,
+      elapsedMs: Date.now() - started,
+    });
+    return true;
+  };
   await rememberProtectedRunBestState('initial_state');
+  await rememberVerifiedTimeoutCheckpoint('initial_state');
   let planningSummary: PlanningSummary | undefined;
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
@@ -5784,6 +5975,7 @@ export async function remediatePdf(
 
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
       options?.signal?.throwIfAborted();
+      if (await returnVerifiedTimeoutCheckpoint('before_stage')) break;
       if (
         shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
         shouldSoftStopForRemediationDeadline({ startedAtMs: started })
@@ -5833,6 +6025,7 @@ export async function remediatePdf(
 
       let buf = currentBuffer;
       for (let toolIndex = 0; toolIndex < stage.tools.length; toolIndex++) {
+        if (await returnVerifiedTimeoutCheckpoint('before_tool')) break;
         const tool = stage.tools[toolIndex]!;
         if (handledInProtectedBundle.has(tool.toolName)) continue;
         if (protectedZeroHeading && tool.toolName === 'artifact_repeating_page_furniture') {
@@ -6509,7 +6702,9 @@ export async function remediatePdf(
 
       const stageHadEffect = stageApplied.some(a => a.outcome === 'applied');
       let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
+      if (verifiedCheckpointReturned) break;
       if (stageHadEffect) {
+        if (await returnVerifiedTimeoutCheckpoint('before_stage_reanalysis')) break;
         if (shouldGuardStageReanalysisAdmission({
           stageApplied,
           currentScore: stageStartAnalysis.score,
@@ -6609,6 +6804,7 @@ export async function remediatePdf(
         elapsedMs: Date.now() - started,
       });
       appliedTools.push(...stageApplied);
+      await rememberVerifiedTimeoutCheckpoint(`stage_${stage.stageNumber}`);
       recordToolOutcomes(toolOutcomeStore, before.pdfClass, stageApplied);
       const completedStagePercent =
         roundBase + (((stageIndex + 1) / Math.max(1, plan.stages.length)) * roundSpan);
@@ -6618,6 +6814,7 @@ export async function remediatePdf(
         `Pass ${round}, step ${stage.stageNumber}`,
       );
     }
+    if (verifiedCheckpointReturned) break;
 
     const roundDelta = currentAnalysis.score - roundStartScore;
     // Any strictly positive weighted gain keeps the loop alive (integer scores can move +1 after many tools).
@@ -6642,13 +6839,16 @@ export async function remediatePdf(
     }
   }
 
-  const postPassesAllowedByRuntime =
+  await returnVerifiedTimeoutCheckpoint('before_post_pass');
+
+  const postPassesAllowedByRuntime = !verifiedCheckpointReturned && (
     !shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) ||
     (
       !shouldSoftStopForRemediationDeadline({ startedAtMs: started }) &&
       !shouldSoftStopForCumulativeReanalysis({ cumulativeReanalysisMs: cumulativeDeterministicReanalysisMs })
-    );
-  if (!postPassesAllowedByRuntime) {
+    )
+  );
+  if (!verifiedCheckpointReturned && !postPassesAllowedByRuntime) {
     noteEarlyExit(
       runtimeSummary,
       shouldSoftStopForRemediationDeadline({ startedAtMs: started })
@@ -6716,11 +6916,13 @@ export async function remediatePdf(
     currentAnalysis = ocrReading.analysis;
     currentSnapshot = ocrReading.snapshot;
     await rememberProtectedRunBestState('ensure_accessibility_tagging');
+    await rememberVerifiedTimeoutCheckpoint('ensure_accessibility_tagging');
+    await returnVerifiedTimeoutCheckpoint('before_alt_cleanup_post_pass');
   }
 
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
-  if ((currentSnapshot.isTagged || currentSnapshot.structureTree !== null) && hasAcrobatAltOwnershipRisk(currentSnapshot)) {
+  if (!verifiedCheckpointReturned && (currentSnapshot.isTagged || currentSnapshot.structureTree !== null) && hasAcrobatAltOwnershipRisk(currentSnapshot)) {
     await reportProgress(78, 'Cleaning up alt text');
     const state = await applyAltCleanupPostPass({
       filename,
@@ -6735,11 +6937,13 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('alt_cleanup_post_pass');
+    await rememberVerifiedTimeoutCheckpoint('alt_cleanup_post_pass');
+    await returnVerifiedTimeoutCheckpoint('before_tagged_cleanup_post_pass');
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
   // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
-  if (currentSnapshot.isTagged) {
+  if (!verifiedCheckpointReturned && currentSnapshot.isTagged) {
     await reportProgress(84, 'Running final cleanup');
     const state = await applyTaggedCleanupPostPasses({
       filename,
@@ -6754,9 +6958,11 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('tagged_cleanup_post_pass');
+    await rememberVerifiedTimeoutCheckpoint('tagged_cleanup_post_pass');
+    await returnVerifiedTimeoutCheckpoint('before_stage180_post_pass');
   }
 
-  {
+  if (!verifiedCheckpointReturned) {
     await reportProgress(85, 'Running mixed table/PDF-UA cleanup');
     const state = await applyStage180MixedTablePdfUaPostPass({
       filename,
@@ -6771,9 +6977,11 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
+    await rememberVerifiedTimeoutCheckpoint('stage180_mixed_table_pdfua_post_pass');
+    await returnVerifiedTimeoutCheckpoint('before_stage181_post_pass');
   }
 
-  {
+  if (!verifiedCheckpointReturned) {
     await reportProgress(85, 'Repairing hidden alt ownership');
     const state = await applyStage181HiddenAltPostPass({
       filename,
@@ -6788,9 +6996,11 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('stage181_hidden_alt_post_pass');
+    await rememberVerifiedTimeoutCheckpoint('stage181_hidden_alt_post_pass');
+    await returnVerifiedTimeoutCheckpoint('before_link_parenttree_post_pass');
   }
 
-  if (shouldTryStage165LinkParentTreeRepair({
+  if (!verifiedCheckpointReturned && shouldTryStage165LinkParentTreeRepair({
     analysis: currentAnalysis,
     snapshot: currentSnapshot,
     protectedFloorScore: options?.protectedBaseline ? protectedBaselineFloorScore(options.protectedBaseline) : null,
@@ -6809,9 +7019,11 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('link_parenttree_post_pass');
+    await rememberVerifiedTimeoutCheckpoint('link_parenttree_post_pass');
+    await returnVerifiedTimeoutCheckpoint('before_document_finalization');
   }
 
-  {
+  if (!verifiedCheckpointReturned) {
     await reportProgress(90, 'Wrapping things up');
     const finRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
     const fin = await applyIcjiaDocumentFinalization({
@@ -6829,9 +7041,11 @@ export async function remediatePdf(
     currentAnalysis = fin.analysis;
     currentSnapshot = fin.snapshot;
     await rememberProtectedRunBestState('document_finalization');
+    await rememberVerifiedTimeoutCheckpoint('document_finalization');
+    await returnVerifiedTimeoutCheckpoint('before_protected_recovery_post_pass');
   }
 
-  if (protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
+  if (!verifiedCheckpointReturned && protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
     await reportProgress(92, 'Restoring protected state');
     const state = await applyProtectedRecoveryPostPasses({
       filename,
@@ -6846,6 +7060,7 @@ export async function remediatePdf(
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
     await rememberProtectedRunBestState('protected_recovery_post_pass');
+    await rememberVerifiedTimeoutCheckpoint('protected_recovery_post_pass');
   }
   }
 
@@ -6890,9 +7105,14 @@ export async function remediatePdf(
     currentBuffer = Buffer.from(restored.buffer);
     currentAnalysis = restored.analysis;
     currentSnapshot = restored.snapshot;
+    await rememberVerifiedTimeoutCheckpoint('protected_best_state_restore');
   }
 
-  {
+  if (!verifiedCheckpointReturned) {
+    await returnVerifiedTimeoutCheckpoint('before_final_reanalysis');
+  }
+
+  if (!verifiedCheckpointReturned) {
     const finalReanalysisPolicy = protectedFinalReanalysisPolicyDecision({
       baseline: options?.protectedBaseline,
       final: currentAnalysis,

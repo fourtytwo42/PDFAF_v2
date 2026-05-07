@@ -133,6 +133,14 @@ interface BenchmarkRuntimeTimeoutTrace {
   completedStageCount: number;
   completedStageReanalysisCount: number;
   completedStageReanalysisMs: number;
+  lastVerifiedCheckpointScore: number | null;
+  lastVerifiedCheckpointGrade: string | null;
+  lastVerifiedCheckpointReason: string | null;
+  lastVerifiedCheckpointAppliedToolCount: number | null;
+  lastVerifiedCheckpointEligible: boolean | null;
+  lastVerifiedCheckpointEligibilityReason: string | null;
+  lastVerifiedCheckpointReturned: boolean;
+  lastVerifiedCheckpointAgeMs: number | null;
 }
 
 function parseTraceReason(details: string | undefined): string | null {
@@ -166,6 +174,14 @@ function createRuntimeTimeoutTrace(entry: ExperimentCorpusEntry, started: number
     completedStageCount: 0,
     completedStageReanalysisCount: 0,
     completedStageReanalysisMs: 0,
+    lastVerifiedCheckpointScore: null,
+    lastVerifiedCheckpointGrade: null,
+    lastVerifiedCheckpointReason: null,
+    lastVerifiedCheckpointAppliedToolCount: null,
+    lastVerifiedCheckpointEligible: null,
+    lastVerifiedCheckpointEligibilityReason: null,
+    lastVerifiedCheckpointReturned: false,
+    lastVerifiedCheckpointAgeMs: null,
   };
   const mark = (phase: string): void => {
     state.lastPhase = phase;
@@ -208,6 +224,17 @@ function createRuntimeTimeoutTrace(entry: ExperimentCorpusEntry, started: number
           state.completedStageReanalysisMs += Math.round(trace.reanalyzeMs);
         }
         break;
+      case 'verified_checkpoint':
+        state.lastPhase = trace.returned ? 'verified_checkpoint_return' : 'verified_checkpoint';
+        state.lastVerifiedCheckpointScore = trace.score;
+        state.lastVerifiedCheckpointGrade = trace.grade ?? null;
+        state.lastVerifiedCheckpointReason = trace.reason;
+        state.lastVerifiedCheckpointAppliedToolCount = trace.appliedToolCount;
+        state.lastVerifiedCheckpointEligible = trace.eligible;
+        state.lastVerifiedCheckpointEligibilityReason = trace.eligibilityReason;
+        state.lastVerifiedCheckpointReturned = trace.returned === true;
+        state.lastVerifiedCheckpointAgeMs = 0;
+        break;
     }
   };
   const snapshot = (error: unknown): BenchmarkRuntimeTimeoutTrace => ({
@@ -215,6 +242,9 @@ function createRuntimeTimeoutTrace(entry: ExperimentCorpusEntry, started: number
     generatedAt: new Date().toISOString(),
     error: sanitizeError(error),
     elapsedMs: Math.round(performance.now() - started),
+    lastVerifiedCheckpointAgeMs: state.lastVerifiedCheckpointReason
+      ? Math.max(0, Math.round(performance.now() - started) - state.elapsedMs)
+      : null,
   });
   return { mark, event, snapshot };
 }
