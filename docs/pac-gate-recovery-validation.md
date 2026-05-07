@@ -802,3 +802,56 @@ Decision:
 - `structure-4076` met its explicit `70/C` floor in the accepted targeted repeat, but remains route/analyzer volatility debt rather than a proven same-state behavior bug.
 - `structure-4438` remains parked; do not lower its `90/A` checkpoint floor.
 - The targeted subset is clean enough to proceed to fixed original-50 validation if the next step is acceptance measurement.
+
+## Fixed Original-50 Acceptance Validation After Drift Isolation
+
+Validation artifact:
+
+- Full run: `Output/experiment-corpus-baseline/run-structure3775-4076-drift-isolation-full-2026-05-07-r1`
+- Stage 41 gate: `Output/experiment-corpus-baseline/structure3775-4076-drift-isolation-gate-2026-05-07-r1`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/structure3775-4076-drift-isolation-full-runtime-2026-05-07-r1`
+- Route diagnostic: `Output/experiment-corpus-baseline/structure3775-4076-drift-isolation-full-route-2026-05-07-r1`
+- PAC recovery diagnostic: `Output/experiment-corpus-baseline/structure3775-4076-drift-isolation-full-pac-recovery-2026-05-07-r1`
+
+Validation result:
+
+- Selected rows: `50 / 50`
+- Remediation success/errors: `48 / 2`
+- Gate mean/median: `89.42 / 96`
+- Grade distribution: `36 A / 2 B / 2 C / 1 D / 7 F`
+- `false_positive_applied = 0`
+- Stage 41 gate: `FAIL`
+- Failed gate keys:
+  - `analyze_success`
+  - `remediate_success`
+  - `route_summary_coverage`
+  - `f_grade_count`
+  - `protected_file_regressions`
+  - `runtime_p95_wall`
+  - `total_tool_attempts`
+
+Key row outcomes:
+
+- `long-4516`: recovered without hard timeout, `86/B`.
+- `long-4683`: completed, `91/A`, but remained a major runtime tail.
+- `structure-3775`: remained fixed at `97/A`.
+- `fixture-inaccessible`: regressed again to `79/C` in full-run route volatility; route diagnostic shows link repair missing and a changed artifact route state from the targeted run.
+- `structure-4076`: hard timeout; trace shows best checkpoint `56/F`, below the `70/C` row floor.
+- `structure-4438`: hard timeout; trace still shows best checkpoint `36/F`, below the `90/A` floor.
+
+Diagnostic classification:
+
+- Runtime diagnostic classified timeout rows as `structure-4076` and parked `structure-4438`.
+- Route diagnostic classified:
+  - `fixture-inaccessible`: `route_volatility`
+  - `structure-4076`: `route_drift`
+  - `structure-4438`: `no_eligible_checkpoint_available`
+  - `long-4683`: `route_volatility`, but final score stayed acceptable.
+- PAC recovery diagnostic found `100` PAC gate rejections and `80` blocked useful repairs. The dominant rule was `pdfua.content.orphan_mcids_absent` with `70` rejections across `16` files, mostly blocking useful heading/annotation repairs.
+
+Decision:
+
+- Do not accept the fixed-50 checkpoint from this run.
+- Do not patch broadly from this run alone.
+- Keep the existing `structure-3775` stabilization and checkpoint-return changes because targeted and full-run evidence still show they help specific rows.
+- Next work should be a narrow PAC orphan-MCID gate recovery design focused on score-moving heading/annotation repairs, plus a separate route-volatility check for `fixture-inaccessible`; `structure-4438` remains parked.
