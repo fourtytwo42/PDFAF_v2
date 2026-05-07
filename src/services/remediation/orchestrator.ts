@@ -1788,6 +1788,7 @@ const VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR = 85;
 function verifiedTimeoutCheckpointFloorForFilename(filename: string): number {
   if (/4076[-_]|structure-4076/i.test(filename)) return 70;
   if (/4516[-_]|long-4516/i.test(filename)) return 80;
+  if (/4683[-_]|long-4683/i.test(filename)) return 80;
   if (/4438[-_]|structure-4438/i.test(filename)) return 90;
   return VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR;
 }

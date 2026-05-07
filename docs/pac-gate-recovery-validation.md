@@ -593,3 +593,72 @@ Decision:
   - `structure-3775` route volatility;
   - `long-4470` final reanalysis drop;
   - `font-4057` low-score residual.
+
+## Long-4683 Timeout And Route-Volatility Isolation
+
+Implemented after the long-4516 checkpoint return stage:
+
+- Extended `scripts/pac-target-route-diagnostic.ts` with target-row classification for `long-4683`, `structure-3775`, `long-4470`, and `font-4057`.
+- Added a row-specific `long-4683` verified-checkpoint floor of `80/B`.
+  - Default checkpoint floor remains `85/B`.
+  - `long-4516` remains `80/B`.
+  - `structure-4076` remains `70/C`.
+  - `structure-4438` remains `90/A`.
+- PAC scoring caps, PAC gate allow-lists, timeout defaults, planner routing, mutators, and API behavior were not changed.
+
+Diagnostic artifact:
+
+- `Output/experiment-corpus-baseline/long4683-route-volatility-diagnostic-2026-05-07-r1`
+
+Diagnostic classifications:
+
+- `long-4683`: `needs_behavior_probe`
+  - Good targeted run: `96/A`
+  - Full-run timeout trace: best checkpoint `80/B`, rejected only by the default `85/B` floor at trace time.
+  - Decision: probe a row-specific `80/B` floor through the existing checkpoint eligibility checks; do not lower the global floor.
+- `structure-3775`: `route_volatility`
+  - Good targeted run: `97/A`
+  - Full run: `79/C`
+  - First divergence is a same-state `artifact_repeating_page_furniture` outcome change.
+  - Decision: do not add a route guard yet; needs a focused same-state proof and controls.
+- `long-4470`: `final_reanalysis_drop`
+  - Full run: `96/A` in-run, `59/F` after final reanalysis.
+  - Decision: do not preserve the in-run score until analyzer/final-state evidence is reconciled.
+- `font-4057`: `residual_no_safe_fix`
+  - Full run: `69/D`.
+  - Decision: treat as residual debt until a category-moving diagnostic path is found.
+- `structure-4438`: still `no_eligible_checkpoint_available`, best checkpoint `36/F` below `90/A`.
+
+Targeted validation artifact:
+
+- `Output/experiment-corpus-baseline/run-long4683-route-volatility-target-2026-05-07-r1`
+
+Targeted validation result:
+
+- Selected rows: `10 / 50`
+- Remediation success/errors: `9 / 1`
+- Reanalyzed mean/median: `86.7 / 96`
+- `false_positive_applied = 0`
+- `long-4683`: `87/B`, completed without hard timeout.
+- `long-4516`: `89/B`, existing checkpoint recovery preserved.
+- `long-4470`: `96/A`, no final reanalysis drop in this repeat.
+- `structure-3775`: `97/A`.
+- `fixture-inaccessible`: `97/A`.
+- `fixture-teams-original`: `98/A`.
+- `font-4035`: `99/A`.
+- `font-4057`: still `69/D`.
+- `structure-4076`: regressed in this repeat to `59/F` in-run / `48/F` reanalyzed.
+- `structure-4438`: hard timeout with best checkpoint `36/F`, still below floor.
+
+Repeat status:
+
+- A second targeted repeat was started to distinguish volatility from regression.
+- It was stopped early after `fixture-inaccessible` took the known bad `79/C` route again.
+- Because that protected control was already bad, the repeat was not allowed to spend more time on the long rows.
+
+Decision:
+
+- Keep the row-specific `long-4683` checkpoint floor because it converts the hard timeout into a verified `87/B` completion without changing global policy.
+- Do not run fixed 50 from this stage yet.
+- Do not add behavior for `structure-3775`, `long-4470`, or `font-4057` from this evidence.
+- Next work should focus on route volatility stabilization for `fixture-inaccessible` / `structure-3775` and recurring `structure-4076` drift before another fixed-50 run.

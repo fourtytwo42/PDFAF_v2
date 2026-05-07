@@ -62,6 +62,33 @@ export interface RowDriftClassification {
   recommendation: string;
 }
 
+export type TargetRowClassification =
+  | 'safe_checkpoint_candidate'
+  | 'route_volatility'
+  | 'final_reanalysis_drop'
+  | 'no_eligible_checkpoint'
+  | 'residual_no_safe_fix'
+  | 'needs_behavior_probe'
+  | 'missing_evidence';
+
+export interface TargetRowRouteClassification {
+  rowId: string;
+  classification: TargetRowClassification;
+  goodScore: number | null;
+  candidateScore: number | null;
+  goodReanalyzedScore: number | null;
+  candidateReanalyzedScore: number | null;
+  candidateError: string | null;
+  finalReanalysisDrop: number | null;
+  firstDivergence: TimelineDivergence | null;
+  timeoutPhase: string | null;
+  checkpointFloor: number | null;
+  bestCheckpointScore: number | null;
+  bestCheckpointEligibilityReason: string | null;
+  pacRejectionCount: number;
+  recommendation: string;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -99,6 +126,25 @@ function pacReasonFromDetails(details: Record<string, unknown> | null): string |
   const raw = stringOrNull(details?.['raw']);
   if (raw?.startsWith('pac_rule_regressed(')) return raw;
   return null;
+}
+
+function rowError(row: RemediateBenchmarkRow | null | undefined): string | null {
+  const record = asRecord(row);
+  return stringOrNull(record?.['error']);
+}
+
+function pacRejectionCount(row: RemediateBenchmarkRow | null | undefined): number {
+  if (!row) return 0;
+  return toolTimeline(row).filter(event => event.pacReason).length;
+}
+
+function bestCheckpoint(trace: RuntimeTimeoutTraceSummary | null | undefined): RuntimeTimeoutTraceSummary['verifiedCheckpointHistory'][number] | null {
+  const history = trace?.verifiedCheckpointHistory ?? [];
+  if (history.length === 0) return null;
+  return [...history].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.elapsedMs - b.elapsedMs;
+  })[0] ?? null;
 }
 
 export function toolTimeline(row: Pick<RemediateBenchmarkRow, 'appliedTools'>): ToolTimelineEvent[] {
@@ -262,6 +308,74 @@ export function classifyRowDrift(input: {
   };
 }
 
+export function classifyTargetRowRoute(input: {
+  rowId: string;
+  goodRow?: RemediateBenchmarkRow | null;
+  candidateRow?: RemediateBenchmarkRow | null;
+  timeoutTrace?: RuntimeTimeoutTraceSummary | null;
+  checkpointFloor?: number;
+  probeCheckpointFloor?: number;
+}): TargetRowRouteClassification {
+  const goodRow = input.goodRow ?? null;
+  const candidateRow = input.candidateRow ?? null;
+  const firstDivergence = goodRow && candidateRow
+    ? firstTimelineDivergence(toolTimeline(goodRow), toolTimeline(candidateRow))
+    : null;
+  const finalReanalysisDrop = (
+    candidateRow &&
+    typeof candidateRow.afterScore === 'number' &&
+    typeof candidateRow.reanalyzedScore === 'number'
+  )
+    ? candidateRow.afterScore - candidateRow.reanalyzedScore
+    : null;
+  const checkpoint = bestCheckpoint(input.timeoutTrace);
+  const checkpointFloor = input.checkpointFloor ?? null;
+  const probeCheckpointFloor = input.probeCheckpointFloor ?? checkpointFloor ?? null;
+  const candidateError = rowError(candidateRow);
+  const pacCount = pacRejectionCount(candidateRow);
+  let classification: TargetRowClassification = 'missing_evidence';
+  let recommendation = 'Collect a focused good/candidate comparison before changing behavior.';
+
+  if (input.timeoutTrace) {
+    if (checkpoint && probeCheckpointFloor != null && checkpoint.score >= probeCheckpointFloor) {
+      classification = checkpoint.eligible ? 'safe_checkpoint_candidate' : 'needs_behavior_probe';
+      recommendation = checkpoint.eligible
+        ? 'A timeout checkpoint is already eligible; verify why it was not returned.'
+        : 'Run a narrow checkpoint-floor probe using existing checkpoint safety checks; do not lower the global floor.';
+    } else {
+      classification = 'no_eligible_checkpoint';
+      recommendation = 'Keep hard-timeout behavior unless a higher-quality checkpoint appears.';
+    }
+  } else if (firstDivergence && goodRow && candidateRow && (goodRow.afterScore ?? 0) > (candidateRow.afterScore ?? 0)) {
+    classification = 'route_volatility';
+    recommendation = 'Inspect same-state divergence before adding a route guard.';
+  } else if (finalReanalysisDrop != null && finalReanalysisDrop >= 5) {
+    classification = 'final_reanalysis_drop';
+    recommendation = 'Do not preserve the in-run score until final reanalysis evidence is reconciled.';
+  } else if (candidateRow) {
+    classification = 'residual_no_safe_fix';
+    recommendation = 'Treat as residual debt unless a focused diagnostic finds a category-moving safe route.';
+  }
+
+  return {
+    rowId: input.rowId,
+    classification,
+    goodScore: goodRow?.afterScore ?? null,
+    candidateScore: candidateRow?.afterScore ?? null,
+    goodReanalyzedScore: goodRow?.reanalyzedScore ?? null,
+    candidateReanalyzedScore: candidateRow?.reanalyzedScore ?? null,
+    candidateError,
+    finalReanalysisDrop,
+    firstDivergence,
+    timeoutPhase: input.timeoutTrace?.lastPhase ?? null,
+    checkpointFloor,
+    bestCheckpointScore: checkpoint?.score ?? null,
+    bestCheckpointEligibilityReason: checkpoint?.eligibilityReason ?? input.timeoutTrace?.lastVerifiedCheckpointEligibilityReason ?? null,
+    pacRejectionCount: pacCount,
+    recommendation,
+  };
+}
+
 async function loadRows(runDir: string): Promise<RemediateBenchmarkRow[]> {
   const loaded = await loadBenchmarkRowsFromRunDir(runDir);
   return loaded.remediateResults;
@@ -292,6 +406,7 @@ function markdown(report: {
   fixture: FixtureRouteClassification;
   structure: StructureCheckpointClassification;
   structure4076: RowDriftClassification;
+  targetRows: TargetRowRouteClassification[];
 }): string {
   const lines: string[] = [];
   lines.push('# PAC Target Route Diagnostic', '');
@@ -326,6 +441,25 @@ function markdown(report: {
     lines.push(`- Bad event: \`${renderTool(report.structure4076.firstDivergence.right)}\``);
   }
   lines.push(`- Recommendation: ${report.structure4076.recommendation}`, '');
+  lines.push('## Target Row Isolation', '');
+  for (const row of report.targetRows) {
+    lines.push(`### ${row.rowId}`, '');
+    lines.push(`- Classification: \`${row.classification}\``);
+    lines.push(`- Scores: good \`${row.goodScore ?? 'n/a'}\` / reanalyzed \`${row.goodReanalyzedScore ?? 'n/a'}\`, candidate \`${row.candidateScore ?? 'n/a'}\` / reanalyzed \`${row.candidateReanalyzedScore ?? 'n/a'}\``);
+    lines.push(`- Candidate error: \`${row.candidateError ?? 'n/a'}\``);
+    lines.push(`- Final reanalysis drop: \`${row.finalReanalysisDrop ?? 'n/a'}\``);
+    lines.push(`- Timeout phase: \`${row.timeoutPhase ?? 'n/a'}\``);
+    lines.push(`- Checkpoint floor: \`${row.checkpointFloor ?? 'n/a'}\``);
+    lines.push(`- Best checkpoint score: \`${row.bestCheckpointScore ?? 'n/a'}\``);
+    lines.push(`- Best checkpoint reason: \`${row.bestCheckpointEligibilityReason ?? 'n/a'}\``);
+    lines.push(`- PAC rejection count: \`${row.pacRejectionCount}\``);
+    if (row.firstDivergence) {
+      lines.push(`- First divergence: \`${row.firstDivergence.reason}\` at index \`${row.firstDivergence.index}\``);
+      lines.push(`- Good event: \`${renderTool(row.firstDivergence.left)}\``);
+      lines.push(`- Candidate event: \`${renderTool(row.firstDivergence.right)}\``);
+    }
+    lines.push(`- Recommendation: ${row.recommendation}`, '');
+  }
   return lines.join('\n');
 }
 
@@ -339,21 +473,47 @@ async function main(): Promise<void> {
   const badRun = argValue('--bad') ?? 'Output/experiment-corpus-baseline/run-verified-checkpoint-timeout-recovery-target-2026-05-07-r1';
   const structureRun = argValue('--structure') ?? badRun;
   const out = argValue('--out') ?? DEFAULT_OUT;
-  const [goodRows, badRows, trace] = await Promise.all([
+  const [goodRows, badRows, structureTrace, long4683Trace] = await Promise.all([
     loadRows(goodRun),
     loadRows(badRun),
     loadTrace(structureRun, 'structure-4438'),
+    loadTrace(badRun, 'long-4683'),
   ]);
   const fixture = classifyFixtureRoute({
     goodRow: rowById(goodRows, 'fixture-inaccessible'),
     badRow: rowById(badRows, 'fixture-inaccessible'),
   });
-  const structure = classifyStructureCheckpoint({ trace, floor: 90 });
+  const structure = classifyStructureCheckpoint({ trace: structureTrace, floor: 90 });
   const structure4076 = classifyRowDrift({
     rowId: 'structure-4076',
     goodRow: rowById(goodRows, 'structure-4076'),
     badRow: rowById(badRows, 'structure-4076'),
   });
+  const targetRows = [
+    classifyTargetRowRoute({
+      rowId: 'long-4683',
+      goodRow: rowById(goodRows, 'long-4683'),
+      candidateRow: rowById(badRows, 'long-4683'),
+      timeoutTrace: long4683Trace,
+      checkpointFloor: 85,
+      probeCheckpointFloor: 80,
+    }),
+    classifyTargetRowRoute({
+      rowId: 'structure-3775',
+      goodRow: rowById(goodRows, 'structure-3775'),
+      candidateRow: rowById(badRows, 'structure-3775'),
+    }),
+    classifyTargetRowRoute({
+      rowId: 'long-4470',
+      goodRow: rowById(goodRows, 'long-4470'),
+      candidateRow: rowById(badRows, 'long-4470'),
+    }),
+    classifyTargetRowRoute({
+      rowId: 'font-4057',
+      goodRow: rowById(goodRows, 'font-4057'),
+      candidateRow: rowById(badRows, 'font-4057'),
+    }),
+  ];
   const report = {
     generatedAt: new Date().toISOString(),
     goodRun,
@@ -362,6 +522,7 @@ async function main(): Promise<void> {
     fixture,
     structure,
     structure4076,
+    targetRows,
   };
   const outDir = resolve(out);
   await mkdir(outDir, { recursive: true });
@@ -369,6 +530,7 @@ async function main(): Promise<void> {
   await writeFile(join(outDir, 'pac-target-route-diagnostic.md'), markdown(report), 'utf8');
   console.log(`Wrote PAC target route diagnostic to ${outDir}`);
   console.log(`Fixture: ${fixture.classification}; structure-4438: ${structure.classification}; structure-4076: ${structure4076.classification}`);
+  console.log(`Targets: ${targetRows.map(row => `${row.rowId}:${row.classification}`).join(', ')}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

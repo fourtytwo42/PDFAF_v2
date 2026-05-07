@@ -869,6 +869,33 @@ describe('late reanalysis runtime guards', () => {
     })).toMatchObject({ eligible: false, floor: 80, reason: 'checkpoint_below_floor(79<80)' });
   });
 
+  it('uses the row-specific long-4683 verified checkpoint floor without lowering the default', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const checkpoint = {
+      analysis: makeAnalysis({ score: 80 }),
+      snapshot: makeSnapshot({ depth: 2 }),
+      appliedToolCount: 1,
+    };
+
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '50-long-report-mixed/4683-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 48 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'repair_list_li_wrong_parent', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({ eligible: true, floor: 80, reason: 'eligible' });
+
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: 'generic-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 48 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'repair_list_li_wrong_parent', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(80<85)' });
+  });
+
   it('rejects checkpoints with page text tag or mutation-truth regressions', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const textDropSnapshot = makeSnapshot({ depth: 2, textCharCount: 1000 });
