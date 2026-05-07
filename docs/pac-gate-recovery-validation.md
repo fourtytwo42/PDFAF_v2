@@ -404,3 +404,43 @@ Decision:
 - Keep the verified checkpoint return mechanism because it recovered two hard timeout rows without false-positive-applied evidence.
 - The remaining blockers are `structure-4438` lack of any eligible checkpoint and `fixture-inaccessible` route volatility.
 - Next work should target `structure-4438` early-stage route/analyzer progress or checkpoint floor feasibility, plus a separate route-volatility isolation for `fixture-inaccessible`; do not lower the `structure-4438` checkpoint floor below `90/A` without explicit acceptance-policy approval.
+
+## Structure-4438 Feasibility And Fixture Route Stabilization
+
+Implemented as diagnostic-first after verified checkpoint timeout recovery:
+
+- Added `scripts/pac-target-route-diagnostic.ts`.
+  - Compares good/bad `fixture-inaccessible` routes at tool-timeline level.
+  - Reports first divergence, replay-state signatures, PAC rejection reasons, link-repair outcome, and score movement.
+  - Classifies `structure-4438` checkpoint feasibility from timeout trace checkpoint history.
+- Extended timeout traces with `verifiedCheckpointHistory` so future timeout artifacts show every checkpoint candidate, not only the last one.
+- No remediation behavior was changed.
+  - No PAC scoring caps or PAC gate changes.
+  - No timeout increases.
+  - No planner broadening or new repair tools.
+  - `structure-4438` checkpoint floor remains `90/A`.
+
+Diagnostic artifacts:
+
+- Initial comparison: `Output/experiment-corpus-baseline/pac-target-route-diagnostic-2026-05-07-r1`
+- Focused `structure-4438` repeat: `Output/experiment-corpus-baseline/run-structure4438-feasibility-repeat-2026-05-07-r1`
+- Final comparison using repeat trace: `Output/experiment-corpus-baseline/pac-target-route-diagnostic-2026-05-07-r2`
+
+Findings:
+
+- `fixture-inaccessible` is confirmed route-volatile:
+  - Good route `run-trace-driven-final-reanalysis-target-2026-05-06-r2`: `97/A`
+  - Bad route `run-verified-checkpoint-timeout-recovery-target-2026-05-07-r1`: `79/C`
+  - First divergence occurs at `mark_untagged_content_as_artifact` from the same replay-state signature: good route rejects it, bad route applies it.
+  - `repair_native_link_structure` applies only in the good route and is rejected in the bad route.
+- `structure-4438` is confirmed `no_eligible_checkpoint_available` at the current floor:
+  - Focused repeat wrote `6` checkpoint candidates.
+  - Best checkpoint remained `36/F`.
+  - Every checkpoint was rejected as `checkpoint_below_floor(...<90)`.
+
+Decision:
+
+- Do not run fixed 50-file validation from this stage.
+- Do not lower the `structure-4438` floor or mask its timeout with a low checkpoint.
+- Do not add a broad orphan-MCID/PAC exception for `fixture-inaccessible`.
+- Next behavior work, if pursued, should be a narrow same-state artifact-route stabilization for `fixture-inaccessible`: when `mark_untagged_content_as_artifact` has the known same replay state and no score/link/category benefit, prefer the rejected/no-effect path that leaves `repair_native_link_structure` available.

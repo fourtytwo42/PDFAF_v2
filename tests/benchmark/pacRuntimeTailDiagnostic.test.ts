@@ -215,6 +215,18 @@ describe('PAC runtime tail diagnostic helpers', () => {
       lastVerifiedCheckpointEligibilityReason: 'eligible',
       lastVerifiedCheckpointReturned: true,
       lastVerifiedCheckpointAgeMs: 1000,
+      verifiedCheckpointHistory: [
+        {
+          reason: 'stage_1',
+          score: 36,
+          grade: 'F',
+          appliedToolCount: 3,
+          eligible: false,
+          eligibilityReason: 'checkpoint_below_floor(36<90)',
+          returned: false,
+          elapsedMs: 120_000,
+        },
+      ],
     });
     expect(parsed).toMatchObject({
       lastVerifiedCheckpointScore: 91,
@@ -225,6 +237,14 @@ describe('PAC runtime tail diagnostic helpers', () => {
       lastVerifiedCheckpointEligibilityReason: 'eligible',
       lastVerifiedCheckpointReturned: true,
       lastVerifiedCheckpointAgeMs: 1000,
+      verifiedCheckpointHistory: [
+        {
+          reason: 'stage_1',
+          score: 36,
+          eligible: false,
+          eligibilityReason: 'checkpoint_below_floor(36<90)',
+        },
+      ],
     });
     expect(parseRuntimeTimeoutTrace({
       lastPhase: 'tool_start',
@@ -232,6 +252,7 @@ describe('PAC runtime tail diagnostic helpers', () => {
     })).toMatchObject({
       lastVerifiedCheckpointScore: null,
       lastVerifiedCheckpointReturned: false,
+      verifiedCheckpointHistory: [],
     });
   });
 

@@ -141,6 +141,16 @@ interface BenchmarkRuntimeTimeoutTrace {
   lastVerifiedCheckpointEligibilityReason: string | null;
   lastVerifiedCheckpointReturned: boolean;
   lastVerifiedCheckpointAgeMs: number | null;
+  verifiedCheckpointHistory: Array<{
+    reason: string;
+    score: number;
+    grade: string | null;
+    appliedToolCount: number;
+    eligible: boolean;
+    eligibilityReason: string;
+    returned: boolean;
+    elapsedMs: number;
+  }>;
 }
 
 function parseTraceReason(details: string | undefined): string | null {
@@ -182,6 +192,7 @@ function createRuntimeTimeoutTrace(entry: ExperimentCorpusEntry, started: number
     lastVerifiedCheckpointEligibilityReason: null,
     lastVerifiedCheckpointReturned: false,
     lastVerifiedCheckpointAgeMs: null,
+    verifiedCheckpointHistory: [],
   };
   const mark = (phase: string): void => {
     state.lastPhase = phase;
@@ -234,6 +245,16 @@ function createRuntimeTimeoutTrace(entry: ExperimentCorpusEntry, started: number
         state.lastVerifiedCheckpointEligibilityReason = trace.eligibilityReason;
         state.lastVerifiedCheckpointReturned = trace.returned === true;
         state.lastVerifiedCheckpointAgeMs = 0;
+        state.verifiedCheckpointHistory.push({
+          reason: trace.reason,
+          score: trace.score,
+          grade: trace.grade ?? null,
+          appliedToolCount: trace.appliedToolCount,
+          eligible: trace.eligible,
+          eligibilityReason: trace.eligibilityReason,
+          returned: trace.returned === true,
+          elapsedMs: Math.round(trace.elapsedMs),
+        });
         break;
     }
   };

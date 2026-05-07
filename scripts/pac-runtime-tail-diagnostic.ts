@@ -76,6 +76,16 @@ export interface RuntimeTimeoutTraceSummary {
   lastVerifiedCheckpointEligibilityReason: string | null;
   lastVerifiedCheckpointReturned: boolean;
   lastVerifiedCheckpointAgeMs: number | null;
+  verifiedCheckpointHistory: Array<{
+    reason: string;
+    score: number;
+    grade: string | null;
+    appliedToolCount: number;
+    eligible: boolean;
+    eligibilityReason: string;
+    returned: boolean;
+    elapsedMs: number;
+  }>;
 }
 
 export interface RuntimeTailDiagnosticReport {
@@ -129,6 +139,27 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function verifiedCheckpointHistory(value: unknown): RuntimeTimeoutTraceSummary['verifiedCheckpointHistory'] {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => {
+    const record = asRecord(item);
+    if (!record) return null;
+    const reason = stringOrNull(record['reason']);
+    const score = numberOrNull(record['score']);
+    if (!reason || score == null) return null;
+    return {
+      reason,
+      score,
+      grade: stringOrNull(record['grade']),
+      appliedToolCount: numberOrNull(record['appliedToolCount']) ?? 0,
+      eligible: record['eligible'] === true,
+      eligibilityReason: stringOrNull(record['eligibilityReason']) ?? 'unknown',
+      returned: record['returned'] === true,
+      elapsedMs: numberOrNull(record['elapsedMs']) ?? 0,
+    };
+  }).filter((item): item is RuntimeTimeoutTraceSummary['verifiedCheckpointHistory'][number] => Boolean(item));
+}
+
 export function parseRuntimeTimeoutTrace(value: unknown): RuntimeTimeoutTraceSummary | null {
   const record = asRecord(value);
   if (!record) return null;
@@ -156,6 +187,7 @@ export function parseRuntimeTimeoutTrace(value: unknown): RuntimeTimeoutTraceSum
     lastVerifiedCheckpointEligibilityReason: stringOrNull(record['lastVerifiedCheckpointEligibilityReason']),
     lastVerifiedCheckpointReturned: record['lastVerifiedCheckpointReturned'] === true,
     lastVerifiedCheckpointAgeMs: numberOrNull(record['lastVerifiedCheckpointAgeMs']),
+    verifiedCheckpointHistory: verifiedCheckpointHistory(record['verifiedCheckpointHistory']),
   };
 }
 
