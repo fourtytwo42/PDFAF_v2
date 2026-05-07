@@ -165,7 +165,7 @@ function roleMapDebtSnapshot(count: number): DocumentSnapshot {
   });
 }
 
-function orphanMcidDebtSnapshot(count: number): DocumentSnapshot {
+function orphanMcidDebtSnapshot(count: number, overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
   return baseSnapshot({
     orphanMcids: Array.from({ length: count }, (_, index) => ({ page: 0, mcid: index })),
     detectionProfile: {
@@ -176,6 +176,7 @@ function orphanMcidDebtSnapshot(count: number): DocumentSnapshot {
         taggedAnnotationRiskCount: 0,
       },
     },
+    ...overrides,
   });
 }
 
@@ -384,6 +385,132 @@ describe('pacRuleAcceptanceGate', () => {
       afterScore: 79,
       beforeLinkQualityScore: 73,
       afterLinkQualityScore: 73,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('allows heading candidate recovery only with score and heading-category movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['create_heading_from_candidate'],
+      beforeScore: 34,
+      afterScore: 99,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 100,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(create_heading_from_candidate)',
+    });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['create_heading_from_candidate'],
+      beforeScore: 34,
+      afterScore: 99,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 0,
+    })).toEqual({ recover: false, reason: null });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['create_heading_from_candidate'],
+      beforeScore: 99,
+      afterScore: 99,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 100,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('allows heading hierarchy recovery only with score and heading-category movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_heading_hierarchy'],
+      beforeScore: 34,
+      afterScore: 99,
+      beforeHeadingScore: 86,
+      afterHeadingScore: 100,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(normalize_heading_hierarchy)',
+    });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_heading_hierarchy'],
+      beforeScore: 34,
+      afterScore: 99,
+      beforeHeadingScore: 86,
+      afterHeadingScore: 86,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('allows annotation tab-order recovery only with score and annotation-adjacent category movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_annotation_tab_order'],
+      beforeScore: 69,
+      afterScore: 79,
+      beforeLinkQualityScore: 58,
+      afterLinkQualityScore: 83,
+      beforeReadingOrderScore: 80,
+      afterReadingOrderScore: 80,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(normalize_annotation_tab_order)',
+    });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_annotation_tab_order'],
+      beforeScore: 69,
+      afterScore: 79,
+      beforeLinkQualityScore: 58,
+      afterLinkQualityScore: 58,
+      beforeReadingOrderScore: 80,
+      afterReadingOrderScore: 94,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(normalize_annotation_tab_order)',
+    });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_annotation_tab_order'],
+      beforeScore: 69,
+      afterScore: 79,
+      beforeLinkQualityScore: 58,
+      afterLinkQualityScore: 58,
+      beforeReadingOrderScore: 80,
+      afterReadingOrderScore: 80,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover orphan-MCID increases when page text or tag evidence regresses', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2, { textCharCount: 119 }),
+      toolNames: ['create_heading_from_candidate'],
+      beforeScore: 34,
+      afterScore: 99,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 100,
+    })).toEqual({ recover: false, reason: null });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2, { isTagged: false }),
+      toolNames: ['normalize_heading_hierarchy'],
+      beforeScore: 34,
+      afterScore: 99,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 100,
     })).toEqual({ recover: false, reason: null });
   });
 

@@ -855,3 +855,60 @@ Decision:
 - Do not patch broadly from this run alone.
 - Keep the existing `structure-3775` stabilization and checkpoint-return changes because targeted and full-run evidence still show they help specific rows.
 - Next work should be a narrow PAC orphan-MCID gate recovery design focused on score-moving heading/annotation repairs, plus a separate route-volatility check for `fixture-inaccessible`; `structure-4438` remains parked.
+
+## Narrow Orphan-MCID Recovery And Fixture Route Isolation
+
+Implemented after the failed fixed-50 validation:
+
+- Extended PAC orphan-MCID useful-repair recovery to score-moving heading and annotation tools:
+  - `create_heading_from_candidate`
+  - `normalize_heading_hierarchy`
+  - `normalize_annotation_tab_order`
+- Recovery is still limited to `pdfua.content.orphan_mcids_absent`; mixed PAC regressions still reject.
+- The new recovery requires:
+  - total score improvement
+  - repaired category movement (`heading_structure` for heading tools; `link_quality` or `reading_order` for tab order)
+  - page count preserved
+  - extracted text character count not reduced
+  - tagged state not lost
+- Existing `repair_alt_text_structure` and `repair_native_link_structure` recovery behavior was preserved.
+- No PAC scoring caps, PAC gate allow-list changes, checkpoint floor changes, timeout increases, planner broadening, API changes, or repair tools were added.
+
+Diagnostic artifacts:
+
+- Fixture route diagnostic before behavior: `Output/experiment-corpus-baseline/orphan-mcid-recovery-fixture-route-diagnostic-2026-05-07-r1`
+- Target run: `Output/experiment-corpus-baseline/run-orphan-mcid-recovery-target-2026-05-07-r1`
+- Target route diagnostic: `Output/experiment-corpus-baseline/orphan-mcid-recovery-target-route-2026-05-07-r1`
+- Target runtime diagnostic: `Output/experiment-corpus-baseline/orphan-mcid-recovery-target-runtime-2026-05-07-r1`
+- Target PAC recovery diagnostic: `Output/experiment-corpus-baseline/orphan-mcid-recovery-target-pac-recovery-2026-05-07-r1`
+
+Targeted validation result:
+
+- Selected rows: `14 / 50`
+- Remediation success/errors: `13 / 1`
+- Successful-row mean: `94.00`
+- Grade distribution: `12 A / 1 F / 1 error`
+- `false_positive_applied = 0`
+- PAC gate recovery diagnostic: `4` PAC gate rejections, `0` blocked useful repairs.
+- Recovered PAC blocker rows:
+  - `short-4074`: `99/A`
+  - `figure-4082`: `98/A`
+  - `figure-4188`: `98/A`
+  - `structure-4078`: `98/A`
+  - `structure-4108`: `99/A`
+  - `structure-4122`: `99/A`
+- Controls and runtime rows:
+  - `fixture-inaccessible`: `97/A`; route diagnostic classified fixture as `same_route`, so no new fixture guard was added.
+  - `structure-3775`: `97/A`
+  - `fixture-teams-original`: `98/A`
+  - `font-4035`: `99/A`
+  - `long-4516`: `92/A`
+  - `long-4683`: `92/A`
+  - `structure-4438`: parked hard timeout; best checkpoint `36/F`, below `90/A`.
+  - `structure-4076`: in-run `70/C`, but protected reanalysis dropped to `56/F`.
+
+Decision:
+
+- Keep the narrow orphan-MCID recovery expansion because it removes the targeted blocked useful repairs without broadening PAC policy.
+- Do not run fixed-50 from this stage yet: `structure-4076` still has reanalysis drift from `70/C` to `56/F`.
+- Next work should isolate `structure-4076` reanalysis drift after checkpoint/floor recovery; `structure-4438` remains parked.

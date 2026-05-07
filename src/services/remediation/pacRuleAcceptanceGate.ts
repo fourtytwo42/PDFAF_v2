@@ -161,14 +161,27 @@ export function pacRuleUsefulRepairRecovery(input: {
   toolNames: readonly string[];
   beforeScore: number;
   afterScore: number;
+  beforeHeadingScore?: number | null;
+  afterHeadingScore?: number | null;
   beforeLinkQualityScore?: number | null;
   afterLinkQualityScore?: number | null;
+  beforeReadingOrderScore?: number | null;
+  afterReadingOrderScore?: number | null;
   beforePdfUaScore?: number | null;
   afterPdfUaScore?: number | null;
 }): { recover: boolean; reason: string | null; details?: string } {
+  const isHeadingCandidateRepair = input.toolNames.includes('create_heading_from_candidate');
+  const isHeadingHierarchyRepair = input.toolNames.includes('normalize_heading_hierarchy');
+  const isAnnotationTabOrderRepair = input.toolNames.includes('normalize_annotation_tab_order');
   const isAltStructureRepair = input.toolNames.includes('repair_alt_text_structure');
   const isNativeLinkRepair = input.toolNames.includes('repair_native_link_structure');
-  if (!isAltStructureRepair && !isNativeLinkRepair) {
+  if (
+    !isHeadingCandidateRepair &&
+    !isHeadingHierarchyRepair &&
+    !isAnnotationTabOrderRepair &&
+    !isAltStructureRepair &&
+    !isNativeLinkRepair
+  ) {
     return { recover: false, reason: null };
   }
   const regressions = pacRuleAcceptanceRegressions({
@@ -183,17 +196,70 @@ export function pacRuleUsefulRepairRecovery(input: {
     return { recover: false, reason: null };
   }
   const scoreImproved = input.afterScore > input.beforeScore;
+  if (!pageTextTagEvidencePreserved(input.beforeSnapshot, input.afterSnapshot)) {
+    return { recover: false, reason: null };
+  }
+  const headingImproved = (
+    input.beforeHeadingScore != null &&
+    input.afterHeadingScore != null &&
+    input.afterHeadingScore > input.beforeHeadingScore
+  );
+  if (isHeadingCandidateRepair || isHeadingHierarchyRepair) {
+    if (!scoreImproved || !headingImproved) {
+      return { recover: false, reason: null };
+    }
+    const toolName = isHeadingCandidateRepair ? 'create_heading_from_candidate' : 'normalize_heading_hierarchy';
+    const reason = `pac_orphan_mcid_recovery(${toolName})`;
+    return {
+      recover: true,
+      reason,
+      details: JSON.stringify({
+        outcome: 'accepted',
+        note: reason,
+        pacRuleRegressions: regressions,
+        beforeScore: input.beforeScore,
+        afterScore: input.afterScore,
+        beforeHeadingScore: input.beforeHeadingScore ?? null,
+        afterHeadingScore: input.afterHeadingScore ?? null,
+      }),
+    };
+  }
+  const linkQualityImproved = (
+    input.beforeLinkQualityScore != null &&
+    input.afterLinkQualityScore != null &&
+    input.afterLinkQualityScore > input.beforeLinkQualityScore
+  );
+  const readingOrderImproved = (
+    input.beforeReadingOrderScore != null &&
+    input.afterReadingOrderScore != null &&
+    input.afterReadingOrderScore > input.beforeReadingOrderScore
+  );
+  if (isAnnotationTabOrderRepair) {
+    if (!scoreImproved || (!linkQualityImproved && !readingOrderImproved)) {
+      return { recover: false, reason: null };
+    }
+    return {
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(normalize_annotation_tab_order)',
+      details: JSON.stringify({
+        outcome: 'accepted',
+        note: 'pac_orphan_mcid_recovery(normalize_annotation_tab_order)',
+        pacRuleRegressions: regressions,
+        beforeScore: input.beforeScore,
+        afterScore: input.afterScore,
+        beforeLinkQualityScore: input.beforeLinkQualityScore ?? null,
+        afterLinkQualityScore: input.afterLinkQualityScore ?? null,
+        beforeReadingOrderScore: input.beforeReadingOrderScore ?? null,
+        afterReadingOrderScore: input.afterReadingOrderScore ?? null,
+      }),
+    };
+  }
   const pdfUaImproved = (
     input.beforePdfUaScore != null &&
     input.afterPdfUaScore != null &&
     input.afterPdfUaScore > input.beforePdfUaScore
   );
   if (isNativeLinkRepair) {
-    const linkQualityImproved = (
-      input.beforeLinkQualityScore != null &&
-      input.afterLinkQualityScore != null &&
-      input.afterLinkQualityScore > input.beforeLinkQualityScore
-    );
     if (!scoreImproved && !linkQualityImproved) {
       return { recover: false, reason: null };
     }
@@ -227,6 +293,13 @@ export function pacRuleUsefulRepairRecovery(input: {
       afterPdfUaScore: input.afterPdfUaScore ?? null,
     }),
   };
+}
+
+function pageTextTagEvidencePreserved(before: DocumentSnapshot, after: DocumentSnapshot): boolean {
+  if (after.pageCount !== before.pageCount) return false;
+  if (after.textCharCount < before.textCharCount) return false;
+  if (before.isTagged && !after.isTagged) return false;
+  return true;
 }
 
 export function pacRuleAcceptanceGateForAppliedTools(input: {
