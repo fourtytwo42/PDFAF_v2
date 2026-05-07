@@ -498,3 +498,98 @@ Decision:
 - Keep the fixture route stabilization as useful but not sufficient for a full acceptance run.
 - The remaining blockers are runtime/checkpoint-return timing on `long-4516`, persistent no-eligible-checkpoint behavior on `structure-4438`, and `structure-4076` route drift below its `70/C` floor.
 - Next work should isolate why the eligible `long-4516` checkpoint was not returned before the wall timeout and why `structure-4076` regressed from the prior `70/C` checkpoint result to `69/D`/`56/F`.
+
+## Long-4516 Checkpoint Return And Structure-4076 Drift Isolation
+
+Implemented after fixture route stabilization:
+
+- Added an earlier verified-checkpoint admission window before risky work.
+  - Existing low-budget soft-stop behavior remains unchanged.
+  - Checkpoint return now uses a larger risky-work threshold before starting another tool, stage reanalysis, post-pass, or final reanalysis.
+  - The returned checkpoint still has to meet existing safety floors and regression checks.
+- Preserved checkpoint floors:
+  - default: `85/B`
+  - `structure-4076`: `70/C`
+  - `long-4516`: `80/B`
+  - `structure-4438`: `90/A`
+- Extended `scripts/pac-target-route-diagnostic.ts` with `structure-4076` drift comparison.
+- No PAC scoring caps, PAC gate allow-list changes, timeout increases, planner broadening, new mutators, or API changes were added.
+
+Diagnostic artifacts:
+
+- Route/drift diagnostic: `Output/experiment-corpus-baseline/pac-target-route-diagnostic-2026-05-07-r3`
+- Targeted validation r1: `Output/experiment-corpus-baseline/run-long4516-checkpoint-return-target-2026-05-07-r1`
+- Targeted validation r2: `Output/experiment-corpus-baseline/run-long4516-checkpoint-return-target-2026-05-07-r2`
+- Focused `structure-3775` smoke: `Output/experiment-corpus-baseline/run-long4516-checkpoint-return-structure3775-smoke-2026-05-07-r1`
+- Fixed 50 run: `Output/experiment-corpus-baseline/run-long4516-checkpoint-return-full-2026-05-07-r1`
+- Stage 41 gate: `Output/experiment-corpus-baseline/long4516-checkpoint-return-gate-2026-05-07-r1`
+
+Targeted r2 result:
+
+- Selected rows: `10 / 50`
+- Remediation success/errors: `9 / 1`
+- Reanalyzed mean/median: `89.1 / 97`
+- `false_positive_applied = 0`
+- `fixture-inaccessible`: `97/A`
+- `fixture-teams-original`: `98/A`
+- `structure-3661`: `98/A`
+- `structure-3775`: `97/A`
+- `font-4035`: `99/A`
+- `long-4516`: `89/B` via `verified_checkpoint_timeout_return`
+- `long-4683`: `96/A`
+- `structure-4076`: `69/D`, below the target floor but left unchanged because the drift diagnostic shows route divergence rather than a proven safe same-state behavior fix.
+- `structure-4438`: hard timeout with trace showing best checkpoint `36/F`, correctly below the `90/A` floor.
+- `figure-4188`: unresolved at `59/F`, not regressed.
+
+Structure-4076 drift finding:
+
+- Good reference: `run-verified-checkpoint-timeout-recovery-target-2026-05-07-r1`
+- Bad comparison: `run-fixture-artifact-route-stabilization-target-2026-05-07-r1`
+- Classification: `route_drift`
+- Good score/reanalysis: `70 / 70`
+- Bad score/reanalysis: `69 / 56`
+- Final reanalysis drop in the bad route: `13`
+- First divergence is the first tool row:
+  - good: `normalize_pdfua_catalog_settings` applied from score `48`
+  - bad: `normalize_pdfua_catalog_settings` rejected from score `53`
+- Decision: do not add a `structure-4076` route guard until a safe same-state/order issue is proven.
+
+Fixed 50 result:
+
+- Selected rows: `50 / 50`
+- Remediation success/errors: `48 / 2`
+- Remediation after mean/median/p95: `89.9 / 97.0 / 100.0`
+- Reanalyzed mean/median/p95: `88.9 / 97.0 / 99.0`
+- Runtime wall mean/median/p95: `33169.6ms / 14143.3ms / 111286.1ms`
+- Bounded-work signals included `verified_checkpoint_timeout_return: 2`.
+- `long-4516` recovered to `86/B` with no hard timeout.
+- `structure-4076` reached `70/C`.
+- `structure-4438` still hard-timed out with best checkpoint `36/F`, below floor.
+- `long-4683` hard-timed out in the full run; its timeout trace shows best checkpoint `80/B`, below the default `85/B` floor.
+- `structure-3775` showed volatility (`79/C` in the full run, `97/A` in the targeted repeat and focused smoke).
+- `long-4470` showed a large final reanalysis drop (`96/A` in-run to `59/F` reanalyzed).
+- `font-4057` remained low at `69/D`.
+
+Stage 41 gate decision: `FAIL`.
+
+Failed gates:
+
+- `analyze_success`
+- `remediate_success`
+- `route_summary_coverage`
+- `f_grade_count`
+- `protected_file_regressions`
+- `runtime_p95_wall`
+- `total_tool_attempts`
+
+Decision:
+
+- Keep the earlier risky-work checkpoint return behavior because it recovered `long-4516` and improved runtime handling without weakening PAC strictness.
+- Do not treat the fixed 50 as acceptance-ready: reanalyzed mean is still below the `90+` goal, two rows still time out, and route/reanalysis volatility remains.
+- Do not lower the `structure-4438` floor.
+- Do not lower the default checkpoint floor for `long-4683` without a separate safety plan.
+- Next work should isolate:
+  - `long-4683` timeout versus its below-floor `80/B` checkpoint;
+  - `structure-3775` route volatility;
+  - `long-4470` final reanalysis drop;
+  - `font-4057` low-score residual.

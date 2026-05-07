@@ -28,6 +28,7 @@ import {
   shouldRejectStageResult,
   shouldCaptureProtectedDebugState,
   shouldKeepCurrentStateForRuntimeSoftStop,
+  shouldReturnVerifiedCheckpointBeforeRiskyWork,
   shouldSkipLateArtifactReanalysisGuard,
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSoftStopForCumulativeReanalysis,
@@ -835,6 +836,37 @@ describe('late reanalysis runtime guards', () => {
       appliedTools: [],
       nearWallBudget: true,
     })).toMatchObject({ eligible: false, floor: 90, reason: 'checkpoint_below_floor(89<90)' });
+  });
+
+  it('uses a larger return window before risky checkpoint work', () => {
+    expect(shouldSoftStopForRemediationDeadline({
+      startedAtMs: 0,
+      nowMs: 238_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+    })).toBe(false);
+    expect(shouldReturnVerifiedCheckpointBeforeRiskyWork({
+      startedAtMs: 0,
+      nowMs: 238_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 95_000,
+    })).toBe(true);
+  });
+
+  it('keeps the long-4516 verified checkpoint floor at B-grade', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '50-long-report-mixed/4516-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 48 }),
+      beforeSnapshot,
+      checkpoint: {
+        analysis: makeAnalysis({ score: 79 }),
+        snapshot: makeSnapshot({ depth: 2 }),
+        appliedToolCount: 2,
+      },
+      appliedTools: [],
+      nearWallBudget: true,
+    })).toMatchObject({ eligible: false, floor: 80, reason: 'checkpoint_below_floor(79<80)' });
   });
 
   it('rejects checkpoints with page text tag or mutation-truth regressions', () => {

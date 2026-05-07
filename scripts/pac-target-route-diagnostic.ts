@@ -50,6 +50,18 @@ export interface StructureCheckpointClassification {
   recommendation: string;
 }
 
+export interface RowDriftClassification {
+  rowId: string;
+  classification: 'route_drift' | 'final_reanalysis_drop' | 'same_route' | 'missing_evidence';
+  goodScore: number | null;
+  badScore: number | null;
+  goodReanalyzedScore: number | null;
+  badReanalyzedScore: number | null;
+  firstDivergence: TimelineDivergence | null;
+  finalReanalysisDrop: number | null;
+  recommendation: string;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -203,6 +215,53 @@ export function classifyStructureCheckpoint(input: {
   };
 }
 
+export function classifyRowDrift(input: {
+  rowId: string;
+  goodRow?: RemediateBenchmarkRow | null;
+  badRow?: RemediateBenchmarkRow | null;
+}): RowDriftClassification {
+  if (!input.goodRow || !input.badRow) {
+    return {
+      rowId: input.rowId,
+      classification: 'missing_evidence',
+      goodScore: null,
+      badScore: null,
+      goodReanalyzedScore: null,
+      badReanalyzedScore: null,
+      firstDivergence: null,
+      finalReanalysisDrop: null,
+      recommendation: 'Collect both good and bad target rows before changing remediation behavior.',
+    };
+  }
+  const firstDivergence = firstTimelineDivergence(toolTimeline(input.goodRow), toolTimeline(input.badRow));
+  const badFinalDrop = (
+    typeof input.badRow.afterScore === 'number' &&
+    typeof input.badRow.reanalyzedScore === 'number'
+  )
+    ? input.badRow.afterScore - input.badRow.reanalyzedScore
+    : null;
+  const classification = firstDivergence
+    ? 'route_drift'
+    : badFinalDrop != null && badFinalDrop >= 5
+      ? 'final_reanalysis_drop'
+      : 'same_route';
+  return {
+    rowId: input.rowId,
+    classification,
+    goodScore: input.goodRow.afterScore ?? null,
+    badScore: input.badRow.afterScore ?? null,
+    goodReanalyzedScore: input.goodRow.reanalyzedScore ?? null,
+    badReanalyzedScore: input.badRow.reanalyzedScore ?? null,
+    firstDivergence,
+    finalReanalysisDrop: badFinalDrop,
+    recommendation: classification === 'route_drift'
+      ? 'Do not add a behavior guard until the same-state divergence is proven safe on controls.'
+      : classification === 'final_reanalysis_drop'
+        ? 'Inspect final reanalysis evidence before accepting a preserved in-run state.'
+        : 'No route drift is proven from the supplied rows.',
+  };
+}
+
 async function loadRows(runDir: string): Promise<RemediateBenchmarkRow[]> {
   const loaded = await loadBenchmarkRowsFromRunDir(runDir);
   return loaded.remediateResults;
@@ -232,6 +291,7 @@ function markdown(report: {
   structureRun: string;
   fixture: FixtureRouteClassification;
   structure: StructureCheckpointClassification;
+  structure4076: RowDriftClassification;
 }): string {
   const lines: string[] = [];
   lines.push('# PAC Target Route Diagnostic', '');
@@ -256,6 +316,16 @@ function markdown(report: {
   lines.push(`- Best eligible score: \`${report.structure.bestEligibleScore ?? 'n/a'}\``);
   lines.push(`- Last eligibility reason: \`${report.structure.lastEligibilityReason ?? 'n/a'}\``);
   lines.push(`- Recommendation: ${report.structure.recommendation}`, '');
+  lines.push('## Structure 4076 Drift', '');
+  lines.push(`- Classification: \`${report.structure4076.classification}\``);
+  lines.push(`- Scores: good \`${report.structure4076.goodScore ?? 'n/a'}\` / reanalyzed \`${report.structure4076.goodReanalyzedScore ?? 'n/a'}\`, bad \`${report.structure4076.badScore ?? 'n/a'}\` / reanalyzed \`${report.structure4076.badReanalyzedScore ?? 'n/a'}\``);
+  lines.push(`- Final reanalysis drop: \`${report.structure4076.finalReanalysisDrop ?? 'n/a'}\``);
+  if (report.structure4076.firstDivergence) {
+    lines.push(`- First divergence: \`${report.structure4076.firstDivergence.reason}\` at index \`${report.structure4076.firstDivergence.index}\``);
+    lines.push(`- Good event: \`${renderTool(report.structure4076.firstDivergence.left)}\``);
+    lines.push(`- Bad event: \`${renderTool(report.structure4076.firstDivergence.right)}\``);
+  }
+  lines.push(`- Recommendation: ${report.structure4076.recommendation}`, '');
   return lines.join('\n');
 }
 
@@ -279,6 +349,11 @@ async function main(): Promise<void> {
     badRow: rowById(badRows, 'fixture-inaccessible'),
   });
   const structure = classifyStructureCheckpoint({ trace, floor: 90 });
+  const structure4076 = classifyRowDrift({
+    rowId: 'structure-4076',
+    goodRow: rowById(goodRows, 'structure-4076'),
+    badRow: rowById(badRows, 'structure-4076'),
+  });
   const report = {
     generatedAt: new Date().toISOString(),
     goodRun,
@@ -286,13 +361,14 @@ async function main(): Promise<void> {
     structureRun,
     fixture,
     structure,
+    structure4076,
   };
   const outDir = resolve(out);
   await mkdir(outDir, { recursive: true });
   await writeFile(join(outDir, 'pac-target-route-diagnostic.json'), JSON.stringify(report, null, 2), 'utf8');
   await writeFile(join(outDir, 'pac-target-route-diagnostic.md'), markdown(report), 'utf8');
   console.log(`Wrote PAC target route diagnostic to ${outDir}`);
-  console.log(`Fixture: ${fixture.classification}; structure-4438: ${structure.classification}`);
+  console.log(`Fixture: ${fixture.classification}; structure-4438: ${structure.classification}; structure-4076: ${structure4076.classification}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

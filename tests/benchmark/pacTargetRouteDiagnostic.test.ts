@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyFixtureRoute,
+  classifyRowDrift,
   classifyStructureCheckpoint,
   firstTimelineDivergence,
   toolTimeline,
@@ -182,6 +183,59 @@ describe('PAC target route diagnostic helpers', () => {
       bestCheckpointScore: 36,
       bestEligibleScore: null,
       checkpointCount: 1,
+    });
+  });
+
+  it('classifies structure-4076 route drift with first divergence details', () => {
+    const goodRow = row({
+      id: 'structure-4076',
+      afterScore: 70,
+      reanalyzedScore: 70,
+      appliedTools: [
+        tool({ toolName: 'normalize_annotation_tab_order', outcome: 'applied', scoreAfter: 62, state: 'a' }),
+        tool({ toolName: 'set_document_language', outcome: 'applied', scoreAfter: 70, state: 'b' }),
+      ],
+    });
+    const badRow = row({
+      id: 'structure-4076',
+      afterScore: 69,
+      reanalyzedScore: 56,
+      appliedTools: [
+        tool({ toolName: 'normalize_annotation_tab_order', outcome: 'applied', scoreAfter: 62, state: 'a' }),
+        tool({ toolName: 'set_document_language', outcome: 'rejected', scoreAfter: 62, state: 'b' }),
+      ],
+    });
+
+    expect(classifyRowDrift({ rowId: 'structure-4076', goodRow, badRow })).toMatchObject({
+      rowId: 'structure-4076',
+      classification: 'route_drift',
+      finalReanalysisDrop: 13,
+      firstDivergence: {
+        index: 1,
+        reason: 'tool_outcome_changed',
+        left: { toolName: 'set_document_language', outcome: 'applied' },
+        right: { toolName: 'set_document_language', outcome: 'rejected' },
+      },
+    });
+  });
+
+  it('classifies final reanalysis drops without timeline divergence', () => {
+    const tools = [tool({ toolName: 'set_document_language', outcome: 'applied', scoreAfter: 69, state: 'b' })];
+    expect(classifyRowDrift({
+      rowId: 'structure-4076',
+      goodRow: row({ id: 'structure-4076', afterScore: 69, reanalyzedScore: 69, appliedTools: tools }),
+      badRow: row({ id: 'structure-4076', afterScore: 69, reanalyzedScore: 56, appliedTools: tools }),
+    })).toMatchObject({
+      classification: 'final_reanalysis_drop',
+      finalReanalysisDrop: 13,
+      firstDivergence: null,
+    });
+  });
+
+  it('handles missing structure-4076 drift rows without crashing', () => {
+    expect(classifyRowDrift({ rowId: 'structure-4076', goodRow: null, badRow: null })).toMatchObject({
+      classification: 'missing_evidence',
+      firstDivergence: null,
     });
   });
 });
