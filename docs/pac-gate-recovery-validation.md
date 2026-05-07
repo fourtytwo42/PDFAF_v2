@@ -717,3 +717,41 @@ Decision:
 - `structure-4076` remains the main quality blocker and should be isolated as route/analyzer drift before more broad validation.
 - `long-4516` now needs a separate checkpoint-finalization closeout: the trace proves an eligible checkpoint return occurred, but the row still ended as a hard timeout.
 - `structure-4438` remains parked because it still has no eligible checkpoint.
+
+## Long-4516 Checkpoint Terminalization
+
+Implemented after route-volatility stabilization:
+
+- Benchmark full-mode final reanalysis now treats an existing `verified_checkpoint_timeout_return` as terminal, even when the returned checkpoint is below the generic `85/B` high-B final-reanalysis guard.
+- The benchmark runtime trace marks completed checkpoint returns as `verified_checkpoint_return_completed` instead of entering final reanalysis.
+- `scripts/pac-runtime-tail-diagnostic.ts` now classifies the broken trace shape `returned_checkpoint_then_timeout` separately from ordinary hard timeouts.
+- PAC scoring caps, PAC gate allow-lists, timeout defaults, checkpoint floors, planner routing, and mutators were not changed.
+
+Validation artifacts:
+
+- Target run: `Output/experiment-corpus-baseline/run-long4516-checkpoint-terminalization-target-2026-05-07-r1`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/long4516-checkpoint-terminalization-diagnostic-2026-05-07-r1`
+
+Targeted validation result:
+
+- Selected rows: `10 / 50`
+- Remediation success/errors: `9 / 1`
+- Reanalyzed mean/median: `85.4 / 89`
+- `false_positive_applied = 0`
+- `long-4516`: `89/B`, completed with `verified_checkpoint_timeout_return` and no hard timeout.
+- `long-4683`: `86/B`, completed with `verified_checkpoint_timeout_return`.
+- `fixture-inaccessible`: `97/A`
+- `fixture-teams-original`: `98/A`
+- `font-4035`: `99/A`
+- `long-4470`: `92/A`
+- `font-4057`: stable residual `69/D`
+- `structure-3775`: route-volatility repeat at `79/C`
+- `structure-4076`: drifted to `60/D`
+- `structure-4438`: only remaining hard timeout; trace still shows best checkpoint `36/F`, below the `90/A` floor.
+
+Decision:
+
+- Keep the checkpoint terminalization fix: it closes the specific `long-4516` timeout leak without weakening PAC strictness or raising timeouts.
+- Do not run fixed 50 from this stage yet because `structure-3775` and `structure-4076` failed targeted acceptance.
+- `structure-4438` remains parked until it produces an eligible `90/A` checkpoint or a real fixer path.
+- Next work should isolate `structure-4076` and `structure-3775` route/analyzer drift; avoid broad PAC policy changes and avoid lowering global checkpoint floors.

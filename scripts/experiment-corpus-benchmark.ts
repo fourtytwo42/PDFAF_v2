@@ -302,6 +302,13 @@ function addDeterministicEarlyExit(
   runtimeSummary.boundedWork.deterministicEarlyExitReasons = runtimeCounts(reasons);
 }
 
+function hasDeterministicEarlyExit(
+  runtimeSummary: RemediationRuntimeSummary | undefined,
+  reason: string,
+): boolean {
+  return runtimeSummary?.boundedWork.deterministicEarlyExitReasons?.some(row => row.key === reason && row.count > 0) ?? false;
+}
+
 export function shouldSkipBenchmarkFinalReanalysis(input: {
   startedAtMs: number;
   score?: number | null;
@@ -309,6 +316,7 @@ export function shouldSkipBenchmarkFinalReanalysis(input: {
   nowMs?: number;
   wallTimeoutMs?: number;
   requiredRemainingMs?: number;
+  verifiedCheckpointReturned?: boolean;
 }): boolean {
   return benchmarkFinalReanalysisDecision(input).skip;
 }
@@ -321,7 +329,11 @@ export function benchmarkFinalReanalysisDecision(input: {
   nowMs?: number;
   wallTimeoutMs?: number;
   requiredRemainingMs?: number;
-}): { skip: boolean; reason: 'soft_deadline_before_final_reanalysis' | 'bounded_final_reanalysis_guard' | null } {
+  verifiedCheckpointReturned?: boolean;
+}): { skip: boolean; reason: 'soft_deadline_before_final_reanalysis' | 'bounded_final_reanalysis_guard' | 'verified_checkpoint_timeout_return' | null } {
+  if (input.verifiedCheckpointReturned === true) {
+    return { skip: true, reason: 'verified_checkpoint_timeout_return' };
+  }
   const wallTimeoutMs = input.wallTimeoutMs ?? REMEDIATION_PDF_TIMEOUT_MS;
   if (!(wallTimeoutMs > 0)) return { skip: false, reason: null };
   const requiredRemainingMs = input.requiredRemainingMs ?? REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
@@ -978,13 +990,21 @@ async function runRemediationStep(
       const finalReanalysisDecision = benchmarkFinalReanalysisDecision({
         startedAtMs: remediationStart,
         score: finalAnalysis.score,
+        verifiedCheckpointReturned: hasDeterministicEarlyExit(
+          remediation.runtimeSummary,
+          'verified_checkpoint_timeout_return',
+        ),
       });
       if (finalReanalysisDecision.skip) {
-        runtimeTrace.mark('final_reanalysis_soft_stop');
-        addDeterministicEarlyExit(
-          remediation.runtimeSummary,
-          finalReanalysisDecision.reason ?? 'soft_deadline_before_final_reanalysis',
-        );
+        runtimeTrace.mark(finalReanalysisDecision.reason === 'verified_checkpoint_timeout_return'
+          ? 'verified_checkpoint_return_completed'
+          : 'final_reanalysis_soft_stop');
+        if (
+          finalReanalysisDecision.reason &&
+          !hasDeterministicEarlyExit(remediation.runtimeSummary, finalReanalysisDecision.reason)
+        ) {
+          addDeterministicEarlyExit(remediation.runtimeSummary, finalReanalysisDecision.reason);
+        }
         reanalyzed = finalAnalysis;
         reanalyzedSnapshot = finalSnapshot;
         reanalyzedParity = buildIcjiaParity(finalSnapshot);

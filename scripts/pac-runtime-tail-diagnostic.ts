@@ -15,6 +15,7 @@ const REMEDIATION_WALL_TIMEOUT_MS = 300_000;
 
 export type RuntimeTailClassification =
   | 'per_pdf_timeout'
+  | 'returned_checkpoint_then_timeout'
   | 'soft_deadline_stop'
   | 'verified_checkpoint_timeout_returned'
   | 'bounded_final_reanalysis_guarded'
@@ -321,8 +322,12 @@ export function classifyRuntimeTail(input: {
   boundedFinalReanalysisGuardCount?: number;
   lateOptionalReanalysisGuardCount?: number;
   verifiedCheckpointReturnCount?: number;
+  returnedCheckpointThenTimedOut?: boolean;
 }): RuntimeTailClassification {
   const error = String(input.row.error ?? '');
+  if (/timeout|aborted/i.test(error) && input.returnedCheckpointThenTimedOut === true) {
+    return 'returned_checkpoint_then_timeout';
+  }
   if (/timeout|aborted/i.test(error)) return 'per_pdf_timeout';
   if ((input.verifiedCheckpointReturnCount ?? 0) > 0) return 'verified_checkpoint_timeout_returned';
   if ((input.softDeadlineEarlyExitCount ?? 0) > 0) return 'soft_deadline_stop';
@@ -350,27 +355,29 @@ export function classifyRuntimeTail(input: {
 function rowSort(a: RuntimeTailRow, b: RuntimeTailRow): number {
   const rank = (row: RuntimeTailRow): number => row.classification === 'per_pdf_timeout'
     ? 0
-    : row.classification === 'verified_checkpoint_timeout_returned'
+    : row.classification === 'returned_checkpoint_then_timeout'
       ? 1
-      : row.classification === 'soft_deadline_stop'
+      : row.classification === 'verified_checkpoint_timeout_returned'
         ? 2
-        : row.classification === 'bounded_final_reanalysis_guarded'
+        : row.classification === 'soft_deadline_stop'
           ? 3
-          : row.classification === 'late_optional_reanalysis_guarded'
+          : row.classification === 'bounded_final_reanalysis_guarded'
             ? 4
-            : row.classification === 'stage_reanalysis_guarded'
+            : row.classification === 'late_optional_reanalysis_guarded'
               ? 5
-              : row.classification === 'repeated_no_gain_tool_churn'
+              : row.classification === 'stage_reanalysis_guarded'
                 ? 6
-                : row.classification === 'protected_reanalysis_churn'
+                : row.classification === 'repeated_no_gain_tool_churn'
                   ? 7
-                  : row.classification === 'reanalysis_heavy_large_document'
+                  : row.classification === 'protected_reanalysis_churn'
                     ? 8
-                    : row.classification === 'mutation_heavy_large_document'
+                    : row.classification === 'reanalysis_heavy_large_document'
                       ? 9
-                      : row.classification === 'analyzer_starvation'
+                      : row.classification === 'mutation_heavy_large_document'
                         ? 10
-                        : 11;
+                        : row.classification === 'analyzer_starvation'
+                          ? 11
+                          : 12;
   return (
     rank(a) - rank(b) ||
     (b.candidateWallMs ?? -1) - (a.candidateWallMs ?? -1) ||
@@ -425,6 +432,8 @@ export function buildRuntimeTailDiagnostic(input: {
       const protectedPasses = protectedReanalysisPassCount(row);
       const mutationMs = mutationToolMs(row);
       const timeoutTrace = input.timeoutTraces?.get(row.id) ?? null;
+      const traceReturnedCheckpoint = timeoutTrace?.lastVerifiedCheckpointReturned === true ||
+        timeoutTrace?.verifiedCheckpointHistory.some(item => item.returned) === true;
       return {
         fileId: row.id,
         file: row.file,
@@ -441,6 +450,7 @@ export function buildRuntimeTailDiagnostic(input: {
           boundedFinalReanalysisGuardCount: boundedFinalGuardCount,
           lateOptionalReanalysisGuardCount: lateOptionalGuardCount,
           verifiedCheckpointReturnCount: verifiedCheckpointCount,
+          returnedCheckpointThenTimedOut: traceReturnedCheckpoint,
         }),
         candidateWallMs,
         recoveryWallMs,

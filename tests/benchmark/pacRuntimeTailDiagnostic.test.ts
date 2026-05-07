@@ -142,6 +142,26 @@ describe('PAC runtime tail diagnostic helpers', () => {
     })).toEqual({ skip: false, reason: null });
   });
 
+  it('treats a verified checkpoint return as terminal before benchmark final reanalysis', () => {
+    expect(benchmarkFinalReanalysisDecision({
+      startedAtMs: 0,
+      score: 82,
+      targetScore: 90,
+      nowMs: 238_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 50_000,
+      verifiedCheckpointReturned: true,
+    })).toEqual({ skip: true, reason: 'verified_checkpoint_timeout_return' });
+    expect(shouldSkipBenchmarkFinalReanalysis({
+      startedAtMs: 0,
+      score: 82,
+      targetScore: 90,
+      nowMs: 100_000,
+      wallTimeoutMs: 300_000,
+      verifiedCheckpointReturned: true,
+    })).toBe(true);
+  });
+
   it('classifies timeout rows separately from completed runtime tails', () => {
     expect(classifyRuntimeTail({
       row: row({ id: 'timeout', error: 'The operation was aborted due to timeout' }),
@@ -152,6 +172,19 @@ describe('PAC runtime tail diagnostic helpers', () => {
       protectedReanalysisPassCount: 0,
       pacGateRejectionCount: 0,
     })).toBe('per_pdf_timeout');
+  });
+
+  it('classifies returned checkpoint followed by timeout separately from ordinary timeout', () => {
+    expect(classifyRuntimeTail({
+      row: row({ id: 'checkpoint-timeout', error: 'The operation was aborted due to timeout' }),
+      candidateWallMs: null,
+      stageReanalysisMs: 0,
+      mutationToolMs: 0,
+      sameStateNoGainEarlyExitCount: 0,
+      protectedReanalysisPassCount: 0,
+      pacGateRejectionCount: 0,
+      returnedCheckpointThenTimedOut: true,
+    })).toBe('returned_checkpoint_then_timeout');
   });
 
   it('classifies repeated no-gain runtime churn before generic reanalysis heaviness', () => {
@@ -315,6 +348,49 @@ describe('PAC runtime tail diagnostic helpers', () => {
     expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
       'a:per_pdf_timeout',
       'b:reanalysis_heavy_large_document',
+    ]);
+  });
+
+  it('uses timeout trace checkpoint return evidence when grouping timed-out rows', () => {
+    const report = buildRuntimeTailDiagnostic({
+      referenceRunDir: 'ref',
+      recoveryRunDir: 'recovery',
+      candidateRunDir: 'candidate',
+      referenceRows: [],
+      recoveryRows: [],
+      candidateRows: [
+        row({
+          id: 'long-4516',
+          error: 'The operation was aborted due to timeout',
+          afterScore: null,
+          wallRemediateMs: null,
+        }),
+      ],
+      timeoutTraces: new Map([
+        ['long-4516', parseRuntimeTimeoutTrace({
+          lastPhase: 'final_reanalysis_start',
+          elapsedMs: 300_011,
+          lastVerifiedCheckpointReturned: true,
+          verifiedCheckpointHistory: [
+            {
+              reason: 'return:before_stage180_post_pass',
+              score: 82,
+              grade: 'B',
+              appliedToolCount: 14,
+              eligible: true,
+              eligibilityReason: 'eligible',
+              returned: true,
+              elapsedMs: 237_692,
+            },
+          ],
+        })!],
+      ]),
+      focusRows: ['long-4516'],
+      generatedAt: '2026-05-07T00:00:00.000Z',
+    });
+
+    expect(report.rows.map(item => `${item.fileId}:${item.classification}`)).toEqual([
+      'long-4516:returned_checkpoint_then_timeout',
     ]);
   });
 
