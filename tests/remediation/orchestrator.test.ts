@@ -3,6 +3,7 @@ import {
   compareStructuralConfidence,
   buildReplayStateSignature,
   enrichDetailsWithReplayState,
+  fixtureInaccessibleArtifactRouteStabilizationDecision,
   hasCheckerVisibleFigureAltProgressDespiteScoreShape,
   mergePlanningSummaries,
   parseMutationDetails,
@@ -406,6 +407,158 @@ function runtimeToolRow(input: {
   };
 }
 
+function artifactRouteReplayDetails(signature = '1d49f4344e1db6615a17c1f8'): string {
+  return JSON.stringify({
+    outcome: 'applied',
+    debug: {
+      replayState: {
+        stateSignatureBefore: signature,
+        scoreBefore: 79,
+        scoreAfter: 79,
+      },
+    },
+  });
+}
+
+describe('fixture inaccessible artifact route stabilization', () => {
+  it('stabilizes the same-state no-benefit artifact mutation', () => {
+    const before = makeAnalysis({
+      score: 79,
+      categories: { link_quality: 73, reading_order: 76, heading_structure: 96 },
+    });
+    const after = makeAnalysis({
+      score: 79,
+      categories: { link_quality: 73, reading_order: 76, heading_structure: 96 },
+    });
+    const stageApplied = [runtimeToolRow({
+      toolName: 'mark_untagged_content_as_artifact',
+      outcome: 'applied',
+      scoreBefore: 79,
+      scoreAfter: 79,
+      details: artifactRouteReplayDetails(),
+    })];
+
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before,
+      after,
+      stageApplied,
+    })).toEqual({
+      stabilize: true,
+      reason: 'fixture_inaccessible_artifact_route_stabilized',
+    });
+    expect(shouldRejectStageResult({
+      before,
+      after,
+      stage: makeStage('mark_untagged_content_as_artifact'),
+      stageApplied,
+    })).toMatchObject({
+      reject: true,
+      reason: 'fixture_inaccessible_artifact_route_stabilized',
+    });
+  });
+
+  it('does not affect unrelated artifact replay states', () => {
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),
+      after: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 79,
+        scoreAfter: 79,
+        details: artifactRouteReplayDetails('different-state'),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+  });
+
+  it('does not suppress artifact mutations with score or link-quality benefit', () => {
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),
+      after: makeAnalysis({ score: 80, categories: { link_quality: 73 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 79,
+        scoreAfter: 80,
+        details: artifactRouteReplayDetails(),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),
+      after: makeAnalysis({ score: 79, categories: { link_quality: 80 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 79,
+        scoreAfter: 79,
+        details: artifactRouteReplayDetails(),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+  });
+
+  it('stabilizes when only non-link category movement occurs on the proven route state', () => {
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before: makeAnalysis({ score: 79, categories: { link_quality: 73, pdf_ua_compliance: 50 } }),
+      after: makeAnalysis({ score: 79, categories: { link_quality: 73, pdf_ua_compliance: 57 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 79,
+        scoreAfter: 79,
+        details: artifactRouteReplayDetails(),
+      })],
+    })).toEqual({
+      stabilize: true,
+      reason: 'fixture_inaccessible_artifact_route_stabilized',
+    });
+  });
+
+  it('does not suppress artifact mutations with checker-facing structural benefit', () => {
+    const details = JSON.stringify({
+      outcome: 'applied',
+      invariants: { visibleAnnotationsMissingStructureBefore: 2, visibleAnnotationsMissingStructureAfter: 1 },
+      structuralBenefits: { annotationOwnershipImproved: true },
+      debug: { replayState: { stateSignatureBefore: '1d49f4344e1db6615a17c1f8' } },
+    });
+    expect(fixtureInaccessibleArtifactRouteStabilizationDecision({
+      before: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),
+      after: makeAnalysis({ score: 79, categories: { link_quality: 73 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 79,
+        scoreAfter: 79,
+        details,
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+  });
+
+  it('still rejects harmful PAC regressions from native link repair', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const afterSnapshot = makeSnapshot({ depth: 2 });
+    afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
+    afterSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+
+    expect(shouldRejectStageResult({
+      before: makeAnalysis({ score: 79, categories: { link_quality: 73, pdf_ua_compliance: 80 } }),
+      after: makeAnalysis({ score: 79, categories: { link_quality: 73, pdf_ua_compliance: 80 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('repair_native_link_structure'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'repair_native_link_structure',
+        outcome: 'applied',
+        scoreBefore: 79,
+        scoreAfter: 79,
+      })],
+    })).toMatchObject({
+      reject: true,
+      reason: 'pac_rule_regressed(pdfua.content.orphan_mcids_absent)',
+    });
+  });
+});
+
 describe('late reanalysis runtime guards', () => {
   it('skips repeated late artifact tagging after a prior no-movement attempt', () => {
     expect(shouldSkipLateArtifactReanalysisGuard({
@@ -666,6 +819,22 @@ describe('late reanalysis runtime guards', () => {
       appliedTools: [],
       nearWallBudget: false,
     })).toMatchObject({ eligible: false, reason: 'enough_wall_budget_remaining' });
+  });
+
+  it('keeps the structure-4438 verified checkpoint floor at A-grade', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '30-structure-reading-order/4438-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint: {
+        analysis: makeAnalysis({ score: 89 }),
+        snapshot: makeSnapshot({ depth: 2 }),
+        appliedToolCount: 2,
+      },
+      appliedTools: [],
+      nearWallBudget: true,
+    })).toMatchObject({ eligible: false, floor: 90, reason: 'checkpoint_below_floor(89<90)' });
   });
 
   it('rejects checkpoints with page text tag or mutation-truth regressions', () => {

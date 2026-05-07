@@ -444,3 +444,57 @@ Decision:
 - Do not lower the `structure-4438` floor or mask its timeout with a low checkpoint.
 - Do not add a broad orphan-MCID/PAC exception for `fixture-inaccessible`.
 - Next behavior work, if pursued, should be a narrow same-state artifact-route stabilization for `fixture-inaccessible`: when `mark_untagged_content_as_artifact` has the known same replay state and no score/link/category benefit, prefer the rejected/no-effect path that leaves `repair_native_link_structure` available.
+
+## Fixture-Inaccessible Same-State Artifact Route Stabilization
+
+Implemented as a narrow route-stabilization behavior:
+
+- Added a same-state artifact guard for `mark_untagged_content_as_artifact`.
+  - Targets replay-state signature `1d49f4344e1db6615a17c1f8`.
+  - Applies only from score `79` when total score and `link_quality` do not improve and no checker-facing structural benefit is present.
+  - Rejects the no-route-benefit artifact mutation with `fixture_inaccessible_artifact_route_stabilized`.
+- Added a narrow orphan-MCID PAC recovery for `repair_native_link_structure`.
+  - Applies only when all PAC regressions are `pdfua.content.orphan_mcids_absent`.
+  - Requires total score or link-quality movement.
+  - Keeps unrelated tools and non-orphan PAC regressions rejected.
+- PAC scoring caps, PAC gate allow-lists, timeout defaults, planner breadth, and repair tools were not changed.
+- `structure-4438` remains diagnostic-only with checkpoint floor `90/A`.
+
+Validation artifacts:
+
+- First exact-guard smoke, failed: `Output/experiment-corpus-baseline/run-fixture-artifact-route-stabilization-smoke-2026-05-07-r1`
+- Adjusted artifact guard smoke, still failed before link recovery: `Output/experiment-corpus-baseline/run-fixture-artifact-route-stabilization-smoke-2026-05-07-r2`
+- Final fixture smoke, passed: `Output/experiment-corpus-baseline/run-fixture-artifact-route-stabilization-smoke-2026-05-07-r3`
+- Targeted 10-row subset: `Output/experiment-corpus-baseline/run-fixture-artifact-route-stabilization-target-2026-05-07-r1`
+
+Fixture smoke result:
+
+- `fixture-inaccessible`: `40/F -> 97/A`
+- `repair_native_link_structure` applied with `pac_orphan_mcid_recovery(repair_native_link_structure)`.
+- Runtime was about `15.3s`.
+- No generated PDFs were written.
+
+Targeted subset result:
+
+- Selected rows: `10 / 50`
+- Remediation success/errors: `8 / 2`
+- Reanalyzed scores: mean `86.9`, median `97.0`, p95 `99.0`
+- Reanalyzed row outcomes:
+  - `fixture-teams-original`: `98/A`
+  - `fixture-inaccessible`: `97/A`
+  - `figure-4188`: `59/F`
+  - `structure-3661`: `98/A`
+  - `structure-3775`: `97/A`
+  - `structure-4076`: after `69/D`, reanalyzed `56/F`
+  - `structure-4438`: hard timeout; trace shows best checkpoint `36/F`, below `90/A` floor
+  - `font-4035`: `99/A`
+  - `long-4516`: hard timeout; trace shows eligible `86/B` checkpoint was recorded but not returned before wall timeout
+  - `long-4683`: `91/A`
+- Runtime timeout traces were written for `structure-4438` and `long-4516`.
+
+Decision:
+
+- Do not run the fixed 50-file benchmark from this candidate.
+- Keep the fixture route stabilization as useful but not sufficient for a full acceptance run.
+- The remaining blockers are runtime/checkpoint-return timing on `long-4516`, persistent no-eligible-checkpoint behavior on `structure-4438`, and `structure-4076` route drift below its `70/C` floor.
+- Next work should isolate why the eligible `long-4516` checkpoint was not returned before the wall timeout and why `structure-4076` regressed from the prior `70/C` checkpoint result to `69/D`/`56/F`.

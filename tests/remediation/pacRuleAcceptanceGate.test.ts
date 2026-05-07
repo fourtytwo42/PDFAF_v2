@@ -360,6 +360,33 @@ describe('pacRuleAcceptanceGate', () => {
     })).toEqual({ recover: false, reason: null });
   });
 
+  it('allows narrow native-link recovery for orphan-MCID count increases with score movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(4),
+      toolNames: ['repair_native_link_structure'],
+      beforeScore: 79,
+      afterScore: 97,
+      beforeLinkQualityScore: 73,
+      afterLinkQualityScore: 100,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(repair_native_link_structure)',
+    });
+  });
+
+  it('does not recover native-link orphan-MCID increases without score or link-quality movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(4),
+      toolNames: ['repair_native_link_structure'],
+      beforeScore: 79,
+      afterScore: 79,
+      beforeLinkQualityScore: 73,
+      afterLinkQualityScore: 73,
+    })).toEqual({ recover: false, reason: null });
+  });
+
   it('does not recover orphan-MCID increases for unrelated tools', () => {
     expect(pacRuleUsefulRepairRecovery({
       beforeSnapshot: orphanMcidDebtSnapshot(1),

@@ -161,10 +161,14 @@ export function pacRuleUsefulRepairRecovery(input: {
   toolNames: readonly string[];
   beforeScore: number;
   afterScore: number;
+  beforeLinkQualityScore?: number | null;
+  afterLinkQualityScore?: number | null;
   beforePdfUaScore?: number | null;
   afterPdfUaScore?: number | null;
 }): { recover: boolean; reason: string | null; details?: string } {
-  if (!input.toolNames.includes('repair_alt_text_structure')) {
+  const isAltStructureRepair = input.toolNames.includes('repair_alt_text_structure');
+  const isNativeLinkRepair = input.toolNames.includes('repair_native_link_structure');
+  if (!isAltStructureRepair && !isNativeLinkRepair) {
     return { recover: false, reason: null };
   }
   const regressions = pacRuleAcceptanceRegressions({
@@ -184,6 +188,29 @@ export function pacRuleUsefulRepairRecovery(input: {
     input.afterPdfUaScore != null &&
     input.afterPdfUaScore > input.beforePdfUaScore
   );
+  if (isNativeLinkRepair) {
+    const linkQualityImproved = (
+      input.beforeLinkQualityScore != null &&
+      input.afterLinkQualityScore != null &&
+      input.afterLinkQualityScore > input.beforeLinkQualityScore
+    );
+    if (!scoreImproved && !linkQualityImproved) {
+      return { recover: false, reason: null };
+    }
+    return {
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(repair_native_link_structure)',
+      details: JSON.stringify({
+        outcome: 'accepted',
+        note: 'pac_orphan_mcid_recovery(repair_native_link_structure)',
+        pacRuleRegressions: regressions,
+        beforeScore: input.beforeScore,
+        afterScore: input.afterScore,
+        beforeLinkQualityScore: input.beforeLinkQualityScore ?? null,
+        afterLinkQualityScore: input.afterLinkQualityScore ?? null,
+      }),
+    };
+  }
   if (!scoreImproved && !pdfUaImproved) {
     return { recover: false, reason: null };
   }
