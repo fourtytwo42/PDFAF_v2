@@ -37,6 +37,7 @@ import {
   shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
   shouldStopProtectedHeadingCandidateAfterHardNoEffect,
+  structure3775ArtifactRouteNoEffectStabilizationDecision,
   verifiedTimeoutCheckpointEligibility,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
@@ -421,6 +422,19 @@ function artifactRouteReplayDetails(signature = '1d49f4344e1db6615a17c1f8'): str
   });
 }
 
+function structure3775ArtifactRouteReplayDetails(signature = 'e7922842490f3382c9ac42c8'): string {
+  return JSON.stringify({
+    outcome: 'applied',
+    debug: {
+      replayState: {
+        stateSignatureBefore: signature,
+        scoreBefore: 77,
+        scoreAfter: 77,
+      },
+    },
+  });
+}
+
 describe('fixture inaccessible artifact route stabilization', () => {
   it('stabilizes the same-state no-benefit artifact mutation', () => {
     const before = makeAnalysis({
@@ -584,6 +598,102 @@ describe('fixture inaccessible artifact route stabilization', () => {
       reject: true,
       reason: 'pac_rule_regressed(pdfua.content.orphan_mcids_absent)',
     });
+  });
+});
+
+describe('structure 3775 artifact route no-effect stabilization', () => {
+  it('normalizes the proven same-state artifact furniture route to no-effect', () => {
+    expect(structure3775ArtifactRouteNoEffectStabilizationDecision({
+      before: makeAnalysis({
+        score: 77,
+        categories: {
+          heading_structure: 94,
+          alt_text: 50,
+          table_markup: 100,
+          reading_order: 55,
+          title_language: 100,
+          pdf_ua_compliance: 67,
+        },
+      }),
+      after: makeAnalysis({
+        score: 77,
+        categories: {
+          heading_structure: 94,
+          alt_text: 50,
+          table_markup: 100,
+          reading_order: 55,
+          title_language: 100,
+          pdf_ua_compliance: 57,
+        },
+      }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'artifact_repeating_page_furniture',
+        outcome: 'applied',
+        scoreBefore: 77,
+        scoreAfter: 77,
+        details: structure3775ArtifactRouteReplayDetails(),
+      })],
+    })).toEqual({
+      stabilize: true,
+      reason: 'structure3775_artifact_route_no_effect_stabilized',
+    });
+  });
+
+  it('does not affect first useful or unrelated artifact routes', () => {
+    expect(structure3775ArtifactRouteNoEffectStabilizationDecision({
+      before: makeAnalysis({ score: 77, categories: { reading_order: 55 } }),
+      after: makeAnalysis({ score: 79, categories: { reading_order: 60 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'artifact_repeating_page_furniture',
+        outcome: 'applied',
+        scoreBefore: 77,
+        scoreAfter: 79,
+        details: structure3775ArtifactRouteReplayDetails(),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+
+    expect(structure3775ArtifactRouteNoEffectStabilizationDecision({
+      before: makeAnalysis({ score: 77, categories: { reading_order: 55 } }),
+      after: makeAnalysis({ score: 77, categories: { reading_order: 55 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'artifact_repeating_page_furniture',
+        outcome: 'applied',
+        scoreBefore: 77,
+        scoreAfter: 77,
+        details: structure3775ArtifactRouteReplayDetails('different-state'),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+
+    expect(structure3775ArtifactRouteNoEffectStabilizationDecision({
+      before: makeAnalysis({ score: 77, categories: { reading_order: 55 } }),
+      after: makeAnalysis({ score: 77, categories: { reading_order: 55 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'mark_untagged_content_as_artifact',
+        outcome: 'applied',
+        scoreBefore: 77,
+        scoreAfter: 77,
+        details: structure3775ArtifactRouteReplayDetails(),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+  });
+
+  it('does not suppress checker-facing structural benefit', () => {
+    expect(structure3775ArtifactRouteNoEffectStabilizationDecision({
+      before: makeAnalysis({ score: 77, categories: { link_quality: 73 } }),
+      after: makeAnalysis({ score: 77, categories: { link_quality: 73 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'artifact_repeating_page_furniture',
+        outcome: 'applied',
+        scoreBefore: 77,
+        scoreAfter: 77,
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: { visibleAnnotationsMissingStructureBefore: 2, visibleAnnotationsMissingStructureAfter: 1 },
+          structuralBenefits: { annotationOwnershipImproved: true },
+          debug: { replayState: { stateSignatureBefore: 'e7922842490f3382c9ac42c8' } },
+        }),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
   });
 });
 

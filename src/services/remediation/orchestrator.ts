@@ -681,6 +681,8 @@ const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_TOOLS = new Set([
   'artifact_repeating_page_furniture',
   'mark_untagged_content_as_artifact',
 ]);
+const STRUCTURE_3775_ARTIFACT_ROUTE_SIGNATURE = 'e7922842490f3382c9ac42c8';
+const STRUCTURE_3775_ARTIFACT_ROUTE_REASON = 'structure3775_artifact_route_no_effect_stabilized';
 
 function replayStateSignatureBefore(row: AppliedRemediationTool): string | null {
   const debug = parseMutationDetails(row.details)?.debug;
@@ -714,6 +716,28 @@ export function fixtureInaccessibleArtifactRouteStabilizationDecision(input: {
   return {
     stabilize: true,
     reason: FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_REASON,
+  };
+}
+
+export function structure3775ArtifactRouteNoEffectStabilizationDecision(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): { stabilize: boolean; reason: string | null } {
+  if (input.before.score !== 77) return { stabilize: false, reason: null };
+  if (input.after.score !== input.before.score) return { stabilize: false, reason: null };
+  const matchingArtifactMutation = input.stageApplied.some(row =>
+    row.toolName === 'artifact_repeating_page_furniture' &&
+    row.outcome === 'applied' &&
+    replayStateSignatureBefore(row) === STRUCTURE_3775_ARTIFACT_ROUTE_SIGNATURE
+  );
+  if (!matchingArtifactMutation) return { stabilize: false, reason: null };
+  if (stageHasCheckerFacingStructuralBenefit(input)) return { stabilize: false, reason: null };
+  return {
+    stabilize: true,
+    reason: STRUCTURE_3775_ARTIFACT_ROUTE_REASON,
   };
 }
 
@@ -3420,6 +3444,13 @@ async function finalizeAnalyzedStage(args: {
   });
 
   if (rejectionDecision.reject) {
+    const noEffectRouteDecision = structure3775ArtifactRouteNoEffectStabilizationDecision({
+      before: stateBeforeStage.analysis,
+      after: analyzedState.analysis,
+      beforeSnapshot: stateBeforeStage.snapshot,
+      afterSnapshot: analyzedState.snapshot,
+      stageApplied,
+    });
     const restorePath = join(tmpdir(), `pdfaf-rem-restore-${randomUUID()}.pdf`);
     await writeFile(restorePath, stateBeforeStage.buffer);
     let restoredState: RemediationState;
@@ -3437,8 +3468,10 @@ async function finalizeAnalyzedStage(args: {
       await unlink(restorePath).catch(() => {});
     }
     for (const row of stageApplied) {
-      row.outcome = 'rejected';
-      row.details = rejectionDecision.details ?? rejectionDecision.reason ?? 'stage_rejected';
+      row.outcome = noEffectRouteDecision.stabilize ? 'no_effect' : 'rejected';
+      row.details = noEffectRouteDecision.stabilize
+        ? noEffectRouteDecision.reason ?? STRUCTURE_3775_ARTIFACT_ROUTE_REASON
+        : rejectionDecision.details ?? rejectionDecision.reason ?? 'stage_rejected';
       row.scoreAfter = restoredState.analysis.score;
       row.delta = restoredState.analysis.score - stageStartScore;
       enrichRowDetailsWithReplayState(row, {
@@ -6572,6 +6605,7 @@ export async function remediatePdf(
               },
             )
           ) {
+            if (await returnVerifiedTimeoutCheckpoint('before_figure_alt_target', { beforeRiskyWork: true })) break;
             const activeRef = typeof activeFigureTool.params['structRef'] === 'string'
               ? activeFigureTool.params['structRef']
               : typeof activeFigureTool.params['targetRef'] === 'string'

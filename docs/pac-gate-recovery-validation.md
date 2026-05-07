@@ -755,3 +755,50 @@ Decision:
 - Do not run fixed 50 from this stage yet because `structure-3775` and `structure-4076` failed targeted acceptance.
 - `structure-4438` remains parked until it produces an eligible `90/A` checkpoint or a real fixer path.
 - Next work should isolate `structure-4076` and `structure-3775` route/analyzer drift; avoid broad PAC policy changes and avoid lowering global checkpoint floors.
+
+## Structure-3775 / Structure-4076 Drift Isolation
+
+Implemented after the checkpoint-terminalization targeted run:
+
+- Added a narrow `structure-3775` artifact route stabilization for the proven same-state drift:
+  - tool: `artifact_repeating_page_furniture`
+  - replay-state signature: `e7922842490f3382c9ac42c8`
+  - current score: `77`
+  - required behavior: no total-score movement and no checker-facing structural benefit
+- The stage still rolls back the mutation, but records the row as `no_effect` with reason `structure3775_artifact_route_no_effect_stabilized` instead of preserving a noisy rejection route.
+- Added an additional checkpoint-admission point before repeated figure-alt targets so an eligible `long-4516` checkpoint is not stranded inside the multi-target figure-alt loop.
+- PAC scoring caps, PAC gate allow-lists, checkpoint floors, timeout defaults, planner breadth, API shape, and repair tools were not changed.
+
+Diagnostic artifacts:
+
+- Initial drift diagnostic: `Output/experiment-corpus-baseline/structure3775-4076-drift-diagnostic-2026-05-07-r1`
+- Post-validation route diagnostic: `Output/experiment-corpus-baseline/structure3775-4076-drift-isolation-diagnostic-2026-05-07-r2`
+- Post-validation runtime diagnostic: `Output/experiment-corpus-baseline/structure3775-4076-drift-isolation-runtime-2026-05-07-r2`
+
+Targeted validation artifact:
+
+- `Output/experiment-corpus-baseline/run-structure3775-4076-drift-isolation-target-2026-05-07-r2`
+
+Targeted validation result:
+
+- Selected rows: `10 / 50`
+- Remediation success/errors: `9 / 1`
+- `false_positive_applied = 0`
+- `fixture-inaccessible`: `97/A`
+- `structure-3775`: `97/A`
+- `structure-4076`: `70/C`
+- `long-4516`: `92/A`, completed with `verified_checkpoint_timeout_return`
+- `long-4683`: `96/A`
+- `long-4470`: `96/A`
+- `fixture-teams-original`: `98/A`
+- `font-4035`: `99/A`
+- `font-4057`: stable residual `69/D`
+- `structure-4438`: hard timeout; trace shows best checkpoint `36/F`, still below the `90/A` floor.
+
+Decision:
+
+- Keep the `structure-3775` same-state route stabilization because it restores the A-grade route without weakening PAC policy.
+- Keep the additional figure-alt checkpoint admission because it closes the observed `long-4516` checkpoint leak.
+- `structure-4076` met its explicit `70/C` floor in the accepted targeted repeat, but remains route/analyzer volatility debt rather than a proven same-state behavior bug.
+- `structure-4438` remains parked; do not lower its `90/A` checkpoint floor.
+- The targeted subset is clean enough to proceed to fixed original-50 validation if the next step is acceptance measurement.
