@@ -990,3 +990,68 @@ Decision:
 - Park `structure-4076` as real table debt plus analyzer/applicability volatility.
 - Fixed-50 can proceed only with `structure-4076` documented as parked debt, not as a recovered row.
 - `structure-4438` remains separately parked at the `90/A` checkpoint floor.
+
+## Fixed Original-50 Validation With Parked Debt
+
+Validation-only run from current candidate commit `6c23d88`; no scoring, PAC gates, timeout defaults, planner routes, checkpoint floors, or repair tools were changed.
+
+Artifacts:
+
+- Fixed-50 run: `Output/experiment-corpus-baseline/run-parked-debt-fixed50-2026-05-08-r1`
+- Stage 41 gate: `Output/experiment-corpus-baseline/parked-debt-fixed50-gate-2026-05-08-r1`
+- Runtime diagnostic: `Output/experiment-corpus-baseline/parked-debt-fixed50-runtime-2026-05-08-r1`
+- PAC recovery diagnostic: `Output/experiment-corpus-baseline/parked-debt-fixed50-pac-recovery-2026-05-08-r1`
+- Route/protected-regression diagnostic: `Output/experiment-corpus-baseline/parked-debt-fixed50-route-regression-2026-05-08-r1`
+
+Validation result:
+
+- Stage 41 gate result: `FAIL`
+- Reanalyzed mean: `93.96`, above the `90+` target
+- Reanalyzed median: `98`
+- Grades: `43 A / 2 B / 1 C / 1 D / 2 F`
+- F count: `2`, down from baseline `6`
+- `false_positive_applied = 0`
+- Attempts: `859`, within the gate threshold
+- p95 wall: `241613ms`, failing the runtime wall gate
+- Remediation success: `49 / 50`; the single remediation error is parked `structure-4438`
+
+Positive recovery:
+
+- Orphan-MCID recovery rows stayed strong:
+  - `short-4074`: `99/A`
+  - `figure-4082`: `98/A`
+  - `figure-4188`: `98/A`
+  - `structure-4078`: `98/A`
+  - `structure-4108`: `99/A`
+  - `structure-4122`: `99/A`
+- Key controls remained strong:
+  - `fixture-inaccessible`: `97/A`
+  - `structure-3775`: `97/A`
+  - `fixture-teams-original`: `98/A`
+  - `fixture-teams-remediated`: `100/A`
+  - `fixture-teams-targeted-wave1`: `95/A`
+  - `font-4035`: `99/A`
+- Runtime recovery rows completed:
+  - `long-4516`: `92/A`
+  - `long-4683`: `92/A`
+  - `structure-4076`: `70/C`
+
+Gate blockers:
+
+- `structure-4438` remains parked runtime/checkpoint debt and hard-timed out. It is the only hard timeout in the run.
+- p95 is still too high. Runtime diagnostic classified `structure-4076`, `long-4516`, and `long-4683` as `verified_checkpoint_timeout_returned`, but they still dominate wall time; `font-4057` is `repeated_no_gain_tool_churn`.
+- Two non-parked protected regressions block acceptance:
+  - `figure-4702`: `87/B -> 59/F`; largest category delta is `heading_structure 94 -> 0`.
+  - `figure-4755`: `87/B -> 59/F`; largest category deltas are `alt_text 52 -> 0`, `heading_structure 100 -> 68`, and `pdf_ua_compliance 100 -> 83`.
+- PAC recovery diagnostic found `56` PAC gate rejections, all classified as true regressions, with `35` blocked useful repairs and an estimated `7` recoverable files. Dominant rules were:
+  - `pdfua.annotations.tagged_annotations_present`: `21` rejections across `2` files.
+  - `pdfua.content.orphan_mcids_absent`: `23` rejections across `11` files.
+  - `pdfua.figure.alt_present`: `12` rejections across `5` files.
+
+Decision:
+
+- Do not accept the fixed-50 validation as a clean gate pass even though the mean target recovered.
+- Keep `structure-4076` and `structure-4438` parked as documented debt.
+- Do not patch behavior from this validation run directly.
+- Next work should be the smallest diagnostic stage for the non-parked protected regressions `figure-4702` and `figure-4755`, with PAC-blocked useful repairs and heading/alt route loss as the primary questions.
+- Runtime remains a secondary target: p95 is failing, but the immediate acceptance blocker beyond parked debt is the non-parked protected regression pair.
