@@ -219,6 +219,17 @@ ABOUT PAC
       'Structure elements:Figure structure:covered_heuristic',
     );
     expect(rows.find(row => row.family === 'Heading structure')?.coverage).toBe('missing');
+    expect(rows.find(row => row.family === 'Tagged text/image/path operators')?.activeScoreInfluencingRules).toEqual([
+      {
+        ruleId: 'pdfua.content.text_tagged_or_artifacted',
+        cap: 79,
+        category: 'reading_order',
+        status: 'fail',
+        confidence: 'verified',
+        count: 2,
+      },
+    ]);
+    expect(rows.find(row => row.family === 'Figure structure')?.scoreInfluencingRuleIds).toEqual([]);
   });
 
   it('classifies missing and manual-review-only leaf coverage separately', () => {
@@ -231,7 +242,13 @@ ABOUT PAC
     const taggedOperators = definitions.find(row => row.family === 'Tagged text/image/path operators');
 
     expect(externalXObject?.coverage).toBe('manual_review_only');
+    expect(externalXObject?.scoreInfluencingRuleIds).toEqual([]);
     expect(taggedOperators?.coverage).toBe('missing');
+    expect(taggedOperators?.scoreInfluencingRuleIds).toEqual([
+      'pdfua.content.image_tagged_or_artifacted',
+      'pdfua.content.path_paint_tagged_or_artifacted',
+      'pdfua.content.text_tagged_or_artifacted',
+    ]);
     expect(classifyPacLeafCoverage(taggedOperators!, [])).toBe('missing');
   });
 

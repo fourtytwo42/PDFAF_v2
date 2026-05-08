@@ -7,6 +7,7 @@ import { basename, extname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { buildPacRuleEvidence, type PacRuleEvidence } from '../src/services/compliance/pacRuleEvidence.js';
 import { analyzePdf } from '../src/services/pdfAnalyzer.js';
+import { pacRuleHasScoringInfluence, pacRuleScoringCap } from '../src/services/scorer/finalizeEvidence.js';
 import type { AnalysisResult, CategoryKey, DocumentSnapshot, ScoredCategory } from '../src/types.js';
 
 const execFileAsync = promisify(execFile);
@@ -116,6 +117,16 @@ export interface PacLeafCoverageRow extends PacLeafDefinition {
   matchedRules: PacRuleEvidence[];
   matchedRuleCount: number;
   failingOrWarningRuleCount: number;
+  scoreInfluencingRuleIds: string[];
+  activeScoreInfluencingRules: Array<{
+    ruleId: string;
+    cap: number;
+    category: CategoryKey;
+    status: PacRuleEvidence['status'];
+    confidence: PacRuleEvidence['confidence'];
+    count?: number;
+  }>;
+  diagnosticOnlyRuleIds: string[];
 }
 
 export interface PacBucketGapRow {
@@ -464,12 +475,32 @@ export function buildPacLeafCoverage(
     .filter(definition => activeBuckets.has(definition.bucket))
     .map(definition => {
       const matchedRules = rulesForLeaf(definition, rules);
+      const scoreInfluencingRuleIds = definition.internalRuleIds
+        .filter(ruleId => pacRuleScoringCap(ruleId) !== null)
+        .sort((a, b) => a.localeCompare(b));
+      const scoreInfluencingSet = new Set(scoreInfluencingRuleIds);
+      const activeScoreInfluencingRules = matchedRules
+        .filter(rule => rule.status === 'fail' && rule.confidence === 'verified' && scoreInfluencingSet.has(rule.ruleId) && pacRuleHasScoringInfluence(rule))
+        .map(rule => ({
+          ruleId: rule.ruleId,
+          cap: pacRuleScoringCap(rule.ruleId)!,
+          category: rule.category,
+          status: rule.status,
+          confidence: rule.confidence,
+          ...(rule.count !== undefined ? { count: rule.count } : {}),
+        }))
+        .sort((a, b) => a.cap - b.cap || a.ruleId.localeCompare(b.ruleId));
       return {
         ...definition,
         coverage: classifyPacLeafCoverage(definition, rules),
         matchedRules,
         matchedRuleCount: matchedRules.length,
         failingOrWarningRuleCount: matchedRules.filter(rule => rule.status === 'fail' || rule.status === 'warn').length,
+        scoreInfluencingRuleIds,
+        activeScoreInfluencingRules,
+        diagnosticOnlyRuleIds: definition.internalRuleIds
+          .filter(ruleId => !scoreInfluencingSet.has(ruleId))
+          .sort((a, b) => a.localeCompare(b)),
       };
     })
     .sort((a, b) => a.bucket.localeCompare(b.bucket) || a.family.localeCompare(b.family));
@@ -577,6 +608,17 @@ function leafRuleCell(row: PacLeafCoverageRow): string {
     .join('<br>');
 }
 
+function leafScoringCell(row: PacLeafCoverageRow): string {
+  if (row.scoreInfluencingRuleIds.length === 0) return 'diagnostic-only';
+  const active = row.activeScoreInfluencingRules.length > 0
+    ? row.activeScoreInfluencingRules.map(rule => `${rule.ruleId}: cap ${rule.cap}${rule.count !== undefined ? ` (${rule.count})` : ''}`)
+    : [];
+  const inactive = row.scoreInfluencingRuleIds
+    .filter(ruleId => !row.activeScoreInfluencingRules.some(rule => rule.ruleId === ruleId))
+    .map(ruleId => `${ruleId}: eligible cap ${pacRuleScoringCap(ruleId)}`);
+  return [...active, ...inactive].join('<br>');
+}
+
 export function renderPacReviewMarkdown(diagnostic: PacReviewDiagnostic): string {
   const lines: string[] = [
     '# PAC Review Gap Diagnostic',
@@ -613,12 +655,13 @@ export function renderPacReviewMarkdown(diagnostic: PacReviewDiagnostic): string
     }
     lines.push('');
     if (file.leafCoverage.length > 0) {
-      lines.push('| PAC Leaf Family | Coverage | PAC Checks | Internal Rules / Current Evidence | Recommended Action |');
-      lines.push('| --- | --- | --- | --- | --- |');
+      lines.push('| PAC Leaf Family | Coverage | Scoring Influence | PAC Checks | Internal Rules / Current Evidence | Recommended Action |');
+      lines.push('| --- | --- | --- | --- | --- | --- |');
       for (const leaf of file.leafCoverage) {
         lines.push([
           mdEscape(`${leaf.bucket}: ${leaf.family}`),
           mdEscape(leaf.coverage),
+          mdEscape(leafScoringCell(leaf)),
           mdEscape(leaf.pacChecks.join(', ')),
           mdEscape(leafRuleCell(leaf)),
           mdEscape(leaf.recommendedAction),

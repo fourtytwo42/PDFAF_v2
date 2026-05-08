@@ -2,18 +2,18 @@
 
 Generated from the five external PAC reports in `Output/review-five-a-pdfs-2026-05-08-r1/PAC Reports` and the internal diagnostic script `scripts/pac-review-gap-diagnostic.ts`.
 
-This is a grader-evidence map only. It does not change scoring, remediation gates, planner routing, mutation behavior, timeout defaults, API responses, or benchmark policy.
+This is the grader-evidence map for the five review PDFs. PAC Grader Strictness Stage 1 now lets selected direct, verified leaf failures cap their mapped category scores; it still does not change remediation gates, planner routing, mutation behavior, timeout defaults, API responses, or benchmark policy.
 
 ## Current Five-PDF PAC Buckets
 
 | PAC bucket | Five-PDF external PAC result | Internal coverage status | Next action |
 | --- | ---: | --- | --- |
-| Content | 5 files failed, 103094 failures | Mostly covered by content/font rule evidence | Add object-level split for external XObjects and character-level Unicode mapping before remediation. |
-| PDF Syntax | 5 files failed, 10 failures | Covered by ParentTree and structure syntax evidence | Use object refs for future scoring/gate candidates only after repeat validation. |
+| Content | 5 files failed, 103094 failures | Mostly covered by content/font rule evidence | Direct verified content-tagging leaves now cap at 79; XObjects and character Unicode remain diagnostic. |
+| PDF Syntax | 5 files failed, 10 failures | Covered by ParentTree and structure syntax evidence | Direct verified ParentTree/structure syntax leaves now cap at 79. |
 | Fonts | 2 files failed, 8 failures | Covered by font/CMap evidence, partly heuristic | Keep diagnostic; prior font scoring promotion was too noisy. |
-| Structure tree | 5 files warned, 39 warnings | Covered by parent-link/RoleMap evidence, partly diagnostic | Keep diagnostic until direct legal-position evidence is complete. |
-| Structure elements | 2 files failed, 34 failures | Partial; new leaf mapping identifies missing object-level families | Prioritize annotation/link/widget nesting, heading role-form, Figure BBox, lists, tables, TOC/Note. |
-| Alternative Descriptions | 1 file warned, 6 warnings | Partial; new leaf mapping identifies missing object-level families | Prioritize exact figure/formula/form/annotation/text-alt ownership evidence. |
+| Structure tree | 5 files warned, 39 warnings | Covered by parent-link/RoleMap evidence, partly diagnostic | Direct parent-link/child-role evidence can cap at 79; RoleMap/legal-position stays diagnostic until direct enough. |
+| Structure elements | 2 files failed, 34 failures | Partial; leaf mapping identifies object-level families | Direct verified annotation/list/table/heading leaves can cap at 79 where evidence is object-backed; BBox/TOC/Note remain diagnostic. |
+| Alternative Descriptions | 1 file warned, 6 warnings | Partial; leaf mapping identifies object-level families | Baseline direct alt/form/annotation description rules cap at 89; heuristic ownership quality remains diagnostic. |
 
 ## PAC Leaf Map
 
@@ -37,6 +37,21 @@ This is a grader-evidence map only. It does not change scoring, remediation gate
 | Alternative Descriptions | Inappropriate or empty alt ownership | `CheckTextTagHasAltText`, `CheckAltTextsAreNotGenerated` | `pdfua.alt.text_element_alt_absent`, `pdfua.alt.descriptions_not_empty`, `pdfua.quality.alt_not_generated` | heuristic quality evidence |
 | Natural language | Language of parts | language-of-parts checks | `pdfua.language.*_lang_valid` | diagnostic until inherited language context is direct |
 
-## Promotion Rule
+## Current Scoring Influence
 
-Evidence from this map can move to remediation only after the leaf diagnostic identifies a stable object-level target and existing page/text/tag/PAC guards verify no regression. Evidence can move to scoring only in a later corpus-backed promotion stage.
+- Strict score-active leaves use cap `79` only when the rule row is `status: fail` and `confidence: verified`.
+- Baseline metadata/language/alt/form PAC failures continue to cap at `89`.
+- Font/CMap, character-level Unicode heuristics, external XObjects, AI visual/tag mismatch, link reachability, Figure BBox, TOC/Note, and manual-review-only rows remain diagnostic-only.
+- The regenerated five-PDF diagnostic shows active score-influencing leaves under the `Scoring Influence` column in `Output/review-five-a-pdfs-2026-05-08-r1/pac-gap-diagnostic/pac-review-gap-diagnostic.md`.
+
+## Strict Stage 1 Validation
+
+- Five-review diagnostic regenerated at `Output/review-five-a-pdfs-2026-05-08-r1/pac-gap-diagnostic/`; active score-influencing leaves are now visible per PAC leaf family.
+- Fixed original-50 validation run: `Output/experiment-corpus-baseline/run-pac-strict-grader-fixed50-2026-05-08-r1`.
+- Stage 41 gate: `Output/experiment-corpus-baseline/pac-strict-grader-fixed50-gate-2026-05-08-r1`; result is expected to fail runtime/protected criteria, but the stricter scorer still meets the mean target with gated mean `90.35`, median `93`, and `false_positive_applied = 0`.
+- Most frequent strict PAC caps in the fixed-50 run were `pdfua.structure.parent_links_valid` (`29` rows), `pdfua.content.orphan_mcids_absent` (`12`), table header association/header-cell rules (`6` each), and `pdfua.content.path_paint_tagged_or_artifacted` (`5`).
+- Known non-scoring blockers remain: `structure-4438` hard timeout, runtime p95 tail, and route/protected volatility on non-parked rows such as `figure-4702`.
+
+## Remediation Promotion Rule
+
+Evidence from this map can move to remediation only after the leaf diagnostic identifies a stable object-level target and existing page/text/tag/PAC guards verify no regression. Scoring strictness does not imply a repair is safe.

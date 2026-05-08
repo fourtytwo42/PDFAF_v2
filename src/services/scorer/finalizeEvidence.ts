@@ -12,26 +12,52 @@ import { buildPacRuleEvidence, type PacRuleEvidence } from '../compliance/pacRul
 import { qualifiesForEngineOwnedOcrExtractabilityCredit } from './remediationProvenance.js';
 
 const HEURISTIC_SCORE_CAP = 89;
-const PAC_RULE_SCORE_CAP = 89;
-const PAC_SCORING_RULE_IDS = new Set([
-  'pdfua.metadata.title_present',
-  'pdfua.metadata.pdfua_identifier_present',
-  'pdfua.settings.marked_true',
-  'pdfua.language.document_lang_present',
-  'pdfua.structure.struct_tree_present',
-  'pdfua.parent_tree.annotation_struct_parent_present',
-  'pdfua.annotations.tagged_annotations_present',
-  'pdfua.annotations.tab_order_structure',
-  'pdfua.annotations.nonlink_contents_present',
-  'pdfua.figure.alt_present',
-  'pdfua.figure.checker_visible_alt_present',
-  'pdfua.form.tu_present',
-  'pdfua.annotation.alt_or_contents_present',
-  'pdfua.table.headers_present',
-  'pdfua.table.cells_nested_under_rows',
-  'pdfua.table.rows_regular',
-  'pdfua.table.strong_regular_structure',
-  'pdfua.content.orphan_mcids_absent',
+const PAC_BASELINE_SCORE_CAP = 89;
+const PAC_STRICT_SCORE_CAP = 79;
+
+const PAC_RULE_SCORE_CAPS = new Map<string, number>([
+  ['pdfua.metadata.title_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.metadata.pdfua_identifier_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.settings.marked_true', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.language.document_lang_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.structure.struct_tree_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.figure.alt_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.figure.checker_visible_alt_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.form.tu_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.annotation.alt_or_contents_present', PAC_BASELINE_SCORE_CAP],
+
+  ['pdfua.parent_tree.annotation_struct_parent_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.parent_tree.page_structparents_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.parent_tree.mcid_entries_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.parent_tree.annotation_object_refs_consistent', PAC_STRICT_SCORE_CAP],
+  ['pdfua.annotations.tagged_annotations_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.annotations.link_in_link_tag', PAC_STRICT_SCORE_CAP],
+  ['pdfua.annotations.widget_in_form_tag', PAC_STRICT_SCORE_CAP],
+  ['pdfua.annotations.tab_order_structure', PAC_STRICT_SCORE_CAP],
+  ['pdfua.annotations.nonlink_contents_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.orphan_mcids_absent', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.path_paint_tagged_or_artifacted', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.text_tagged_or_artifacted', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.image_tagged_or_artifacted', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.artifact_tag_boundary_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.no_artifact_in_tagged_content', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.no_tagged_content_in_artifact', PAC_STRICT_SCORE_CAP],
+  ['pdfua.content.marked_content_stack_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.structure.syntax_roles_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.structure.parent_links_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.structure.child_roles_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.structure.mcr_objr_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.heading.first_heading_h1', PAC_STRICT_SCORE_CAP],
+  ['pdfua.heading.levels_not_skipped', PAC_STRICT_SCORE_CAP],
+  ['pdfua.list.li_parent_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.list.lbl_lbody_parent_valid', PAC_STRICT_SCORE_CAP],
+  ['pdfua.list.items_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.table.headers_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.table.cells_nested_under_rows', PAC_STRICT_SCORE_CAP],
+  ['pdfua.table.rows_regular', PAC_STRICT_SCORE_CAP],
+  ['pdfua.table.strong_regular_structure', PAC_STRICT_SCORE_CAP],
+  ['pdfua.table.header_association_present', PAC_STRICT_SCORE_CAP],
+  ['pdfua.table.header_cells_associated', PAC_STRICT_SCORE_CAP],
 ]);
 
 interface CategoryPolicy {
@@ -54,6 +80,18 @@ interface FinalizeScoringResult {
 interface PacCategoryInfluence {
   rules: PacRuleEvidence[];
   manualReviewReasons: string[];
+  cap: number;
+}
+
+export function pacRuleScoringCap(ruleId: string): number | null {
+  return PAC_RULE_SCORE_CAPS.get(ruleId) ?? null;
+}
+
+export function pacRuleHasScoringInfluence(rule: PacRuleEvidence): boolean {
+  if (rule.ruleId === 'pdfua.heading.first_heading_h1') {
+    return Boolean(rule.source?.structRef);
+  }
+  return true;
 }
 
 function metadataSuggestsOcrEngine(snap: DocumentSnapshot): boolean {
@@ -203,15 +241,18 @@ function pacInfluenceByCategory(snap: DocumentSnapshot): Map<CategoryKey, PacCat
   const out = new Map<CategoryKey, PacCategoryInfluence>();
   const selected = buildPacRuleEvidence(snap)
     .filter(rule =>
-      PAC_SCORING_RULE_IDS.has(rule.ruleId) &&
+      pacRuleScoringCap(rule.ruleId) !== null &&
       rule.status === 'fail' &&
-      rule.confidence === 'verified'
+      rule.confidence === 'verified' &&
+      pacRuleHasScoringInfluence(rule)
     )
     .sort((a, b) => a.category.localeCompare(b.category) || a.ruleId.localeCompare(b.ruleId));
   for (const rule of selected) {
-    const existing = out.get(rule.category) ?? { rules: [], manualReviewReasons: [] };
+    const ruleCap = pacRuleScoringCap(rule.ruleId) ?? PAC_BASELINE_SCORE_CAP;
+    const existing = out.get(rule.category) ?? { rules: [], manualReviewReasons: [], cap: ruleCap };
     existing.rules.push(rule);
     existing.manualReviewReasons.push(`PAC rule failure requires manual review: ${rule.ruleId}.`);
+    existing.cap = Math.min(existing.cap, ruleCap);
     out.set(rule.category, existing);
   }
   return out;
@@ -239,15 +280,16 @@ function finalizeCategory(
   if (
     applicablePacInfluence &&
     typeof category.score === 'number' &&
-    category.score > PAC_RULE_SCORE_CAP
+    category.score > applicablePacInfluence.cap
   ) {
-    finalScore = Math.min(finalScore ?? PAC_RULE_SCORE_CAP, PAC_RULE_SCORE_CAP);
+    finalScore = Math.min(finalScore ?? applicablePacInfluence.cap, applicablePacInfluence.cap);
     for (const pacRule of applicablePacInfluence.rules) {
+      const ruleCap = pacRuleScoringCap(pacRule.ruleId) ?? applicablePacInfluence.cap;
       scoreCapsApplied.push({
         category: category.key,
-        cap: PAC_RULE_SCORE_CAP,
+        cap: ruleCap,
         rawScore: category.score,
-        finalScore: PAC_RULE_SCORE_CAP,
+        finalScore: Math.min(category.score, ruleCap),
         reason: `PAC rule failure: ${pacRule.ruleId}`,
       });
     }

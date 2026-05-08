@@ -1666,7 +1666,7 @@ describe('phase 3 PAC scoring influence', () => {
     expect(cat.manualReviewRequired).toBe(false);
   });
 
-  it('keeps verified table header association evidence diagnostic-only for scoring after Stage 1 narrowing', () => {
+  it('caps verified table header association evidence under strict PAC grading', () => {
     const snap = makeSnap({
       tableHeaderAudit: {
         tablesChecked: 1,
@@ -1681,13 +1681,21 @@ describe('phase 3 PAC scoring influence', () => {
     ]);
     const cat = finalized.categories[0]!;
 
-    expect(cat.score).toBe(100);
-    expect(cat.scoreCapsApplied).toBeUndefined();
-    expect(cat.evidence).toBe('verified');
-    expect(cat.manualReviewRequired).toBe(false);
+    expect(cat.score).toBe(79);
+    expect(cat.scoreCapsApplied).toEqual([
+      {
+        category: 'table_markup',
+        cap: 79,
+        rawScore: 100,
+        finalScore: 79,
+        reason: 'PAC rule failure: pdfua.table.header_association_present',
+      },
+    ]);
+    expect(cat.evidence).toBe('manual_review_required');
+    expect(cat.manualReviewRequired).toBe(true);
   });
 
-  it('does not lower already-low font or table categories for diagnostic-only PAC evidence', () => {
+  it('does not lower already-low font or strict table categories', () => {
     const snap = makeSnap({
       fontSyntaxAudit: {
         fontsChecked: 1,
@@ -1704,7 +1712,7 @@ describe('phase 3 PAC scoring influence', () => {
         tablesChecked: 1,
         headerAssociationMissingCount: 1,
         orphanHeaderCellCount: 0,
-        dataCellsWithoutHeaderCount: 0,
+        dataCellsWithoutHeaderCount: 1,
       },
     });
 
@@ -1768,6 +1776,92 @@ describe('phase 3 PAC scoring influence', () => {
       },
     ]);
     expect(finalized.manualReviewReasons).toContain('PAC rule failure requires manual review: pdfua.form.tu_present.');
+  });
+
+  it('applies stricter caps for verified PAC content-tagging leaf failures', () => {
+    const snap = makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        textOutsideMarkedContentOrArtifact: 3,
+        imageOutsideMarkedContentOrArtifact: 0,
+        pathOutsideMarkedContentOrArtifact: 0,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('reading_order', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(79);
+    expect(cat.scoreCapsApplied).toEqual([
+      {
+        category: 'reading_order',
+        cap: 79,
+        rawScore: 100,
+        finalScore: 79,
+        reason: 'PAC rule failure: pdfua.content.text_tagged_or_artifacted',
+      },
+    ]);
+  });
+
+  it('applies stricter caps for verified PAC structure-syntax leaf failures', () => {
+    const snap = makeSnap({
+      structureSyntaxAudit: {
+        missingStructureTypeCount: 0,
+        missingRoleCount: 0,
+        missingParentCount: 1,
+        wrongParentCount: 0,
+        invalidChildRoleCount: 0,
+        invalidMcrObjrCount: 0,
+        circularRoleMapCount: 0,
+        standardRoleRemappedCount: 0,
+        unmappedNonstandardRoleCount: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('reading_order', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(79);
+    expect(cat.scoreCapsApplied?.map(cap => `${cap.cap}:${cap.reason}`)).toEqual([
+      '79:PAC rule failure: pdfua.structure.parent_links_valid',
+    ]);
+  });
+
+  it('applies stricter caps for verified PAC heading and table leaf failures', () => {
+    const snap = makeSnap({
+      headings: [{ level: 3, text: 'Skipped', page: 0, structRef: '12 0 R' }],
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 1,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 1,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('heading_structure', 100),
+      scoredCategory('table_markup', 100),
+    ]);
+    const heading = finalized.categories.find(category => category.key === 'heading_structure')!;
+    const table = finalized.categories.find(category => category.key === 'table_markup')!;
+
+    expect(heading.score).toBe(79);
+    expect(heading.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.heading.first_heading_h1',
+    ]);
+    expect(table.score).toBe(79);
+    expect(table.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
+      'PAC rule failure: pdfua.table.header_association_present',
+    ]);
   });
 
   it('does not lower an already-low category for a selected verified PAC failure', () => {
@@ -1837,7 +1931,7 @@ describe('phase 3 PAC scoring influence', () => {
     ]);
     const cat = finalized.categories[0]!;
 
-    expect(cat.score).toBe(89);
+    expect(cat.score).toBe(79);
     expect(cat.scoreCapsApplied?.map(cap => cap.reason)).toEqual([
       'PAC rule failure: pdfua.annotation.alt_or_contents_present',
       'PAC rule failure: pdfua.annotations.nonlink_contents_present',
