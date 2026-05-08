@@ -260,6 +260,8 @@ function annotationRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     return [
       noStructureRule('pdfua.parent_tree.annotation_struct_parent_present', 'link_quality', 'Annotation ParentTree evidence requires a structure tree.'),
       noStructureRule('pdfua.annotations.tagged_annotations_present', 'pdf_ua_compliance', 'Tagged annotation evidence requires a structure tree.'),
+      noStructureRule('pdfua.annotations.link_in_link_tag', 'link_quality', 'Link annotation nesting evidence requires a structure tree.'),
+      noStructureRule('pdfua.annotations.widget_in_form_tag', 'form_accessibility', 'Widget/Form nesting evidence requires a structure tree.'),
       noStructureRule('pdfua.annotations.tab_order_structure', 'reading_order', 'Annotation tab-order evidence requires a structure tree.'),
       noStructureRule('pdfua.annotations.nonlink_contents_present', 'alt_text', 'Non-link annotation contents evidence requires a structure tree.'),
     ];
@@ -288,6 +290,26 @@ function annotationRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       count: missingStructure,
     }),
     rule({
+      ruleId: 'pdfua.annotations.link_in_link_tag',
+      status: aa.linkAnnotationsMissingStructure > 0 ? 'fail' : 'pass',
+      category: 'link_quality',
+      message: aa.linkAnnotationsMissingStructure > 0
+        ? `${aa.linkAnnotationsMissingStructure} link annotation(s) are missing Link structure ownership.`
+        : 'Link annotations do not show missing Link structure ownership debt.',
+      confidence: 'heuristic',
+      count: aa.linkAnnotationsMissingStructure,
+    }),
+    rule({
+      ruleId: 'pdfua.annotations.widget_in_form_tag',
+      status: snapshot.formFields.length + snapshot.formFieldsFromPdfjs.length === 0 ? 'not_applicable' : 'warn',
+      category: 'form_accessibility',
+      message: snapshot.formFields.length + snapshot.formFieldsFromPdfjs.length === 0
+        ? 'No widget/form field evidence is present.'
+        : 'Widget-in-Form nesting is not directly captured by the current snapshot.',
+      confidence: 'manual_review_required',
+      count: 0,
+    }),
+    rule({
       ruleId: 'pdfua.annotations.tab_order_structure',
       status: aa.pagesMissingTabsS > 0 ? 'fail' : 'pass',
       category: 'reading_order',
@@ -310,7 +332,9 @@ function annotationRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
 
 function altRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const informativeFigures = snapshot.figures.filter(figure => !figure.isArtifact);
+  const formulas = informativeFigures.filter(figure => ((figure.role ?? figure.rawRole ?? '').replace(/^\//, '').toLowerCase() === 'formula'));
   const missingFigureAlt = informativeFigures.filter(figure => !figure.hasAlt || !nonEmpty(figure.altText));
+  const missingFormulaAlt = formulas.filter(figure => !figure.hasAlt || !nonEmpty(figure.altText));
   const weakFigureAlt = informativeFigures.filter(figure => isWeakFigureAlt(figure.altText, figure.hasAlt));
   const checkerFigures = (snapshot.checkerFigureTargets ?? []).filter(figure =>
     figure.reachable &&
@@ -324,6 +348,9 @@ function altRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   ];
   const formMissingTu = formFields.filter(field => !nonEmpty(field.tooltip));
   const nonLinkMissing = snapshot.annotationAccessibility?.nonLinkAnnotationsMissingContents ?? 0;
+  const altRisks = snapshot.acrobatStyleAltRisks;
+  const textAltRisk = altRisks?.nonFigureWithAltCount ?? 0;
+  const emptyAltRisk = altRisks?.emptyNonFigureAltActualCount ?? 0;
 
   return [
     rule({
@@ -353,6 +380,22 @@ function altRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
           : 'Figure alternate text does not match known weak-alt patterns.',
       confidence: 'heuristic',
       count: weakFigureAlt.length,
+    }),
+    rule({
+      ruleId: 'pdfua.formula.alt_present',
+      status: formulas.length === 0 ? 'not_applicable' : missingFormulaAlt.length > 0 ? 'fail' : 'pass',
+      category: 'alt_text',
+      message: formulas.length === 0
+        ? 'No Formula structure evidence is present.'
+        : missingFormulaAlt.length > 0
+          ? `${missingFormulaAlt.length} of ${formulas.length} Formula element(s) are missing non-empty alternate text.`
+          : 'All Formula structure evidence includes non-empty alternate text.',
+      count: missingFormulaAlt.length,
+      source: missingFormulaAlt[0] ? {
+        page: missingFormulaAlt[0].page,
+        structRef: missingFormulaAlt[0].structRef,
+        category: 'alt_text',
+      } : undefined,
     }),
     rule({
       ruleId: 'pdfua.figure.checker_visible_alt_present',
@@ -391,6 +434,90 @@ function altRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
           ? `${nonLinkMissing} non-link annotation(s) are missing /Contents.`
           : 'Non-link annotation alternate-description evidence is clean.',
       count: nonLinkMissing,
+    }),
+    rule({
+      ruleId: 'pdfua.alt.text_element_alt_absent',
+      status: !altRisks ? 'not_applicable' : textAltRisk > 0 ? 'warn' : 'pass',
+      category: 'alt_text',
+      message: !altRisks
+        ? 'Text-element alternate-description risk evidence is not present in the snapshot.'
+        : textAltRisk > 0
+          ? `${textAltRisk} non-Figure structure element(s) carry alternate-description text and need checker review.`
+          : 'No non-Figure alternate-description ownership risk was detected.',
+      confidence: altRisks ? 'heuristic' : 'manual_review_required',
+      count: textAltRisk,
+    }),
+    rule({
+      ruleId: 'pdfua.alt.descriptions_not_empty',
+      status: !altRisks ? 'not_applicable' : emptyAltRisk > 0 ? 'warn' : 'pass',
+      category: 'alt_text',
+      message: !altRisks
+        ? 'Empty alternate-description risk evidence is not present in the snapshot.'
+        : emptyAltRisk > 0
+          ? `${emptyAltRisk} empty alternate-description/ActualText value(s) were detected on non-Figure elements.`
+          : 'No empty alternate-description/ActualText ownership risk was detected.',
+      confidence: altRisks ? 'heuristic' : 'manual_review_required',
+      count: emptyAltRisk,
+    }),
+  ];
+}
+
+function headingStructureRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  if (!hasStructure(snapshot)) {
+    return [
+      noStructureRule('pdfua.heading.first_heading_h1', 'heading_structure', 'Heading evidence requires a structure tree.'),
+      noStructureRule('pdfua.heading.levels_not_skipped', 'heading_structure', 'Heading evidence requires a structure tree.'),
+      noStructureRule('pdfua.heading.h_and_hn_not_mixed', 'heading_structure', 'Heading role-form evidence requires a structure tree.'),
+    ];
+  }
+  const headings = snapshot.headings.filter(heading => heading.level >= 1 && heading.level <= 6);
+  if (headings.length === 0) {
+    return [
+      noStructureRule('pdfua.heading.first_heading_h1', 'heading_structure', 'No heading structure evidence is present.'),
+      noStructureRule('pdfua.heading.levels_not_skipped', 'heading_structure', 'No heading structure evidence is present.'),
+      noStructureRule('pdfua.heading.h_and_hn_not_mixed', 'heading_structure', 'No heading structure evidence is present.'),
+    ];
+  }
+  const firstHeading = headings[0]!;
+  let skipped = 0;
+  for (let i = 1; i < headings.length; i += 1) {
+    const current = headings[i]!;
+    const previous = headings[i - 1]!;
+    if (current.level > previous.level + 1) skipped += 1;
+  }
+  return [
+    rule({
+      ruleId: 'pdfua.heading.first_heading_h1',
+      status: firstHeading.level === 1 ? 'pass' : 'fail',
+      category: 'heading_structure',
+      message: firstHeading.level === 1
+        ? 'The first captured heading is H1.'
+        : `The first captured heading is H${firstHeading.level}, not H1.`,
+      confidence: 'verified',
+      count: firstHeading.level === 1 ? 0 : 1,
+      source: {
+        page: firstHeading.page,
+        structRef: firstHeading.structRef,
+        category: 'heading_structure',
+      },
+    }),
+    rule({
+      ruleId: 'pdfua.heading.levels_not_skipped',
+      status: skipped > 0 ? 'fail' : 'pass',
+      category: 'heading_structure',
+      message: skipped > 0
+        ? `${skipped} skipped heading-level transition(s) were detected.`
+        : 'No skipped heading-level transitions were detected.',
+      confidence: 'verified',
+      count: skipped,
+    }),
+    rule({
+      ruleId: 'pdfua.heading.h_and_hn_not_mixed',
+      status: 'warn',
+      category: 'heading_structure',
+      message: 'Mixed generic H versus numbered Hn role evidence is not directly captured by the current snapshot.',
+      confidence: 'manual_review_required',
+      count: 0,
     }),
   ];
 }
@@ -455,7 +582,11 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       noStructureRule('pdfua.content.text_tagged_or_artifacted', 'reading_order', 'Text tagging evidence requires a structure tree.'),
       noStructureRule('pdfua.content.image_tagged_or_artifacted', 'pdf_ua_compliance', 'Image tagging evidence requires a structure tree.'),
       noStructureRule('pdfua.content.artifact_tag_boundary_valid', 'pdf_ua_compliance', 'Artifact/tag boundary evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.no_artifact_in_tagged_content', 'pdf_ua_compliance', 'Artifact/tag boundary evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.no_tagged_content_in_artifact', 'pdf_ua_compliance', 'Artifact/tag boundary evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.marked_content_stack_valid', 'pdf_ua_compliance', 'Marked-content stack evidence requires a structure tree.'),
       noStructureRule('pdfua.content.within_page_bounds', 'pdf_ua_compliance', 'Content-boundary evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.external_reference_xobjects_absent', 'pdf_ua_compliance', 'Reference XObject evidence requires a structure tree.'),
     ];
   }
 
@@ -468,6 +599,9 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     (tagging?.artifactInsideTaggedContent ?? 0) +
     (tagging?.taggedContentInsideArtifact ?? 0) +
     (tagging?.malformedMarkedContentStack ?? 0);
+  const artifactInside = tagging?.artifactInsideTaggedContent ?? 0;
+  const taggedInsideArtifact = tagging?.taggedContentInsideArtifact ?? 0;
+  const malformedStack = tagging?.malformedMarkedContentStack ?? 0;
   const outsidePageBounds = tagging?.contentOutsidePageBounds ?? 0;
   const contentConfidence: PacRuleConfidence = tagging
     ? (tagging.pageStreamsChecked !== undefined &&
@@ -528,6 +662,36 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       count: boundaryDebt,
     }),
     rule({
+      ruleId: 'pdfua.content.no_artifact_in_tagged_content',
+      status: artifactInside > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: artifactInside > 0
+        ? `${artifactInside} artifact block(s) appear inside tagged content.`
+        : 'No artifact-inside-tagged-content debt was detected.',
+      confidence: contentConfidence,
+      count: artifactInside,
+    }),
+    rule({
+      ruleId: 'pdfua.content.no_tagged_content_in_artifact',
+      status: taggedInsideArtifact > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: taggedInsideArtifact > 0
+        ? `${taggedInsideArtifact} tagged-content block(s) appear inside artifacts.`
+        : 'No tagged-content-inside-artifact debt was detected.',
+      confidence: contentConfidence,
+      count: taggedInsideArtifact,
+    }),
+    rule({
+      ruleId: 'pdfua.content.marked_content_stack_valid',
+      status: malformedStack > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: malformedStack > 0
+        ? `${malformedStack} malformed marked-content stack issue(s) were detected.`
+        : 'No malformed marked-content stack issue was detected.',
+      confidence: contentConfidence,
+      count: malformedStack,
+    }),
+    rule({
       ruleId: 'pdfua.content.within_page_bounds',
       status: outsidePageBounds > 0 ? 'fail' : 'pass',
       category: 'pdf_ua_compliance',
@@ -536,6 +700,14 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
         : 'No outside-page-boundary content evidence was detected.',
       confidence: contentConfidence,
       count: outsidePageBounds,
+    }),
+    rule({
+      ruleId: 'pdfua.content.external_reference_xobjects_absent',
+      status: 'warn',
+      category: 'pdf_ua_compliance',
+      message: 'External reference XObject evidence is not directly captured by the current snapshot.',
+      confidence: 'manual_review_required',
+      count: 0,
     }),
   ];
 }
@@ -727,6 +899,7 @@ function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     return [
       noStructureRule('pdfua.font.to_unicode_cmap_present', 'text_extractability', 'No font evidence is present.'),
       noStructureRule('pdfua.font.to_unicode_cmap_valid', 'text_extractability', 'No font evidence is present.'),
+      noStructureRule('pdfua.content.characters_unicode_mappable', 'text_extractability', 'No font/text mapping evidence is present.'),
       noStructureRule('pdfua.font.cid_to_gidmap_valid', 'text_extractability', 'No font evidence is present.'),
       noStructureRule('pdfua.font.truetype_encoding_consistent', 'text_extractability', 'No font evidence is present.'),
       noStructureRule('pdfua.font.wmode_consistent', 'text_extractability', 'No font evidence is present.'),
@@ -752,6 +925,16 @@ function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
         : 'No invalid /ToUnicode CMap syntax was detected.',
       confidence: audit ? 'verified' : 'manual_review_required',
       count: (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0),
+    }),
+    rule({
+      ruleId: 'pdfua.content.characters_unicode_mappable',
+      status: ((audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)) > 0 ? 'fail' : 'pass',
+      category: 'text_extractability',
+      message: ((audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)) > 0
+        ? `${(audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)} font CMap issue(s) may prevent mapping text characters to Unicode.`
+        : 'Font CMap evidence does not show Unicode mapping debt.',
+      confidence: audit ? 'heuristic' : 'manual_review_required',
+      count: (audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0),
     }),
     rule({
       ruleId: 'pdfua.font.cid_to_gidmap_valid',
@@ -1019,6 +1202,7 @@ export function buildPacRuleEvidence(snapshot: DocumentSnapshot): PacRuleEvidenc
     ...structureRules(snapshot),
     ...annotationRules(snapshot),
     ...altRules(snapshot),
+    ...headingStructureRules(snapshot),
     ...figureStructureRules(snapshot),
     ...tableRules(snapshot),
     ...contentRules(snapshot),

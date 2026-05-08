@@ -362,9 +362,24 @@ describe('buildPacRuleEvidence', () => {
 
     expect(byId(rows, 'pdfua.parent_tree.annotation_struct_parent_present').status).toBe('fail');
     expect(byId(rows, 'pdfua.annotations.tagged_annotations_present').status).toBe('fail');
+    expect(byId(rows, 'pdfua.annotations.link_in_link_tag')).toMatchObject({ status: 'fail', count: 3, confidence: 'heuristic' });
+    expect(byId(rows, 'pdfua.annotations.widget_in_form_tag')).toMatchObject({ status: 'not_applicable' });
     expect(byId(rows, 'pdfua.annotations.tab_order_structure').status).toBe('fail');
     expect(byId(rows, 'pdfua.annotations.nonlink_contents_present').status).toBe('fail');
     expect(byId(rows, 'pdfua.annotation.alt_or_contents_present').status).toBe('fail');
+  });
+
+  it('emits PAC heading leaf rows for first heading and skipped levels', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      headings: [
+        { level: 2, text: 'Intro', page: 0, structRef: '2_0' },
+        { level: 4, text: 'Deep topic', page: 1, structRef: '4_0' },
+      ],
+    }));
+
+    expect(byId(rows, 'pdfua.heading.first_heading_h1')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.heading.levels_not_skipped')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.heading.h_and_hn_not_mixed')).toMatchObject({ status: 'warn', confidence: 'manual_review_required' });
   });
 
   it('fails direct cells under Table and irregular rows', () => {
@@ -456,6 +471,9 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.content.image_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 2 });
     expect(byId(rows, 'pdfua.content.path_paint_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 1 });
     expect(byId(rows, 'pdfua.content.artifact_tag_boundary_valid')).toMatchObject({ status: 'fail', count: 4, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.content.no_artifact_in_tagged_content')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.content.no_tagged_content_in_artifact')).toMatchObject({ status: 'fail', count: 2, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.content.marked_content_stack_valid')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
     expect(byId(rows, 'pdfua.content.within_page_bounds')).toMatchObject({ status: 'pass', count: 0, confidence: 'verified' });
   });
 
@@ -533,6 +551,7 @@ describe('buildPacRuleEvidence', () => {
 
     expect(byId(rows, 'pdfua.font.to_unicode_cmap_present').status).toBe('fail');
     expect(byId(rows, 'pdfua.font.to_unicode_cmap_valid')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.content.characters_unicode_mappable')).toMatchObject({ status: 'fail', count: 3, confidence: 'heuristic' });
     expect(byId(rows, 'pdfua.font.cid_to_gidmap_valid')).toMatchObject({ status: 'warn', count: 2 });
     expect(byId(rows, 'pdfua.font.truetype_encoding_consistent').status).toBe('warn');
     expect(byId(rows, 'pdfua.font.wmode_consistent').status).toBe('fail');
@@ -624,6 +643,29 @@ describe('buildPacRuleEvidence', () => {
     }));
 
     expect(byId(rows, 'pdfua.quality.title_not_filename_like').status).toBe('warn');
+  });
+
+  it('surfaces Formula alt and non-Figure alt ownership risks', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 1,
+        rawRole: 'Formula',
+        role: 'Formula',
+        structRef: '44_0',
+      }],
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 2,
+        emptyNonFigureAltActualCount: 1,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.formula.alt_present')).toMatchObject({ status: 'fail', count: 1 });
+    expect(byId(rows, 'pdfua.alt.text_element_alt_absent')).toMatchObject({ status: 'warn', count: 2, confidence: 'heuristic' });
+    expect(byId(rows, 'pdfua.alt.descriptions_not_empty')).toMatchObject({ status: 'warn', count: 1, confidence: 'heuristic' });
   });
 
   it('marks structure-child rules not applicable when no structure is present', () => {

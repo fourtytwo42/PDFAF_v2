@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBucketGaps,
   buildPacReviewDiagnostic,
+  buildPacLeafCoverage,
+  classifyPacLeafCoverage,
   parsePacReportText,
   type PacReviewCategorySnapshot,
   type PacReviewFileRow,
@@ -189,6 +191,50 @@ ABOUT PAC
     ]);
   });
 
+  it('expands active PAC buckets into deterministic leaf coverage rows', () => {
+    const pac = parsePacReportText(`
+CHECKPOINT
+PASSED
+WARNED
+FAILED
+Content
+10
+-
+2
+Structure elements
+5
+-
+1
+ABOUT PAC
+`);
+    const rows = buildPacLeafCoverage(pac.buckets, [
+      rule({ ruleId: 'pdfua.content.text_tagged_or_artifacted', status: 'fail', confidence: 'verified', count: 2 }),
+      rule({ ruleId: 'pdfua.figure.bbox_present', status: 'fail', confidence: 'heuristic', category: 'pdf_ua_compliance', count: 1 }),
+    ]);
+
+    expect(rows.map(row => `${row.bucket}:${row.family}:${row.coverage}`)).toContain(
+      'Content:Tagged text/image/path operators:covered_verified',
+    );
+    expect(rows.map(row => `${row.bucket}:${row.family}:${row.coverage}`)).toContain(
+      'Structure elements:Figure structure:covered_heuristic',
+    );
+    expect(rows.find(row => row.family === 'Heading structure')?.coverage).toBe('missing');
+  });
+
+  it('classifies missing and manual-review-only leaf coverage separately', () => {
+    const definitions = buildPacLeafCoverage(
+      [{ bucket: 'Content', passed: 1, warned: 0, failed: 1 }],
+      [],
+    );
+
+    const externalXObject = definitions.find(row => row.family === 'Referenced external objects');
+    const taggedOperators = definitions.find(row => row.family === 'Tagged text/image/path operators');
+
+    expect(externalXObject?.coverage).toBe('manual_review_only');
+    expect(taggedOperators?.coverage).toBe('missing');
+    expect(classifyPacLeafCoverage(taggedOperators!, [])).toBe('missing');
+  });
+
   it('builds deterministic aggregate bucket totals', () => {
     const rows: PacReviewFileRow[] = [
       {
@@ -211,6 +257,7 @@ ABOUT PAC
             likelyMissingCheckerFamily: 'missing',
           },
         ],
+        leafCoverage: [],
         pacRuleFailures: [],
         pacRuleWarnings: [],
         analyzerAudits: {},
@@ -235,6 +282,7 @@ ABOUT PAC
             likelyMissingCheckerFamily: 'missing',
           },
         ],
+        leafCoverage: [],
         pacRuleFailures: [],
         pacRuleWarnings: [],
         analyzerAudits: {},

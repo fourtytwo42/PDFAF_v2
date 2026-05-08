@@ -95,6 +95,29 @@ export interface PacReviewCategorySnapshot {
   applicable: boolean;
 }
 
+export type PacLeafCoverageStatus =
+  | 'covered_verified'
+  | 'covered_heuristic'
+  | 'partial'
+  | 'missing'
+  | 'manual_review_only';
+
+export interface PacLeafDefinition {
+  bucket: PacReportBucket;
+  family: string;
+  pacChecks: string[];
+  internalRuleIds: string[];
+  manualReviewOnly?: boolean;
+  recommendedAction: string;
+}
+
+export interface PacLeafCoverageRow extends PacLeafDefinition {
+  coverage: PacLeafCoverageStatus;
+  matchedRules: PacRuleEvidence[];
+  matchedRuleCount: number;
+  failingOrWarningRuleCount: number;
+}
+
 export interface PacBucketGapRow {
   bucket: PacReportBucket;
   pacFailed: number;
@@ -115,6 +138,7 @@ export interface PacReviewFileRow {
   categories: PacReviewCategorySnapshot[];
   pac: PacReportSummary | null;
   bucketGaps: PacBucketGapRow[];
+  leafCoverage: PacLeafCoverageRow[];
   pacRuleFailures: PacRuleEvidence[];
   pacRuleWarnings: PacRuleEvidence[];
   analyzerAudits: Record<string, unknown>;
@@ -126,6 +150,164 @@ export interface PacReviewDiagnostic {
   files: PacReviewFileRow[];
   failedBucketTotals: Array<{ bucket: PacReportBucket; failed: number; warned: number; files: number }>;
 }
+
+export const PAC_LEAF_DEFINITIONS: PacLeafDefinition[] = [
+  {
+    bucket: 'Content',
+    family: 'Tagged text/image/path operators',
+    pacChecks: ['CheckContentIsTaggedOrArtifacted'],
+    internalRuleIds: [
+      'pdfua.content.text_tagged_or_artifacted',
+      'pdfua.content.image_tagged_or_artifacted',
+      'pdfua.content.path_paint_tagged_or_artifacted',
+    ],
+    recommendedAction: 'Use contentTaggingAudit event counts to identify object/page targets before content tagging repairs.',
+  },
+  {
+    bucket: 'Content',
+    family: 'Artifact/tag nesting and marked-content stack',
+    pacChecks: ['CheckNoArtifactInTaggedContent', 'CheckNoTaggedContentInArtifacts'],
+    internalRuleIds: [
+      'pdfua.content.artifact_tag_boundary_valid',
+      'pdfua.content.no_artifact_in_tagged_content',
+      'pdfua.content.no_tagged_content_in_artifact',
+      'pdfua.content.marked_content_stack_valid',
+    ],
+    recommendedAction: 'Promote direct stack-state evidence before any artifact/tag cleanup repair is broadened.',
+  },
+  {
+    bucket: 'Content',
+    family: 'Unicode character mapping',
+    pacChecks: ['CheckCharactersUnicodeMappable'],
+    internalRuleIds: ['pdfua.content.characters_unicode_mappable', 'pdfua.font.to_unicode_cmap_present', 'pdfua.font.to_unicode_cmap_valid'],
+    recommendedAction: 'Deepen font evidence from CMap syntax to character-level unmappable text where possible.',
+  },
+  {
+    bucket: 'Content',
+    family: 'Referenced external objects',
+    pacChecks: ['CheckDocuementContainsNoReferenceXObjects'],
+    internalRuleIds: ['pdfua.content.external_reference_xobjects_absent'],
+    manualReviewOnly: true,
+    recommendedAction: 'Add direct XObject reference detection before using this as scorer or remediation evidence.',
+  },
+  {
+    bucket: 'PDF Syntax',
+    family: 'ParentTree and structure syntax',
+    pacChecks: ['CheckStructuralParentTree', 'CheckStructureElementHasParentKey', 'CheckStructureHasCorruptElements'],
+    internalRuleIds: [
+      'pdfua.parent_tree.present',
+      'pdfua.parent_tree.page_structparents_present',
+      'pdfua.parent_tree.mcid_entries_valid',
+      'pdfua.parent_tree.annotation_object_refs_consistent',
+      'pdfua.structure.parent_links_valid',
+      'pdfua.structure.mcr_objr_valid',
+    ],
+    recommendedAction: 'Use direct object reference deltas to select future protected scoring/gate candidates.',
+  },
+  {
+    bucket: 'Structure tree',
+    family: 'RoleMap and legal structure locations',
+    pacChecks: ['CheckNoCircularMappings', 'CheckNonStandardStructureTypeIsRemapped', 'CheckStandardStructureTypeIsNotRemapped', 'CheckMarkedContentIsInLegalPosition'],
+    internalRuleIds: ['pdfua.structure.rolemap_valid', 'pdfua.structure.child_roles_valid', 'pdfua.content.within_page_bounds'],
+    recommendedAction: 'Keep as diagnostic until direct legal-position evidence is complete enough to avoid noisy gates.',
+  },
+  {
+    bucket: 'Fonts',
+    family: 'Font/CMap syntax',
+    pacChecks: ['CheckCMapPredefinedOrEmbedded', 'CheckWModeInDictAndStreamIdentical', 'CheckFontType2HasCIDToGIDMap', 'CheckFontsAreEmbedded'],
+    internalRuleIds: [
+      'pdfua.font.to_unicode_cmap_present',
+      'pdfua.font.to_unicode_cmap_valid',
+      'pdfua.font.cid_to_gidmap_valid',
+      'pdfua.font.truetype_encoding_consistent',
+      'pdfua.font.wmode_consistent',
+    ],
+    recommendedAction: 'Keep font findings diagnostic/manual-review for now; prior numeric scoring promotion was too noisy.',
+  },
+  {
+    bucket: 'Structure elements',
+    family: 'Figure structure',
+    pacChecks: ['CheckFigureHasBBox'],
+    internalRuleIds: ['pdfua.figure.bbox_present'],
+    recommendedAction: 'Upgrade BBox evidence from heuristic to verified object-level evidence before repair/scoring use.',
+  },
+  {
+    bucket: 'Structure elements',
+    family: 'Annotation/link/widget nesting',
+    pacChecks: ['CheckAnnotationsInAnnotTag', 'CheckLinkAnnotationsInLinkTag', 'CheckWidgetAnnotationsInFormTag'],
+    internalRuleIds: ['pdfua.annotations.tagged_annotations_present', 'pdfua.annotations.link_in_link_tag', 'pdfua.annotations.widget_in_form_tag'],
+    recommendedAction: 'Add direct subtype-to-structure-role matching for Annot/Link/Form nesting.',
+  },
+  {
+    bucket: 'Structure elements',
+    family: 'Heading structure',
+    pacChecks: ['CheckSetFirstHeadingIsH1', 'CheckSetHeadingStructureTypesNotMixed', 'CheckSetNoHeadingsSkipped', 'CheckSetOnlyOneHPerNode'],
+    internalRuleIds: ['pdfua.heading.first_heading_h1', 'pdfua.heading.levels_not_skipped', 'pdfua.heading.h_and_hn_not_mixed'],
+    recommendedAction: 'Add raw H/Hn role-form capture to make mixed-heading evidence verified.',
+  },
+  {
+    bucket: 'Structure elements',
+    family: 'List structure',
+    pacChecks: ['CheckLTag', 'CheckLITag', 'CheckLblTag', 'CheckLBodyTag', 'CheckLIContainsExactlyOneBody'],
+    internalRuleIds: ['pdfua.list.li_parent_valid', 'pdfua.list.lbl_lbody_parent_valid', 'pdfua.list.items_present'],
+    recommendedAction: 'Use listStructureAudit object refs as repair targets only after object identity is stable.',
+  },
+  {
+    bucket: 'Structure elements',
+    family: 'Table structure',
+    pacChecks: ['CheckTablesAreRegular', 'CheckTableHeaderCellAssignments'],
+    internalRuleIds: [
+      'pdfua.table.headers_present',
+      'pdfua.table.cells_nested_under_rows',
+      'pdfua.table.rows_regular',
+      'pdfua.table.strong_regular_structure',
+      'pdfua.table.header_association_present',
+      'pdfua.table.header_cells_associated',
+    ],
+    recommendedAction: 'Use table object refs and protected reanalysis before promoting additional table repairs.',
+  },
+  {
+    bucket: 'Structure elements',
+    family: 'TOC and Note structure',
+    pacChecks: ['CheckTOCITag', 'CheckNoteTagHasID', 'CheckNoteTagHasUniqueID'],
+    internalRuleIds: ['pdfua.toc.toci_links_valid', 'pdfua.note.ids_unique'],
+    recommendedAction: 'Keep TOC/Note diagnostic unless a review PDF shows repeatable direct debt.',
+  },
+  {
+    bucket: 'Alternative Descriptions',
+    family: 'Figure and Formula alternate text',
+    pacChecks: ['CheckFigureHasAltText', 'CheckFormulaHasAltText'],
+    internalRuleIds: ['pdfua.figure.alt_present', 'pdfua.figure.checker_visible_alt_present', 'pdfua.formula.alt_present'],
+    recommendedAction: 'Use exact struct refs and semantic alt policy only after deterministic ownership is proven.',
+  },
+  {
+    bucket: 'Alternative Descriptions',
+    family: 'Form and annotation descriptions',
+    pacChecks: ['CheckFormFieldHasTUKey', 'CheckAnnotationHasAltText'],
+    internalRuleIds: ['pdfua.form.tu_present', 'pdfua.annotation.alt_or_contents_present', 'pdfua.annotations.nonlink_contents_present'],
+    recommendedAction: 'Use existing form/annotation fill tools only when link/page/text/tag guards are clean.',
+  },
+  {
+    bucket: 'Alternative Descriptions',
+    family: 'Inappropriate or empty alt ownership',
+    pacChecks: ['CheckTextTagHasAltText', 'CheckAltTextsAreNotGenerated'],
+    internalRuleIds: ['pdfua.alt.text_element_alt_absent', 'pdfua.alt.descriptions_not_empty', 'pdfua.quality.alt_not_generated'],
+    recommendedAction: 'Keep as warning/quality evidence until object-level role ownership can be repaired safely.',
+  },
+  {
+    bucket: 'Natural language',
+    family: 'Language of parts',
+    pacChecks: ['CheckAltTextHasLanguage', 'CheckActualTextHasLanguage', 'CheckContentsEntryHasLanguage', 'CheckTUEntryHasLanguage', 'CheckTextContentHasLanguage'],
+    internalRuleIds: [
+      'pdfua.language.alt_text_lang_valid',
+      'pdfua.language.actual_text_lang_valid',
+      'pdfua.language.annotation_contents_lang_valid',
+      'pdfua.language.form_tu_lang_valid',
+      'pdfua.language.text_object_lang_valid',
+    ],
+    recommendedAction: 'Keep language part evidence diagnostic until direct inherited language context is complete.',
+  },
+];
 
 function argValue(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -253,6 +435,46 @@ function matchingRules(bucket: PacReportBucket, rules: PacRuleEvidence[], status
     .sort((a, b) => a.ruleId.localeCompare(b.ruleId));
 }
 
+function rulesForLeaf(definition: PacLeafDefinition, rules: PacRuleEvidence[]): PacRuleEvidence[] {
+  return rules
+    .filter(rule => definition.internalRuleIds.includes(rule.ruleId))
+    .sort((a, b) => a.ruleId.localeCompare(b.ruleId));
+}
+
+export function classifyPacLeafCoverage(definition: PacLeafDefinition, rules: PacRuleEvidence[]): PacLeafCoverageStatus {
+  const matched = rulesForLeaf(definition, rules);
+  if (matched.length === 0) return definition.manualReviewOnly ? 'manual_review_only' : 'missing';
+  const applicable = matched.filter(rule => rule.status !== 'not_applicable');
+  if (applicable.length === 0) return 'partial';
+  if (applicable.some(rule => rule.confidence === 'verified')) return 'covered_verified';
+  if (applicable.some(rule => rule.confidence === 'heuristic')) return 'covered_heuristic';
+  return definition.manualReviewOnly ? 'manual_review_only' : 'partial';
+}
+
+export function buildPacLeafCoverage(
+  buckets: PacReportBucketCounts[],
+  rules: PacRuleEvidence[],
+): PacLeafCoverageRow[] {
+  const activeBuckets = new Set(
+    buckets
+      .filter(bucket => (bucket.failed ?? 0) > 0 || (bucket.warned ?? 0) > 0)
+      .map(bucket => bucket.bucket),
+  );
+  return PAC_LEAF_DEFINITIONS
+    .filter(definition => activeBuckets.has(definition.bucket))
+    .map(definition => {
+      const matchedRules = rulesForLeaf(definition, rules);
+      return {
+        ...definition,
+        coverage: classifyPacLeafCoverage(definition, rules),
+        matchedRules,
+        matchedRuleCount: matchedRules.length,
+        failingOrWarningRuleCount: matchedRules.filter(rule => rule.status === 'fail' || rule.status === 'warn').length,
+      };
+    })
+    .sort((a, b) => a.bucket.localeCompare(b.bucket) || a.family.localeCompare(b.family));
+}
+
 function categoriesForBucket(bucket: PacReportBucket, categories: PacReviewCategorySnapshot[]): PacReviewCategorySnapshot[] {
   const keysByBucket: Partial<Record<PacReportBucket, CategoryKey[]>> = {
     'PDF Syntax': ['pdf_ua_compliance', 'reading_order'],
@@ -282,6 +504,7 @@ export function buildBucketGaps(
     .map(bucket => {
       const failures = matchingRules(bucket.bucket, rules, ['fail']);
       const warnings = matchingRules(bucket.bucket, rules, ['warn']);
+      const allMatches = matchingRules(bucket.bucket, rules, ['pass', 'warn', 'fail', 'not_applicable']);
       return {
         bucket: bucket.bucket,
         pacFailed: bucket.failed ?? 0,
@@ -291,7 +514,9 @@ export function buildBucketGaps(
         matchingRuleFailures: failures,
         matchingRuleWarnings: warnings,
         likelyMissingCheckerFamily: failures.length === 0
-          ? `PAC has ${bucket.bucket} debt not represented by a matching internal failed rule.`
+          ? allMatches.length > 0
+            ? `PAC has ${bucket.bucket} debt but current matching internal rows are passing, not applicable, or warning-only; inspect the leaf map for object-level gaps.`
+            : `PAC has ${bucket.bucket} debt not represented by a matching internal rule family.`
           : 'Internal PAC evidence has matching failed rule rows; inspect object-level counts before remediation.',
       };
     })
@@ -345,6 +570,13 @@ function ruleCell(rules: PacRuleEvidence[]): string {
   return rules.slice(0, 8).map(rule => `${rule.ruleId}${rule.count !== undefined ? ` (${rule.count})` : ''}`).join('<br>');
 }
 
+function leafRuleCell(row: PacLeafCoverageRow): string {
+  if (row.matchedRules.length === 0) return row.internalRuleIds.join('<br>');
+  return row.matchedRules
+    .map(rule => `${rule.ruleId}: ${rule.status}/${rule.confidence}${rule.count !== undefined ? ` (${rule.count})` : ''}`)
+    .join('<br>');
+}
+
 export function renderPacReviewMarkdown(diagnostic: PacReviewDiagnostic): string {
   const lines: string[] = [
     '# PAC Review Gap Diagnostic',
@@ -380,11 +612,62 @@ export function renderPacReviewMarkdown(diagnostic: PacReviewDiagnostic): string
       ].join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
     }
     lines.push('');
+    if (file.leafCoverage.length > 0) {
+      lines.push('| PAC Leaf Family | Coverage | PAC Checks | Internal Rules / Current Evidence | Recommended Action |');
+      lines.push('| --- | --- | --- | --- | --- |');
+      for (const leaf of file.leafCoverage) {
+        lines.push([
+          mdEscape(`${leaf.bucket}: ${leaf.family}`),
+          mdEscape(leaf.coverage),
+          mdEscape(leaf.pacChecks.join(', ')),
+          mdEscape(leafRuleCell(leaf)),
+          mdEscape(leaf.recommendedAction),
+        ].join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
+      }
+      lines.push('');
+    }
   }
   lines.push('## Interpretation', '');
   lines.push('- This report is diagnostic-only. It does not change scoring, remediation gates, planner routing, or API responses.');
   lines.push('- A PAC bucket with no matching internal failed rule is the first priority for analyzer evidence hardening.');
   lines.push('- A PAC bucket with matching internal failures needs object-level target proof before any deterministic repair is added.');
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderPacLeafMapMarkdown(diagnostic: PacReviewDiagnostic): string {
+  const statusCounts = new Map<PacLeafCoverageStatus, number>();
+  for (const file of diagnostic.files) {
+    for (const leaf of file.leafCoverage) {
+      statusCounts.set(leaf.coverage, (statusCounts.get(leaf.coverage) ?? 0) + 1);
+    }
+  }
+  const lines: string[] = [
+    '# PAC Leaf Coverage Map',
+    '',
+    `Generated: ${diagnostic.generatedAt}`,
+    '',
+    '| Coverage | Count |',
+    '| --- | ---: |',
+    ...(['covered_verified', 'covered_heuristic', 'partial', 'missing', 'manual_review_only'] as PacLeafCoverageStatus[])
+      .map(status => `| ${status} | ${statusCounts.get(status) ?? 0} |`),
+    '',
+    '| File | PAC Bucket | Leaf Family | Coverage | PAC Checks | Internal Rules / Current Evidence | Recommended Action |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+  ];
+  for (const file of diagnostic.files) {
+    for (const leaf of file.leafCoverage) {
+      lines.push([
+        mdEscape(file.id),
+        mdEscape(leaf.bucket),
+        mdEscape(leaf.family),
+        mdEscape(leaf.coverage),
+        mdEscape(leaf.pacChecks.join(', ')),
+        mdEscape(leafRuleCell(leaf)),
+        mdEscape(leaf.recommendedAction),
+      ].join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
+    }
+  }
+  lines.push('', 'This map is diagnostic-only and is intended to identify grader evidence gaps before scoring, gates, or remediation behavior are promoted.');
   return `${lines.join('\n')}\n`;
 }
 
@@ -420,6 +703,7 @@ async function main(): Promise<void> {
   const pdfDir = resolve(argValue('--pdf-dir') ?? DEFAULT_PDF_DIR);
   const pacReportDir = resolve(argValue('--pac-report-dir') ?? DEFAULT_PAC_REPORT_DIR);
   const outDir = resolve(argValue('--out') ?? DEFAULT_OUT);
+  const writeLeafMap = process.argv.includes('--leaf-map');
   const pdfs = await listPdfFiles(pdfDir);
   const reports = await findPacReports(pacReportDir);
   await mkdir(outDir, { recursive: true });
@@ -442,6 +726,7 @@ async function main(): Promise<void> {
         categories,
         pac,
         bucketGaps: pac ? buildBucketGaps(pac, rules, categories) : [],
+        leafCoverage: pac ? buildPacLeafCoverage(pac.buckets, rules) : [],
         pacRuleFailures: rules.filter(rule => rule.status === 'fail').sort((a, b) => a.ruleId.localeCompare(b.ruleId)),
         pacRuleWarnings: rules.filter(rule => rule.status === 'warn' || rule.confidence !== 'verified').sort((a, b) => a.ruleId.localeCompare(b.ruleId)),
         analyzerAudits: collectAnalyzerAudits(snapshot),
@@ -456,6 +741,7 @@ async function main(): Promise<void> {
         categories: [],
         pac: null,
         bucketGaps: [],
+        leafCoverage: [],
         pacRuleFailures: [],
         pacRuleWarnings: [],
         analyzerAudits: {},
@@ -467,6 +753,10 @@ async function main(): Promise<void> {
   const diagnostic = buildPacReviewDiagnostic(rows);
   await writeFile(join(outDir, 'pac-review-gap-diagnostic.json'), `${JSON.stringify(diagnostic, null, 2)}\n`, 'utf8');
   await writeFile(join(outDir, 'pac-review-gap-diagnostic.md'), renderPacReviewMarkdown(diagnostic), 'utf8');
+  if (writeLeafMap) {
+    await writeFile(join(outDir, 'pac-review-leaf-map.json'), `${JSON.stringify({ generatedAt: diagnostic.generatedAt, files: diagnostic.files.map(file => ({ id: file.id, leafCoverage: file.leafCoverage })) }, null, 2)}\n`, 'utf8');
+    await writeFile(join(outDir, 'pac-review-leaf-map.md'), renderPacLeafMapMarkdown(diagnostic), 'utf8');
+  }
   console.log(`Wrote PAC review gap diagnostic for ${rows.length} file(s): ${outDir}`);
 }
 
