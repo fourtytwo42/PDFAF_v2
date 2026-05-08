@@ -912,3 +912,39 @@ Decision:
 - Keep the narrow orphan-MCID recovery expansion because it removes the targeted blocked useful repairs without broadening PAC policy.
 - Do not run fixed-50 from this stage yet: `structure-4076` still has reanalysis drift from `70/C` to `56/F`.
 - Next work should isolate `structure-4076` reanalysis drift after checkpoint/floor recovery; `structure-4438` remains parked.
+
+## Structure-4076 Reanalysis Drift Isolation
+
+Implemented as diagnostic-only after the orphan-MCID recovery target run:
+
+- Added `scripts/structure4076-reanalysis-drift-diagnostic.ts`.
+- Added focused coverage in `tests/benchmark/structure4076ReanalysisDriftDiagnostic.test.ts`.
+- No protected checkpoint preservation behavior was added.
+- PAC scoring caps, PAC gate allow-lists, global checkpoint floors, timeout defaults, planner routes, API shape, and repair tools were not changed.
+
+Diagnostic artifacts:
+
+- Source run: `Output/experiment-corpus-baseline/run-orphan-mcid-recovery-target-2026-05-07-r1`
+- Diagnostic output: `Output/experiment-corpus-baseline/structure4076-reanalysis-drift-diagnostic-2026-05-08-r1`
+
+Diagnostic result for `structure-4076`:
+
+- In-run score: `70/C`
+- Protected reanalysis score: `56/F`
+- Row floor: `70/C`
+- Classification: `real_pdf_regression`
+- Reason: protected reanalysis introduces checker-facing table evidence that lowers the score.
+- Text evidence was preserved.
+- Tag evidence was preserved.
+- Page evidence is not available from the benchmark row artifact, so it was not used as proof for restoration.
+- `table_markup` changed from `100` / not applicable to `0` / applicable.
+- Table irregular and strongly-irregular signals increased from `0` to `1`.
+- The accepted in-run timeline ended with `embed_local_font_substitutes` moving the row from `69` to `70`.
+
+Decision:
+
+- Do not add the row-specific `structure-4076` protected checkpoint preservation path.
+- The in-run `70/C` checkpoint meets the score floor, but preserving it would hide newly measurable table debt from the protected reanalysis.
+- Do not run fixed-50 from this stage.
+- Next work should either address the actual `structure-4076` table evidence with a narrow table-focused path or explicitly park the row as real checker-facing debt.
+- `structure-4438` remains parked at the `90/A` checkpoint floor.
