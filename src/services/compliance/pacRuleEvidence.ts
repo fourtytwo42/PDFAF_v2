@@ -455,6 +455,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
       noStructureRule('pdfua.content.text_tagged_or_artifacted', 'reading_order', 'Text tagging evidence requires a structure tree.'),
       noStructureRule('pdfua.content.image_tagged_or_artifacted', 'pdf_ua_compliance', 'Image tagging evidence requires a structure tree.'),
       noStructureRule('pdfua.content.artifact_tag_boundary_valid', 'pdf_ua_compliance', 'Artifact/tag boundary evidence requires a structure tree.'),
+      noStructureRule('pdfua.content.within_page_bounds', 'pdf_ua_compliance', 'Content-boundary evidence requires a structure tree.'),
     ];
   }
 
@@ -467,6 +468,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     (tagging?.artifactInsideTaggedContent ?? 0) +
     (tagging?.taggedContentInsideArtifact ?? 0) +
     (tagging?.malformedMarkedContentStack ?? 0);
+  const outsidePageBounds = tagging?.contentOutsidePageBounds ?? 0;
   const contentConfidence: PacRuleConfidence = tagging
     ? (tagging.pageStreamsChecked !== undefined &&
         tagging.totalPageStreams !== undefined &&
@@ -524,6 +526,110 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
         : 'No nested artifact/tag boundary issue was detected.',
       confidence: contentConfidence,
       count: boundaryDebt,
+    }),
+    rule({
+      ruleId: 'pdfua.content.within_page_bounds',
+      status: outsidePageBounds > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: outsidePageBounds > 0
+        ? `${outsidePageBounds} content operation(s) appear outside the page boundary.`
+        : 'No outside-page-boundary content evidence was detected.',
+      confidence: contentConfidence,
+      count: outsidePageBounds,
+    }),
+  ];
+}
+
+function figureStructureRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  if (!hasStructure(snapshot)) {
+    return [
+      noStructureRule('pdfua.figure.bbox_present', 'pdf_ua_compliance', 'Figure BBox evidence requires a structure tree.'),
+    ];
+  }
+  const figures = [
+    ...snapshot.figures.filter(figure => !figure.isArtifact && (figure.role ?? '').toLowerCase() === 'figure'),
+    ...(snapshot.checkerFigureTargets ?? []).filter(figure =>
+      !figure.isArtifact &&
+      figure.reachable !== false &&
+      ((figure.resolvedRole ?? figure.role ?? '').toLowerCase() === 'figure')
+    ),
+  ];
+  if (figures.length === 0) {
+    return [noStructureRule('pdfua.figure.bbox_present', 'pdf_ua_compliance', 'No structural Figure evidence is present.')];
+  }
+  const hasBBox = (figure: unknown): boolean => {
+    const bbox = (figure as { bbox?: unknown }).bbox;
+    return Array.isArray(bbox) && bbox.length > 0;
+  };
+  const missing = figures.filter(figure => !hasBBox(figure));
+  return [
+    rule({
+      ruleId: 'pdfua.figure.bbox_present',
+      status: missing.length > 0 ? 'fail' : 'pass',
+      category: 'pdf_ua_compliance',
+      message: missing.length > 0
+        ? `${missing.length} Figure structure element(s) are missing direct /BBox evidence.`
+        : 'Structural Figure elements have BBox evidence where checked.',
+      confidence: 'heuristic',
+      source: missing[0]
+        ? {
+          page: missing[0].page,
+          structRef: missing[0].structRef,
+          category: 'pdf_ua_compliance',
+          details: missing[0].parentPath?.join(' > '),
+        }
+        : undefined,
+      count: missing.length,
+    }),
+  ];
+}
+
+function listStructureRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
+  if (!hasStructure(snapshot)) {
+    return [
+      noStructureRule('pdfua.list.li_parent_valid', 'reading_order', 'List structure evidence requires a structure tree.'),
+      noStructureRule('pdfua.list.lbl_lbody_parent_valid', 'reading_order', 'List label/body evidence requires a structure tree.'),
+      noStructureRule('pdfua.list.items_present', 'reading_order', 'List item evidence requires a structure tree.'),
+    ];
+  }
+  const audit = snapshot.listStructureAudit;
+  if ((audit?.listCount ?? 0) === 0) {
+    return [
+      noStructureRule('pdfua.list.li_parent_valid', 'reading_order', 'No list structure evidence is present.'),
+      noStructureRule('pdfua.list.lbl_lbody_parent_valid', 'reading_order', 'No list structure evidence is present.'),
+      noStructureRule('pdfua.list.items_present', 'reading_order', 'No list structure evidence is present.'),
+    ];
+  }
+  return [
+    rule({
+      ruleId: 'pdfua.list.li_parent_valid',
+      status: (audit?.listItemMisplacedCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'reading_order',
+      message: (audit?.listItemMisplacedCount ?? 0) > 0
+        ? `${audit!.listItemMisplacedCount} LI element(s) are not directly nested under L.`
+        : 'List item parentage evidence is valid.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.listItemMisplacedCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.list.lbl_lbody_parent_valid',
+      status: (audit?.lblBodyMisplacedCount ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'reading_order',
+      message: (audit?.lblBodyMisplacedCount ?? 0) > 0
+        ? `${audit!.lblBodyMisplacedCount} Lbl/LBody element(s) are not directly nested under LI.`
+        : 'List label/body parentage evidence is valid.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.lblBodyMisplacedCount ?? 0,
+    }),
+    rule({
+      ruleId: 'pdfua.list.items_present',
+      status: (audit?.listsWithoutItems ?? 0) > 0 ? 'fail' : 'pass',
+      category: 'reading_order',
+      message: (audit?.listsWithoutItems ?? 0) > 0
+        ? `${audit!.listsWithoutItems} L element(s) have no direct LI children.`
+        : 'List elements have direct LI children where checked.',
+      confidence: audit ? 'verified' : 'manual_review_required',
+      count: audit?.listsWithoutItems ?? 0,
     }),
   ];
 }
@@ -913,8 +1019,10 @@ export function buildPacRuleEvidence(snapshot: DocumentSnapshot): PacRuleEvidenc
     ...structureRules(snapshot),
     ...annotationRules(snapshot),
     ...altRules(snapshot),
+    ...figureStructureRules(snapshot),
     ...tableRules(snapshot),
     ...contentRules(snapshot),
+    ...listStructureRules(snapshot),
     ...parentTreeAuditRules(snapshot),
     ...tableHeaderAuditRules(snapshot),
     ...fontSyntaxRules(snapshot),

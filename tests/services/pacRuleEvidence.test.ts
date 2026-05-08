@@ -313,6 +313,25 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.figure.checker_visible_alt_present').source?.structRef).toBe('18_0');
   });
 
+  it('surfaces PAC-style Figure BBox debt from existing figure evidence', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      figures: [{
+        hasAlt: true,
+        altText: 'Chart showing quarterly totals',
+        isArtifact: false,
+        page: 1,
+        role: 'Figure',
+        structRef: '22_0',
+      }],
+    }));
+
+    expect(byId(rows, 'pdfua.figure.bbox_present')).toMatchObject({
+      status: 'fail',
+      count: 1,
+      confidence: 'heuristic',
+    });
+  });
+
   it('warns on weak figure alt', () => {
     const rows = buildPacRuleEvidence(makeSnap({
       figures: [{
@@ -437,6 +456,36 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.content.image_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 2 });
     expect(byId(rows, 'pdfua.content.path_paint_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 1 });
     expect(byId(rows, 'pdfua.content.artifact_tag_boundary_valid')).toMatchObject({ status: 'fail', count: 4, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.content.within_page_bounds')).toMatchObject({ status: 'pass', count: 0, confidence: 'verified' });
+  });
+
+  it('fails outside-page-boundary content and list structure debt', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 0,
+        textOutsideMarkedContentOrArtifact: 0,
+        imageOutsideMarkedContentOrArtifact: 0,
+        pathOutsideMarkedContentOrArtifact: 0,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 2,
+      },
+      listStructureAudit: {
+        listCount: 2,
+        listItemCount: 2,
+        listItemMisplacedCount: 1,
+        lblBodyMisplacedCount: 2,
+        listsWithoutItems: 1,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.content.within_page_bounds')).toMatchObject({ status: 'fail', count: 2 });
+    expect(byId(rows, 'pdfua.list.li_parent_valid')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.list.lbl_lbody_parent_valid')).toMatchObject({ status: 'fail', count: 2, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.list.items_present')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
   });
 
   it('fails table header association audit debt', () => {
