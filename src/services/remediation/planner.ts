@@ -2556,10 +2556,65 @@ export function buildDefaultParams(
         : {};
     }
     case 'set_table_header_cells': {
-      const t = snapshot.tables
-        .filter(row => !row.hasHeaders && (row.cellsMisplacedCount ?? 0) === 0 && (row.rowCount ?? 0) > 1 && row.structRef)
+      const attemptedRefs = new Set(
+        alreadyApplied
+          .filter(row => row.toolName === 'set_table_header_cells')
+          .map(row => mutationTargetRef(parseMutationDetails(row.details)))
+          .filter((ref): ref is string => Boolean(ref)),
+      );
+      const missingHeaderTarget = snapshot.tables
+        .filter(row => !row.hasHeaders && (row.cellsMisplacedCount ?? 0) === 0 && (row.rowCount ?? 0) > 1 && row.structRef && !attemptedRefs.has(row.structRef))
         .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''))[0];
-      return t?.structRef ? { structRef: t.structRef } : {};
+      if (missingHeaderTarget?.structRef) return { structRef: missingHeaderTarget.structRef };
+      if ((analysis.score ?? 100) >= REMEDIATION_TARGET_SCORE) return {};
+      const audit = snapshot.tableHeaderAudit;
+      const hasAssociationDebt = Boolean(audit && audit.tablesChecked > 0 && (
+        audit.headerAssociationMissingCount > 0 ||
+        audit.dataCellsWithoutHeaderCount > 0 ||
+        audit.orphanHeaderCellCount > 0
+      ));
+      const isSmallBoundedAssociationDebt = Boolean(audit && (
+        audit.tablesChecked <= 4 &&
+        audit.headerAssociationMissingCount > 0 &&
+        audit.headerAssociationMissingCount <= 2 &&
+        audit.dataCellsWithoutHeaderCount > 0 &&
+        audit.dataCellsWithoutHeaderCount <= 12
+      ));
+      const hasStrictTablePacCap = analysis.categories.some(category =>
+        category.key === 'table_markup' &&
+        category.score < REMEDIATION_CATEGORY_THRESHOLD &&
+        (category.scoreCapsApplied ?? []).some(cap =>
+          cap.cap <= 79 &&
+          (
+            cap.reason === 'PAC rule failure: pdfua.table.header_association_present' ||
+            cap.reason === 'PAC rule failure: pdfua.table.header_cells_associated'
+          ),
+        ),
+      );
+      if (!hasAssociationDebt || !isSmallBoundedAssociationDebt || !hasStrictTablePacCap) return {};
+      const associationTarget = snapshot.tables
+        .filter(row =>
+          row.structRef &&
+          !attemptedRefs.has(row.structRef) &&
+          row.hasHeaders &&
+          (row.headerCount ?? 0) > 0 &&
+          (row.cellsMisplacedCount ?? 0) === 0 &&
+          (row.irregularRows ?? 0) === 0 &&
+          (row.rowCount ?? 0) > 1 &&
+          (row.totalCells ?? 0) > (row.headerCount ?? 0)
+        )
+        .sort((a, b) =>
+          (b.totalCells ?? 0) - (a.totalCells ?? 0)
+          || (b.headerCount ?? 0) - (a.headerCount ?? 0)
+          || a.page - b.page
+          || (a.structRef ?? '').localeCompare(b.structRef ?? '')
+        )[0];
+      return associationTarget?.structRef
+        ? {
+          structRef: associationTarget.structRef,
+          tableHeaderAssociation: true,
+        }
+        : {};
     }
     case 'wrap_singleton_orphan_mcid': {
       const o = snapshot.orphanMcids ?? [];

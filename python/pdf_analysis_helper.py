@@ -749,6 +749,100 @@ def _promote_first_column_td_to_th(table_elem) -> bool:
     return changed
 
 
+def _table_header_id(table_elem, row_index: int, cell_index: int) -> str:
+    try:
+        n, g = table_elem.objgen
+        prefix = f"pdfaf-th-{int(n)}-{int(g)}"
+    except Exception:
+        prefix = "pdfaf-th"
+    return f"{prefix}-r{row_index}-c{cell_index}"
+
+
+def _associate_existing_table_headers(table_elem) -> bool:
+    rows = _iter_table_rows(table_elem)
+    if not rows:
+        return False
+    grid: list[list] = []
+    changed = False
+    for row in rows:
+        cells = [
+            child for child in _direct_role_children(row)
+            if (get_name(child) or "").lstrip("/").upper() in {"TH", "TD"}
+        ]
+        if cells:
+            grid.append(cells)
+    if not grid:
+        return False
+
+    header_ids: dict[tuple[int, int], str] = {}
+    for row_index, cells in enumerate(grid):
+        for cell_index, cell in enumerate(cells):
+            tag = (get_name(cell) or "").lstrip("/").upper()
+            if tag != "TH":
+                continue
+            current_id = safe_str(cell.get("/ID")).strip()
+            if not current_id:
+                current_id = _table_header_id(table_elem, row_index, cell_index)
+                try:
+                    cell["/ID"] = pikepdf.String(current_id)
+                    changed = True
+                except Exception:
+                    pass
+            header_ids[(row_index, cell_index)] = current_id
+
+            current_scope = safe_str(cell.get("/Scope")).strip().lstrip("/").lower()
+            desired_scope = None
+            if row_index == 0 and cell_index == 0 and len(grid) > 1 and len(cells) > 1:
+                desired_scope = pikepdf.Name("/Both")
+            elif row_index == 0:
+                desired_scope = pikepdf.Name("/Column")
+            elif cell_index == 0:
+                desired_scope = pikepdf.Name("/Row")
+            if desired_scope is not None and current_scope not in {"row", "column", "col", "both"}:
+                try:
+                    cell["/Scope"] = desired_scope
+                    changed = True
+                except Exception:
+                    pass
+
+    if not header_ids:
+        return changed
+
+    for row_index, cells in enumerate(grid):
+        for cell_index, cell in enumerate(cells):
+            tag = (get_name(cell) or "").lstrip("/").upper()
+            if tag != "TD":
+                continue
+            wanted: list[str] = []
+            row_header = header_ids.get((row_index, 0))
+            col_header = header_ids.get((0, cell_index))
+            if row_header:
+                wanted.append(row_header)
+            if col_header and col_header not in wanted:
+                wanted.append(col_header)
+            if not wanted:
+                continue
+            existing = cell.get("/Headers")
+            existing_values: list[str] = []
+            if isinstance(existing, pikepdf.Array):
+                existing_values = [safe_str(v).strip() for v in existing if safe_str(v).strip()]
+            elif existing is not None:
+                text = safe_str(existing).strip()
+                if text:
+                    existing_values = [text]
+            merged = existing_values[:]
+            for value in wanted:
+                if value not in merged:
+                    merged.append(value)
+            if merged != existing_values:
+                try:
+                    cell["/Headers"] = pikepdf.Array([pikepdf.String(value) for value in merged])
+                    changed = True
+                except Exception:
+                    pass
+    return changed
+
+
 def _table_target_ref(params: dict):
     return params.get("targetStructRef") or params.get("structRef") or params.get("targetRef")
 
@@ -765,10 +859,14 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
         return False
     if (get_name(table) or "").lstrip("/").upper() != "TABLE":
         return False
-    changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+    th_count, _td_count = _count_table_cells(table)
+    if th_count > 0 and bool(params.get("tableHeaderAssociation")):
+        changed = _associate_existing_table_headers(table)
+    else:
+        changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
     if changed:
         try:
-            _set_last_mutation_debug({"targetRef": ref})
+            _set_last_mutation_debug({"targetRef": ref, "tableHeaderAssociation": bool(params.get("tableHeaderAssociation"))})
         except Exception:
             pass
     return changed
@@ -10789,6 +10887,77 @@ def _annotation_invariant_stats(pdf: pikepdf.Pdf) -> dict:
     }
 
 
+def _table_header_assoc_counts_for_struct_tables(tables: list) -> dict:
+    out = {
+        "headerAssociationMissingCount": 0,
+        "orphanHeaderCellCount": 0,
+        "dataCellsWithoutHeaderCount": 0,
+        "headerCellsWithScopeCount": 0,
+        "headerCellsWithIdCount": 0,
+        "dataCellsWithHeadersCount": 0,
+    }
+    for table in tables:
+        if not isinstance(table, pikepdf.Dictionary):
+            continue
+        try:
+            table_headers = []
+            data_cells = []
+            for row_index, row in enumerate(_iter_table_rows(table)):
+                for cell_index, cell in enumerate(_direct_role_children(row)):
+                    tag = (get_name(cell) or "").lstrip("/").upper()
+                    if tag == "TH":
+                        table_headers.append((row_index, cell_index, cell))
+                        if safe_str(cell.get("/Scope")).strip():
+                            out["headerCellsWithScopeCount"] += 1
+                        if safe_str(cell.get("/ID")).strip():
+                            out["headerCellsWithIdCount"] += 1
+                    elif tag == "TD":
+                        data_cells.append((row_index, cell_index, cell))
+            if not table_headers and data_cells:
+                out["headerAssociationMissingCount"] += 1
+                out["dataCellsWithoutHeaderCount"] += len(data_cells)
+                continue
+            table_missing = False
+            th_ids = {safe_str(th.get("/ID")).strip() for _, _, th in table_headers if safe_str(th.get("/ID")).strip()}
+            associated_headers = set()
+            for row_index, cell_index, th in table_headers:
+                scope = safe_str(th.get("/Scope")).strip().lstrip("/").lower()
+                if scope in ("row", "both"):
+                    for td_row, _td_col, _td in data_cells:
+                        if td_row == row_index:
+                            associated_headers.add(_obj_key(th))
+                if scope in ("column", "col", "both"):
+                    for _td_row, td_col, _td in data_cells:
+                        if td_col == cell_index:
+                            associated_headers.add(_obj_key(th))
+            for row_index, cell_index, td in data_cells:
+                headers = td.get("/Headers")
+                has_explicit = False
+                if isinstance(headers, pikepdf.Array):
+                    has_explicit = any(safe_str(h).strip() in th_ids for h in headers)
+                elif headers is not None:
+                    has_explicit = safe_str(headers).strip() in th_ids
+                has_scope = any(
+                    ((safe_str(th.get("/Scope")).strip().lstrip("/").lower() in ("row", "both") and th_row == row_index) or
+                     (safe_str(th.get("/Scope")).strip().lstrip("/").lower() in ("column", "col", "both") and th_col == cell_index))
+                    for th_row, th_col, th in table_headers
+                )
+                if has_explicit or has_scope:
+                    out["dataCellsWithHeadersCount"] += 1
+                else:
+                    out["dataCellsWithoutHeaderCount"] += 1
+                    table_missing = True
+            for _, _, th in table_headers:
+                key = _obj_key(th)
+                if not safe_str(th.get("/Scope")).strip() and not safe_str(th.get("/ID")).strip() and key not in associated_headers:
+                    out["orphanHeaderCellCount"] += 1
+            if data_cells and table_missing:
+                out["headerAssociationMissingCount"] += 1
+        except Exception:
+            pass
+    return out
+
+
 def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> dict:
     direct_cells = 0
     header_cells = 0
@@ -10817,6 +10986,7 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
         if table_irregular >= 2:
             strongly_irregular_tables += 1
     table_tree_valid = direct_cells == 0 and (target_resolved if target_ref else True)
+    assoc = _table_header_assoc_counts_for_struct_tables(tables)
     return {
         "targetRef": target_ref if target_ref else None,
         "targetResolved": target_resolved if target_ref else None,
@@ -10826,6 +10996,7 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
         "irregularRows": irregular_rows,
         "stronglyIrregularTableCount": strongly_irregular_tables,
         "tableTreeValid": table_tree_valid,
+        **assoc,
     }
 
 
@@ -11052,6 +11223,16 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         "stronglyIrregularTableCountBefore": before.get("stronglyIrregularTableCount", 0),
         "stronglyIrregularTableCountAfter": after.get("stronglyIrregularTableCount", 0),
         "tableTreeValidAfter": after.get("tableTreeValid", False),
+        "headerAssociationMissingCountBefore": before.get("headerAssociationMissingCount", 0),
+        "headerAssociationMissingCountAfter": after.get("headerAssociationMissingCount", 0),
+        "orphanHeaderCellCountBefore": before.get("orphanHeaderCellCount", 0),
+        "orphanHeaderCellCountAfter": after.get("orphanHeaderCellCount", 0),
+        "dataCellsWithoutHeaderCountBefore": before.get("dataCellsWithoutHeaderCount", 0),
+        "dataCellsWithoutHeaderCountAfter": after.get("dataCellsWithoutHeaderCount", 0),
+        "headerCellsWithScopeCountBefore": before.get("headerCellsWithScopeCount", 0),
+        "headerCellsWithScopeCountAfter": after.get("headerCellsWithScopeCount", 0),
+        "dataCellsWithHeadersCountBefore": before.get("dataCellsWithHeadersCount", 0),
+        "dataCellsWithHeadersCountAfter": after.get("dataCellsWithHeadersCount", 0),
     }
     if not mutated:
         return "no_effect", note or "no_structural_change", invariants
@@ -11061,6 +11242,15 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         return "no_effect", "role_invalid_after_mutation", invariants
     if (after.get("directCellsUnderTable", 0) or 0) > 0 and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
         return "no_effect", "direct_cells_under_table_remain", invariants
+    association_improved = (
+        (after.get("headerAssociationMissingCount", 0) or 0) < (before.get("headerAssociationMissingCount", 0) or 0)
+        or (after.get("dataCellsWithoutHeaderCount", 0) or 0) < (before.get("dataCellsWithoutHeaderCount", 0) or 0)
+        or (after.get("orphanHeaderCellCount", 0) or 0) < (before.get("orphanHeaderCellCount", 0) or 0)
+        or (after.get("dataCellsWithHeadersCount", 0) or 0) > (before.get("dataCellsWithHeadersCount", 0) or 0)
+        or (after.get("headerCellsWithScopeCount", 0) or 0) > (before.get("headerCellsWithScopeCount", 0) or 0)
+    )
+    if op == "set_table_header_cells" and association_improved:
+        return "applied", note or "table_header_association_improved", invariants
     if (after.get("headerCellCount", 0) or 0) <= (before.get("headerCellCount", 0) or 0) and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
         if (after.get("irregularRows", 0) or 0) >= (before.get("irregularRows", 0) or 0):
             return "no_effect", "headers_not_created", invariants
@@ -11163,9 +11353,15 @@ def _stage36_structural_benefits(op: str, outcome: str, before: dict | None, inv
         after_direct = int(invariants.get("directCellsUnderTableAfter") or 0)
         before_headers = int(before.get("headerCellCountAfter") or 0)
         after_headers = int(invariants.get("headerCellCountAfter") or 0)
+        before_missing_headers = int(before.get("dataCellsWithoutHeaderCountAfter") or before.get("dataCellsWithoutHeaderCount") or 0)
+        after_missing_headers = int(invariants.get("dataCellsWithoutHeaderCountAfter") or 0)
+        before_header_assoc = int(before.get("headerAssociationMissingCountAfter") or before.get("headerAssociationMissingCount") or 0)
+        after_header_assoc = int(invariants.get("headerAssociationMissingCountAfter") or 0)
         benefits["tableValidityImproved"] = (
             after_direct < before_direct
             or after_headers > before_headers
+            or after_missing_headers < before_missing_headers
+            or after_header_assoc < before_header_assoc
             or int(invariants.get("irregularRowsAfter") or 0) < int(before.get("irregularRowsAfter") or before.get("irregularRows") or 0)
             or int(invariants.get("stronglyIrregularTableCountAfter") or 0) < int(before.get("stronglyIrregularTableCountAfter") or before.get("stronglyIrregularTableCount") or 0)
             or bool(invariants.get("tableTreeValidAfter"))

@@ -67,6 +67,44 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildUnassociatedHeaderTablePdf(): { buf: Buffer; tableRef: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-header-association-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const refPath = join(dir, 'table-ref.txt');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index in range(3):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for cell_index in range(3):
+        role = Name('/TH') if row_index == 0 or cell_index == 0 else Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+n, g = table.objgen
+with open(${JSON.stringify(refPath)}, 'w') as f:
+    f.write(f"{n}_{g}")
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return { buf: readFileSync(pdfPath), tableRef: readFileSync(refPath, 'utf8').trim() };
+}
+
 function buildMultipleStronglyIrregularTablesPdf(): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-multi-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -118,6 +156,22 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.directCellsUnderTableAfter).toBe(0);
     expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('adds deterministic scope/id/header associations without changing table shape', async () => {
+    const { buf, tableRef } = buildUnassociatedHeaderTablePdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      { op: 'set_table_header_cells', params: { structRef: tableRef, tableHeaderAssociation: true } },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.note).toBe('table_header_association_improved');
+    expect(row?.invariants?.headerCellCountBefore).toBe(row?.invariants?.headerCellCountAfter);
+    expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
+    expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(row?.invariants?.headerCellsWithScopeCountBefore ?? 0);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 

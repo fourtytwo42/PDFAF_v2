@@ -3042,6 +3042,162 @@ describe('planForRemediation', () => {
     expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({ structRef: '21_0' });
   });
 
+  it('targets existing table headers for association only on below-A strict PAC table debt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tableHeaderAudit: {
+        tablesChecked: 2,
+        headerAssociationMissingCount: 2,
+        orphanHeaderCellCount: 12,
+        dataCellsWithoutHeaderCount: 10,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 6,
+          totalCells: 10,
+          page: 0,
+          structRef: '116_0',
+          rowCount: 5,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+      ],
+    };
+    const analysis = {
+      ...withCategoryScores(score(snap, META), { table_markup: 79 }),
+      score: 88,
+      categories: withCategoryScores(score(snap, META), { table_markup: 79 }).categories.map(category =>
+        category.key === 'table_markup'
+          ? {
+            ...category,
+            scoreCapsApplied: [
+              {
+                category: 'table_markup',
+                cap: 79,
+                rawScore: 100,
+                finalScore: 79,
+                reason: 'PAC rule failure: pdfua.table.header_association_present',
+              },
+            ],
+          }
+          : category,
+      ),
+    };
+    expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({
+      structRef: '116_0',
+      tableHeaderAssociation: true,
+    });
+  });
+
+  it('does not target A-grade controls solely for residual strict table caps', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 1,
+        orphanHeaderCellCount: 4,
+        dataCellsWithoutHeaderCount: 39,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 4,
+          totalCells: 43,
+          page: 0,
+          structRef: '125_0',
+          rowCount: 13,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+      ],
+    };
+    const analysis = {
+      ...withCategoryScores(score(snap, META), { table_markup: 79 }),
+      score: 96,
+      categories: withCategoryScores(score(snap, META), { table_markup: 79 }).categories.map(category =>
+        category.key === 'table_markup'
+          ? {
+            ...category,
+            scoreCapsApplied: [
+              {
+                category: 'table_markup',
+                cap: 79,
+                rawScore: 96,
+                finalScore: 79,
+                reason: 'PAC rule failure: pdfua.table.header_cells_associated',
+              },
+            ],
+          }
+          : category,
+      ),
+    };
+    expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({});
+  });
+
+  it('does not target large many-table association debt until a safer batch policy exists', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tableHeaderAudit: {
+        tablesChecked: 10,
+        headerAssociationMissingCount: 10,
+        orphanHeaderCellCount: 240,
+        dataCellsWithoutHeaderCount: 220,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 28,
+          totalCells: 54,
+          page: 0,
+          structRef: '1327_0',
+          rowCount: 27,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+      ],
+    };
+    const analysis = {
+      ...withCategoryScores(score(snap, META), { table_markup: 79 }),
+      score: 78,
+      categories: withCategoryScores(score(snap, META), { table_markup: 79 }).categories.map(category =>
+        category.key === 'table_markup'
+          ? {
+            ...category,
+            scoreCapsApplied: [
+              {
+                category: 'table_markup',
+                cap: 79,
+                rawScore: 100,
+                finalScore: 79,
+                reason: 'PAC rule failure: pdfua.table.header_association_present',
+              },
+            ],
+          }
+          : category,
+      ),
+    };
+    expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({});
+  });
+
   it('targets strongly irregular dense tables with bounded normalization params', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
