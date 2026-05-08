@@ -948,3 +948,45 @@ Decision:
 - Do not run fixed-50 from this stage.
 - Next work should either address the actual `structure-4076` table evidence with a narrow table-focused path or explicitly park the row as real checker-facing debt.
 - `structure-4438` remains parked at the `90/A` checkpoint floor.
+
+## Structure-4076 Table Evidence Isolation And Narrow Recovery
+
+Implemented as diagnostic-only after the reanalysis drift isolation:
+
+- Added `scripts/structure4076-table-evidence-diagnostic.ts`.
+- Added focused coverage in `tests/benchmark/structure4076TableEvidenceDiagnostic.test.ts`.
+- No table recovery behavior was kept.
+- PAC scoring caps, PAC gate allow-lists, checkpoint floors, timeout defaults, planner routes, API shape, and repair tools were not changed.
+
+Diagnostic artifacts:
+
+- Source run: `Output/experiment-corpus-baseline/run-orphan-mcid-recovery-target-2026-05-07-r1`
+- Diagnostic output: `Output/experiment-corpus-baseline/structure4076-table-evidence-diagnostic-2026-05-08-r1`
+
+Diagnostic result for `structure-4076`:
+
+- Classification: `real_table_debt_no_safe_repair`
+- Protected row evidence still shows in-run `70/C` and protected reanalysis `56/F`.
+- Repeat analysis reproduced a stable table target in two of three passes:
+  - target `81311_0`
+  - `382` cells
+  - `118` rows
+  - `17` irregular rows
+  - dominant column count `6`
+  - missing headers
+- One repeat analysis saw no applicable table, confirming analyzer table-applicability volatility is still present.
+- The existing `normalize_table_structure` probe applied to `81311_0`:
+  - header count `0 -> 1`
+  - irregular rows `17 -> 2`
+  - direct cells stayed `0`
+- The probe was not safe enough to promote because repeat analysis after mutation did not consistently keep both score and table evidence at the row floor:
+  - one pass reached `70/C` with `table_markup=72`
+  - one pass saw no applicable table and stayed `70/C`
+  - one pass saw no applicable table but scored only `59/F`
+
+Decision:
+
+- Do not add the row-specific `normalize_table_structure` recovery for `structure-4076`.
+- Park `structure-4076` as real table debt plus analyzer/applicability volatility.
+- Fixed-50 can proceed only with `structure-4076` documented as parked debt, not as a recovered row.
+- `structure-4438` remains separately parked at the `90/A` checkpoint floor.
