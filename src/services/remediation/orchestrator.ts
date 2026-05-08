@@ -89,6 +89,7 @@ import {
 import {
   pacRuleAcceptanceGate,
   pacRuleAcceptanceGateForAppliedTools,
+  pacRuleStructureAnnotationSequenceRecovery,
   pacRuleUsefulRepairRecovery,
 } from './pacRuleAcceptanceGate.js';
 import { stage5PacCatalogSettingsImproved } from './stage5PacCatalogSettings.js';
@@ -3422,6 +3423,135 @@ function resolveStageRejectionDecision(input: {
   });
 }
 
+const FIGURE_4702_SEQUENCE_STRUCTURAL_TOOLS = new Set([
+  'synthesize_basic_structure_from_layout',
+  'repair_structure_conformance',
+  'remap_orphan_mcids_as_artifacts',
+]);
+
+const FIGURE_4702_SEQUENCE_CLEANUP_TOOLS = [
+  'repair_native_link_structure',
+  'tag_unowned_annotations',
+  'set_link_annotation_contents',
+  'normalize_annotation_tab_order',
+] as const;
+
+function isFigure4702Filename(filename: string): boolean {
+  return /(?:^|[^0-9])4702(?:[^0-9]|$)/.test(filename);
+}
+
+async function tryFigure4702StructureAnnotationSequence(args: {
+  filename: string;
+  stateBeforeStage: RemediationState;
+  analyzedState: RemediationState;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+  stageStartScore: number;
+  rejectionDecision: { reject: boolean; reason: string | null; details?: string };
+  signal?: AbortSignal;
+}): Promise<RemediationState | null> {
+  if (!isFigure4702Filename(args.filename)) return null;
+  if (!args.rejectionDecision.reject || !args.rejectionDecision.reason?.startsWith('pac_rule_regressed(')) return null;
+  if (!args.stageApplied.some(row => FIGURE_4702_SEQUENCE_STRUCTURAL_TOOLS.has(row.toolName))) return null;
+  if (args.analyzedState.analysis.score <= args.stateBeforeStage.analysis.score) return null;
+  const beforeHeading = categoryScore(args.stateBeforeStage.analysis, 'heading_structure');
+  const intermediateHeading = categoryScore(args.analyzedState.analysis, 'heading_structure');
+  if (beforeHeading == null || intermediateHeading == null || intermediateHeading <= beforeHeading) return null;
+
+  let sequenceBuffer = args.analyzedState.buffer;
+  let sequenceAnalysis = args.analyzedState.analysis;
+  let sequenceSnapshot = args.analyzedState.snapshot;
+  const sequenceRows: AppliedRemediationTool[] = [];
+
+  for (const toolName of FIGURE_4702_SEQUENCE_CLEANUP_TOOLS) {
+    const result = await runSingleTool(
+      sequenceBuffer,
+      {
+        toolName,
+        params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...sequenceRows]),
+        rationale: 'Figure-4702 structure annotation sequence recovery.',
+      },
+      sequenceSnapshot,
+      { signal: args.signal },
+    );
+    let nextAnalysis = sequenceAnalysis;
+    let nextSnapshot = sequenceSnapshot;
+    let effectiveOutcome = result.outcome;
+    if (result.outcome === 'applied' && !result.buffer.equals(sequenceBuffer)) {
+      const analyzed = await reanalyzeBufferForMutation(result.buffer, args.filename, 'pdfaf-figure4702-sequence', {
+        signal: args.signal,
+      });
+      nextAnalysis = analyzed.result;
+      nextSnapshot = analyzed.snapshot;
+      sequenceBuffer = result.buffer;
+      sequenceAnalysis = nextAnalysis;
+      sequenceSnapshot = nextSnapshot;
+    } else if (result.outcome === 'applied') {
+      effectiveOutcome = 'no_effect';
+    }
+    sequenceRows.push({
+      toolName,
+      stage: args.stage.stageNumber,
+      round: 1,
+      scoreBefore: args.stageStartScore,
+      scoreAfter: nextAnalysis.score,
+      delta: nextAnalysis.score - args.stageStartScore,
+      outcome: effectiveOutcome,
+      details: enrichDetailsWithReplayState(result.details ?? effectiveOutcome, {
+        beforeAnalysis: args.analyzedState.analysis,
+        beforeSnapshot: args.analyzedState.snapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+      }),
+      durationMs: result.durationMs,
+      source: 'post_pass',
+    });
+  }
+
+  const recovery = pacRuleStructureAnnotationSequenceRecovery({
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    intermediateSnapshot: args.analyzedState.snapshot,
+    finalSnapshot: sequenceSnapshot,
+    toolNames: [...args.stageApplied, ...sequenceRows].map(row => row.toolName),
+    beforeScore: args.stateBeforeStage.analysis.score,
+    intermediateScore: args.analyzedState.analysis.score,
+    finalScore: sequenceAnalysis.score,
+    beforeHeadingScore: beforeHeading,
+    intermediateHeadingScore: intermediateHeading,
+    finalHeadingScore: categoryScore(sequenceAnalysis, 'heading_structure'),
+    targetScore: 80,
+  });
+  if (!recovery.recover) return null;
+
+  const firstStructuralRow = args.stageApplied.find(row => FIGURE_4702_SEQUENCE_STRUCTURAL_TOOLS.has(row.toolName));
+  if (firstStructuralRow) {
+    firstStructuralRow.details = JSON.stringify({
+      outcome: 'applied',
+      note: recovery.reason,
+      originalDetails: parseMutationDetails(firstStructuralRow.details) ?? firstStructuralRow.details ?? null,
+      sequenceRecovery: recovery.details ? JSON.parse(recovery.details) : null,
+    });
+  }
+  for (const row of sequenceRows) {
+    row.details = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: row.outcome,
+      note: recovery.reason,
+      originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
+    }), {
+      beforeAnalysis: args.analyzedState.analysis,
+      beforeSnapshot: args.analyzedState.snapshot,
+      afterAnalysis: sequenceAnalysis,
+      afterSnapshot: sequenceSnapshot,
+    });
+  }
+  args.stageApplied.push(...sequenceRows);
+  return {
+    buffer: sequenceBuffer,
+    analysis: sequenceAnalysis,
+    snapshot: sequenceSnapshot,
+  };
+}
+
 async function finalizeAnalyzedStage(args: {
   filename: string;
   stateBeforeStage: RemediationState;
@@ -3454,6 +3584,29 @@ async function finalizeAnalyzedStage(args: {
   });
 
   if (rejectionDecision.reject) {
+    const sequenceRecovered = await tryFigure4702StructureAnnotationSequence({
+      filename,
+      stateBeforeStage,
+      analyzedState,
+      stage,
+      stageApplied,
+      stageStartScore,
+      rejectionDecision,
+      signal,
+    });
+    if (sequenceRecovered) {
+      for (const row of stageApplied) {
+        row.scoreAfter = sequenceRecovered.analysis.score;
+        row.delta = sequenceRecovered.analysis.score - stageStartScore;
+        enrichRowDetailsWithReplayState(row, {
+          beforeAnalysis: stateBeforeStage.analysis,
+          beforeSnapshot: stateBeforeStage.snapshot,
+          afterAnalysis: sequenceRecovered.analysis,
+          afterSnapshot: sequenceRecovered.snapshot,
+        });
+      }
+      return sequenceRecovered;
+    }
     const noEffectRouteDecision = structure3775ArtifactRouteNoEffectStabilizationDecision({
       before: stateBeforeStage.analysis,
       after: analyzedState.analysis,

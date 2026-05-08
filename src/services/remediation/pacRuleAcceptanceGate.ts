@@ -295,6 +295,113 @@ export function pacRuleUsefulRepairRecovery(input: {
   };
 }
 
+const STRUCTURE_ANNOTATION_SEQUENCE_STRUCTURAL_TOOLS = new Set([
+  'synthesize_basic_structure_from_layout',
+  'repair_structure_conformance',
+  'remap_orphan_mcids_as_artifacts',
+]);
+
+const STRUCTURE_ANNOTATION_SEQUENCE_CLEANUP_TOOLS = new Set([
+  'repair_native_link_structure',
+  'tag_unowned_annotations',
+  'set_link_annotation_contents',
+  'normalize_annotation_tab_order',
+]);
+
+const STRUCTURE_ANNOTATION_SEQUENCE_ALLOWED_RULES = new Set([
+  'pdfua.annotations.tagged_annotations_present',
+  'pdfua.content.orphan_mcids_absent',
+]);
+
+function evidenceRow(snapshot: DocumentSnapshot, ruleId: string): PacRuleEvidence | undefined {
+  return buildPacRuleEvidence(snapshot).find(row => row.ruleId === ruleId);
+}
+
+export function pacRuleStructureAnnotationSequenceRecovery(input: {
+  beforeSnapshot: DocumentSnapshot;
+  intermediateSnapshot: DocumentSnapshot;
+  finalSnapshot: DocumentSnapshot;
+  toolNames: readonly string[];
+  beforeScore: number;
+  intermediateScore: number;
+  finalScore: number;
+  beforeHeadingScore?: number | null;
+  intermediateHeadingScore?: number | null;
+  finalHeadingScore?: number | null;
+  targetScore?: number;
+}): { recover: boolean; reason: string | null; details?: string } {
+  if (!input.toolNames.some(toolName => STRUCTURE_ANNOTATION_SEQUENCE_STRUCTURAL_TOOLS.has(toolName))) {
+    return { recover: false, reason: null };
+  }
+  if (!input.toolNames.some(toolName => STRUCTURE_ANNOTATION_SEQUENCE_CLEANUP_TOOLS.has(toolName))) {
+    return { recover: false, reason: null };
+  }
+  const intermediateRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.intermediateSnapshot,
+    toolNames: input.toolNames,
+  });
+  if (intermediateRegressions.length === 0) return { recover: false, reason: null };
+  if (!intermediateRegressions.some(row => row.ruleId === 'pdfua.annotations.tagged_annotations_present')) {
+    return { recover: false, reason: null };
+  }
+  if (intermediateRegressions.some(row => !STRUCTURE_ANNOTATION_SEQUENCE_ALLOWED_RULES.has(row.ruleId))) {
+    return { recover: false, reason: null };
+  }
+  const intermediateHeadingImproved = (
+    input.beforeHeadingScore != null &&
+    input.intermediateHeadingScore != null &&
+    input.intermediateHeadingScore > input.beforeHeadingScore
+  );
+  if (input.intermediateScore <= input.beforeScore || !intermediateHeadingImproved) {
+    return { recover: false, reason: null };
+  }
+  if (input.finalScore <= input.beforeScore || input.finalScore < (input.targetScore ?? 80)) {
+    return { recover: false, reason: null };
+  }
+  if (!pageTextTagEvidencePreserved(input.beforeSnapshot, input.finalSnapshot)) {
+    return { recover: false, reason: null };
+  }
+  const finalRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.finalSnapshot,
+    toolNames: input.toolNames,
+  });
+  if (finalRegressions.some(row => !STRUCTURE_ANNOTATION_SEQUENCE_ALLOWED_RULES.has(row.ruleId))) {
+    return { recover: false, reason: null };
+  }
+  const intermediateAnnotationCount = failedCount(evidenceRow(input.intermediateSnapshot, 'pdfua.annotations.tagged_annotations_present'));
+  const finalAnnotationCount = failedCount(evidenceRow(input.finalSnapshot, 'pdfua.annotations.tagged_annotations_present'));
+  if (finalAnnotationCount >= intermediateAnnotationCount) {
+    return { recover: false, reason: null };
+  }
+  const finalHeadingPreserved = (
+    input.finalHeadingScore == null ||
+    input.intermediateHeadingScore == null ||
+    input.finalHeadingScore >= input.intermediateHeadingScore
+  );
+  if (!finalHeadingPreserved) return { recover: false, reason: null };
+  const reason = 'structure_annotation_sequence_recovered';
+  return {
+    recover: true,
+    reason,
+    details: JSON.stringify({
+      outcome: 'accepted',
+      note: reason,
+      intermediateRegressions,
+      finalRegressions,
+      beforeScore: input.beforeScore,
+      intermediateScore: input.intermediateScore,
+      finalScore: input.finalScore,
+      beforeHeadingScore: input.beforeHeadingScore ?? null,
+      intermediateHeadingScore: input.intermediateHeadingScore ?? null,
+      finalHeadingScore: input.finalHeadingScore ?? null,
+      intermediateAnnotationCount,
+      finalAnnotationCount,
+    }),
+  };
+}
+
 function pageTextTagEvidencePreserved(before: DocumentSnapshot, after: DocumentSnapshot): boolean {
   if (after.pageCount !== before.pageCount) return false;
   if (after.textCharCount < before.textCharCount) return false;

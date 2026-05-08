@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   pacAcceptanceGateAppliesToTools,
   pacRuleAcceptanceGate,
+  pacRuleStructureAnnotationSequenceRecovery,
   pacRuleUsefulRepairRecovery,
 } from '../../src/services/remediation/pacRuleAcceptanceGate.js';
 import type { DocumentSnapshot } from '../../src/types.js';
@@ -174,6 +175,27 @@ function orphanMcidDebtSnapshot(count: number, overrides: Partial<DocumentSnapsh
         orphanMcidCount: count,
         suspectedPathPaintOutsideMc: 0,
         taggedAnnotationRiskCount: 0,
+      },
+    },
+    ...overrides,
+  });
+}
+
+function annotationDebtSnapshot(count: number, orphanCount = 0, overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
+  const base = baseSnapshot();
+  return baseSnapshot({
+    orphanMcids: Array.from({ length: orphanCount }, (_, index) => ({ page: 0, mcid: index })),
+    detectionProfile: {
+      ...base.detectionProfile!,
+      pdfUaSignals: {
+        orphanMcidCount: orphanCount,
+        suspectedPathPaintOutsideMc: 0,
+        taggedAnnotationRiskCount: count,
+      },
+      annotationSignals: {
+        ...base.detectionProfile!.annotationSignals,
+        linkAnnotationsMissingStructure: count,
+        linkAnnotationsMissingStructParent: 0,
       },
     },
     ...overrides,
@@ -535,6 +557,96 @@ describe('pacRuleAcceptanceGate', () => {
       afterScore: 98,
       beforePdfUaScore: 60,
       afterPdfUaScore: 70,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('allows structure-annotation sequence only when cleanup reduces annotation PAC debt and score moves', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(80, 25),
+      finalSnapshot: annotationDebtSnapshot(0, 8),
+      toolNames: ['synthesize_basic_structure_from_layout', 'repair_native_link_structure', 'tag_unowned_annotations'],
+      beforeScore: 48,
+      intermediateScore: 77,
+      finalScore: 87,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 80,
+    })).toMatchObject({
+      recover: true,
+      reason: 'structure_annotation_sequence_recovered',
+    });
+  });
+
+  it('does not recover structure-annotation sequence if annotation debt remains unreduced', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(80, 25),
+      finalSnapshot: annotationDebtSnapshot(80, 8),
+      toolNames: ['synthesize_basic_structure_from_layout', 'repair_native_link_structure'],
+      beforeScore: 48,
+      intermediateScore: 77,
+      finalScore: 87,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 80,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover structure-annotation sequence with mixed harmful PAC regressions', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0, tableHeaderPassSnapshot()),
+      intermediateSnapshot: annotationDebtSnapshot(80, 25, tableHeaderPassSnapshot()),
+      finalSnapshot: annotationDebtSnapshot(0, 8, {
+        tableHeaderAudit: {
+          tablesChecked: 1,
+          headerAssociationMissingCount: 0,
+          orphanHeaderCellCount: 0,
+          dataCellsWithoutHeaderCount: 1,
+        },
+      }),
+      toolNames: ['synthesize_basic_structure_from_layout', 'repair_native_link_structure'],
+      beforeScore: 48,
+      intermediateScore: 77,
+      finalScore: 87,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 80,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover structure-annotation sequence with page text or tag regressions', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(80, 25),
+      finalSnapshot: annotationDebtSnapshot(0, 8, { textCharCount: 100 }),
+      toolNames: ['synthesize_basic_structure_from_layout', 'repair_native_link_structure'],
+      beforeScore: 48,
+      intermediateScore: 77,
+      finalScore: 87,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 80,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover unrelated tools through structure-annotation sequence', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(80, 25),
+      finalSnapshot: annotationDebtSnapshot(0, 8),
+      toolNames: ['set_figure_alt_text', 'repair_native_link_structure'],
+      beforeScore: 48,
+      intermediateScore: 77,
+      finalScore: 87,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 80,
     })).toEqual({ recover: false, reason: null });
   });
 });
