@@ -105,6 +105,54 @@ pdf.save(${JSON.stringify(pdfPath)})
   return { buf: readFileSync(pdfPath), tableRef: readFileSync(refPath, 'utf8').trim() };
 }
 
+function buildMultipleUnassociatedHeaderTablesPdf(): { buf: Buffer; tableRefs: string[] } {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-header-association-batch-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const refPath = join(dir, 'table-refs.txt');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+tables = []
+refs = []
+for table_index in range(3):
+    table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+    rows = []
+    for row_index in range(3):
+        tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+        cells = []
+        for cell_index in range(3):
+            role = Name('/TH') if row_index == 0 or cell_index == 0 else Name('/TD')
+            cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+            cells.append(cell)
+        tr['/K'] = Array(cells)
+        rows.append(tr)
+    table['/K'] = Array(rows)
+    tables.append(table)
+    n, g = table.objgen
+    refs.append(f"{n}_{g}")
+doc['/K'] = Array(tables)
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+saved = pikepdf.open(${JSON.stringify(pdfPath)})
+saved_tables = list(saved.Root['/StructTreeRoot']['/K']['/K'])
+with open(${JSON.stringify(refPath)}, 'w') as f:
+    f.write("\\n".join(f"{table.objgen[0]}_{table.objgen[1]}" for table in saved_tables))
+`);
+  execFileSync('python3', [script]);
+  return {
+    buf: readFileSync(pdfPath),
+    tableRefs: readFileSync(refPath, 'utf8').trim().split('\n').filter(Boolean),
+  };
+}
+
 function buildMultipleStronglyIrregularTablesPdf(): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-multi-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -172,6 +220,23 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.headerCellCountBefore).toBe(row?.invariants?.headerCellCountAfter);
     expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
     expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(row?.invariants?.headerCellsWithScopeCountBefore ?? 0);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('adds deterministic associations across multiple targeted tables without changing table shape', async () => {
+    const { buf, tableRefs } = buildMultipleUnassociatedHeaderTablesPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      { op: 'set_table_header_cells', params: { structRefs: tableRefs, tableHeaderAssociation: true } },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.note).toBe('table_header_association_batch_improved');
+    expect(row?.debug?.targetRefs).toEqual(tableRefs);
+    expect(row?.invariants?.headerCellCountBefore).toBe(row?.invariants?.headerCellCountAfter);
+    expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
+    expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 

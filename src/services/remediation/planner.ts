@@ -456,12 +456,25 @@ function mutationTargetRef(details: PythonMutationDetailPayload | null | undefin
   return null;
 }
 
+function mutationTargetRefs(details: PythonMutationDetailPayload | null | undefined): string[] {
+  const refs = new Set<string>();
+  const single = mutationTargetRef(details);
+  if (single) refs.add(single);
+  const debugRefs = details?.debug?.['targetRefs'];
+  if (Array.isArray(debugRefs)) {
+    for (const value of debugRefs) {
+      if (typeof value === 'string' && value.length > 0) refs.add(value);
+    }
+  }
+  return [...refs];
+}
+
 function attemptedMutationRefs(applied: AppliedRemediationTool[], toolName: string): Set<string> {
   return new Set(
     applied
       .filter(row => row.toolName === toolName)
-      .map(row => mutationTargetRef(parseMutationDetails(row.details)))
-      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+      .flatMap(row => mutationTargetRefs(parseMutationDetails(row.details)))
+      .filter(value => typeof value === 'string' && value.length > 0),
   );
 }
 
@@ -2559,7 +2572,7 @@ export function buildDefaultParams(
       const attemptedRefs = new Set(
         alreadyApplied
           .filter(row => row.toolName === 'set_table_header_cells')
-          .map(row => mutationTargetRef(parseMutationDetails(row.details)))
+          .flatMap(row => mutationTargetRefs(parseMutationDetails(row.details)))
           .filter((ref): ref is string => Boolean(ref)),
       );
       const missingHeaderTarget = snapshot.tables
@@ -2591,8 +2604,14 @@ export function buildDefaultParams(
           ),
         ),
       );
-      if (!hasAssociationDebt || !isSmallBoundedAssociationDebt || !hasStrictTablePacCap) return {};
-      const associationTarget = snapshot.tables
+      const hasUnsafeTableShape = Boolean(snapshot.detectionProfile?.tableSignals && (
+        (snapshot.detectionProfile.tableSignals.directCellUnderTableCount ?? 0) > 0 ||
+        (snapshot.detectionProfile.tableSignals.misplacedCellCount ?? 0) > 0 ||
+        (snapshot.detectionProfile.tableSignals.irregularTableCount ?? 0) > 0 ||
+        (snapshot.detectionProfile.tableSignals.stronglyIrregularTableCount ?? 0) > 0
+      ));
+      if (!hasAssociationDebt || !hasStrictTablePacCap || hasUnsafeTableShape) return {};
+      const associationTargets = snapshot.tables
         .filter(row =>
           row.structRef &&
           !attemptedRefs.has(row.structRef) &&
@@ -2604,15 +2623,37 @@ export function buildDefaultParams(
           (row.totalCells ?? 0) > (row.headerCount ?? 0)
         )
         .sort((a, b) =>
-          (b.totalCells ?? 0) - (a.totalCells ?? 0)
+          ((b.totalCells ?? 0) - (b.headerCount ?? 0)) - ((a.totalCells ?? 0) - (a.headerCount ?? 0))
+          || (b.totalCells ?? 0) - (a.totalCells ?? 0)
           || (b.headerCount ?? 0) - (a.headerCount ?? 0)
           || a.page - b.page
           || (a.structRef ?? '').localeCompare(b.structRef ?? '')
-        )[0];
-      return associationTarget?.structRef
+        );
+      const associationTarget = associationTargets[0];
+      if (isSmallBoundedAssociationDebt) {
+        return associationTarget?.structRef
+          ? {
+            structRef: associationTarget.structRef,
+            tableHeaderAssociation: true,
+          }
+          : {};
+      }
+      if (!audit || audit.headerAssociationMissingCount < 4 || audit.dataCellsWithoutHeaderCount < 100) return {};
+      const batchRefs: string[] = [];
+      let estimatedTdDebt = 0;
+      for (const target of associationTargets) {
+        if (!target.structRef) continue;
+        const targetDebt = Math.max(1, (target.totalCells ?? 0) - (target.headerCount ?? 0));
+        if (batchRefs.length > 0 && estimatedTdDebt + targetDebt > 120) continue;
+        batchRefs.push(target.structRef);
+        estimatedTdDebt += targetDebt;
+        if (batchRefs.length >= 4) break;
+      }
+      return batchRefs.length > 1
         ? {
-          structRef: associationTarget.structRef,
+          structRefs: batchRefs,
           tableHeaderAssociation: true,
+          maxTableHeaderAssociationTargets: 4,
         }
         : {};
     }

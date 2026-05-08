@@ -3147,12 +3147,115 @@ describe('planForRemediation', () => {
     expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({});
   });
 
-  it('does not target large many-table association debt until a safer batch policy exists', () => {
+  it('returns batched table-header association params for below-A many-table debt', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       isTagged: true,
       pdfClass: 'native_tagged',
       structureTree: { type: 'Document', children: [] },
+      detectionProfile: {
+        readingOrderSignals: {},
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+        },
+      },
+      tableHeaderAudit: {
+        tablesChecked: 10,
+        headerAssociationMissingCount: 10,
+        orphanHeaderCellCount: 240,
+        dataCellsWithoutHeaderCount: 220,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 28,
+          totalCells: 54,
+          page: 0,
+          structRef: '1327_0',
+          rowCount: 27,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+        {
+          hasHeaders: true,
+          headerCount: 26,
+          totalCells: 50,
+          page: 0,
+          structRef: '1049_0',
+          rowCount: 25,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+        {
+          hasHeaders: true,
+          headerCount: 18,
+          totalCells: 34,
+          page: 0,
+          structRef: '107_0',
+          rowCount: 17,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+        {
+          hasHeaders: true,
+          headerCount: 28,
+          totalCells: 54,
+          page: 0,
+          structRef: '1400_0',
+          rowCount: 27,
+          cellsMisplacedCount: 0,
+          irregularRows: 0,
+        },
+      ],
+    };
+    const analysis = {
+      ...withCategoryScores(score(snap, META), { table_markup: 79 }),
+      score: 78,
+      categories: withCategoryScores(score(snap, META), { table_markup: 79 }).categories.map(category =>
+        category.key === 'table_markup'
+          ? {
+            ...category,
+            scoreCapsApplied: [
+              {
+                category: 'table_markup',
+                cap: 79,
+                rawScore: 100,
+                finalScore: 79,
+                reason: 'PAC rule failure: pdfua.table.header_association_present',
+              },
+            ],
+          }
+          : category,
+      ),
+    };
+    expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({
+      structRefs: ['1327_0', '1400_0', '1049_0', '107_0'],
+      tableHeaderAssociation: true,
+      maxTableHeaderAssociationTargets: 4,
+    });
+  });
+
+  it('does not batch table-header association when table-shape signals are unsafe', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      detectionProfile: {
+        readingOrderSignals: {},
+        tableSignals: {
+          directCellUnderTableCount: 1,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+        },
+      },
       tableHeaderAudit: {
         tablesChecked: 10,
         headerAssociationMissingCount: 10,

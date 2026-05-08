@@ -847,28 +847,58 @@ def _table_target_ref(params: dict):
     return params.get("targetStructRef") or params.get("structRef") or params.get("targetRef")
 
 
+def _table_target_refs(params: dict) -> list[str]:
+    refs: list[str] = []
+    multi = params.get("structRefs")
+    if isinstance(multi, list):
+        for value in multi:
+            text = safe_str(value).strip()
+            if text and text not in refs:
+                refs.append(text)
+    single = _table_target_ref(params)
+    if single:
+        text = safe_str(single).strip()
+        if text and text not in refs:
+            refs.append(text)
+    return refs
+
+
 def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
-    ref = _table_target_ref(params)
-    if not ref:
+    refs = _table_target_refs(params)
+    if not refs:
         return False
-    try:
-        table = _resolve_ref(pdf, ref)
-    except Exception:
-        return False
-    if table is None or not isinstance(table, pikepdf.Dictionary):
-        return False
-    if (get_name(table) or "").lstrip("/").upper() != "TABLE":
-        return False
-    th_count, _td_count = _count_table_cells(table)
-    if th_count > 0 and bool(params.get("tableHeaderAssociation")):
-        changed = _associate_existing_table_headers(table)
-    else:
-        changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+    changed_refs: list[str] = []
+    changed = False
+    for ref in refs:
+        try:
+            table = _resolve_ref(pdf, ref)
+        except Exception:
+            continue
+        if table is None or not isinstance(table, pikepdf.Dictionary):
+            continue
+        if (get_name(table) or "").lstrip("/").upper() != "TABLE":
+            continue
+        th_count, _td_count = _count_table_cells(table)
+        if th_count > 0 and bool(params.get("tableHeaderAssociation")):
+            table_changed = _associate_existing_table_headers(table)
+        else:
+            table_changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+        if table_changed:
+            changed = True
+            changed_refs.append(ref)
     if changed:
         try:
-            _set_last_mutation_debug({"targetRef": ref, "tableHeaderAssociation": bool(params.get("tableHeaderAssociation"))})
+            payload = {
+                "targetRef": changed_refs[0] if len(changed_refs) == 1 else None,
+                "targetRefs": changed_refs,
+                "requestedTargetRefs": refs,
+                "tableHeaderAssociation": bool(params.get("tableHeaderAssociation")),
+            }
+            _set_last_mutation_debug(payload)
         except Exception:
             pass
+        if len(refs) > 1 and bool(params.get("tableHeaderAssociation")):
+            _set_last_mutation_note("table_header_association_batch_improved")
     return changed
 
 
