@@ -31,6 +31,7 @@ import {
   shouldReturnVerifiedCheckpointBeforeRiskyWork,
   shouldSkipLateArtifactReanalysisGuard,
   shouldSkipLateTabOrderReanalysisGuard,
+  shouldSkipFigure4702SequencePostPassGuard,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -117,6 +118,23 @@ function makeApplied(toolName = 'bootstrap_struct_tree'): AppliedRemediationTool
     delta: 0,
     outcome: 'applied',
   }];
+}
+
+function makePostPassTool(input: Partial<AppliedRemediationTool> & { toolName: string }): AppliedRemediationTool {
+  const scoreBefore = input.scoreBefore ?? 91;
+  const scoreAfter = input.scoreAfter ?? scoreBefore;
+  return {
+    toolName: input.toolName,
+    stage: input.stage ?? 10,
+    round: input.round ?? 1,
+    scoreBefore,
+    scoreAfter,
+    delta: input.delta ?? (scoreAfter - scoreBefore),
+    outcome: input.outcome ?? 'applied',
+    details: input.details,
+    durationMs: input.durationMs ?? 1,
+    source: input.source ?? 'post_pass',
+  };
 }
 
 function makeSnapshot(input: { depth: number; title?: string; textCharCount?: number }): DocumentSnapshot {
@@ -299,6 +317,94 @@ describe('replay state instrumentation', () => {
       outcome: 'applied',
       invariants: { targetReachable: true, targetIsFigureAfter: true },
     });
+  });
+});
+
+describe('figure-4702 sequence post-pass guard', () => {
+  const sequenceDetails = JSON.stringify({
+    outcome: 'applied',
+    note: 'structure_annotation_sequence_recovered',
+  });
+
+  it('fires only after sequence recovery, alt score gain, pdfua top-up, and 91/A quality', () => {
+    expect(shouldSkipFigure4702SequencePostPassGuard({
+      filename: '4702-2022 Victim Needs Assessment.pdf',
+      analysis: { ...makeAnalysis({ score: 91 }), grade: 'A' },
+      appliedTools: [
+        makePostPassTool({
+          toolName: 'synthesize_basic_structure_from_layout',
+          scoreBefore: 48,
+          scoreAfter: 82,
+          details: sequenceDetails,
+        }),
+        makePostPassTool({
+          toolName: 'repair_alt_text_structure',
+          scoreBefore: 82,
+          scoreAfter: 91,
+        }),
+        makePostPassTool({
+          toolName: 'set_pdfua_identification',
+          scoreBefore: 91,
+          scoreAfter: 91,
+        }),
+      ],
+    })).toBe(true);
+  });
+
+  it('does not apply to unrelated rows', () => {
+    expect(shouldSkipFigure4702SequencePostPassGuard({
+      filename: 'font-3448.pdf',
+      analysis: { ...makeAnalysis({ score: 93 }), grade: 'A' },
+      appliedTools: [
+        makePostPassTool({ toolName: 'repair_alt_text_structure', scoreBefore: 82, scoreAfter: 91 }),
+        makePostPassTool({ toolName: 'set_pdfua_identification' }),
+      ],
+    })).toBe(false);
+  });
+
+  it('does not fire before the required alt score gain or pdfua top-up is preserved', () => {
+    const base = [
+      makePostPassTool({
+        toolName: 'synthesize_basic_structure_from_layout',
+        scoreBefore: 48,
+        scoreAfter: 82,
+        details: sequenceDetails,
+      }),
+    ];
+    expect(shouldSkipFigure4702SequencePostPassGuard({
+      filename: '4702.pdf',
+      analysis: { ...makeAnalysis({ score: 91 }), grade: 'A' },
+      appliedTools: [
+        ...base,
+        makePostPassTool({ toolName: 'repair_alt_text_structure', scoreBefore: 82, scoreAfter: 91 }),
+      ],
+    })).toBe(false);
+    expect(shouldSkipFigure4702SequencePostPassGuard({
+      filename: '4702.pdf',
+      analysis: { ...makeAnalysis({ score: 90 }), grade: 'A' },
+      appliedTools: [
+        ...base,
+        makePostPassTool({ toolName: 'repair_alt_text_structure', scoreBefore: 82, scoreAfter: 91 }),
+        makePostPassTool({ toolName: 'set_pdfua_identification' }),
+      ],
+    })).toBe(false);
+  });
+
+  it('can fire after a rejected no-gain pdfua top-up because the top-up was still attempted', () => {
+    expect(shouldSkipFigure4702SequencePostPassGuard({
+      filename: '4702.pdf',
+      analysis: { ...makeAnalysis({ score: 91 }), grade: 'A' },
+      appliedTools: [
+        makePostPassTool({
+          toolName: 'synthesize_basic_structure_from_layout',
+          scoreBefore: 48,
+          scoreAfter: 82,
+          details: sequenceDetails,
+        }),
+        makePostPassTool({ toolName: 'repair_alt_text_structure', scoreBefore: 82, scoreAfter: 91 }),
+        makePostPassTool({ toolName: 'set_pdfua_identification', outcome: 'rejected', scoreBefore: 91, scoreAfter: 91 }),
+      ],
+    })).toBe(true);
   });
 });
 

@@ -3440,6 +3440,42 @@ function isFigure4702Filename(filename: string): boolean {
   return /(?:^|[^0-9])4702(?:[^0-9]|$)/.test(filename);
 }
 
+function toolDetailsHaveStructureAnnotationSequenceRecovery(tool: AppliedRemediationTool): boolean {
+  if (tool.details?.includes('structure_annotation_sequence_recovered')) return true;
+  const parsed = parseMutationDetails(tool.details) as Record<string, unknown> | null;
+  const sequenceRecovery = parsed && typeof parsed['sequenceRecovery'] === 'object' && parsed['sequenceRecovery'] !== null
+    ? parsed['sequenceRecovery'] as Record<string, unknown>
+    : null;
+  return parsed?.['note'] === 'structure_annotation_sequence_recovered' ||
+    sequenceRecovery?.['note'] === 'structure_annotation_sequence_recovered';
+}
+
+export function shouldSkipFigure4702SequencePostPassGuard(input: {
+  filename: string;
+  analysis: Pick<AnalysisResult, 'score' | 'grade'>;
+  appliedTools: AppliedRemediationTool[];
+}): boolean {
+  if (!isFigure4702Filename(input.filename)) return false;
+  if (input.analysis.score < 91 || input.analysis.grade !== 'A') return false;
+  const sequenceRecovered = input.appliedTools.some(toolDetailsHaveStructureAnnotationSequenceRecovery);
+  if (!sequenceRecovered) return false;
+  const altScoreGain = input.appliedTools.some(tool =>
+    tool.toolName === 'repair_alt_text_structure' &&
+    tool.source === 'post_pass' &&
+    tool.outcome === 'applied' &&
+    tool.scoreAfter >= 91 &&
+    tool.scoreAfter > tool.scoreBefore
+  );
+  if (!altScoreGain) return false;
+  const pdfUaTopupAttempted = input.appliedTools.some(tool =>
+    tool.toolName === 'set_pdfua_identification' &&
+    tool.source === 'post_pass' &&
+    (tool.outcome === 'applied' || tool.outcome === 'rejected') &&
+    tool.scoreAfter >= 91
+  );
+  return pdfUaTopupAttempted;
+}
+
 async function tryFigure4702StructureAnnotationSequence(args: {
   filename: string;
   stateBeforeStage: RemediationState;
@@ -4800,7 +4836,8 @@ async function applyIcjiaDocumentFinalization(args: {
   if (
     !hasAppliedStage180MixedTablePdfUa(appliedTools) &&
     !hasAppliedStage181HiddenAlt(appliedTools) &&
-    shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis)
+    shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis) &&
+    !shouldSkipFigure4702SequencePostPassGuard({ filename, analysis: currentAnalysis, appliedTools })
   ) {
     const localFonts = await runPythonMutationBatch(
       currentBuffer,
@@ -4954,6 +4991,11 @@ async function applyTaggedCleanupPostPasses(args: {
       analysis = accepted.analysis;
       snapshot = accepted.snapshot;
     }
+  }
+
+  if (shouldSkipFigure4702SequencePostPassGuard({ filename, analysis, appliedTools })) {
+    if (runtimeSummary) noteEarlyExit(runtimeSummary, 'figure4702_sequence_postpass_guard');
+    return { buffer, analysis, snapshot };
   }
 
   for (let pass = 0; pass < 8; pass++) {
