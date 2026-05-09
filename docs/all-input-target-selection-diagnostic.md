@@ -187,3 +187,22 @@ Revised next checkpoint:
 - Do not add a single-step PAC allow-list for these table tools.
 - If continuing the table lane, build a proposal-buffer sequencing diagnostic that can start from a rejected table/structure proposal and immediately run bounded annotation plus table-header cleanup, then accept only the final PAC-safe state.
 - Candidate rows for that diagnostic are `font-4057` and `4722`; controls should include prior table successes (`font-4699`, `long-4700`) plus fixed-50 controls (`font-4035`, `fixture-accessible`, `figure-4753`).
+
+## API Semantic Smoke And Post-Alt Guard
+
+Generated artifacts:
+
+- API semantic sample: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-heading-sample-r1/`
+- Source validation run: `Output/goal-all-input-mean-2026-05-09-r1/run-one-4519-regression-guard-2026-05-09-r1/`
+
+Findings:
+
+- The running Docker API has an embedded LLM configured and reachable via `/v1/health`, while port `1234` is not exposed on the host. Treat API semantic samples as production-path evidence, not clean in-repo `:memory:` benchmark evidence.
+- API samples showed useful learned deterministic routes on hard heading rows: `v1-4655 46/F -> 97/A`, `4614 59/F -> 96/A`, and `4646 50/F -> 89/B` in the repeat sample.
+- API sample `4519` exposed an honesty bug: after all major tools were rejected, final post-semantic `repair_alt_text_structure` dropped `51 -> 45`, with `alt_text 89 -> 20` and `table_markup 100/not-applicable -> 0/applicable`.
+
+Source change:
+
+- `shouldKeepPostRemediationAltRepair(...)` now rejects post-remediation alt cleanup when total score drops or core non-alt categories regress.
+- The API route and `scripts/baseline-corpus-batch.ts` now use that guard for direct post-alt cleanup paths. The main orchestrator was already using guarded post-pass acceptance.
+- Focused source validation on `4519` completed `35/F -> 60/D` without accepting a lower final cleanup state.

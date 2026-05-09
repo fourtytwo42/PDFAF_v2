@@ -26,7 +26,7 @@ import {
 } from '../remediationProgress.js';
 import { analyzePdf } from '../services/pdfAnalyzer.js';
 import { remediatePdf } from '../services/remediation/orchestrator.js';
-import { applyPostRemediationAltRepair } from '../services/remediation/altStructureRepair.js';
+import { applyPostRemediationAltRepair, shouldKeepPostRemediationAltRepair } from '../services/remediation/altStructureRepair.js';
 import { buildRemediationOutcomeSummary } from '../services/remediation/outcomeSummary.js';
 import { buildPacRuleEvidence } from '../services/compliance/pacRuleEvidence.js';
 import { applySemanticRepairs } from '../services/semantic/semanticService.js';
@@ -494,7 +494,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       const ar = await applyPostRemediationAltRepair(outBuffer, filename, outAfter, outSnapshot, {
         signal: semanticAbort.signal,
       });
-      if (!ar.buffer.equals(outBuffer)) {
+      if (!ar.buffer.equals(outBuffer) && shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
         outBuffer = ar.buffer;
         outAfter = ar.analysis;
         outSnapshot = ar.snapshot;

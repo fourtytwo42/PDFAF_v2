@@ -5,7 +5,35 @@ import { tmpdir } from 'node:os';
 import { PYTHON_MUTATION_TIMEOUT_MS, REMEDIATION_ANALYSIS_TIMEOUT_MS } from '../../config.js';
 import { runPythonMutationBatch } from '../../python/bridge.js';
 import { analyzePdf } from '../pdfAnalyzer.js';
-import type { AnalysisResult, DocumentSnapshot } from '../../types.js';
+import type { AnalysisResult, CategoryKey, DocumentSnapshot } from '../../types.js';
+
+const POST_ALT_CORE_CATEGORIES: CategoryKey[] = [
+  'heading_structure',
+  'reading_order',
+  'table_markup',
+  'pdf_ua_compliance',
+  'link_quality',
+  'text_extractability',
+];
+
+function scoreOf(analysis: AnalysisResult): number {
+  return analysis.scoreProfile?.overallScore ?? analysis.score;
+}
+
+function categoryScore(analysis: AnalysisResult, key: CategoryKey): number | null {
+  const category = analysis.categories.find(item => item.key === key);
+  return typeof category?.score === 'number' ? category.score : null;
+}
+
+export function shouldKeepPostRemediationAltRepair(before: AnalysisResult, after: AnalysisResult): boolean {
+  if (scoreOf(after) < scoreOf(before)) return false;
+  for (const key of POST_ALT_CORE_CATEGORIES) {
+    const beforeScore = categoryScore(before, key);
+    const afterScore = categoryScore(after, key);
+    if (beforeScore != null && afterScore != null && afterScore < beforeScore) return false;
+  }
+  return true;
+}
 
 /**
  * Post-remediation cleanup pass for tagged PDFs:

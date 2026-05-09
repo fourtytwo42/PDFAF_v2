@@ -95,7 +95,7 @@ async function main(): Promise<void> {
   }
   const { analyzePdf } = await import('../src/services/pdfAnalyzer.js');
   const { remediatePdf } = await import('../src/services/remediation/orchestrator.js');
-  const { applyPostRemediationAltRepair } = await import('../src/services/remediation/altStructureRepair.js');
+  const { applyPostRemediationAltRepair, shouldKeepPostRemediationAltRepair } = await import('../src/services/remediation/altStructureRepair.js');
   const { applySemanticRepairs } = await import('../src/services/semantic/semanticService.js');
   const { applySemanticHeadingRepairs } = await import('../src/services/semantic/headingSemantic.js');
   const { applySemanticPromoteHeadingRepairs } = await import('../src/services/semantic/promoteHeadingSemantic.js');
@@ -176,9 +176,11 @@ async function main(): Promise<void> {
       let outSnap = snap2;
       if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
         const ar = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
-        outBuf = ar.buffer;
-        outAfter = ar.analysis;
-        outSnap = ar.snapshot;
+        if (shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
+          outBuf = ar.buffer;
+          outAfter = ar.analysis;
+          outSnap = ar.snapshot;
+        }
       }
       // Second deterministic pass: planner/tool caps often leave headroom after the first re-analyze.
       if (outAfter.score < REMEDIATION_TARGET_SCORE) {
@@ -197,9 +199,11 @@ async function main(): Promise<void> {
         }
         if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
           const ar2 = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
-          outBuf = ar2.buffer;
-          outAfter = ar2.analysis;
-          outSnap = ar2.snapshot;
+          if (shouldKeepPostRemediationAltRepair(outAfter, ar2.analysis)) {
+            outBuf = ar2.buffer;
+            outAfter = ar2.analysis;
+            outSnap = ar2.snapshot;
+          }
         }
       }
       afterDeterministicScore = outAfter.score;
@@ -273,9 +277,11 @@ async function main(): Promise<void> {
 
           if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
             const ar2 = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
-            outBuf = ar2.buffer;
-            outAfter = ar2.analysis;
-            outSnap = ar2.snapshot;
+            if (shouldKeepPostRemediationAltRepair(outAfter, ar2.analysis)) {
+              outBuf = ar2.buffer;
+              outAfter = ar2.analysis;
+              outSnap = ar2.snapshot;
+            }
           }
         };
 
