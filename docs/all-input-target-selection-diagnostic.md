@@ -91,3 +91,19 @@ Decision from R1:
 - Do not add a broad heading scheduler from this run.
 - The next focused diagnostic should inspect tool timelines and object evidence for the selected rows, especially why heading remains `0` after remediation and why `tag_native_text_blocks`, `synthesize_basic_structure_from_layout`, `create_heading_from_candidate`, or structure conformance tools do not produce safe final states.
 - Prioritize rows with repeatable direct PAC structure/content evidence over font/CMap-only rows.
+
+## Focused Tool Trace Sample
+
+Generated artifacts:
+
+- Trace output: `Output/goal-all-input-mean-2026-05-09-r1/focused-heading-reading-traces-r1/`
+- Rows traced: `v1-4655`, `4646`, `4614`, and `4519`.
+
+Observed patterns:
+
+- `v1-4655`: structural/heading proposals (`create_heading_from_tagged_visible_anchor`, `repair_structure_conformance`, `synthesize_basic_structure_from_layout`, orphan remap, and annotation cleanup) were rejected from the same score plateau because the intermediate state triggered `pdfua.annotations.tagged_annotations_present`; later link/annotation cleanup attempts regressed score.
+- `4646`: structural and heading proposals were again blocked by `pdfua.annotations.tagged_annotations_present`; a later artifact marking path applied but did not move score/category evidence.
+- `4614`: most stage work was rejected as `stage_no_gain_orphan_artifact_mutation` or score regression; no clear heading recovery path is proven from this trace.
+- `4519`: real partial progress exists (`35/F -> 59/F` in trace, `79/C` in the focused batch path), with figure/table/header tools applying, but later useful repairs were blocked by `pdfua.table.headers_present` or `pdfua.figure.alt_present` PAC regressions. This row is mixed and should not drive a heading-only behavior change.
+
+The most promising next diagnostic is a generalized structure-then-annotation sequencing diagnostic modeled after the successful `figure-4702` probe, but only for rows where the rejected structural proposal improves total score and heading/reading evidence, and final bounded annotation/link cleanup can clear annotation PAC debt. This should be diagnostic-first; do not globally weaken `pdfua.annotations.tagged_annotations_present` or orphan-MCID gates.
