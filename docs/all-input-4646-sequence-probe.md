@@ -35,14 +35,14 @@ The trace shows:
 
 ## Decision
 
-`4646` and `4593` are recovered under a narrow heading-then-annotation sequence. Do not generalize this to other rows without the same proposal-buffer proof and orchestrator validation. In particular, do not add a global annotation PAC exception and do not lower PAC gates.
+`4646` and `4593` are covered under a narrow heading-then-annotation sequence. Do not generalize this to other rows without the same proposal-buffer proof and orchestrator validation. In particular, do not add a global annotation PAC exception and do not lower PAC gates.
 
 Validation:
 
 - Four-row target `Output/goal-all-input-mean-2026-05-09-r1/run-sequence-4646-target-2026-05-09-r3`: `4646 50/F -> 94/A`; nearby controls stayed bounded.
 - Twelve-row heading set `Output/goal-all-input-mean-2026-05-09-r1/run-focused-heading-reading-targets-sequence-heading-2026-05-09-r1`: `4646 50/F -> 95/A` and `4593 42/F -> 91/A`; remaining low rows still need separate remediation paths.
 - Focused trace `Output/goal-all-input-mean-2026-05-09-r1/sequence-4646-one-trace-r3`: sequence rows are `create_heading_from_candidate` and `tag_unowned_annotations`, both with `structure_annotation_sequence_recovered`.
-- Direct probes for `4655` and `4614` showed possible local movement but did not translate through orchestrator validation, so they are not in the kept ID set.
+- Direct probes for `4583`, `4655`, and `4614` showed possible local movement but did not translate through orchestrator validation, so they are not in the kept ID set.
 
 The next all-input mean-recovery branch should target either:
 
