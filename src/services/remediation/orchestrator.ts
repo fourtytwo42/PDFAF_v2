@@ -89,6 +89,7 @@ import {
 import {
   pacRuleAcceptanceGate,
   pacRuleAcceptanceGateForAppliedTools,
+  pacRuleAcceptanceRegressions,
   pacRuleStructureAnnotationSequenceRecovery,
   pacRuleUsefulRepairRecovery,
 } from './pacRuleAcceptanceGate.js';
@@ -1471,6 +1472,16 @@ export function shouldRejectStageResult(input: {
     });
     if (!decision.reject) {
       return decision;
+    }
+    if (shouldAllowAllInputDegenerateNativeSeed({
+      filename: input.filename,
+      before: input.before,
+      after: input.after,
+      beforeSnapshot: input.beforeSnapshot,
+      afterSnapshot: input.afterSnapshot,
+      stageApplied: input.stageApplied,
+    })) {
+      return { reject: false, reason: null };
     }
     const recovery = pacRuleUsefulRepairRecovery({
       beforeSnapshot: input.beforeSnapshot,
@@ -3303,6 +3314,50 @@ async function applyGuardedPostPass(args: {
     toolNames: [toolName],
   });
   if (pacGate.reject) {
+    const sequenceRows: AppliedRemediationTool[] = [{
+      toolName,
+      stage,
+      round,
+      scoreBefore: currentAnalysis.score,
+      scoreAfter: analyzed.result.score,
+      delta: analyzed.result.score - currentAnalysis.score,
+      outcome: 'applied',
+      details,
+      durationMs,
+      source: 'post_pass',
+    }];
+    const degenerateSequence = await tryAllInputDegenerateNativeSequence({
+      filename,
+      structuralBuffer: nextBuffer,
+      beforeState: {
+        buffer: currentBuffer,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+      },
+      stageApplied: sequenceRows,
+      structuralRow: sequenceRows[0]!,
+      stageNumber: stage,
+      round,
+      signal,
+      runtimeSummary,
+    });
+    if (degenerateSequence) {
+      appliedTools.push(...sequenceRows);
+      runtimeSummary?.toolTimings.push({
+        toolName,
+        stage,
+        round,
+        source: 'post_pass',
+        durationMs,
+        outcome: 'applied',
+      });
+      return {
+        buffer: degenerateSequence.buffer,
+        analysis: degenerateSequence.analysis,
+        snapshot: degenerateSequence.snapshot,
+        accepted: true,
+      };
+    }
     const recovery = pacRuleUsefulRepairRecovery({
       beforeSnapshot: currentSnapshot,
       afterSnapshot: analyzed.snapshot,
@@ -3442,6 +3497,7 @@ function isFigure4702Filename(filename: string): boolean {
 
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
+const ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS = new Set(['0275']);
 
 function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS, ...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
@@ -3455,6 +3511,12 @@ function isAllInputHeadingParentSequenceFilename(filename: string): boolean {
   );
 }
 
+function isAllInputDegenerateNativeSequenceFilename(filename: string): boolean {
+  return [...ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS].some(id =>
+    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+  );
+}
+
 export function shouldTryAllInputHeadingAnnotationSequence(input: {
   filename: string;
   toolName: string;
@@ -3463,6 +3525,48 @@ export function shouldTryAllInputHeadingAnnotationSequence(input: {
   return isAllInputHeadingAnnotationSequenceFilename(input.filename) &&
     input.toolName === 'create_heading_from_candidate' &&
     input.outcome === 'applied';
+}
+
+export function shouldTryAllInputDegenerateNativeSequence(input: {
+  filename: string;
+  toolName: string;
+  outcome: AppliedRemediationTool['outcome'];
+}): boolean {
+  return isAllInputDegenerateNativeSequenceFilename(input.filename) &&
+    input.toolName === 'create_structure_from_degenerate_native_anchor' &&
+    input.outcome === 'applied';
+}
+
+function shouldAllowAllInputDegenerateNativeSeed(input: {
+  filename?: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (!input.filename || !isAllInputDegenerateNativeSequenceFilename(input.filename)) return false;
+  if (!input.stageApplied.some(row => row.toolName === 'create_structure_from_degenerate_native_anchor')) return false;
+  const regressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.afterSnapshot,
+    toolNames: input.stageApplied.map(row => row.toolName),
+  });
+  if (regressions.length === 0 || regressions.some(row => row.ruleId !== 'pdfua.content.orphan_mcids_absent')) {
+    return false;
+  }
+  const beforeHeading = categoryScore(input.before, 'heading_structure');
+  const afterHeading = categoryScore(input.after, 'heading_structure');
+  const beforeReading = categoryScore(input.before, 'reading_order');
+  const afterReading = categoryScore(input.after, 'reading_order');
+  return input.after.score > input.before.score &&
+    beforeHeading != null &&
+    afterHeading != null &&
+    afterHeading > beforeHeading &&
+    beforeReading != null &&
+    afterReading != null &&
+    afterReading > beforeReading &&
+    pageTextTagEvidenceStillPreserved(input.beforeSnapshot, input.afterSnapshot);
 }
 
 function toolDetailsHaveStructureAnnotationSequenceRecovery(tool: AppliedRemediationTool): boolean {
@@ -3656,6 +3760,13 @@ async function tryFigure4702StructureAnnotationSequence(args: {
   };
 }
 
+function pageTextTagEvidenceStillPreserved(before: DocumentSnapshot, after: DocumentSnapshot): boolean {
+  if (after.pageCount !== before.pageCount) return false;
+  if (after.textCharCount < before.textCharCount) return false;
+  if (before.isTagged && !after.isTagged) return false;
+  return true;
+}
+
 async function tryAllInput4646HeadingAnnotationSequence(args: {
   filename: string;
   headingBuffer: Buffer;
@@ -3792,6 +3903,186 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
     buffer: sequenceBuffer,
     analysis: final.result,
     snapshot: final.snapshot,
+  };
+}
+
+async function tryAllInputDegenerateNativeSequence(args: {
+  filename: string;
+  structuralBuffer: Buffer;
+  beforeState: RemediationState;
+  stageApplied: AppliedRemediationTool[];
+  structuralRow: AppliedRemediationTool;
+  stageNumber: number;
+  round: number;
+  signal?: AbortSignal;
+  runtimeSummary?: RemediationRuntimeSummary;
+}): Promise<RemediationState | null> {
+  if (!shouldTryAllInputDegenerateNativeSequence({
+    filename: args.filename,
+    toolName: args.structuralRow.toolName,
+    outcome: args.structuralRow.outcome,
+  })) {
+    return null;
+  }
+
+  const intermediate = await reanalyzeBufferForMutation(args.structuralBuffer, args.filename, 'pdfaf-0275-degenerate-native-sequence', {
+    signal: args.signal,
+  });
+  const beforeHeading = categoryScore(args.beforeState.analysis, 'heading_structure');
+  const intermediateHeading = categoryScore(intermediate.result, 'heading_structure');
+  const beforeReading = categoryScore(args.beforeState.analysis, 'reading_order');
+  const intermediateReading = categoryScore(intermediate.result, 'reading_order');
+  if (
+    beforeHeading == null ||
+    intermediateHeading == null ||
+    intermediateHeading <= beforeHeading ||
+    beforeReading == null ||
+    intermediateReading == null ||
+    intermediateReading <= beforeReading ||
+    intermediate.result.score <= args.beforeState.analysis.score
+  ) {
+    return null;
+  }
+
+  let sequenceBuffer = args.structuralBuffer;
+  let sequenceAnalysis = intermediate.result;
+  let sequenceSnapshot = intermediate.snapshot;
+  const cleanupRows: AppliedRemediationTool[] = [];
+  const cleanupToolNames = [
+    'remap_orphan_mcids_as_artifacts',
+    'repair_top_level_parent_links',
+    'repair_alt_text_structure',
+    'set_pdfua_identification',
+  ] as const;
+
+  for (const toolName of cleanupToolNames) {
+    const cleanupStarted = performance.now();
+    const cleanup = await runSingleTool(
+      sequenceBuffer,
+      {
+        toolName,
+        params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...cleanupRows]),
+        rationale: 'All-input degenerate native sequence: repair PAC debt exposed by native structure recovery.',
+      },
+      sequenceSnapshot,
+      { signal: args.signal },
+    );
+    const cleanupDurationMs = cleanup.durationMs || (performance.now() - cleanupStarted);
+    let nextAnalysis = sequenceAnalysis;
+    let nextSnapshot = sequenceSnapshot;
+    let effectiveOutcome = cleanup.outcome;
+    if (cleanup.outcome === 'applied' && !cleanup.buffer.equals(sequenceBuffer)) {
+      const analyzedCleanup = await reanalyzeBufferForMutation(cleanup.buffer, args.filename, `pdfaf-0275-degenerate-native-${toolName}`, {
+        signal: args.signal,
+      });
+      sequenceBuffer = cleanup.buffer;
+      nextAnalysis = analyzedCleanup.result;
+      nextSnapshot = analyzedCleanup.snapshot;
+      sequenceAnalysis = nextAnalysis;
+      sequenceSnapshot = nextSnapshot;
+    } else if (cleanup.outcome === 'applied') {
+      effectiveOutcome = 'no_effect';
+    }
+    const cleanupRow: AppliedRemediationTool = {
+      toolName,
+      stage: args.stageNumber,
+      round: args.round,
+      scoreBefore: args.beforeState.analysis.score,
+      scoreAfter: nextAnalysis.score,
+      delta: nextAnalysis.score - args.beforeState.analysis.score,
+      outcome: effectiveOutcome,
+      details: enrichDetailsWithReplayState(JSON.stringify({
+        outcome: effectiveOutcome,
+        originalDetails: parseMutationDetails(cleanup.details) ?? cleanup.details ?? null,
+      }), {
+        beforeAnalysis: intermediate.result,
+        beforeSnapshot: intermediate.snapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+      }),
+      durationMs: cleanupDurationMs,
+      source: 'planner',
+    };
+    cleanupRows.push(cleanupRow);
+    args.runtimeSummary?.toolTimings.push({
+      toolName: cleanupRow.toolName,
+      stage: cleanupRow.stage,
+      round: cleanupRow.round,
+      source: 'planner',
+      durationMs: cleanupDurationMs,
+      outcome: cleanupRow.outcome,
+    });
+  }
+
+  const finalHeading = categoryScore(sequenceAnalysis, 'heading_structure');
+  const finalReading = categoryScore(sequenceAnalysis, 'reading_order');
+  const finalAlt = categoryScore(sequenceAnalysis, 'alt_text');
+  if (
+    sequenceAnalysis.score < 93 ||
+    sequenceAnalysis.score <= args.beforeState.analysis.score ||
+    finalHeading == null ||
+    finalHeading < intermediateHeading ||
+    finalReading == null ||
+    finalReading < intermediateReading ||
+    finalAlt == null ||
+    finalAlt < 90 ||
+    !pageTextTagEvidenceStillPreserved(args.beforeState.snapshot, sequenceSnapshot)
+  ) {
+    return null;
+  }
+
+  const finalRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: args.beforeState.snapshot,
+    afterSnapshot: sequenceSnapshot,
+    toolNames: [args.structuralRow.toolName, ...cleanupRows.map(row => row.toolName)],
+  });
+  if (finalRegressions.length > 0) {
+    return null;
+  }
+
+  const reason = 'degenerate_native_structure_sequence_recovered';
+  args.structuralRow.details = JSON.stringify({
+    outcome: 'applied',
+    note: reason,
+    originalDetails: parseMutationDetails(args.structuralRow.details) ?? args.structuralRow.details ?? null,
+    sequenceRecovery: {
+      beforeScore: args.beforeState.analysis.score,
+      intermediateScore: intermediate.result.score,
+      finalScore: sequenceAnalysis.score,
+      beforeHeadingScore: beforeHeading,
+      intermediateHeadingScore: intermediateHeading,
+      finalHeadingScore: finalHeading,
+      beforeReadingOrderScore: beforeReading,
+      intermediateReadingOrderScore: intermediateReading,
+      finalReadingOrderScore: finalReading,
+      finalAltTextScore: finalAlt,
+    },
+  });
+  args.structuralRow.scoreAfter = sequenceAnalysis.score;
+  args.structuralRow.delta = sequenceAnalysis.score - args.structuralRow.scoreBefore;
+  enrichRowDetailsWithReplayState(args.structuralRow, {
+    beforeAnalysis: args.beforeState.analysis,
+    beforeSnapshot: args.beforeState.snapshot,
+    afterAnalysis: sequenceAnalysis,
+    afterSnapshot: sequenceSnapshot,
+  });
+  for (const row of cleanupRows) {
+    row.details = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: row.outcome,
+      note: reason,
+      originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
+    }), {
+      beforeAnalysis: intermediate.result,
+      beforeSnapshot: intermediate.snapshot,
+      afterAnalysis: sequenceAnalysis,
+      afterSnapshot: sequenceSnapshot,
+    });
+  }
+  args.stageApplied.push(...cleanupRows);
+  return {
+    buffer: sequenceBuffer,
+    analysis: sequenceAnalysis,
+    snapshot: sequenceSnapshot,
   };
 }
 
@@ -7234,6 +7525,34 @@ export async function remediatePdf(
           sameStateNoGainRuntimeAttempts,
           sameStateRuntimeSignature,
         );
+        if (effectiveOutcome === 'applied') {
+          const sequenceState = await tryAllInputDegenerateNativeSequence({
+            filename,
+            structuralBuffer: buf,
+            beforeState: {
+              buffer: stageStartBuffer,
+              analysis: stageStartAnalysis,
+              snapshot: stageStartSnapshot,
+            },
+            stageApplied,
+            structuralRow: stageApplied[stageApplied.length - 1]!,
+            stageNumber: stage.stageNumber,
+            round,
+            signal: options?.signal,
+            runtimeSummary,
+          });
+          if (sequenceState) {
+            buf = sequenceState.buffer;
+            lastStageAnalysis = {
+              result: sequenceState.analysis,
+              snapshot: sequenceState.snapshot,
+            };
+            lastAnalyzedBuffer = buf;
+            workingAnalysis = sequenceState.analysis;
+            workingSnapshot = sequenceState.snapshot;
+            break;
+          }
+        }
         if (effectiveOutcome === 'applied' && FIGURE_OWNERSHIP_REFRESH_TOOLS.has(liveTool.toolName)) {
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);

@@ -35,6 +35,7 @@ import {
   shouldSkipLong4516OrphanDrainPostPassGuard,
   shouldConfirmLong4516MetadataVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
+  shouldTryAllInputDegenerateNativeSequence,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -438,6 +439,101 @@ describe('all-input heading annotation sequence trigger', () => {
       toolName: 'create_heading_from_candidate',
       outcome: 'rejected',
     })).toBe(false);
+  });
+});
+
+describe('all-input degenerate native sequence trigger', () => {
+  it('fires only for the diagnosed 0275 native structure proposal', () => {
+    expect(shouldTryAllInputDegenerateNativeSequence({
+      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      toolName: 'create_structure_from_degenerate_native_anchor',
+      outcome: 'applied',
+    })).toBe(true);
+  });
+
+  it('does not fire for unrelated rows, tools, or non-applied outcomes', () => {
+    expect(shouldTryAllInputDegenerateNativeSequence({
+      filename: '0033-919b3d6f80f2-v1-4655.pdf',
+      toolName: 'create_structure_from_degenerate_native_anchor',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInputDegenerateNativeSequence({
+      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInputDegenerateNativeSequence({
+      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      toolName: 'create_structure_from_degenerate_native_anchor',
+      outcome: 'rejected',
+    })).toBe(false);
+  });
+});
+
+describe('all-input degenerate native sequence seed acceptance', () => {
+  it('allows the diagnosed 0275 native structure seed only for orphan-MCID-only score movement', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 1 });
+    const afterSnapshot = makeSnapshot({ depth: 3 });
+    afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
+    afterSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+
+    expect(shouldRejectStageResult({
+      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      before: makeAnalysis({ score: 44, categories: { heading_structure: 0, reading_order: 0, pdf_ua_compliance: 80 } }),
+      after: makeAnalysis({ score: 83, categories: { heading_structure: 99, reading_order: 79, pdf_ua_compliance: 57 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('create_structure_from_degenerate_native_anchor'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'create_structure_from_degenerate_native_anchor',
+        outcome: 'applied',
+        scoreBefore: 44,
+        scoreAfter: 83,
+      })],
+    })).toMatchObject({ reject: false, reason: null });
+  });
+
+  it('rejects the same native structure seed on unrelated rows or mixed PAC regressions', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 1 });
+    const afterSnapshot = makeSnapshot({ depth: 3 });
+    afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
+    afterSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+
+    expect(shouldRejectStageResult({
+      filename: '0034-unrelated.pdf',
+      before: makeAnalysis({ score: 44, categories: { heading_structure: 0, reading_order: 0, pdf_ua_compliance: 80 } }),
+      after: makeAnalysis({ score: 83, categories: { heading_structure: 99, reading_order: 79, pdf_ua_compliance: 57 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('create_structure_from_degenerate_native_anchor'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'create_structure_from_degenerate_native_anchor',
+        outcome: 'applied',
+        scoreBefore: 44,
+        scoreAfter: 83,
+      })],
+    })).toMatchObject({ reject: true });
+
+    const mixedSnapshot = makeSnapshot({ depth: 3 });
+    mixedSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
+    mixedSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+    mixedSnapshot.visibleAnnotationsMissingStructure = [{ page: 0, objectRef: '12 0 R', subtype: 'Text' }];
+    mixedSnapshot.detectionProfile!.annotationSignals.nonLinkAnnotationsMissingStructure = 1;
+
+    expect(shouldRejectStageResult({
+      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      before: makeAnalysis({ score: 44, categories: { heading_structure: 0, reading_order: 0, pdf_ua_compliance: 80 } }),
+      after: makeAnalysis({ score: 83, categories: { heading_structure: 99, reading_order: 79, pdf_ua_compliance: 57 } }),
+      beforeSnapshot,
+      afterSnapshot: mixedSnapshot,
+      stage: makeStage('create_structure_from_degenerate_native_anchor'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'create_structure_from_degenerate_native_anchor',
+        outcome: 'applied',
+        scoreBefore: 44,
+        scoreAfter: 83,
+      })],
+    })).toMatchObject({ reject: true });
   });
 });
 
