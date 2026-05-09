@@ -175,3 +175,15 @@ Decision:
 - The next table lane should be diagnostic-first around strongly-irregular table normalization on rows like `4722`, `4765`, `4147`, and `font-4057`, using existing `normalize_table_structure` only if object identity and protected reanalysis prove safe improvement.
 - Keep font/CMap failures diagnostic-only for now; they are frequent but remain excluded from behavior selection because prior corpus validation found font/CMap numeric policy noisy.
 - Do not run a broad all-input benchmark from this table result. Validate any table-shape behavior on the focused table subset and controls first.
+
+Follow-up trace sample:
+
+- Trace output: `Output/goal-all-input-mean-2026-05-09-r1/table-tool-trace-r1/`
+- `4722`: `normalize_table_structure` projects table markup `0 -> 16`, but is rejected because `pdfua.table.header_association_present` worsens (`934 -> 966` or `945` depending route). This is not safe for a PAC gate exception unless a combined table-normalization-plus-header-association sequence reduces the final table PAC debt.
+- `font-4057`: `normalize_table_structure` / `repair_native_table_headers` can project large heading/table movement (`heading_structure 0 -> 96`, one proposal `table_markup 0 -> 44`, score up to `61`), but the intermediate state triggers `pdfua.annotations.tagged_annotations_present` with `28` unowned visible annotations. Existing `set_table_header_cells` can create local header improvements but leaves overall table markup `0`.
+
+Revised next checkpoint:
+
+- Do not add a single-step PAC allow-list for these table tools.
+- If continuing the table lane, build a proposal-buffer sequencing diagnostic that can start from a rejected table/structure proposal and immediately run bounded annotation plus table-header cleanup, then accept only the final PAC-safe state.
+- Candidate rows for that diagnostic are `font-4057` and `4722`; controls should include prior table successes (`font-4699`, `long-4700`) plus fixed-50 controls (`font-4035`, `fixture-accessible`, `figure-4753`).
