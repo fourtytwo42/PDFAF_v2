@@ -36,6 +36,25 @@ An uncommitted experiment added `repair_alt_text_structure` to the existing `fig
 
 Decision: the probe was reverted and is not safe to promote. It proves there may be a recoverable route, but not a repeatable protected-baseline behavior change.
 
+## Protected Repeat Evidence
+
+Additional focused protected-baseline repeats after reverting the probe:
+
+- `Output/experiment-corpus-baseline/run-protected-route-repeat-focus-2026-05-09-r1`
+  - `figure-4702`: `59/F`
+  - `long-4470`: `93/A`
+  - `long-4683`: hard timeout
+  - `long-4700`: `78/C`
+- `Output/experiment-corpus-baseline/run-figure4702-protected-current-repeat-2026-05-09-r1`
+  - `figure-4702`: `91/A`
+
+Interpretation:
+
+- `figure-4702` is recoverable in isolation but not stable in protected multi-row/full-run context. Treat it as run-context route volatility, not as a proven safe behavior target.
+- `long-4470` recovered in the focused repeat, so its full-run `59/F` is route volatility unless a future repeat proves a stable bad same-state decision.
+- `long-4683` remains runtime/final-reanalysis debt; the focused repeat hard-timed out.
+- `long-4700` is stable residual strict table/header debt at `78/C`, not a runtime fix.
+
 ## Next Step
 
-The next checkpoint should collect protected-route repeats for the four non-parked rows, with focus on same-state `figure-4702` first. A future behavior change must be narrower than the rejected alt-in-sequence probe and must pass a targeted protected-baseline subset before fixed-50.
+The next checkpoint should not patch `figure-4702` from single-row success. It should either isolate why multi-row protected context changes the route, or park `figure-4702` as run-context route volatility if acceptance can proceed with documented debt. A future behavior change must be narrower than the rejected alt-in-sequence probe and must pass a targeted protected-baseline subset before fixed-50.
