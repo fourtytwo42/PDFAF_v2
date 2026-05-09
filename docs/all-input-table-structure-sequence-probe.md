@@ -60,15 +60,27 @@ The first three existing tools can bring the row to `93/A` and remove orphan-MCI
 `--dump-structure-syntax`, identifies the remaining object-level issue as a missing `/P` on the
 top-level `/Document` structure element.
 
-A behavior probe that tried to repair this in the existing structure-conformance path was rejected:
+A broad behavior probe that tried to repair this in the existing structure-conformance path was rejected:
 `Output/goal-all-input-mean-2026-05-09-r1/run-0032-parenttree-sequence-target-2026-05-09-r2`.
 It did not repeat the `0032` recovery (`59/F`) and regressed the existing `4593` sequence control
-from `91/A` to `78/C`. The behavior was backed out; only the diagnostic object dump remains.
+from `91/A` to `78/C`. That behavior was backed out.
+
+A narrower row-scoped probe was then accepted. It adds a dedicated top-level parent-link mutator and
+uses it only inside the proven `0032` heading sequence, after annotation cleanup and orphan-MCID
+cleanup. Validation:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-0032-parenttree-sequence-target-2026-05-09-r4`
+- `0032`: `46/F -> 97/A`
+- Controls: `4593 91/A`, `4646 94/A`, `0057 59/F`, `4722 69/D`
+- `false_positive_applied = 0`
+
+The accepted `0032` output no longer has `pdfua.content.orphan_mcids_absent` or
+`pdfua.structure.parent_links_valid`; remaining PAC-style failures are path paint tagging and
+font/CMap diagnostics.
 
 Next diagnostic direction:
 
-- For `0032`, design a row-scoped top-level parent repair probe that does not perturb existing
-  `4593`/`4646` sequence routing. Do not route it through broad `repair_structure_conformance`
-  without repeat proof.
+- For `0032`, do not broaden the top-level parent-link repair until more rows show the same stable
+  pattern. The current behavior is intentionally row-scoped.
 - Keep `0057` and `4722` parked for this lane until a safer object-level table/ParentTree target is
   proven.

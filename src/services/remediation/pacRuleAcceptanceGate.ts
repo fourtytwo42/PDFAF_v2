@@ -337,6 +337,10 @@ const STRUCTURE_ANNOTATION_SEQUENCE_ALLOWED_RULES = new Set([
   'pdfua.content.orphan_mcids_absent',
 ]);
 
+const STRUCTURE_ANNOTATION_SEQUENCE_INTERMEDIATE_ONLY_RULES = new Set([
+  'pdfua.structure.parent_links_valid',
+]);
+
 function evidenceRow(snapshot: DocumentSnapshot, ruleId: string): PacRuleEvidence | undefined {
   return buildPacRuleEvidence(snapshot).find(row => row.ruleId === ruleId);
 }
@@ -369,7 +373,10 @@ export function pacRuleStructureAnnotationSequenceRecovery(input: {
   if (!intermediateRegressions.some(row => row.ruleId === 'pdfua.annotations.tagged_annotations_present')) {
     return { recover: false, reason: null };
   }
-  if (intermediateRegressions.some(row => !STRUCTURE_ANNOTATION_SEQUENCE_ALLOWED_RULES.has(row.ruleId))) {
+  if (intermediateRegressions.some(row =>
+    !STRUCTURE_ANNOTATION_SEQUENCE_ALLOWED_RULES.has(row.ruleId) &&
+    !STRUCTURE_ANNOTATION_SEQUENCE_INTERMEDIATE_ONLY_RULES.has(row.ruleId)
+  )) {
     return { recover: false, reason: null };
   }
   const intermediateHeadingImproved = (

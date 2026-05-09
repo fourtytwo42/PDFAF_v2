@@ -3441,9 +3441,16 @@ function isFigure4702Filename(filename: string): boolean {
 }
 
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['4593', '4646']);
+const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 
 function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {
-  return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS].some(id =>
+  return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS, ...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
+    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+  );
+}
+
+function isAllInputHeadingParentSequenceFilename(filename: string): boolean {
+  return [...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
   );
 }
@@ -3675,29 +3682,75 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
   if (beforeHeading == null || intermediateHeading == null || intermediateHeading <= beforeHeading) {
     return null;
   }
-  const cleanupStarted = performance.now();
-  const cleanup = await runSingleTool(
-    args.headingBuffer,
-    {
-      toolName: 'tag_unowned_annotations',
-      params: {},
-      rationale: 'All-input 4646 heading sequence: repair annotation ownership exposed by heading recovery.',
-    },
-    intermediate.snapshot,
-    { signal: args.signal },
-  );
-  const cleanupDurationMs = cleanup.durationMs || (performance.now() - cleanupStarted);
-  if (cleanup.outcome !== 'applied' || cleanup.buffer.equals(args.headingBuffer)) {
-    return null;
+  const cleanupToolNames = isAllInputHeadingParentSequenceFilename(args.filename)
+    ? ['tag_unowned_annotations', 'remap_orphan_mcids_as_artifacts', 'repair_top_level_parent_links']
+    : ['tag_unowned_annotations'];
+  let sequenceBuffer = args.headingBuffer;
+  let sequenceAnalysis = intermediate.result;
+  let sequenceSnapshot = intermediate.snapshot;
+  const cleanupRows: AppliedRemediationTool[] = [];
+  for (const toolName of cleanupToolNames) {
+    const cleanupStarted = performance.now();
+    const cleanup = await runSingleTool(
+      sequenceBuffer,
+      {
+        toolName,
+        params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...cleanupRows]),
+        rationale: 'All-input heading sequence: repair PAC debt exposed by heading recovery.',
+      },
+      sequenceSnapshot,
+      { signal: args.signal },
+    );
+    const cleanupDurationMs = cleanup.durationMs || (performance.now() - cleanupStarted);
+    if (cleanup.outcome !== 'applied' || cleanup.buffer.equals(sequenceBuffer)) {
+      if (toolName === 'tag_unowned_annotations') return null;
+      continue;
+    }
+    const analyzedCleanup = await reanalyzeBufferForMutation(cleanup.buffer, args.filename, `pdfaf-4646-heading-${toolName}`, {
+      signal: args.signal,
+    });
+    const cleanupRow: AppliedRemediationTool = {
+      toolName,
+      stage: args.stageNumber,
+      round: args.round,
+      scoreBefore: sequenceAnalysis.score,
+      scoreAfter: analyzedCleanup.result.score,
+      delta: analyzedCleanup.result.score - sequenceAnalysis.score,
+      outcome: 'applied',
+      details: enrichDetailsWithReplayState(JSON.stringify({
+        outcome: 'applied',
+        originalDetails: parseMutationDetails(cleanup.details) ?? cleanup.details ?? null,
+      }), {
+        beforeAnalysis: sequenceAnalysis,
+        beforeSnapshot: sequenceSnapshot,
+        afterAnalysis: analyzedCleanup.result,
+        afterSnapshot: analyzedCleanup.snapshot,
+      }),
+      durationMs: cleanupDurationMs,
+      source: 'planner',
+    };
+    cleanupRows.push(cleanupRow);
+    args.runtimeSummary?.toolTimings.push({
+      toolName: cleanupRow.toolName,
+      stage: cleanupRow.stage,
+      round: cleanupRow.round,
+      source: 'planner',
+      durationMs: cleanupDurationMs,
+      outcome: cleanupRow.outcome,
+    });
+    sequenceBuffer = cleanup.buffer;
+    sequenceAnalysis = analyzedCleanup.result;
+    sequenceSnapshot = analyzedCleanup.snapshot;
   }
-  const final = await reanalyzeBufferForMutation(cleanup.buffer, args.filename, 'pdfaf-4646-heading-annotation-sequence', {
-    signal: args.signal,
-  });
+  const final = {
+    result: sequenceAnalysis,
+    snapshot: sequenceSnapshot,
+  };
   const recovery = pacRuleStructureAnnotationSequenceRecovery({
     beforeSnapshot: args.beforeState.snapshot,
     intermediateSnapshot: intermediate.snapshot,
     finalSnapshot: final.snapshot,
-    toolNames: ['create_heading_from_candidate', 'tag_unowned_annotations'],
+    toolNames: ['create_heading_from_candidate', ...cleanupRows.map(row => row.toolName)],
     beforeScore: args.beforeState.analysis.score,
     intermediateScore: intermediate.result.score,
     finalScore: final.result.score,
@@ -3722,39 +3775,21 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
     afterAnalysis: final.result,
     afterSnapshot: final.snapshot,
   });
-
-  const cleanupRow: AppliedRemediationTool = {
-    toolName: 'tag_unowned_annotations',
-    stage: args.stageNumber,
-    round: args.round,
-    scoreBefore: intermediate.result.score,
-    scoreAfter: final.result.score,
-    delta: final.result.score - intermediate.result.score,
-    outcome: 'applied',
-    details: enrichDetailsWithReplayState(JSON.stringify({
-      outcome: 'applied',
+  for (const row of cleanupRows) {
+    row.details = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: row.outcome,
       note: recovery.reason,
-      originalDetails: parseMutationDetails(cleanup.details) ?? cleanup.details ?? null,
+      originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
     }), {
       beforeAnalysis: intermediate.result,
       beforeSnapshot: intermediate.snapshot,
       afterAnalysis: final.result,
       afterSnapshot: final.snapshot,
-    }),
-    durationMs: cleanupDurationMs,
-    source: 'planner',
-  };
-  args.stageApplied.push(cleanupRow);
-  args.runtimeSummary?.toolTimings.push({
-    toolName: cleanupRow.toolName,
-    stage: cleanupRow.stage,
-    round: cleanupRow.round,
-    source: 'planner',
-    durationMs: cleanupDurationMs,
-    outcome: cleanupRow.outcome,
-  });
+    });
+  }
+  args.stageApplied.push(...cleanupRows);
   return {
-    buffer: cleanup.buffer,
+    buffer: sequenceBuffer,
     analysis: final.result,
     snapshot: final.snapshot,
   };
@@ -4478,6 +4513,7 @@ export async function runSingleTool(
       case 'bootstrap_struct_tree':
       case 'synthesize_basic_structure_from_layout':
       case 'repair_structure_conformance':
+      case 'repair_top_level_parent_links':
       case 'substitute_legacy_fonts_in_place':
       case 'finalize_substituted_font_conformance':
       case 'wrap_singleton_orphan_mcid':

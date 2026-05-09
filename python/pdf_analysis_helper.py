@@ -8362,6 +8362,27 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
     return changed
 
 
+def _op_repair_top_level_parent_links(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """Repair missing /P links for top-level structure elements only."""
+    changed = False
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        if not isinstance(sr, pikepdf.Dictionary):
+            return False
+        for elem in _iter_top_level_struct_elems(sr):
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            parent = elem.get("/P")
+            if parent is None or _obj_key(parent) != _obj_key(sr):
+                elem["/P"] = sr
+                changed = True
+    except Exception:
+        return changed
+    if changed:
+        _set_last_mutation_note("top_level_parent_links_repaired")
+    return changed
+
+
 def _struct_elem_heading_level(elem) -> int | None:
     """If /S is a heading role, return 1–6; else None."""
     try:
@@ -12164,6 +12185,7 @@ MUTATORS = {
     "canonicalize_figure_alt_ownership": _op_canonicalize_figure_alt_ownership,
     "repair_alt_text_structure": _op_repair_alt_text_structure,
     "repair_structure_conformance": _op_repair_structure_conformance,
+    "repair_top_level_parent_links": _op_repair_top_level_parent_links,
     "substitute_legacy_fonts_in_place": _op_substitute_legacy_fonts_in_place,
     "finalize_substituted_font_conformance": _op_finalize_substituted_font_conformance,
     "bootstrap_struct_tree": _op_bootstrap_struct_tree,
