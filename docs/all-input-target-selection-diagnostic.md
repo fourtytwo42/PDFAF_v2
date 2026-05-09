@@ -130,6 +130,12 @@ For `4646`, the trace shows `create_heading_from_candidate` can project `54/59 -
 Next behavior checkpoint:
 
 - Add no broad PAC gate or scoring change.
-- Add a row-scoped sequence proof for `4646` only, using the existing structure-annotation sequence machinery.
+- A row-scoped attempt to reuse the existing `figure-4702` sequence machinery for `4646` was tested and rejected/not kept: targeted run `Output/goal-all-input-mean-2026-05-09-r1/run-structure-annotation-sequence-target-2026-05-09-r1/` left `4646` at `59/F`.
+- Trace `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-target-trace-r1/` showed why: the score-moving `54/59 -> 79` proposal exists in rejected tool replay details, but the existing sequence extension point only receives the stage-level analyzed state, not the rejected proposal buffer. Reusing that path cannot recover this row.
 - Accept only the final combined state when final reanalysis is PAC-safe for annotations, page/text/tag evidence is preserved, `false_positive_applied = 0`, and score improves into at least the observed `79/C` range.
 - Validate on the focused heading/reading subset plus controls before any broader all-input run.
+
+Revised next checkpoint:
+
+- Do not keep the attempted row-scoped behavior.
+- If continuing this lane, build a proposal-buffer sequencing diagnostic/probe that can rerun one structural candidate and then cleanup from that candidate buffer, rather than relying on the stage-level rejected state.
