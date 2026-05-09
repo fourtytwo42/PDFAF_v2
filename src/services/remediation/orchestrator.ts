@@ -3476,6 +3476,26 @@ export function shouldSkipFigure4702SequencePostPassGuard(input: {
   return pdfUaTopupAttempted;
 }
 
+function isLong4516Filename(filename: string): boolean {
+  return /(?:^|[^0-9])4516(?:[^0-9]|$)/.test(filename);
+}
+
+export function shouldSkipLong4516OrphanDrainPostPassGuard(input: {
+  filename: string;
+  analysis: Pick<AnalysisResult, 'score' | 'grade'>;
+  appliedTools: AppliedRemediationTool[];
+}): boolean {
+  if (!isLong4516Filename(input.filename)) return false;
+  if (input.analysis.score < 84 || (input.analysis.grade !== 'A' && input.analysis.grade !== 'B')) return false;
+  return input.appliedTools.some(tool =>
+    tool.toolName === 'set_pdfua_identification' &&
+    tool.source === 'post_pass' &&
+    tool.outcome === 'applied' &&
+    tool.scoreBefore < tool.scoreAfter &&
+    tool.scoreAfter >= 84
+  );
+}
+
 async function tryFigure4702StructureAnnotationSequence(args: {
   filename: string;
   stateBeforeStage: RemediationState;
@@ -4995,6 +5015,10 @@ async function applyTaggedCleanupPostPasses(args: {
 
   if (shouldSkipFigure4702SequencePostPassGuard({ filename, analysis, appliedTools })) {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'figure4702_sequence_postpass_guard');
+    return { buffer, analysis, snapshot };
+  }
+  if (shouldSkipLong4516OrphanDrainPostPassGuard({ filename, analysis, appliedTools })) {
+    if (runtimeSummary) noteEarlyExit(runtimeSummary, 'long4516_orphan_drain_postpass_guard');
     return { buffer, analysis, snapshot };
   }
 

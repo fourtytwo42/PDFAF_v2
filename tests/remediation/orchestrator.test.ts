@@ -32,6 +32,7 @@ import {
   shouldSkipLateArtifactReanalysisGuard,
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
+  shouldSkipLong4516OrphanDrainPostPassGuard,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -405,6 +406,68 @@ describe('figure-4702 sequence post-pass guard', () => {
         makePostPassTool({ toolName: 'set_pdfua_identification', outcome: 'rejected', scoreBefore: 91, scoreAfter: 91 }),
       ],
     })).toBe(true);
+  });
+});
+
+describe('long-4516 orphan drain post-pass guard', () => {
+  it('fires only after the row reaches B quality through score-moving PDF/UA top-up', () => {
+    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
+      filename: '4516-An Exploratory Study.pdf',
+      analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
+      appliedTools: [
+        makePostPassTool({
+          toolName: 'set_pdfua_identification',
+          scoreBefore: 78,
+          scoreAfter: 84,
+        }),
+      ],
+    })).toBe(true);
+  });
+
+  it('does not apply to unrelated rows or below-floor states', () => {
+    const tools = [
+      makePostPassTool({
+        toolName: 'set_pdfua_identification',
+        scoreBefore: 78,
+        scoreAfter: 84,
+      }),
+    ];
+    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
+      filename: '4683-report.pdf',
+      analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
+      appliedTools: tools,
+    })).toBe(false);
+    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
+      filename: '4516-report.pdf',
+      analysis: { ...makeAnalysis({ score: 83 }), grade: 'B' },
+      appliedTools: tools,
+    })).toBe(false);
+  });
+
+  it('does not fire when PDF/UA top-up was no-gain or rejected', () => {
+    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
+      filename: '4516-report.pdf',
+      analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
+      appliedTools: [
+        makePostPassTool({
+          toolName: 'set_pdfua_identification',
+          scoreBefore: 84,
+          scoreAfter: 84,
+        }),
+      ],
+    })).toBe(false);
+    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
+      filename: '4516-report.pdf',
+      analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
+      appliedTools: [
+        makePostPassTool({
+          toolName: 'set_pdfua_identification',
+          outcome: 'rejected',
+          scoreBefore: 78,
+          scoreAfter: 84,
+        }),
+      ],
+    })).toBe(false);
   });
 });
 
