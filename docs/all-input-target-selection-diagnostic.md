@@ -56,3 +56,38 @@ The next diagnostic should therefore inspect both score movement and checker-vis
 - No timeout increase.
 - No all-input benchmark until a targeted behavior change passes focused validation.
 - Generated PDFs and diagnostic matrices remain under `Output/` and are not committed.
+
+## Focused Heading/Reading Run R1
+
+Generated artifacts:
+
+- Target symlink dir: `Output/goal-all-input-mean-2026-05-09-r1/focused-heading-reading-targets/`
+- Remediation run: `Output/goal-all-input-mean-2026-05-09-r1/run-focused-heading-reading-targets-2026-05-09-r1/`
+- POC/PAC strong-area pass over remediated PDFs: `Output/goal-all-input-mean-2026-05-09-r1/poc-strong-focused-heading-reading-r1/`
+
+Result:
+
+- `12/12` selected rows remained below the run target.
+- Mean moved from `44.58` to `57.58`.
+- Best row was `4519-national-survey...` at `79/C`; most rows stayed at `59/F` or lower.
+- `4614-transitional-housing...` regressed from `59/F` to `53/F` in the focused path and needs route inspection before any recovery behavior.
+- Several rows hit 45s remediation reanalysis timeouts, so runtime admission remains part of the eventual acceptance problem.
+
+The remediated-PDF POC/PAC pass still found `44` failures across the 12 rows. Top fail rules:
+
+| Rule | Failed files | Notes |
+| --- | ---: | --- |
+| `pdfua.font.to_unicode_cmap_valid` | 10 | Still diagnostic-only for scoring because prior validation found font/CMap numeric caps noisy. |
+| `pdfua.font.to_unicode_cmap_present` | 9 | Same as above. |
+| `pdfua.structure.child_roles_valid` | 8 | Strong signal that heading/reading recovery is entangled with invalid structure child roles. |
+| `pdfua.table.header_association_present` | 5 | Table/header follow-up remains a second lane. |
+| `pdfua.table.header_cells_associated` | 4 | Same table/header lane. |
+| `pdfua.parent_tree.annotation_object_refs_consistent` | 2 | Link/annotation ownership should be checked on affected rows. |
+| `pdfua.structure.parent_links_valid` | 1 | Direct structure parent-link issue on the DUI row. |
+| `pdfua.parent_tree.page_structparents_present` | 1 | Direct ParentTree/page ownership issue on `4574-juvenile-justice-in-illinois-2015`. |
+
+Decision from R1:
+
+- Do not add a broad heading scheduler from this run.
+- The next focused diagnostic should inspect tool timelines and object evidence for the selected rows, especially why heading remains `0` after remediation and why `tag_native_text_blocks`, `synthesize_basic_structure_from_layout`, `create_heading_from_candidate`, or structure conformance tools do not produce safe final states.
+- Prioritize rows with repeatable direct PAC structure/content evidence over font/CMap-only rows.
