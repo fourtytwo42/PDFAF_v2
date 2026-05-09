@@ -42,3 +42,29 @@ Parked or known volatile rows are still visible but should not drive broad behav
 ## Decision
 
 Do not make a broad runtime, PAC, scoring, or planner change from this run. The next checkpoint should be focused diagnostics for `long-4516` and `font-4057`, using targeted repeats with the current deterministic engine. If the Stage 42 baseline artifact is restored, rerun Stage 41 after targeted validation is clean.
+
+## Targeted Repeat
+
+Targeted repeat:
+
+- `Output/experiment-corpus-baseline/run-goal-blocker-repeat-2026-05-09-r1`
+
+Rows:
+
+- Blockers: `long-4516`, `font-4057`
+- Controls: `font-3448`, `figure-4702`, `long-4683`, `long-4700`, `font-4699`, `font-4035`
+
+Result:
+
+- `font-4057` repeated at `38/F`, so it is a real current score blocker.
+- `long-4516` recovered to `84/B`, so the full-run hard timeout is runtime/route-tail volatility, not a deterministic failure.
+- `figure-4702` stayed `91/A`; the post-pass guard remains quality-preserving.
+- `font-3448` stayed `93/A`; native tagging recovery remains stable.
+- `font-4699` and `font-4035` stayed A-grade.
+- `long-4700` stayed `86/B`.
+- `long-4683` reached `96/A` in-run but reanalyzed to `60/D`, so it is still protected/reanalysis volatility and should not drive a broad runtime rule.
+
+Next branch:
+
+- Score branch: diagnose `font-4057` as a possible structure-then-annotation sequence candidate. It repeatedly has score-moving heading/table proposals rejected by `pdfua.annotations.tagged_annotations_present`, but unlike `figure-4702` it also has heavy table/alt debt, so a row-specific sequence must prove a final safe state before any behavior.
+- Runtime branch: keep `long-4516` as targeted runtime volatility unless a repeat shows a same-state no-gain tail or an eligible checkpoint leak.
