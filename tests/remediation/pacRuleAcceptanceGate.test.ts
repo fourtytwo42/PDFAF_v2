@@ -632,6 +632,25 @@ describe('pacRuleAcceptanceGate', () => {
     });
   });
 
+  it('allows heading proposal plus annotation cleanup sequence when the final state is PAC-safe', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(63, 64),
+      finalSnapshot: annotationDebtSnapshot(0, 64),
+      toolNames: ['create_heading_from_candidate', 'tag_unowned_annotations'],
+      beforeScore: 54,
+      intermediateScore: 79,
+      finalScore: 88,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 75,
+      finalHeadingScore: 75,
+      targetScore: 79,
+    })).toMatchObject({
+      recover: true,
+      reason: 'structure_annotation_sequence_recovered',
+    });
+  });
+
   it('does not recover structure-annotation sequence if annotation debt remains unreduced', () => {
     expect(pacRuleStructureAnnotationSequenceRecovery({
       beforeSnapshot: annotationDebtSnapshot(0, 0),

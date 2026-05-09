@@ -34,6 +34,7 @@ import {
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipLong4516OrphanDrainPostPassGuard,
   shouldConfirmLong4516MetadataVolatility,
+  shouldTryAllInput4646HeadingAnnotationSequence,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -407,6 +408,34 @@ describe('figure-4702 sequence post-pass guard', () => {
         makePostPassTool({ toolName: 'set_pdfua_identification', outcome: 'rejected', scoreBefore: 91, scoreAfter: 91 }),
       ],
     })).toBe(true);
+  });
+});
+
+describe('all-input 4646 heading annotation sequence trigger', () => {
+  it('fires only for the diagnosed 4646 heading proposal buffer', () => {
+    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+      filename: '4646-youth-development-an-overview.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'applied',
+    })).toBe(true);
+  });
+
+  it('does not fire for unrelated rows, tools, or non-applied outcomes', () => {
+    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+      filename: '4702.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+      filename: '4646-youth-development-an-overview.pdf',
+      toolName: 'synthesize_basic_structure_from_layout',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+      filename: '4646-youth-development-an-overview.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'rejected',
+    })).toBe(false);
   });
 });
 

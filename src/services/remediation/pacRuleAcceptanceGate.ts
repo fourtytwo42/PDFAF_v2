@@ -318,6 +318,8 @@ export function pacRuleUsefulRepairRecovery(input: {
 }
 
 const STRUCTURE_ANNOTATION_SEQUENCE_STRUCTURAL_TOOLS = new Set([
+  'create_heading_from_candidate',
+  'normalize_heading_hierarchy',
   'synthesize_basic_structure_from_layout',
   'repair_structure_conformance',
   'remap_orphan_mcids_as_artifacts',
