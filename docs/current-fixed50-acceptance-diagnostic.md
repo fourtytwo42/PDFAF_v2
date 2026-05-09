@@ -68,3 +68,37 @@ Next branch:
 
 - Score branch: diagnose `font-4057` as a possible structure-then-annotation sequence candidate. It repeatedly has score-moving heading/table proposals rejected by `pdfua.annotations.tagged_annotations_present`, but unlike `figure-4702` it also has heavy table/alt debt, so a row-specific sequence must prove a final safe state before any behavior.
 - Runtime branch: keep `long-4516` as targeted runtime volatility unless a repeat shows a same-state no-gain tail or an eligible checkpoint leak.
+
+## Long-4516 Metadata Confirmation Fixed-50
+
+After the long-4516 runtime route diagnostic and metadata confirmation probe, a deterministic fixed original-50 measurement was run:
+
+- Run: `Output/experiment-corpus-baseline/run-long4516-metadata-confirm-fixed50-2026-05-09-r1`
+- Diagnostic output: `Output/experiment-corpus-baseline/current-fixed50-acceptance-diagnostic-long4516-metadata-confirm-2026-05-09-r1`
+
+Result:
+
+- Reanalyzed mean: `90.18`
+- Reanalyzed median: `93`
+- Remediation success: `49/50`
+- p95 wall: `240005.75ms`
+- Attempts: `918`
+- `false_positive_applied`: `0`
+- Hard timeout rows: `structure-4438` only
+
+Important row outcomes:
+
+- `long-4516`: `87/B`, no hard timeout, `verified_checkpoint_timeout_return`
+- `long-4683`: `91/A`, no hard timeout, `verified_checkpoint_timeout_return`
+- `figure-4702`: `91/A`
+- `font-3448`: `93/A`
+- `font-4699`: `95/A`
+- `long-4700`: `86/B`
+- `font-4057`: `38/F`, repeated known mixed table/alt/annotation score debt
+- `short-4074`: `95/A` in-run, `59/F` after reanalysis because alt evidence becomes applicable
+- `structure-4076`: `42/F`, parked analyzer/table debt
+- `structure-3775`: `79/C`, parked route volatility
+
+Decision:
+
+The metadata confirmation probe removed the non-parked `long-4516` hard timeout from this fixed-50 measurement without lowering floors or changing PAC strictness. The run is still not acceptance-ready because `short-4074` is a new non-parked protected/reanalysis drop and `font-4057` remains a non-parked residual score blocker. The next checkpoint should diagnose `short-4074` first because it was `95/A` in-run and failed only after reanalysis; `font-4057` remains the real score-debt branch after that.
