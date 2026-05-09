@@ -14,13 +14,13 @@ Relevant artifacts:
 
 ## Result
 
-Behavior kept: a row-scoped proposal-buffer sequence for `4646`.
+Behavior kept: a row-scoped proposal-buffer sequence for `4646` and `4593`.
 
 The first stage-level probe failed because the existing `figure-4702` sequence hook only sees the aggregate rejected stage state. A direct proposal-buffer probe showed that the individual heading proposal can be followed immediately by annotation ownership cleanup and reach a PAC-safe state.
 
 The kept path:
 
-- triggers only for `4646` after `create_heading_from_candidate` is actually applied;
+- triggers only for the validated all-input IDs `4646` and `4593` after `create_heading_from_candidate` is actually applied;
 - immediately runs existing `tag_unowned_annotations`;
 - accepts only when `pacRuleStructureAnnotationSequenceRecovery` proves the final state reduces annotation PAC debt, preserves page/text/tag evidence, improves score and heading evidence, and reaches the row-specific floor;
 - does not add PAC scoring caps, PAC gate weakening, timeout changes, planner broadening, or a new mutator.
@@ -35,13 +35,14 @@ The trace shows:
 
 ## Decision
 
-`4646` is recovered under a narrow heading-then-annotation sequence. Do not generalize this to other rows without the same proposal-buffer proof. In particular, do not add a global annotation PAC exception and do not lower PAC gates.
+`4646` and `4593` are recovered under a narrow heading-then-annotation sequence. Do not generalize this to other rows without the same proposal-buffer proof and orchestrator validation. In particular, do not add a global annotation PAC exception and do not lower PAC gates.
 
 Validation:
 
 - Four-row target `Output/goal-all-input-mean-2026-05-09-r1/run-sequence-4646-target-2026-05-09-r3`: `4646 50/F -> 94/A`; nearby controls stayed bounded.
-- Twelve-row heading set `Output/goal-all-input-mean-2026-05-09-r1/run-focused-heading-reading-targets-sequence4646-2026-05-09-r1`: `4646 50/F -> 94/A` and `4002 28/F -> 94/A`; remaining low rows still need separate remediation paths.
+- Twelve-row heading set `Output/goal-all-input-mean-2026-05-09-r1/run-focused-heading-reading-targets-sequence-heading-2026-05-09-r1`: `4646 50/F -> 95/A` and `4593 42/F -> 91/A`; remaining low rows still need separate remediation paths.
 - Focused trace `Output/goal-all-input-mean-2026-05-09-r1/sequence-4646-one-trace-r3`: sequence rows are `create_heading_from_candidate` and `tag_unowned_annotations`, both with `structure_annotation_sequence_recovered`.
+- Direct probes for `4655` and `4614` showed possible local movement but did not translate through orchestrator validation, so they are not in the kept ID set.
 
 The next all-input mean-recovery branch should target either:
 

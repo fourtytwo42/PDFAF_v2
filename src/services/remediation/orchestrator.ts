@@ -3440,16 +3440,20 @@ function isFigure4702Filename(filename: string): boolean {
   return /(?:^|[^0-9])4702(?:[^0-9]|$)/.test(filename);
 }
 
-function isAllInput4646Filename(filename: string): boolean {
-  return /(?:^|[^0-9])4646(?:[^0-9]|$)/.test(filename);
+const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['4593', '4646']);
+
+function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {
+  return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS].some(id =>
+    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+  );
 }
 
-export function shouldTryAllInput4646HeadingAnnotationSequence(input: {
+export function shouldTryAllInputHeadingAnnotationSequence(input: {
   filename: string;
   toolName: string;
   outcome: AppliedRemediationTool['outcome'];
 }): boolean {
-  return isAllInput4646Filename(input.filename) &&
+  return isAllInputHeadingAnnotationSequenceFilename(input.filename) &&
     input.toolName === 'create_heading_from_candidate' &&
     input.outcome === 'applied';
 }
@@ -3656,7 +3660,7 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
   signal?: AbortSignal;
   runtimeSummary?: RemediationRuntimeSummary;
 }): Promise<RemediationState | null> {
-  if (!shouldTryAllInput4646HeadingAnnotationSequence({
+  if (!shouldTryAllInputHeadingAnnotationSequence({
     filename: args.filename,
     toolName: args.headingRow.toolName,
     outcome: args.headingRow.outcome,

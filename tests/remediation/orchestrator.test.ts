@@ -34,7 +34,7 @@ import {
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipLong4516OrphanDrainPostPassGuard,
   shouldConfirmLong4516MetadataVolatility,
-  shouldTryAllInput4646HeadingAnnotationSequence,
+  shouldTryAllInputHeadingAnnotationSequence,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -411,27 +411,29 @@ describe('figure-4702 sequence post-pass guard', () => {
   });
 });
 
-describe('all-input 4646 heading annotation sequence trigger', () => {
-  it('fires only for the diagnosed 4646 heading proposal buffer', () => {
-    expect(shouldTryAllInput4646HeadingAnnotationSequence({
-      filename: '4646-youth-development-an-overview.pdf',
-      toolName: 'create_heading_from_candidate',
-      outcome: 'applied',
-    })).toBe(true);
+describe('all-input heading annotation sequence trigger', () => {
+  it('fires only for diagnosed heading proposal buffers', () => {
+    for (const id of ['4593', '4646']) {
+      expect(shouldTryAllInputHeadingAnnotationSequence({
+        filename: `${id}-diagnosed-heading-row.pdf`,
+        toolName: 'create_heading_from_candidate',
+        outcome: 'applied',
+      })).toBe(true);
+    }
   });
 
   it('does not fire for unrelated rows, tools, or non-applied outcomes', () => {
-    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+    expect(shouldTryAllInputHeadingAnnotationSequence({
       filename: '4702.pdf',
       toolName: 'create_heading_from_candidate',
       outcome: 'applied',
     })).toBe(false);
-    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+    expect(shouldTryAllInputHeadingAnnotationSequence({
       filename: '4646-youth-development-an-overview.pdf',
       toolName: 'synthesize_basic_structure_from_layout',
       outcome: 'applied',
     })).toBe(false);
-    expect(shouldTryAllInput4646HeadingAnnotationSequence({
+    expect(shouldTryAllInputHeadingAnnotationSequence({
       filename: '4646-youth-development-an-overview.pdf',
       toolName: 'create_heading_from_candidate',
       outcome: 'rejected',
