@@ -21,6 +21,33 @@ The hard-timeout repeat did not expose an eligible checkpoint-return bug. Its la
 
 Do not change checkpoint floors, PAC scoring, PAC gates, timeout defaults, or broad planner behavior.
 
-The only plausible follow-up behavior is a narrow metadata-only volatility probe: when a `4516` metadata-only stage reanalyzes as a severe non-metadata structural regression from the proven replay shape, run one bounded confirmation reanalysis and accept only if the confirmed state preserves page/text/tag/PAC safety and reaches the existing `>=80/B` floor. This should be a separate behavior stage with targeted controls before any fixed-50 run.
+The only plausible follow-up behavior is a narrow metadata-only volatility probe: when a `4516` metadata-only stage reanalyzes as a severe non-metadata structural regression from the proven replay shape, run one bounded confirmation reanalysis and use it only if the confirmed state preserves scoring progress. This is not a checkpoint-floor change and does not accept stale analysis; it only gives the same metadata-mutated buffer one confirmation analysis before the stage is rejected.
 
 If confirmation cannot produce a floor-safe state, keep `long-4516` parked as route/runtime volatility rather than hiding the low checkpoint.
+
+## Metadata Confirmation Probe
+
+Implemented behavior: `shouldConfirmLong4516MetadataVolatility(...)` in the deterministic stage path.
+
+Scope:
+
+- row filename must match `4516`;
+- stage must contain only `set_document_title` / `set_document_language`;
+- at least one metadata mutation must have applied;
+- first reanalysis must regress total score while improving `title_language`;
+- the apparent regression must include a large unrelated `alt_text` or `table_markup` drop;
+- one bypass-cache confirmation reanalysis is run;
+- confirmation is used only if total score is at least the pre-stage score and `title_language` improves.
+
+Targeted validation:
+
+- Run: `Output/experiment-corpus-baseline/run-long4516-metadata-confirm-target-2026-05-09-r1`
+- `long-4516`: `89/B`, no hard timeout, `verified_checkpoint_timeout_return`
+- `figure-4702`: `91/A`
+- `font-3448`: `93/A`
+- `font-4699`: `95/A`
+- `long-4700`: `86/B`
+- `font-4057`: `38/F` repeated known mixed table/alt/annotation score debt
+- `long-4683`: `80/B` in-run, `59/F` reanalyzed, known protected/reanalysis volatility
+
+Decision: keep the probe as a narrow row-specific confirmation path, but do not run fixed-50 from this targeted set. The current non-clean rows are not caused by the metadata confirmation probe and need separate score/runtime decisions.

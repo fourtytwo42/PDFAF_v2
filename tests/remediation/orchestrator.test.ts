@@ -33,6 +33,7 @@ import {
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipLong4516OrphanDrainPostPassGuard,
+  shouldConfirmLong4516MetadataVolatility,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -466,6 +467,60 @@ describe('long-4516 orphan drain post-pass guard', () => {
           scoreBefore: 78,
           scoreAfter: 84,
         }),
+      ],
+    })).toBe(false);
+  });
+});
+
+describe('long-4516 metadata volatility confirmation', () => {
+  const metadataTools = [
+    makePostPassTool({ toolName: 'set_document_language', outcome: 'applied', scoreBefore: 76, scoreAfter: 76, source: 'planner', stage: 1 }),
+    makePostPassTool({ toolName: 'set_document_title', outcome: 'applied', scoreBefore: 76, scoreAfter: 76, source: 'planner', stage: 1 }),
+  ];
+
+  it('requests confirmation for the proven metadata-only route with unrelated structural score drop', () => {
+    expect(shouldConfirmLong4516MetadataVolatility({
+      filename: '4516-An Exploratory Study.pdf',
+      before: makeAnalysis({
+        score: 76,
+        categories: { title_language: 0, alt_text: 80, table_markup: 100 },
+      }),
+      after: makeAnalysis({
+        score: 51,
+        categories: { title_language: 100, alt_text: 0, table_markup: 0 },
+      }),
+      stageApplied: metadataTools,
+    })).toBe(true);
+  });
+
+  it('does not apply to unrelated files, mixed stages, or non-regressing metadata analysis', () => {
+    const before = makeAnalysis({
+      score: 76,
+      categories: { title_language: 0, alt_text: 80, table_markup: 100 },
+    });
+    const after = makeAnalysis({
+      score: 85,
+      categories: { title_language: 100, alt_text: 80, table_markup: 100 },
+    });
+    expect(shouldConfirmLong4516MetadataVolatility({
+      filename: '4515-report.pdf',
+      before,
+      after: makeAnalysis({ score: 51, categories: { title_language: 100, alt_text: 0, table_markup: 0 } }),
+      stageApplied: metadataTools,
+    })).toBe(false);
+    expect(shouldConfirmLong4516MetadataVolatility({
+      filename: '4516-report.pdf',
+      before,
+      after,
+      stageApplied: metadataTools,
+    })).toBe(false);
+    expect(shouldConfirmLong4516MetadataVolatility({
+      filename: '4516-report.pdf',
+      before,
+      after: makeAnalysis({ score: 51, categories: { title_language: 100, alt_text: 0, table_markup: 0 } }),
+      stageApplied: [
+        ...metadataTools,
+        makePostPassTool({ toolName: 'repair_structure_conformance', outcome: 'applied', scoreBefore: 76, scoreAfter: 76, source: 'planner', stage: 2 }),
       ],
     })).toBe(false);
   });

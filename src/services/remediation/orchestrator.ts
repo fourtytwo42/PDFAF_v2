@@ -3496,6 +3496,29 @@ export function shouldSkipLong4516OrphanDrainPostPassGuard(input: {
   );
 }
 
+export function shouldConfirmLong4516MetadataVolatility(input: {
+  filename: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (!isLong4516Filename(input.filename)) return false;
+  if (input.stageApplied.length === 0) return false;
+  if (!input.stageApplied.every(row => row.toolName === 'set_document_title' || row.toolName === 'set_document_language')) {
+    return false;
+  }
+  if (!input.stageApplied.some(row => row.outcome === 'applied')) return false;
+  if (input.after.score >= input.before.score) return false;
+  const beforeTitle = categoryScore(input.before, 'title_language') ?? 0;
+  const afterTitle = categoryScore(input.after, 'title_language') ?? 0;
+  if (afterTitle <= beforeTitle) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text') ?? 100;
+  const afterAlt = categoryScore(input.after, 'alt_text') ?? beforeAlt;
+  const beforeTable = categoryScore(input.before, 'table_markup') ?? 100;
+  const afterTable = categoryScore(input.after, 'table_markup') ?? beforeTable;
+  return beforeAlt - afterAlt >= 20 || beforeTable - afterTable >= 20;
+}
+
 async function tryFigure4702StructureAnnotationSequence(args: {
   filename: string;
   stateBeforeStage: RemediationState;
@@ -7091,6 +7114,28 @@ export async function remediatePdf(
         }
       } else {
         analyzed = { result: currentAnalysis, snapshot: currentSnapshot };
+      }
+
+      if (shouldConfirmLong4516MetadataVolatility({
+        filename,
+        before: stageStartAnalysis,
+        after: analyzed.result,
+        stageApplied,
+      })) {
+        const confirmed = await reanalyzeBufferForMutation(
+          buf,
+          filename,
+          'pdfaf-long4516-metadata-confirm',
+          { bypassCache: true, signal: options?.signal },
+        );
+        const beforeTitle = categoryScore(stageStartAnalysis, 'title_language') ?? 0;
+        const confirmedTitle = categoryScore(confirmed.result, 'title_language') ?? 0;
+        if (confirmed.result.score >= stageStartAnalysis.score && confirmedTitle > beforeTitle) {
+          noteEarlyExit(runtimeSummary, 'long4516_metadata_confirmation_reanalysis');
+          analyzed = confirmed;
+          lastStageAnalysis = confirmed;
+          lastAnalyzedBuffer = buf;
+        }
       }
 
       const finalizedState = await finalizeAnalyzedStage({
