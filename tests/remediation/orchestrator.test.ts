@@ -413,7 +413,7 @@ describe('figure-4702 sequence post-pass guard', () => {
 
 describe('all-input heading annotation sequence trigger', () => {
   it('fires only for diagnosed heading proposal buffers', () => {
-    for (const id of ['4593', '4646']) {
+    for (const id of ['0033', '4593', '4646']) {
       expect(shouldTryAllInputHeadingAnnotationSequence({
         filename: `${id}-diagnosed-heading-row.pdf`,
         toolName: 'create_heading_from_candidate',

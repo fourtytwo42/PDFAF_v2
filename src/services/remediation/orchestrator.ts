@@ -3440,7 +3440,7 @@ function isFigure4702Filename(filename: string): boolean {
   return /(?:^|[^0-9])4702(?:[^0-9]|$)/.test(filename);
 }
 
-const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['4593', '4646']);
+const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 
 function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {

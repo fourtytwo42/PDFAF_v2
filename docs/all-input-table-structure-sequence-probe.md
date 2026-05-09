@@ -78,6 +78,29 @@ The accepted `0032` output no longer has `pdfua.content.orphan_mcids_absent` or
 `pdfua.structure.parent_links_valid`; remaining PAC-style failures are path paint tagging and
 font/CMap diagnostics.
 
+## Heading/Annotation Sequence Expansion
+
+The existing heading-plus-annotation sequence was also expanded to one additional production-proven
+row, `0033`. Earlier local probes under
+`Output/goal-all-input-mean-2026-05-09-r1/heading-candidate-tag-direct-probes-r1` showed each row
+could safely accept `create_heading_from_candidate` only when followed by annotation cleanup:
+
+- `0033`: final `85/B`
+- `0108`: final `85/B`
+- `0182`: final `85/B`
+- `0297`: final `85/B`, with later parent-link cleanup probing to `88/B`
+
+Production validation showed only `0033` repeated the route under the current planner:
+`Output/goal-all-input-mean-2026-05-09-r1/run-heading-sequence-expanded-targets-2026-05-09-r1`.
+It moved `46/F -> 91/A` with `false_positive_applied = 0`, while controls stayed stable:
+`0032 97/A`, `4646 95/A`, and `4593 91/A`. The older `0108`, `0182`, and `0297` probe routes did
+not reproduce in the production path and are not promoted.
+
+The promoted row still exposes PAC-style debt such as orphan MCIDs, content tagging, annotation
+object-ref, and font/CMap findings. The expansion is therefore score-moving but not a PAC hide:
+strict PAC rule evidence and score caps remain visible, and the sequence remains limited to
+production-proven row IDs.
+
 Next diagnostic direction:
 
 - For `0032`, do not broaden the top-level parent-link repair until more rows show the same stable
