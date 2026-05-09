@@ -175,12 +175,14 @@ export function pacRuleUsefulRepairRecovery(input: {
   const isAnnotationTabOrderRepair = input.toolNames.includes('normalize_annotation_tab_order');
   const isAltStructureRepair = input.toolNames.includes('repair_alt_text_structure');
   const isNativeLinkRepair = input.toolNames.includes('repair_native_link_structure');
+  const isNativeTextTaggingRepair = input.toolNames.includes('tag_native_text_blocks');
   if (
     !isHeadingCandidateRepair &&
     !isHeadingHierarchyRepair &&
     !isAnnotationTabOrderRepair &&
     !isAltStructureRepair &&
-    !isNativeLinkRepair
+    !isNativeLinkRepair &&
+    !isNativeTextTaggingRepair
   ) {
     return { recover: false, reason: null };
   }
@@ -234,6 +236,26 @@ export function pacRuleUsefulRepairRecovery(input: {
     input.afterReadingOrderScore != null &&
     input.afterReadingOrderScore > input.beforeReadingOrderScore
   );
+  if (isNativeTextTaggingRepair) {
+    if (!scoreImproved || !headingImproved || !readingOrderImproved) {
+      return { recover: false, reason: null };
+    }
+    return {
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(tag_native_text_blocks)',
+      details: JSON.stringify({
+        outcome: 'accepted',
+        note: 'pac_orphan_mcid_recovery(tag_native_text_blocks)',
+        pacRuleRegressions: regressions,
+        beforeScore: input.beforeScore,
+        afterScore: input.afterScore,
+        beforeHeadingScore: input.beforeHeadingScore ?? null,
+        afterHeadingScore: input.afterHeadingScore ?? null,
+        beforeReadingOrderScore: input.beforeReadingOrderScore ?? null,
+        afterReadingOrderScore: input.afterReadingOrderScore ?? null,
+      }),
+    };
+  }
   if (isAnnotationTabOrderRepair) {
     if (!scoreImproved || (!linkQualityImproved && !readingOrderImproved)) {
       return { recover: false, reason: null };

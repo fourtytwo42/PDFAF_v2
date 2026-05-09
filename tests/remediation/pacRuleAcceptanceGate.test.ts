@@ -514,6 +514,47 @@ describe('pacRuleAcceptanceGate', () => {
     })).toEqual({ recover: false, reason: null });
   });
 
+  it('allows native text tagging recovery only with score, heading, and reading-order movement', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['tag_native_text_blocks'],
+      beforeScore: 44,
+      afterScore: 83,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 98,
+      beforeReadingOrderScore: 0,
+      afterReadingOrderScore: 79,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(tag_native_text_blocks)',
+    });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['tag_native_text_blocks'],
+      beforeScore: 44,
+      afterScore: 83,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 98,
+      beforeReadingOrderScore: 79,
+      afterReadingOrderScore: 79,
+    })).toEqual({ recover: false, reason: null });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['tag_native_text_blocks'],
+      beforeScore: 83,
+      afterScore: 83,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 98,
+      beforeReadingOrderScore: 0,
+      afterReadingOrderScore: 79,
+    })).toEqual({ recover: false, reason: null });
+  });
+
   it('does not recover orphan-MCID increases when page text or tag evidence regresses', () => {
     expect(pacRuleUsefulRepairRecovery({
       beforeSnapshot: orphanMcidDebtSnapshot(1),
@@ -533,6 +574,18 @@ describe('pacRuleAcceptanceGate', () => {
       afterScore: 99,
       beforeHeadingScore: 0,
       afterHeadingScore: 100,
+    })).toEqual({ recover: false, reason: null });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2, { isTagged: false }),
+      toolNames: ['tag_native_text_blocks'],
+      beforeScore: 44,
+      afterScore: 83,
+      beforeHeadingScore: 0,
+      afterHeadingScore: 98,
+      beforeReadingOrderScore: 0,
+      afterReadingOrderScore: 79,
     })).toEqual({ recover: false, reason: null });
   });
 
