@@ -206,3 +206,4 @@ Source change:
 - `shouldKeepPostRemediationAltRepair(...)` now rejects post-remediation alt cleanup when total score drops or core non-alt categories regress.
 - The API route and `scripts/baseline-corpus-batch.ts` now use that guard for direct post-alt cleanup paths. The main orchestrator was already using guarded post-pass acceptance.
 - Focused source validation on `4519` completed `35/F -> 60/D` without accepting a lower final cleanup state.
+- Focused 12-row heading/reading validation after the guard completed at mean `42.58 -> 59.25`; every row improved, `4574` reached `93/A`, and `4519` completed `35/F -> 59/F` instead of accepting the API-observed `45/F` cleanup regression. This guard is an honesty fix, not a mean-recovery stage by itself.
