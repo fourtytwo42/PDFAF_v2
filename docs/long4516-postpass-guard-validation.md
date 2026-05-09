@@ -41,3 +41,19 @@ Result:
 Keep the guard as a narrow pilot because it is row-scoped and did not suppress score-moving work in validation. Do not run fixed-50 from this stage yet: targeted validation is not clean because `font-4057` remains a real score blocker and `long-4683` remains protected/reanalysis volatility.
 
 Next work should not broaden this guard. Either restore the Stage 42 protected baseline and run an exact gate, or continue with the explicitly documented remaining blockers: `font-4057` mixed table/alt/annotation debt and `long-4683` protected/reanalysis volatility.
+
+## Hard-Timeout Repeat
+
+Follow-up runtime repeat:
+
+- `Output/experiment-corpus-baseline/run-goal-runtime-hardtimeout-repeat-2026-05-09-r1`
+
+Result for `long-4516`:
+
+- Hard timeout repeated.
+- Timeout trace last phase: `verified_checkpoint`.
+- Last verified checkpoint: `78/C`, below the row floor `80/B`.
+- Eligibility reason: `checkpoint_below_floor(78<80)`.
+- Last checkpoint reason: `stage181_hidden_alt_post_pass`.
+
+Decision: do not lower the row floor and do not return the `78/C` checkpoint. The remaining `long-4516` failure is a real runtime-tail path that does not expose a safe checkpoint in this repeat. Any future runtime work must prove an earlier score-moving route or a same-state no-gain loop before behavior changes.
