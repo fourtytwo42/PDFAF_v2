@@ -44,10 +44,31 @@ interesting movement is a structural recovery that needs object-level ParentTree
 before it can be honest. A PAC gate relaxation would hide real checker-facing debt and should not be
 used.
 
+## Follow-Up Object Evidence
+
+After this probe, a local `0032` artifact replay was generated under
+`Output/goal-all-input-mean-2026-05-09-r1/0032-parenttree-sequence-artifacts-r1`.
+It showed a possible final sequence:
+
+1. `create_heading_from_candidate`
+2. `tag_unowned_annotations`
+3. `remap_orphan_mcids_as_artifacts`
+4. top-level structure parent repair
+
+The first three existing tools can bring the row to `93/A` and remove orphan-MCID debt, but
+`pdfua.structure.parent_links_valid` remains. A new diagnostic-only Python helper mode,
+`--dump-structure-syntax`, identifies the remaining object-level issue as a missing `/P` on the
+top-level `/Document` structure element.
+
+A behavior probe that tried to repair this in the existing structure-conformance path was rejected:
+`Output/goal-all-input-mean-2026-05-09-r1/run-0032-parenttree-sequence-target-2026-05-09-r2`.
+It did not repeat the `0032` recovery (`59/F`) and regressed the existing `4593` sequence control
+from `91/A` to `78/C`. The behavior was backed out; only the diagnostic object dump remains.
+
 Next diagnostic direction:
 
-- For `0032`, inspect the exact MCID/ParentTree objects created by the `create_heading_from_candidate`
-  path and determine whether existing orphan remap or ParentTree ownership tools can reduce the
-  new `64` orphan MCIDs without losing the `93/A` structure gain.
+- For `0032`, design a row-scoped top-level parent repair probe that does not perturb existing
+  `4593`/`4646` sequence routing. Do not route it through broad `repair_structure_conformance`
+  without repeat proof.
 - Keep `0057` and `4722` parked for this lane until a safer object-level table/ParentTree target is
   proven.

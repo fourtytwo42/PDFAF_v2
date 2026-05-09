@@ -1868,6 +1868,118 @@ def collect_structure_syntax_audit(pdf: pikepdf.Pdf) -> dict:
     return out
 
 
+def dump_structure_syntax_issues(pdf: pikepdf.Pdf, limit: int = 200) -> dict:
+    """Diagnostic-only PAC-style structure syntax issue list with object references."""
+    out = {
+        "issues": [],
+        "truncated": False,
+    }
+
+    def add_issue(issue: str, elem=None, role: str = "", parent=None, child=None, child_role: str = "", details: str = ""):
+        if len(out["issues"]) >= limit:
+            out["truncated"] = True
+            return
+        row = {"issue": issue}
+        if elem is not None:
+            row["objectRef"] = _obj_key(elem)
+            row["role"] = role or safe_str(elem.get("/S")).lstrip("/")
+        if parent is not None:
+            row["parentRef"] = _obj_key(parent)
+            row["parentRole"] = safe_str(parent.get("/S")).lstrip("/")
+        if child is not None:
+            row["childRef"] = _obj_key(child)
+            row["childRole"] = child_role or safe_str(child.get("/S")).lstrip("/")
+        if details:
+            row["details"] = details
+        out["issues"].append(row)
+
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        if not isinstance(sr, pikepdf.Dictionary):
+            add_issue("missing_struct_tree_root")
+            return out
+        rolemap = {}
+        rm = sr.get("/RoleMap")
+        if isinstance(rm, pikepdf.Dictionary):
+            for key, value in rm.items():
+                k = safe_str(key).lstrip("/").upper()
+                v = safe_str(value).lstrip("/").upper()
+                rolemap[k] = v
+                if k in STANDARD_STRUCTURE_ROLES:
+                    add_issue("standard_role_remapped", details=f"{k}->{v}")
+        for key in rolemap:
+            seen = set()
+            cur = key
+            while cur in rolemap:
+                if cur in seen:
+                    add_issue("circular_rolemap", details=key)
+                    break
+                seen.add(cur)
+                cur = rolemap[cur]
+
+        q = deque()
+        _enqueue_children(q, sr.get("/K"))
+        seen_elems = set()
+        while q and len(seen_elems) < MAX_ITEMS * 4:
+            elem = q.popleft()
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            key = _obj_key(elem) or id(elem)
+            if key in seen_elems:
+                continue
+            seen_elems.add(key)
+            role = safe_str(elem.get("/S")).lstrip("/").upper()
+            typ = elem.get("/Type")
+            if typ is not None and typ != pikepdf.Name("/StructElem"):
+                add_issue("type_not_struct_elem", elem=elem, role=role, details=safe_str(typ))
+            if not role:
+                add_issue("missing_role", elem=elem, role=role)
+            elif role not in STANDARD_STRUCTURE_ROLES and role not in rolemap:
+                add_issue("unmapped_nonstandard_role", elem=elem, role=role)
+
+            parent = elem.get("/P")
+            if parent is None and _obj_key(elem) != _obj_key(sr):
+                add_issue("missing_parent", elem=elem, role=role)
+            elif isinstance(parent, pikepdf.Dictionary):
+                try:
+                    if elem not in _direct_role_children(parent) and elem not in _struct_elem_children(parent):
+                        add_issue("wrong_parent", elem=elem, role=role, parent=parent)
+                except Exception as ex:
+                    add_issue("parent_validation_error", elem=elem, role=role, parent=parent, details=str(ex))
+
+            resolved_parent = rolemap.get(role, role)
+            for child in _direct_role_children(elem):
+                child_role = safe_str(child.get("/S")).lstrip("/").upper()
+                resolved_child = rolemap.get(child_role, child_role)
+                allowed = VALID_CHILDREN_BY_PARENT.get(resolved_parent)
+                if allowed is not None and resolved_child not in allowed:
+                    add_issue(
+                        "invalid_child_role",
+                        elem=elem,
+                        role=role,
+                        child=child,
+                        child_role=child_role,
+                        details=f"{resolved_parent}->{resolved_child}",
+                    )
+                q.append(child)
+
+            k = elem.get("/K")
+            kids = list(k) if isinstance(k, pikepdf.Array) else [k]
+            for kid in kids:
+                if not isinstance(kid, pikepdf.Dictionary):
+                    continue
+                typ = kid.get("/Type")
+                if typ == pikepdf.Name("/MCR"):
+                    if not isinstance(kid.get("/MCID"), int):
+                        add_issue("invalid_mcr_missing_mcid", elem=elem, role=role)
+                elif typ == pikepdf.Name("/OBJR"):
+                    if kid.get("/Obj") is None:
+                        add_issue("invalid_objr_missing_obj", elem=elem, role=role)
+    except Exception as ex:
+        add_issue("diagnostic_error", details=str(ex))
+    return out
+
+
 def collect_optional_content_audit(pdf: pikepdf.Pdf) -> dict:
     out = {
         "optionalContentConfigMissingNameCount": 0,
@@ -12332,6 +12444,16 @@ if __name__ == "__main__":
         try:
             with pikepdf.open(path, suppress_warnings=True) as pdf:
                 rep = dump_structure_page(pdf, page_i)
+            print(json.dumps(rep, ensure_ascii=False, default=str))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(0)
+    if len(argv) >= 2 and argv[0] == "--dump-structure-syntax":
+        path = argv[1]
+        limit = int(argv[2]) if len(argv) >= 3 else 200
+        try:
+            with pikepdf.open(path, suppress_warnings=True) as pdf:
+                rep = dump_structure_syntax_issues(pdf, limit=limit)
             print(json.dumps(rep, ensure_ascii=False, default=str))
         except Exception as e:
             print(json.dumps({"error": str(e)}, ensure_ascii=False))
