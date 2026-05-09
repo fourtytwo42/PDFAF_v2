@@ -102,3 +102,37 @@ Important row outcomes:
 Decision:
 
 The metadata confirmation probe removed the non-parked `long-4516` hard timeout from this fixed-50 measurement without lowering floors or changing PAC strictness. The run is still not acceptance-ready because `short-4074` is a new non-parked protected/reanalysis drop and `font-4057` remains a non-parked residual score blocker. The next checkpoint should diagnose `short-4074` first because it was `95/A` in-run and failed only after reanalysis; `font-4057` remains the real score-debt branch after that.
+
+## Parked-Debt Reclassification
+
+After the follow-up diagnostics:
+
+- `short-4074` is documented in `docs/short4074-protected-drift-diagnostic.md`.
+- `font-4057` is documented in `docs/font4057-structure-annotation-diagnostic.md`.
+
+The updated local diagnostic output is:
+
+- `Output/experiment-corpus-baseline/current-fixed50-acceptance-diagnostic-long4516-metadata-confirm-parked-2026-05-09-r1`
+
+Result:
+
+- Mean / median: `90.18` / `93`
+- Remediation success: `49/50`
+- p95 wall: `240005.75ms`
+- Attempts: `918`
+- `false_positive_applied`: `0`
+- Hard timeout rows: `structure-4438` only
+- Non-parked timeout rows: none
+- Non-parked low-score rows: none
+
+Parked rows in this diagnostic:
+
+- `structure-4438`: parked runtime/checkpoint debt.
+- `structure-4076`: parked analyzer/table-applicability debt.
+- `short-4074`: parked analyzer/figure-applicability drift; focused repeats did not reproduce the fixed-50 drop.
+- `font-4057`: parked mixed table/alt/annotation residual debt; no safe sequence or PAC exception has been proven.
+- `figure-4754` and `structure-3775`: parked route volatility.
+
+Decision:
+
+The current fixed-50 artifact now has no non-parked timeout or low-score blocker under the source-documented parked-debt policy. It still cannot be a literal Stage 41 pass until the missing Stage 42 protected baseline artifact is restored or regenerated. Do not change scoring, PAC gates, timeout defaults, planner breadth, checkpoint floors, or remediation behavior to hide these parked rows.

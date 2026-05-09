@@ -19,7 +19,12 @@ const PARKED_RUNTIME_ROWS = new Set([
 ]);
 
 const PARKED_ANALYZER_ROWS = new Set([
+  'short-4074',
   'structure-4076',
+]);
+
+const PARKED_RESIDUAL_SCORE_ROWS = new Set([
+  'font-4057',
 ]);
 
 export type CurrentFixed50Classification =
@@ -27,6 +32,7 @@ export type CurrentFixed50Classification =
   | 'parked_runtime_debt'
   | 'parked_route_volatility'
   | 'parked_analyzer_or_table_debt'
+  | 'parked_residual_score_debt'
   | 'runtime_timeout_blocker'
   | 'residual_score_blocker'
   | 'runtime_tail_observation';
@@ -123,7 +129,12 @@ function classifyRow(row: RemediateBenchmarkRow): CurrentFixed50DiagnosticRow {
     reason = 'known route-volatility row below A in this repeat';
   } else if (PARKED_ANALYZER_ROWS.has(row.id) && (score ?? 0) < 90) {
     classification = 'parked_analyzer_or_table_debt';
-    reason = 'known analyzer/table-applicability debt below A in this repeat';
+    reason = row.id === 'short-4074'
+      ? 'known analyzer/figure-applicability drift below A in this repeat'
+      : 'known analyzer/table-applicability debt below A in this repeat';
+  } else if (PARKED_RESIDUAL_SCORE_ROWS.has(row.id) && (score ?? 0) < 80) {
+    classification = 'parked_residual_score_debt';
+    reason = 'documented mixed table/alt/annotation residual debt with no safe behavior accepted';
   } else if ((score ?? 0) < 80) {
     classification = 'residual_score_blocker';
     reason = 'non-parked row remains below B quality';
