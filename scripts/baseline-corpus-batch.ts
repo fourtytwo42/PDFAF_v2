@@ -74,6 +74,7 @@ async function main(): Promise<void> {
     getOpenAiCompatBaseUrl,
     SEMANTIC_REMEDIATE_FIGURE_PASSES,
     SEMANTIC_REMEDIATE_PROMOTE_PASSES,
+    REMEDIATION_PDF_TIMEOUT_MS,
     REMEDIATION_TARGET_SCORE,
   } = await import('../src/config.js');
 
@@ -136,13 +137,15 @@ async function main(): Promise<void> {
     error?: string;
   }> = [];
 
-  const semanticAbort = new AbortController();
-  const signal = semanticAbort.signal;
-
   for (const name of names) {
     const inputPath = join(inputDir, name);
     const t0 = Date.now();
     const base = safeBase(name.replace(/\.pdf$/i, ''));
+    const fileAbort = new AbortController();
+    const timeout = setTimeout(() => {
+      fileAbort.abort(new Error(`per_pdf_timeout_${REMEDIATION_PDF_TIMEOUT_MS}ms`));
+    }, REMEDIATION_PDF_TIMEOUT_MS);
+    const signal = fileAbort.signal;
     let error: string | undefined;
     let beforeScore = 0;
     let beforeGrade = '?';
@@ -177,6 +180,7 @@ async function main(): Promise<void> {
         maxRounds: 10,
         playbookStore,
         toolOutcomeStore,
+        signal,
       });
       appliedTools.push(...remediation.appliedTools);
       let outBuf = buffer;
@@ -198,6 +202,7 @@ async function main(): Promise<void> {
           maxRounds: 10,
           playbookStore: createPlaybookStore(memDb2),
           toolOutcomeStore: createToolOutcomeStore(memDb2),
+          signal,
         });
         memDb2.close();
         if (r2.remediation.after.score >= outAfter.score) {
@@ -322,6 +327,7 @@ async function main(): Promise<void> {
     } catch (e) {
       error = (e as Error).message;
     }
+    clearTimeout(timeout);
     const durationMs = Date.now() - t0;
     rows.push({
       file: name,
