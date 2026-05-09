@@ -107,3 +107,29 @@ Observed patterns:
 - `4519`: real partial progress exists (`35/F -> 59/F` in trace, `79/C` in the focused batch path), with figure/table/header tools applying, but later useful repairs were blocked by `pdfua.table.headers_present` or `pdfua.figure.alt_present` PAC regressions. This row is mixed and should not drive a heading-only behavior change.
 
 The most promising next diagnostic is a generalized structure-then-annotation sequencing diagnostic modeled after the successful `figure-4702` probe, but only for rows where the rejected structural proposal improves total score and heading/reading evidence, and final bounded annotation/link cleanup can clear annotation PAC debt. This should be diagnostic-first; do not globally weaken `pdfua.annotations.tagged_annotations_present` or orphan-MCID gates.
+
+## Structure/Annotation Sequence Diagnostic R1
+
+Generated artifacts:
+
+- Diagnostic output: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-r1/`
+- Source helper: `scripts/all-input-structure-annotation-sequence-diagnostic.ts`
+
+Result:
+
+- Rows inspected: `4`
+- Sequence probe candidates: `1`
+- Candidate: `0096-27b779ba44ec-4646-youth-development-an-overview-of-related-factors-and-interventions.pdf`
+- Non-candidates:
+  - `v1-4655`: score-moving heading proposals exist, but every cleanup attempt in the trace was score-regressive.
+  - `4614`: no annotation-blocked score-moving structural proposal.
+  - `4519`: mixed table/figure PAC blockers, not a heading-only sequence candidate.
+
+For `4646`, the trace shows `create_heading_from_candidate` can project `54/59 -> 79` with `heading_structure 0 -> 95`, blocked by `pdfua.annotations.tagged_annotations_present`. Existing bounded cleanup tools were scheduled in the row and were not classified as score-regressive in this trace. This is a valid next behavior probe candidate, scoped to this row and this sequence shape only.
+
+Next behavior checkpoint:
+
+- Add no broad PAC gate or scoring change.
+- Add a row-scoped sequence proof for `4646` only, using the existing structure-annotation sequence machinery.
+- Accept only the final combined state when final reanalysis is PAC-safe for annotations, page/text/tag evidence is preserved, `false_positive_applied = 0`, and score improves into at least the observed `79/C` range.
+- Validate on the focused heading/reading subset plus controls before any broader all-input run.
