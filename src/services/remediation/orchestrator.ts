@@ -3684,7 +3684,7 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
   }
   const cleanupToolNames = isAllInputHeadingParentSequenceFilename(args.filename)
     ? ['tag_unowned_annotations', 'remap_orphan_mcids_as_artifacts', 'repair_top_level_parent_links']
-    : ['tag_unowned_annotations'];
+    : ['tag_unowned_annotations', 'repair_top_level_parent_links'];
   let sequenceBuffer = args.headingBuffer;
   let sequenceAnalysis = intermediate.result;
   let sequenceSnapshot = intermediate.snapshot;

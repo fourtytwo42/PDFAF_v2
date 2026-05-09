@@ -96,6 +96,14 @@ It moved `46/F -> 91/A` with `false_positive_applied = 0`, while controls stayed
 `0032 97/A`, `4646 95/A`, and `4593 91/A`. The older `0108`, `0182`, and `0297` probe routes did
 not reproduce in the production path and are not promoted.
 
+Follow-up object-level probing showed the same top-level parent-link repair is safe and useful after
+the heading sequence on the promoted non-`0032` rows. Applied to production outputs it removed
+`pdfua.structure.parent_links_valid` and improved:
+
+- `0033`: `91/A -> 94/A`
+- `4646`: `95/A -> 97/A`
+- `4593`: analyzer-volatile but improved after the parent fix and cleared the parent-link PAC row
+
 The promoted row still exposes PAC-style debt such as orphan MCIDs, content tagging, annotation
 object-ref, and font/CMap findings. The expansion is therefore score-moving but not a PAC hide:
 strict PAC rule evidence and score caps remain visible, and the sequence remains limited to
