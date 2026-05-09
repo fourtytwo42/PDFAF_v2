@@ -43,6 +43,7 @@ Validation:
 - Twelve-row heading set `Output/goal-all-input-mean-2026-05-09-r1/run-focused-heading-reading-targets-sequence-heading-2026-05-09-r1`: `4646 50/F -> 95/A` and `4593 42/F -> 91/A`; remaining low rows still need separate remediation paths.
 - Focused trace `Output/goal-all-input-mean-2026-05-09-r1/sequence-4646-one-trace-r3`: sequence rows are `create_heading_from_candidate` and `tag_unowned_annotations`, both with `structure_annotation_sequence_recovered`.
 - Direct probes for `4583`, `4655`, and `4614` showed possible local movement but did not translate through orchestrator validation, so they are not in the kept ID set.
+- A later local final-proposal experiment also tested `0297`, `4655`, `4614`, and `4583` in `Output/goal-all-input-mean-2026-05-09-r1/run-sequence-final-probe-target-2026-05-09-r1`; none recovered through the real remediation path, so that helper was rejected and not kept.
 
 The next all-input mean-recovery branch should target either:
 
