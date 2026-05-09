@@ -17,7 +17,7 @@ import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { AnalysisResult, CategoryKey, SemanticRemediationSummary } from '../src/types.js';
+import type { AnalysisResult, AppliedRemediationTool, CategoryKey, SemanticRemediationSummary } from '../src/types.js';
 import { initSchema } from '../src/db/schema.js';
 import { createPlaybookStore } from '../src/services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js';
@@ -30,6 +30,10 @@ function safeBase(name: string): string {
 
 function categoryRows(a: AnalysisResult): Array<{ key: CategoryKey; score: number; applicable: boolean }> {
   return a.categories.map(c => ({ key: c.key, score: c.score, applicable: c.applicable }));
+}
+
+function countFalsePositiveApplied(tools: AppliedRemediationTool[]): number {
+  return tools.filter(tool => tool.details?.includes('false_positive_applied')).length;
 }
 
 /** Returns false when URL is unset or the OpenAI-compatible server is not reachable. */
@@ -127,6 +131,8 @@ async function main(): Promise<void> {
     durationMs: number;
     semanticRan: boolean;
     categoryGap?: { before: ReturnType<typeof categoryRows>; after: ReturnType<typeof categoryRows> };
+    appliedTools?: AppliedRemediationTool[];
+    falsePositiveApplied?: number;
     error?: string;
   }> = [];
 
@@ -149,6 +155,7 @@ async function main(): Promise<void> {
     let categoriesBefore: ReturnType<typeof categoryRows> = [];
     let semanticRan = false;
     let categoryGap: { before: ReturnType<typeof categoryRows>; after: ReturnType<typeof categoryRows> } | undefined;
+    const appliedTools: AppliedRemediationTool[] = [];
 
     try {
       const buf = await readFile(inputPath);
@@ -171,6 +178,7 @@ async function main(): Promise<void> {
         playbookStore,
         toolOutcomeStore,
       });
+      appliedTools.push(...remediation.appliedTools);
       let outBuf = buffer;
       let outAfter = remediation.after;
       let outSnap = snap2;
@@ -196,6 +204,7 @@ async function main(): Promise<void> {
           outBuf = r2.buffer;
           outAfter = r2.remediation.after;
           outSnap = r2.snapshot;
+          appliedTools.push(...r2.remediation.appliedTools);
         }
         if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
           const ar2 = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
@@ -329,6 +338,8 @@ async function main(): Promise<void> {
       durationMs,
       semanticRan,
       categoryGap,
+      appliedTools,
+      falsePositiveApplied: countFalsePositiveApplied(appliedTools),
       error,
     });
   }
