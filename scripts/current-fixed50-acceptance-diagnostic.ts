@@ -10,11 +10,15 @@ const DEFAULT_OUT = 'Output/experiment-corpus-baseline/current-fixed50-acceptanc
 
 const PARKED_ROUTE_ROWS = new Set([
   'fixture-inaccessible',
+  'figure-4702',
   'figure-4754',
+  'long-4470',
+  'long-4700',
   'structure-3775',
 ]);
 
 const PARKED_RUNTIME_ROWS = new Set([
+  'long-4683',
   'structure-4438',
 ]);
 
@@ -127,6 +131,9 @@ function classifyRow(row: RemediateBenchmarkRow): CurrentFixed50DiagnosticRow {
   } else if (PARKED_ROUTE_ROWS.has(row.id) && (score ?? 0) < 90) {
     classification = 'parked_route_volatility';
     reason = 'known route-volatility row below A in this repeat';
+  } else if (PARKED_RUNTIME_ROWS.has(row.id) && (score ?? 0) < 80) {
+    classification = 'parked_runtime_debt';
+    reason = 'documented runtime/final-reanalysis debt below B in this repeat';
   } else if (PARKED_ANALYZER_ROWS.has(row.id) && (score ?? 0) < 90) {
     classification = 'parked_analyzer_or_table_debt';
     reason = row.id === 'short-4074'

@@ -136,3 +136,35 @@ Parked rows in this diagnostic:
 Decision:
 
 The current fixed-50 artifact now has no non-parked timeout or low-score blocker under the source-documented parked-debt policy. It still cannot be a literal Stage 41 pass until the missing Stage 42 protected baseline artifact is restored or regenerated. Do not change scoring, PAC gates, timeout defaults, planner breadth, checkpoint floors, or remediation behavior to hide these parked rows.
+
+## Protected Baseline Gate Audit
+
+The Stage 42 protected baseline was regenerated locally from historical commit `f19eab5` so the exact Stage 41 gate could be rerun against the current protected fixed-50 candidate.
+
+- Baseline: `Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7`
+- Candidate: `Output/experiment-corpus-baseline/run-goal-protected-fixed50-2026-05-09-r1`
+- Stage 41 gate: `Output/experiment-corpus-baseline/goal-stage41-gate-protected-fixed50-2026-05-09-r1`
+- Parked-debt diagnostic: `Output/experiment-corpus-baseline/current-fixed50-acceptance-diagnostic-protected-parked-2026-05-09-r1`
+
+Stage 41 still fails, but the source diagnostic now classifies all remaining low-score or timeout rows as parked debt:
+
+- Stage 41 mean / median: `90.35` / `94`
+- Benchmark reanalyzed mean / median: `89.08` / `94`
+- Remediation success: `49/50`
+- `false_positive_applied`: `0`
+- Hard timeout rows: `structure-4438` only
+- Non-parked timeout rows: none
+- Non-parked low-score rows: none
+
+Parked rows in the protected candidate:
+
+- `structure-4438`: parked runtime/checkpoint debt.
+- `structure-4076`: parked analyzer/table-applicability debt.
+- `short-4074`: parked analyzer/figure-applicability drift; focused repeats did not reproduce the fixed-50 drop.
+- `font-4057`: parked mixed table/alt/annotation residual debt; no safe sequence or PAC exception has been proven.
+- `long-4683`: parked runtime/final-reanalysis debt in this protected repeat.
+- `figure-4702`, `figure-4754`, `long-4470`, `long-4700`, and `structure-3775`: parked route-volatility or residual strict table/header debt.
+
+Decision:
+
+The protected fixed-50 checkpoint is not a clean Stage 41 pass. It is acceptance-ready only under the documented parked-debt stop condition: the strict PAC grader stays active, `false_positive_applied = 0`, the Stage 41 mean floor passes, and every remaining low-score/timeout failure is explicitly parked. The raw benchmark reanalyzed mean remains below `90`, so future agents should not call this a clean pass without naming that distinction.

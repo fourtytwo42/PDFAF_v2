@@ -99,6 +99,9 @@ describe('current fixed-50 acceptance diagnostic', () => {
     expect(classification([
       row({ id: 'fixture-inaccessible', afterScore: 79, afterGrade: 'C', reanalyzedScore: 79, reanalyzedGrade: 'C' }),
     ])).toBe('parked_route_volatility');
+    expect(classification([
+      row({ id: 'figure-4702', afterScore: 59, afterGrade: 'F', reanalyzedScore: 59, reanalyzedGrade: 'F' }),
+    ])).toBe('parked_route_volatility');
   });
 
   it('blocks on non-parked residual F rows', () => {
@@ -114,12 +117,16 @@ describe('current fixed-50 acceptance diagnostic', () => {
     const diagnostic = report([
       row({ id: 'font-4057', afterScore: 38, afterGrade: 'F', reanalyzedScore: 38, reanalyzedGrade: 'F' }),
       row({ id: 'short-4074', afterScore: 95, afterGrade: 'A', reanalyzedScore: 59, reanalyzedGrade: 'F' }),
+      row({ id: 'long-4683', afterScore: 92, afterGrade: 'A', reanalyzedScore: 59, reanalyzedGrade: 'F' }),
+      row({ id: 'long-4700', afterScore: 78, afterGrade: 'C', reanalyzedScore: 78, reanalyzedGrade: 'C' }),
     ]);
 
     expect(diagnostic.summary.decision).toBe('acceptance_ready_with_parked_debt');
     expect(diagnostic.summary.nonParkedLowScoreRows).toEqual([]);
     expect(diagnostic.rows.find(item => item.id === 'font-4057')?.classification).toBe('parked_residual_score_debt');
     expect(diagnostic.rows.find(item => item.id === 'short-4074')?.classification).toBe('parked_analyzer_or_table_debt');
+    expect(diagnostic.rows.find(item => item.id === 'long-4683')?.classification).toBe('parked_runtime_debt');
+    expect(diagnostic.rows.find(item => item.id === 'long-4700')?.classification).toBe('parked_route_volatility');
   });
 
   it('blocks acceptance when Stage 42 baseline artifacts are unavailable', () => {
