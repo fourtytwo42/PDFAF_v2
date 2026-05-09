@@ -139,3 +139,39 @@ Revised next checkpoint:
 
 - Do not keep the attempted row-scoped behavior.
 - If continuing this lane, build a proposal-buffer sequencing diagnostic/probe that can rerun one structural candidate and then cleanup from that candidate buffer, rather than relying on the stage-level rejected state.
+
+## Focused Table/Header Object Diagnostic R1
+
+Generated artifacts:
+
+- Target symlink dir: `Output/goal-all-input-mean-2026-05-09-r1/focused-table-header-targets/`
+- Remediation run: `Output/goal-all-input-mean-2026-05-09-r1/run-focused-table-header-targets-2026-05-09-r1/`
+- POC/PAC strong-area pass: `Output/goal-all-input-mean-2026-05-09-r1/poc-strong-focused-table-header-r1/`
+- Object diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/table-header-object-diagnostic-r1/`
+- Source helper: `scripts/all-input-table-header-object-diagnostic.ts`
+
+Result:
+
+- The focused table/header subset completed `9/9` rows, moving mean `42.89 -> 63.44`.
+- All `9` rows remained below target: one reached `69/D` class on several rows, while the rest stayed `59/F`.
+- The remediated-PDF POC/PAC pass still found `45` failures: `15` verified table-header failures, `16` verified font/CMap failures, `9` structure syntax/RoleMap failures, `2` ParentTree failures, and `3` TOCI/bookmark issues.
+- The object diagnostic found `0` safe association-only candidates for current table-header batching.
+- Classification distribution: `8 irregular_or_direct_table_shape`, `1 not_table_first`.
+
+Key table evidence:
+
+| Row | Score | Table markup | Classification | Direct table reason |
+| --- | ---: | ---: | --- | --- |
+| `v1-4637` | `59/F` | `44` | `irregular_or_direct_table_shape` | `2` irregular and strongly-irregular tables; no stable association refs. |
+| `font-4057` | `59/F` | `0` | `irregular_or_direct_table_shape` | `23` checked tables, `1079` TD-without-header debt, `6` strongly-irregular tables. |
+| `4722` | `69/D` | `0` | `irregular_or_direct_table_shape` | `12` checked tables, `934` TD-without-header debt, `9` strongly-irregular tables. |
+| `4765` | `69/D` | `0` | `irregular_or_direct_table_shape` | `734` TD-without-header debt, `6` strongly-irregular tables. |
+| `4147` | `69/D` | `0` | `irregular_or_direct_table_shape` | `98` checked tables, `7358` TD-without-header debt, `62` strongly-irregular tables. |
+| `4427` | `59/F` | `100` | `not_table_first` | Remediated artifact has no direct table-header debt; remaining issues are structure/font/TOCI. |
+
+Decision:
+
+- Do not widen `set_table_header_cells` batching from this evidence. PAC/POC is still reporting table-header failures, but the blocker is table shape regularity first, not missing `/Headers` metadata on otherwise regular tables.
+- The next table lane should be diagnostic-first around strongly-irregular table normalization on rows like `4722`, `4765`, `4147`, and `font-4057`, using existing `normalize_table_structure` only if object identity and protected reanalysis prove safe improvement.
+- Keep font/CMap failures diagnostic-only for now; they are frequent but remain excluded from behavior selection because prior corpus validation found font/CMap numeric policy noisy.
+- Do not run a broad all-input benchmark from this table result. Validate any table-shape behavior on the focused table subset and controls first.
