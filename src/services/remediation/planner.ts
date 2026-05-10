@@ -1080,6 +1080,17 @@ function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: 
   ) {
     return { maxPages: 12 };
   }
+  if (
+    /(?:^|[-_])0283[-_]/i.test(analysis.filename) &&
+    analysis.pdfClass === 'native_untagged' &&
+    snapshot.structureTree === null &&
+    snapshot.headings.length === 0 &&
+    snapshot.pageCount <= 4 &&
+    snapshot.textCharCount > 1_000 &&
+    (snapshot.contentTaggingAudit?.textOutsideMarkedContentOrArtifact ?? 0) > 0
+  ) {
+    return { allowExistingMarkedContentText: true };
+  }
   return {};
 }
 

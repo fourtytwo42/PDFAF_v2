@@ -10286,6 +10286,32 @@ def _bt_et_text_groups(insts: list) -> list[tuple[int, int, str]]:
     return groups
 
 
+def _unowned_bt_et_text_groups(insts: list) -> list[tuple[int, int, str]]:
+    """Return BT…ET spans that are outside existing BDC/BMC marked-content scopes."""
+    groups: list[tuple[int, int, str]] = []
+    in_bt = False
+    bt_start = 0
+    bt_marked_depth = 0
+    marked_depth = 0
+    for idx, inst in enumerate(insts):
+        op = str(inst.operator)
+        depth_before = marked_depth
+        if op == "BT" and not in_bt:
+            in_bt = True
+            bt_start = idx
+            bt_marked_depth = depth_before
+        elif op == "ET" and in_bt:
+            in_bt = False
+            if bt_marked_depth <= 0:
+                text = _extract_text_from_instruction_segment(insts[bt_start : idx + 1])
+                groups.append((bt_start, idx, text))
+        if op in ("BDC", "BMC"):
+            marked_depth += 1
+        elif op == "EMC" and marked_depth > 0:
+            marked_depth -= 1
+    return groups
+
+
 def _bt_et_group_records(insts: list) -> list[dict]:
     """Return bounded BT/ET group metadata for native title-owner diagnostics."""
     groups: list[dict] = []
@@ -11734,6 +11760,10 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
     except (TypeError, ValueError):
         max_pages_param = 0
     max_pages = max_pages_param if max_pages_param > 0 else len(pdf.pages)
+    allow_existing_marked_content_text = bool(
+        (_params or {}).get("allowExistingMarkedContentText")
+        or (_params or {}).get("allowExistingBdcText")
+    )
 
     for page_idx, page in enumerate(pdf.pages):
         if page_idx >= max_pages:
@@ -11744,7 +11774,8 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         except Exception:
             pages_without_promotable_segments += 1
             continue
-        if any(str(i.operator) == "BDC" for i in insts):
+        has_existing_marked_content = any(str(i.operator) in ("BDC", "BMC") for i in insts)
+        if has_existing_marked_content and not allow_existing_marked_content_text:
             pages_with_existing_marked_content += 1
             continue
         page_parent_tree, _page_key, page_pt_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
@@ -11754,7 +11785,7 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         if page_pt_changed:
             changed = True
 
-        groups = _bt_et_text_groups(insts)
+        groups = _unowned_bt_et_text_groups(insts) if allow_existing_marked_content_text else _bt_et_text_groups(insts)
         segments = [(start, end + 1, text) for start, end, text in groups if text or (end + 1) > start]
         if not segments:
             paint_segments = _outside_paint_segments(insts)
@@ -12129,11 +12160,21 @@ def _op_tag_native_text_blocks(pdf: pikepdf.Pdf, _params: dict) -> bool:
     if _is_ocrmypdf_produced(pdf):
         _set_last_mutation_note("native_text_tagger_skipped_for_ocr_pdf")
         return False
-    changed = _tag_bt_et_blocks_into_structure(pdf, require_ocrmypdf=False)
+    allow_existing_bdc_text = bool(
+        (_params or {}).get("allowExistingMarkedContentText")
+        or (_params or {}).get("allowExistingBdcText")
+    )
+    changed = _tag_bt_et_blocks_into_structure(
+        pdf,
+        require_ocrmypdf=False,
+        allow_existing_bdc_text=allow_existing_bdc_text,
+        append_to_existing_document_children=allow_existing_bdc_text,
+    )
     if changed:
         return True
     note = _consume_last_mutation_note()
-    changed = _op_synthesize_basic_structure_from_layout(pdf, {})
+    synth_params = {"allowExistingMarkedContentText": True} if allow_existing_bdc_text else {}
+    changed = _op_synthesize_basic_structure_from_layout(pdf, synth_params)
     if changed:
         if note:
             _set_last_mutation_note(f"{note};fallback_synthesize_applied")

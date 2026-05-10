@@ -68,6 +68,44 @@ async function buildEmbeddedPageXObjectPdf(): Promise<Buffer> {
   return Buffer.from(await outer.save({ useObjectStreams: false }));
 }
 
+async function wrapFirstTextGroupInMarkedContent(buf: Buffer): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), 'pdfaf-marked-content-'));
+  const inPath = join(dir, 'in.pdf');
+  const outPath = join(dir, 'out.pdf');
+  await writeFile(inPath, buf);
+  await execFileAsync('python3', ['-c', `
+import pikepdf
+import sys
+pdf = pikepdf.open(sys.argv[1])
+for page_index, page in enumerate(pdf.pages):
+    page_obj = page.obj
+    insts = list(pikepdf.parse_content_stream(page_obj))
+    bt_start = None
+    for idx, inst in enumerate(insts):
+        if str(inst.operator) == 'BT':
+            bt_start = idx
+            break
+    if bt_start is None:
+        continue
+    et_end = None
+    for idx in range(bt_start + 1, len(insts)):
+        if str(insts[idx].operator) == 'ET':
+            et_end = idx
+            break
+    if et_end is None:
+        continue
+    rewritten = []
+    rewritten.extend(insts[:bt_start])
+    rewritten.append(pikepdf.ContentStreamInstruction([pikepdf.Name('/Span'), pikepdf.Dictionary(MCID=page_index)], pikepdf.Operator('BDC')))
+    rewritten.extend(insts[bt_start:et_end + 1])
+    rewritten.append(pikepdf.ContentStreamInstruction([], pikepdf.Operator('EMC')))
+    rewritten.extend(insts[et_end + 1:])
+    page_obj['/Contents'] = pdf.make_stream(pikepdf.unparse_content_stream(rewritten))
+pdf.save(sys.argv[2])
+`, inPath, outPath]);
+  return readFile(outPath);
+}
+
 describe('Stage 14 deterministic tools', () => {
   it('synthesize_basic_structure_from_layout creates a tagged structure with headings', async () => {
     const buf = await buildUntaggedStructurePdf();
@@ -221,6 +259,34 @@ describe('Stage 14 deterministic tools', () => {
     expect(after.snapshot.structureTree).not.toBeNull();
     expect(after.snapshot.headings.length).toBeGreaterThan(0);
     expect(after.result.categories.find(c => c.key === 'heading_structure')?.score ?? 0).toBeGreaterThan(0);
+  });
+
+  it('synthesize_basic_structure_from_layout can preserve unrelated marked content while tagging unowned text', async () => {
+    const buf = await wrapFirstTextGroupInMarkedContent(await buildUntaggedStructurePdf());
+    const conservative = await runPythonMutationBatch(buf, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(conservative.result.success).toBe(true);
+    expect(conservative.result.applied).not.toContain('synthesize_basic_structure_from_layout');
+    expect(
+      conservative.result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.note,
+    ).toBe('existing_marked_content_blocks_without_promotable_structure');
+
+    const recovered = await runPythonMutationBatch(buf, [
+      { op: 'synthesize_basic_structure_from_layout', params: { allowExistingMarkedContentText: true } },
+    ]);
+    expect(recovered.result.success).toBe(true);
+    expect(recovered.result.applied).toContain('synthesize_basic_structure_from_layout');
+    const invariants = recovered.result.opResults?.find(row => row.op === 'synthesize_basic_structure_from_layout')?.invariants;
+    expect(invariants?.rootReachableHeadingCountAfter ?? 0).toBeGreaterThan(0);
+    expect(invariants?.ownershipPreserved).toBe(true);
+
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-marked-content-'));
+    const pdfPath = join(dir, 'out.pdf');
+    await writeFile(pdfPath, recovered.buffer);
+    const after = await runPythonAnalysis(pdfPath);
+    expect(after.contentTaggingAudit?.textOutsideMarkedContentOrArtifact ?? 1).toBe(0);
+    expect(after.headings.length).toBeGreaterThan(0);
   });
 
   it('artifact_repeating_page_furniture removes repeated header/footer text from structured text elements', async () => {

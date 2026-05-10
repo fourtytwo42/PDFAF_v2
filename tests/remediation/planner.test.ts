@@ -1384,6 +1384,47 @@ describe('planForRemediation', () => {
     expect(buildDefaultParams('synthesize_basic_structure_from_layout', analysis, snap)).toEqual({});
   });
 
+  it('allows marked-content-preserving synthesis for the proven 0283 native text ownership gap', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 2,
+      textByPage: ['The Illinois juvenile justice system was created', 'Juvenile sentencing'],
+      textCharCount: 5_491,
+      isTagged: false,
+      structureTree: null,
+      headings: [],
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 0,
+        textOutsideMarkedContentOrArtifact: 120,
+        imageOutsideMarkedContentOrArtifact: 22,
+        pathOutsideMarkedContentOrArtifact: 200,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    };
+    const analysis = withRoutingContext(
+      withCategoryScores(score(snap, { ...META, filename: '0283-243c7c4d24a6-newsletter-5.pdf' }), {
+        pdf_ua_compliance: 0,
+        heading_structure: 0,
+        reading_order: 30,
+        text_extractability: 65,
+      }),
+      { filename: '0283-243c7c4d24a6-newsletter-5.pdf', pdfClass: 'native_untagged' },
+    );
+
+    expect(buildDefaultParams('synthesize_basic_structure_from_layout', analysis, snap)).toEqual({
+      allowExistingMarkedContentText: true,
+    });
+    const synth = planForRemediation(analysis, snap, []).stages
+      .flatMap(stage => stage.tools)
+      .find(tool => tool.toolName === 'synthesize_basic_structure_from_layout');
+    expect(synth?.params).toEqual({ allowExistingMarkedContentText: true });
+  });
+
   it('routes high-score alt residuals into near_pass_figure_recovery', () => {
     const structuralClassification = {
       structureClass: 'native_tagged' as const,
