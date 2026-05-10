@@ -11,6 +11,28 @@ Source helper: `scripts/all-input-target-selection-diagnostic.ts`.
 
 The selected next direction is `heading_reading_recovery_target`.
 
+Latest overlay checkpoint after the `0319` title/reading sequence and existing-code heading rerun:
+
+- Overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-next-heading-existing-2026-05-10-r1`
+- Target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-after-next-heading-existing-2026-05-10-r1`
+- Estimated mean: `88.5214 -> 89.8575`
+- Rows below target: `136 -> 125`
+- Points still needed for mean `93`: `1103`
+
+No behavior change was needed for the latest existing-code heading pass. Run
+`Output/goal-all-input-mean-2026-05-09-r1/run-next-heading-existing-2026-05-10-r1`
+confirmed current code already lifts `0072` to `94/A`, `0097` to `95/A`,
+`0149` to `91/A`, and `0235` to `94/A` with `false_positive_applied = 0`.
+Rows `0068`, `0069`, and `0284` improved but stayed below target, while `0073`
+was skipped in the overlay because this repeat was worse than the current best.
+
+The top remaining heading/reading rows are not all equal: `0034`, `0085`,
+`0114`, and parked `structure-4438` are runtime/route-heavy; `0297` has
+PAC-blocked heading proposal evidence but a quick rejected-proposal behavior
+probe did not reach a reliable production extension point and was not kept.
+The next behavior stage should therefore be a route/proposal-buffer diagnostic,
+not a broad PAC gate change.
+
 | Classification | Count | Deficit to 93 | Decision |
 | --- | ---: | ---: | --- |
 | `heading_reading_recovery_target` | 18 | 650 | First target-selection lane. Largest recoverable score deficit; several rows also have PAC/POC content, structure, ParentTree, or table evidence that can guide object-level diagnostics. |
