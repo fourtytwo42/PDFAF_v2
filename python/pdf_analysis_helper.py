@@ -361,6 +361,68 @@ def _fill_missing_figure_alts(pdf: pikepdf.Pdf) -> bool:
         return False
 
 
+def _map_office_figure_like_roles(pdf: pikepdf.Pdf) -> bool:
+    """
+    Add absent RoleMap entries for Office figure-like roles that carry content.
+
+    PAC resolves structure roles through RoleMap before applying Figure checks. Word
+    exports often use /InlineShape or /Shape for real image/vector content; leaving
+    those roles unmapped makes the alt text checker invisible to the intended role.
+    """
+    changed = False
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        if not isinstance(sr, pikepdf.Dictionary):
+            return False
+        roles_to_map: set[str] = set()
+        q: deque = deque()
+        _enqueue_children(q, sr.get("/K"))
+        visited = set()
+        item_count = 0
+        item_limit = max(MAX_ITEMS * 4, 40_000)
+        while q and item_count < item_limit:
+            item_count += 1
+            elem = q.popleft()
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            vk = _struct_elem_visit_key(elem)
+            if vk in visited:
+                continue
+            visited.add(vk)
+            try:
+                raw = (get_name(elem) or "").lstrip("/")
+                if (
+                    raw.upper() in {"INLINESHAPE", "SHAPE"}
+                    and not _is_artifact(elem)
+                    and _elem_has_figure_subtree_content(elem)
+                ):
+                    roles_to_map.add("/" + raw)
+            except Exception:
+                pass
+            try:
+                _enqueue_children(q, elem.get("/K"))
+            except Exception:
+                pass
+        if not roles_to_map:
+            return False
+        rm = sr.get("/RoleMap")
+        if not isinstance(rm, pikepdf.Dictionary):
+            rm = pikepdf.Dictionary()
+            sr["/RoleMap"] = rm
+            changed = True
+        for role in sorted(roles_to_map):
+            try:
+                current = rm.get(role)
+                if current is None:
+                    rm[pikepdf.Name(role)] = pikepdf.Name("/Figure")
+                    changed = True
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[warn] _map_office_figure_like_roles: {e}", file=sys.stderr)
+    return changed
+
+
 def _read_page_contents_raw(page) -> bytes:
     raw = b""
     try:
@@ -7210,20 +7272,22 @@ def _op_repair_alt_text_structure(pdf: pikepdf.Pdf, _params: dict) -> bool:
         sr = pdf.Root.get("/StructTreeRoot")
         if sr is None:
             return False
-        _fill_missing_figure_alts(pdf)
+        changed = False
+        changed = _fill_missing_figure_alts(pdf) or changed
+        changed = _map_office_figure_like_roles(pdf) or changed
         k = sr.get("/K")
         if isinstance(k, pikepdf.Dictionary):
             if _is_struct_elem_dict(k):
-                _repair_alt_text_subtree(k)
+                changed = _repair_alt_text_subtree(k) or changed
         elif isinstance(k, pikepdf.Array):
             for ch in k:
                 if isinstance(ch, pikepdf.Dictionary) and _is_struct_elem_dict(ch):
-                    _repair_alt_text_subtree(ch)
-        _sweep_strip_descendants_under_figure_like_with_alt(pdf)
-        _artifact_nested_figure_like_under_outer_alt(pdf)
-        _fill_missing_figure_alts(pdf)
-        # Return True when tagged so batch counts as applied (idempotent no-op OK).
-        return True
+                    changed = _repair_alt_text_subtree(ch) or changed
+        changed = _sweep_strip_descendants_under_figure_like_with_alt(pdf) or changed
+        changed = _artifact_nested_figure_like_under_outer_alt(pdf) or changed
+        changed = _fill_missing_figure_alts(pdf) or changed
+        changed = _map_office_figure_like_roles(pdf) or changed
+        return changed
     except Exception as e:
         print(f"[warn] repair_alt_text_structure: {e}", file=sys.stderr)
         return False

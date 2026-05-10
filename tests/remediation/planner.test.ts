@@ -1797,6 +1797,142 @@ describe('planForRemediation', () => {
     expect(names).toContain('retag_as_figure');
   });
 
+  it('schedules alt-structure repair for reachable Office figure roles that need RoleMap parity', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1200,
+      figures: [
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 0,
+          rawRole: 'InlineShape',
+          role: 'InlineShape',
+          structRef: 'shape_0',
+          reachable: true,
+          directContent: true,
+          subtreeMcidCount: 1,
+        },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 1,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: { tablesWithMisplacedCells: 0, misplacedCellCount: 0, irregularTableCount: 0, stronglyIrregularTableCount: 0, directCellUnderTableCount: 0 },
+        sampledPages: [],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), { alt_text: 0 }), {
+      detectionProfile: snap.detectionProfile,
+    });
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('repair_alt_text_structure');
+    expect(names).not.toContain('retag_as_figure');
+  });
+
+  it('does not schedule Office figure RoleMap repair for A-grade rows or contentless shapes', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1200,
+      figures: [
+        {
+          hasAlt: true,
+          altText: 'Logo',
+          isArtifact: false,
+          page: 0,
+          rawRole: 'InlineShape',
+          role: 'InlineShape',
+          structRef: 'shape_0',
+          reachable: true,
+          directContent: false,
+          subtreeMcidCount: 0,
+        },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 1,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 1,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: { tablesWithMisplacedCells: 0, misplacedCellCount: 0, irregularTableCount: 0, stronglyIrregularTableCount: 0, directCellUnderTableCount: 0 },
+        sampledPages: [],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(withCategoryScores(score(snap, META), { alt_text: 95 }), {
+      detectionProfile: snap.detectionProfile,
+    });
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).not.toContain('repair_alt_text_structure');
+  });
+
   it('does not target unreachable or contentless role-mapped figures for retagging', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

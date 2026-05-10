@@ -995,6 +995,23 @@ function hasRoleMappedFigureCandidate(snapshot: DocumentSnapshot): boolean {
   );
 }
 
+function hasOfficeFigureRoleMapAltDebt(snapshot: DocumentSnapshot): boolean {
+  const officeRoles = new Set(['inlineshape', 'shape']);
+  return snapshot.figures.some(figure => {
+    const rawRole = (figure.rawRole ?? '').replace(/^\//, '').toLowerCase();
+    const resolvedRole = (figure.role ?? '').replace(/^\//, '').toLowerCase();
+    return (
+      officeRoles.has(rawRole) &&
+      resolvedRole !== 'figure' &&
+      !figure.isArtifact &&
+      figure.reachable === true &&
+      typeof figure.structRef === 'string' &&
+      figure.structRef.length > 0 &&
+      (figure.directContent === true || (figure.subtreeMcidCount ?? 0) > 0)
+    );
+  });
+}
+
 function hasWeakVisibleLinkTexts(snapshot: DocumentSnapshot): boolean {
   return snapshot.links.some(link => {
     const raw = link.text.trim();
@@ -1507,6 +1524,7 @@ export function planForRemediation(
       && ROUTE_TOOL_MAP.figure_semantics.includes(toolName)
       && !DETERMINISTIC_FIGURE_TOOLS.has(toolName)
       && toolName !== 'repair_annotation_alt_text'
+      && !(toolName === 'repair_alt_text_structure' && hasOfficeFigureRoleMapAltDebt(snapshot))
     ) {
       return { allowed: false, reason: 'semantic_deferred' };
     }
@@ -1704,6 +1722,9 @@ export function planForRemediation(
       if (toolName === 'retag_as_figure' && !hasRoleMappedFigureCandidate(snapshot)) {
         return { allowed: false, reason: 'missing_precondition' };
       }
+      if (toolName === 'repair_alt_text_structure' && hasOfficeFigureRoleMapAltDebt(snapshot)) {
+        return { allowed: true };
+      }
       if (toolName === 'repair_annotation_alt_text' || DETERMINISTIC_FIGURE_TOOLS.has(toolName)) {
         return { allowed: true };
       }
@@ -1744,7 +1765,10 @@ export function planForRemediation(
       toolName === 'repair_alt_text_structure'
       && !(
         categoryFailing('alt_text')
-        && classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk'
+        && (
+          classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk' ||
+          hasOfficeFigureRoleMapAltDebt(snapshot)
+        )
       )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
@@ -2171,7 +2195,14 @@ export function planForRemediation(
     && snapshot.figures.length > 0
     && routeFailureProof('figure_semantics', alreadyApplied) === null
   ) {
-    for (const toolName of ['normalize_nested_figure_containers', 'canonicalize_figure_alt_ownership', 'retag_as_figure', 'set_figure_alt_text']) {
+    const figureTools = [
+      'normalize_nested_figure_containers',
+      'canonicalize_figure_alt_ownership',
+      'retag_as_figure',
+      'set_figure_alt_text',
+      ...(hasOfficeFigureRoleMapAltDebt(snapshot) ? ['repair_alt_text_structure'] : []),
+    ];
+    for (const toolName of figureTools) {
       if (toolSet.has(toolName)) continue;
       const routeGate = toolIsRouteRelevant(toolName);
       if (!routeGate.allowed) {
