@@ -12531,7 +12531,14 @@ MUTATORS = {
 }
 
 
-def _ocr_timeout_sec() -> int:
+def _ocr_timeout_sec(params: dict | None = None) -> int:
+    if params:
+        raw = params.get("timeoutSec") or params.get("timeout_sec")
+        try:
+            if raw is not None:
+                return max(60, int(raw))
+        except (TypeError, ValueError):
+            pass
     try:
         return max(60, int(os.environ.get("PDFAF_OCR_TIMEOUT_SEC", "1800")))
     except ValueError:
@@ -12574,12 +12581,12 @@ def _run_ocrmypdf(in_pdf: str, out_pdf: str, params: dict) -> tuple[bool, str]:
         proc = subprocess.run(
             cmd,
             capture_output=True,
-            timeout=_ocr_timeout_sec(),
+            timeout=_ocr_timeout_sec(params),
             check=False,
             env=ocr_env,
         )
     except subprocess.TimeoutExpired:
-        return False, f"ocrmypdf timed out after {_ocr_timeout_sec()}s"
+        return False, f"ocrmypdf timed out after {_ocr_timeout_sec(params)}s"
     if proc.returncode != 0:
         se = proc.stderr or b""
         so = proc.stdout or b""

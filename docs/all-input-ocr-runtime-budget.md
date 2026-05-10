@@ -44,3 +44,14 @@ Acceptance for the next checkpoint is fewer hard timeouts, no `false_positive_ap
 ## Resource Note
 
 An attempted broader timeout shard at `Output/goal-all-input-mean-2026-05-09-r1/run-timeout-broader-2026-05-10-r1` was stopped before completion because OCR mutation timeouts left `ocrmypdf`/Tesseract/Ghostscript children running after the Python parent was killed. The Python mutation bridge now starts mutation workers in their own process group and kills the full group on timeout or abort. Retry broader OCR/runtime shards only after confirming no orphan OCR children remain.
+
+Follow-up extra OCR shard:
+
+- Output: `Output/goal-all-input-mean-2026-05-09-r1/run-ocr-budget-extra-2026-05-10-r1`
+- `0212`: hard timeout converted to `51/F`.
+- `0222`: hard timeout converted to `51/F`.
+- `0219`: preserved at `95/A`.
+- `0296`: completed at `36/F` instead of hard timeout.
+- `0221` and `0287`: still hard-timeout; they need separate analyzer/runtime handling.
+
+The shard left no OCR child processes after completion. Python now also receives the OCR timeout budget through mutation params so `ocrmypdf` can time out internally before the outer mutation process is killed.

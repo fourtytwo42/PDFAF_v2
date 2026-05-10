@@ -8280,6 +8280,7 @@ export async function remediatePdf(
           elapsedMs: Date.now() - started,
         });
         let liveToolTimeoutMs: number | undefined;
+        let toolToRun = liveTool;
         if (liveTool.toolName === 'ocr_scanned_pdf') {
           const ocrTimeoutMs = ocrMutationTimeoutForRemainingWall({ startedAtMs: started });
           if (ocrTimeoutMs == null) {
@@ -8298,9 +8299,17 @@ export async function remediatePdf(
             });
             break;
           }
+          const pythonOcrTimeoutMs = Math.max(60_000, ocrTimeoutMs - 10_000);
           liveToolTimeoutMs = ocrTimeoutMs;
+          toolToRun = {
+            ...liveTool,
+            params: {
+              ...liveTool.params,
+              timeoutSec: Math.floor(pythonOcrTimeoutMs / 1000),
+            },
+          };
         }
-        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot, {
+        const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, toolToRun, workingSnapshot, {
           signal: options?.signal,
           timeoutMs: liveToolTimeoutMs,
         });
