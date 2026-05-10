@@ -285,3 +285,26 @@ Next selection:
 
 - Refreshed target selection after including observed heading rows chooses `alt_recovery_target` first (`8` rows, `280` deficit), with table/header close behind (`9` rows, `254` deficit) and heading/reading third (`9` rows, `252` deficit).
 - Top remaining low rows include `0034`, `0283`, `0084`, `0347`, `0085`, and `0114`. Several heading rows are runtime/route-heavy, so the next behavior stage should be diagnostic-first and probably shift to the stable alt lane unless a quick heading repeatability check proves otherwise.
+
+## Current Table/Header Lane Recheck
+
+Generated artifacts:
+
+- Current focused run: `Output/goal-all-input-mean-2026-05-09-r1/run-focused-table-header-current-2026-05-10-r1/`
+- Current object diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/table-header-object-diagnostic-current-2026-05-10-r1/`
+
+Finding:
+
+- The current table/header lane is not a safe association-batching target. The object diagnostic found `0` candidate files.
+- Completed rows moved mean `42.50 -> 67.50`, but `7` rows stayed below target and `4147` hit the 5-minute wall.
+- Current classifications are `6 irregular_or_direct_table_shape`, `1 needs_stable_table_identity`, and `1 not_table_first`.
+- Rows such as `4057`, `4722`, `4765`, `4766`, `4678`, and `4761` have strongly-irregular table signals and large TD-without-header debt, so `/Headers` association metadata is not the first safe repair.
+- `0032` is already recovered by the promoted structure/annotation/parent-link path and should not drive table behavior.
+
+Decision:
+
+- Park deterministic table/header association for the all-input mean goal until a single-row strongly-irregular table normalization proof exists.
+- The stable accepted overlay remains `89.9487` mean from promoted rows plus `0297`; the optimistic observed-heading overlay remains non-accepted because the repeat did not reproduce.
+- Next selection should not retry deterministic alt or association-only table/header. The practical next checkpoint is either:
+  - source/API semantic validation for rows with true visual/alt debt, with VM-local LLM concurrency kept low; or
+  - a route/repeatability diagnostic for high-deficit heading rows, accepting only if a stable proposal-buffer recovery is proven.

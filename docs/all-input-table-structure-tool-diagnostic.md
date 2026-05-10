@@ -42,3 +42,36 @@ The next behavior candidate, if pursued, should be a proposal-buffer sequence th
 
 Rows with the strongest evidence for this next diagnostic are `0032`, `0057`, and `4722`. Keep the scope targeted; do not run all `Input/` until one of these sequences validates cleanly.
 
+## Current-Code Table/Header Refresh
+
+Generated artifacts:
+
+- Current focused run: `Output/goal-all-input-mean-2026-05-09-r1/run-focused-table-header-current-2026-05-10-r1/`
+- Current object diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/table-header-object-diagnostic-current-2026-05-10-r1/`
+
+Result:
+
+- The focused current-code table/header run processed the same 9-row lane with `false_positive_applied = 0` on completed rows.
+- Mean moved `42.50 -> 67.50`; `7` rows remained below target.
+- `0032` is already recovered by the promoted structure/annotation parent-link sequence (`46/F -> 97/A`), so it is no longer a table/header behavior target.
+- `4147` hit the 5-minute per-PDF wall timeout and remains runtime/table debt.
+- Completed table rows were still mostly `59/F` or `69/D`: `4057 59/F`, `4722 69/D`, `4765 69/D`, `4766 59/F`, `4678 69/D`, `4427 59/F`, and `4761 59/F`.
+
+Current object diagnostic:
+
+- Candidate files: `none`.
+- Classification distribution: `6 irregular_or_direct_table_shape`, `1 needs_stable_table_identity`, `1 not_table_first`.
+- The six active table/header debt rows all show irregular or strongly-irregular table signals before association metadata can safely move:
+  - `4057`: `23` checked tables, `1079` TD-without-header debt, `6` strongly-irregular tables.
+  - `4722`: `12` checked tables, `934` TD-without-header debt, `9` strongly-irregular tables.
+  - `4765`: `9` checked tables, `734` TD-without-header debt, `6` strongly-irregular tables.
+  - `4766`: `10` checked tables, `508` TD-without-header debt, `9` strongly-irregular tables.
+  - `4678`: `10` checked tables, `859` TD-without-header debt, `8` strongly-irregular tables.
+  - `4761`: `12` checked tables, `225` TD-without-header debt, `7` strongly-irregular tables.
+- `4427` is `not_table_first`; the remediated artifact has no direct table-header debt in the current diagnostic.
+
+Decision:
+
+- Keep deterministic table/header association batching parked for this all-input lane. Current evidence says the blocker is irregular table shape and route/runtime debt, not missing `/Scope`, `/ID`, or `/Headers` metadata on otherwise regular tables.
+- Do not widen `set_table_header_cells`, weaken PAC gates, or accept table proposals that worsen strict PAC table evidence.
+- If table work resumes, the next diagnostic should be a strongly-irregular table normalization proof for a single stable row such as `4722` or `4057`, with protected reanalysis and table-header PAC evidence checked after normalization. `4147` should be treated as runtime debt until a bounded checkpoint or smaller target can be proven.
