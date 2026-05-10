@@ -44,7 +44,8 @@ This means the next behavior stage should not widen `set_table_header_cells` or 
 - Do not promote another table-header association repair from this evidence; the object diagnostic found no safe association candidates.
 - `0086/4567` has a prior deterministic `90/A` route, but route comparison `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0086-2026-05-10-r2` classifies it as `upstream_route_volatility`, not a same-state guard candidate. The good and bad runs diverge at `artifact_repeating_page_furniture` from the same replay signature, but no same-tool rejected score-moving state was proven. Do not add a guard yet.
 - The best next narrow candidates are:
-  - `0283` and `3924`: semantic/source candidates if deterministic object traces remain weak.
+  - `0283`: semantic/source candidate only with a stronger object prompt; the earlier top-heading sample did not move it.
+  - `3924`: semantic/source candidate is currently parked; sequential API probe `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-3924-2026-05-10-r1` source-reanalyzed to the same `81/B`.
   - `4178`/`4735`: table-structure-first diagnostics, not header association metadata.
   - `0086/4567`: repeatability or route-admission research only, because the current proof is upstream volatility.
 - Keep API semantic requests sequential on this VM and count only source-reanalyzed saved PDFs.
