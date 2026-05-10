@@ -46,7 +46,8 @@ This means the next behavior stage should not widen `set_table_header_cells` or 
 - The best next narrow candidates are:
   - `0283`: semantic/source candidate only with a stronger object prompt; the earlier top-heading sample did not move it.
   - `3924`: semantic/source candidate is currently parked; sequential API probe `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-3924-2026-05-10-r1` source-reanalyzed to the same `81/B`.
-  - `4178`/`4735`: table-structure-first diagnostics, not header association metadata.
+  - `4178`: table-structure-first probe `Output/goal-all-input-mean-2026-05-09-r1/table-structure-first-4178-2026-05-10-r1` found `0` safe sequence candidates; the best path reached only `69/D`, left table markup at `0`, and increased harmful non-target PAC failures.
+  - `4735`: table-structure-first probing was stopped after more than six minutes without a completed report, so treat it as runtime-heavy table debt until a cheaper object-specific probe is designed.
   - `0086/4567`: repeatability or route-admission research only, because the current proof is upstream volatility.
 - Keep API semantic requests sequential on this VM and count only source-reanalyzed saved PDFs.
 
