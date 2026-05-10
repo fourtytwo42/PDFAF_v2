@@ -693,8 +693,15 @@ describe('all-input proposal-buffer sequence trigger', () => {
       'synthesize_basic_structure_from_layout',
     ]) {
       for (const filename of [
+        '0057-0a57112fbecb-4057-chri-audit.pdf',
+        '0119-dcdceee8fe93-focus-groups.pdf',
+        '0121-b22fc444e9cf-school-personnel-readiness.pdf',
+        '0194-9ea32badb1b4-juvenile-recidivism.pdf',
+        '0201-d57d1ae9986e-statewide-violence-prevention.pdf',
         '0297-90516e88cb48-victim-offender-overlap.pdf',
         '0306-20f8aa13aa59-4657-the-2021-safe-t-act.pdf',
+        '0318-a6f71880008b-school-violence.pdf',
+        '0347-5db466b61427-police-officer-stress.pdf',
       ]) {
         expect(shouldTryAllInputProposalBufferSequence({
           filename,

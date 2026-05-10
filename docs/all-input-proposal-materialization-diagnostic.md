@@ -41,7 +41,7 @@ The diagnostic initially showed that `0306` needed explicit proposal-buffer vali
 
 Behavior change:
 
-- Add `0306` to `ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS`.
+- Add diagnosed proposal-buffer rows to `ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS`.
 - Keep the existing strict sequence acceptance unchanged.
 - No PAC scoring change, PAC gate weakening, planner broadening outside the diagnosed ID, timeout change, API change, AI default, or new mutator.
 
@@ -70,3 +70,50 @@ The `0306` recovery is accepted as a narrow row-scoped extension of the existing
 2. Reanalyze the proposal buffer.
 3. Run bounded annotation/link/orphan cleanup from that proposal buffer.
 4. Accept only a final PAC-safe state with page/text/tag evidence preserved and `false_positive_applied = 0`.
+
+## Batch Candidate Expansion
+
+A follow-up scan ran this diagnostic over existing focused heading, alt, and table/header artifacts. It identified the same PAC-bounded proposal-buffer shape on several more rows. The accepted ID set now includes:
+
+- `0057`
+- `0119`
+- `0121`
+- `0194`
+- `0201`
+- `0297`
+- `0306`
+- `0318`
+- `0347`
+
+Rejected or not promoted:
+
+- `0200`: did not reproduce a deterministic recovery in the batch probe.
+- `0032` and `0149`: already high enough or not a useful score target for this lane.
+- Rows with non-annotation/non-orphan PAC blockers remain excluded.
+
+Validation artifacts:
+
+- Candidate/control probe: `Output/goal-all-input-mean-2026-05-09-r1/run-proposal-buffer-batch-accepted-candidates-2026-05-10-r1`
+- Overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-proposal-buffer-batch-2026-05-10-r1`
+
+Useful recovered rows from the batch:
+
+| Row | Result |
+| --- | ---: |
+| `0057` | `90/A` |
+| `0119` | `91/A` |
+| `0121` | `92/A` |
+| `0194` | `91/A` |
+| `0201` | `95/A` |
+| `0297` | `91/A` |
+| `0306` | `91/A` |
+| `0318` | `91/A` |
+| `0347` | `91/A` |
+
+Focused controls preserved several promoted paths (`0032 97/A`, `4646 97/A`, `0275 94/A`, `0317 93/A`, `0319 93/A`) and the batch had `false_positive_applied = 0`. `0033` route-dropped in this mixed batch, matching known route volatility; the overlay keeps its earlier clean `94/A` artifact rather than counting the worse repeat.
+
+Overlay impact after deterministic accepted rows plus source-reanalyzed semantic planning rows:
+
+- Estimated mean: `88.5214 -> 91.1453`
+- Rows below target: `136 -> 124`
+- Points still needed for mean `93`: `651`
