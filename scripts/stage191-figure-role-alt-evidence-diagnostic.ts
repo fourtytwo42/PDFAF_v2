@@ -186,10 +186,15 @@ async function loadResultRows(resultFiles: string[]): Promise<Array<{ row: RunRo
   const out: Array<{ row: RunRow; resultFile: string }> = [];
   for (const resultFile of resultFiles) {
     const raw = JSON.parse(await readFile(resultFile, 'utf8')) as unknown;
-    const rows = Array.isArray(raw) ? raw as RunRow[] : [raw as RunRow];
+    const record = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as { rows?: RunRow[] } : null;
+    const rows = Array.isArray(raw) ? raw as RunRow[] : (Array.isArray(record?.rows) ? record.rows : [raw as RunRow]);
     for (const row of rows) out.push({ row, resultFile });
   }
   return out;
+}
+
+function safeBase(name: string): string {
+  return basename(name).replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9._-]+/g, '_');
 }
 
 function uniqueRows(rows: Array<{ row: RunRow; resultFile: string }>): Array<{ row: RunRow; resultFile: string }> {
@@ -203,10 +208,13 @@ function uniqueRows(rows: Array<{ row: RunRow; resultFile: string }>): Array<{ r
 async function findRemediatedPdf(resultFile: string, row: RunRow): Promise<string | null> {
   const resultDir = dirname(resultFile);
   const names = await readdir(resultDir).catch(() => []);
-  const prefixes = [row.publicationId, row.id].filter((value): value is string => Boolean(value));
+  const prefixes = [row.publicationId, row.id, row.file ? safeBase(row.file) : null]
+    .filter((value): value is string => Boolean(value));
   for (const name of names) {
-    if (!name.endsWith('.remediated.pdf')) continue;
-    if (prefixes.some(prefix => name.startsWith(`${prefix}-`) || name.includes(prefix))) return join(resultDir, name);
+    if (!name.endsWith('.remediated.pdf') && !name.endsWith('_remediated.pdf')) continue;
+    if (prefixes.some(prefix => name.startsWith(`${prefix}-`) || name.startsWith(`${prefix}_`) || name.includes(prefix))) {
+      return join(resultDir, name);
+    }
   }
   return null;
 }

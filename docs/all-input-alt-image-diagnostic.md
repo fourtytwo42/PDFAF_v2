@@ -41,3 +41,29 @@ Do not add a figure-alt mutator or alt-specific PAC recovery from this evidence.
 - table/structure plus annotation/header cleanup for rows where existing table/structure tools improve local evidence but fail final PAC gates; or
 - a semantic/AI heading-alt lane once source-side LLM validation can use the current honesty guards without rebuilding the oversized Docker image blindly.
 
+## Current-Code Refresh
+
+Generated on 2026-05-10 after the `0297` proposal-buffer checkpoint.
+
+Artifacts:
+
+- Current deterministic alt run: `Output/goal-all-input-mean-2026-05-09-r1/run-focused-alt-image-current-2026-05-10-r1/`
+- Current figure-role diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/figure-role-alt-current-2026-05-10-r4/`
+- Current true-missing-alt diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/true-missing-alt-current-2026-05-10-r4/`
+
+Result:
+
+- Current deterministic remediation still leaves all eight focused alt rows at `59/F`.
+- Stage 191 figure-role diagnostic classifies all eight rows as `mixed_table_or_heading_blocker`.
+- Stage 192 true-missing-alt diagnostic classifies six rows as `no_safe_alt_action` and two rows as `table_or_heading_blocked_not_alt_first`.
+- Behavior candidates remain `0`; this confirms the refreshed target selector's alt lane is high-deficit but not currently deterministic-fixer-ready.
+
+Implementation note:
+
+- `stage191-figure-role-alt-evidence-diagnostic.ts` and `stage192-true-missing-alt-diagnostic.ts` now understand `baseline_report.json` `rows[]` files and batch `*_remediated.pdf` outputs, so they can be reused directly on current all-input batch artifacts.
+
+Decision:
+
+- Keep the deterministic alt lane parked.
+- The next non-semantic remediation branch should shift to table/structure/object evidence or route repeatability.
+- A semantic/AI alt lane remains plausible, but it needs an explicit opt-in validation stage because deterministic object evidence does not identify safe placeholder/retag targets.
