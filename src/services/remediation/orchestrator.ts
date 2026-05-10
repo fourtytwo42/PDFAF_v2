@@ -7,6 +7,7 @@ import {
   BOOKMARKS_PAGE_OUTLINE_MAX_PAGES,
   BOOKMARKS_PAGE_THRESHOLD,
   EXPENSIVE_NO_GAIN_RUNTIME_SUPPRESSION_MS,
+  OCR_MUTATION_TIMEOUT_MS,
   PLAYBOOK_LEARN_MIN_SCORE_DELTA,
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_CATEGORY_THRESHOLD,
@@ -1759,6 +1760,26 @@ export function shouldReturnVerifiedCheckpointBeforeRiskyWork(input: {
     ...input,
     requiredRemainingMs: input.requiredRemainingMs ?? VERIFIED_CHECKPOINT_RISKY_WORK_REMAINING_MS,
   });
+}
+
+export function ocrMutationTimeoutForRemainingWall(input: {
+  startedAtMs: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+  reserveMs?: number;
+  maxTimeoutMs?: number;
+  minTimeoutMs?: number;
+}): number | null {
+  const wallTimeoutMs = input.wallTimeoutMs ?? REMEDIATION_PDF_TIMEOUT_MS;
+  if (!(wallTimeoutMs > 0)) return input.maxTimeoutMs ?? OCR_MUTATION_TIMEOUT_MS;
+  const nowMs = input.nowMs ?? Date.now();
+  const elapsedMs = Math.max(0, nowMs - input.startedAtMs);
+  const remainingMs = Math.max(0, wallTimeoutMs - elapsedMs);
+  const reserveMs = input.reserveMs ?? REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
+  const availableMs = Math.floor(remainingMs - reserveMs);
+  const minTimeoutMs = input.minTimeoutMs ?? 60_000;
+  if (availableMs < minTimeoutMs) return null;
+  return Math.max(minTimeoutMs, Math.min(input.maxTimeoutMs ?? OCR_MUTATION_TIMEOUT_MS, availableMs));
 }
 
 export function shouldSoftStopForCumulativeReanalysis(input: {
@@ -7360,6 +7381,7 @@ export async function remediatePdf(
   const rounds: RemediationRoundSummary[] = [];
   const sameStateNoGainRuntimeAttempts = new Set<string>();
   let cumulativeDeterministicReanalysisMs = 0;
+  let ocrRuntimeBudgetExhausted = false;
   const protectedRunBestState: { current?: RemediationState & { appliedToolCount: number; reason: string } } = {};
   const verifiedTimeoutCheckpoint: {
     current?: RemediationState & {
@@ -7562,6 +7584,7 @@ export async function remediatePdf(
 
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
       options?.signal?.throwIfAborted();
+      if (ocrRuntimeBudgetExhausted) break;
       if (await returnVerifiedTimeoutCheckpoint('before_stage', { beforeRiskyWork: true })) break;
       if (
         shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
@@ -8256,8 +8279,30 @@ export async function remediatePdf(
           stateSignatureBefore: sameStateRuntimeSignature,
           elapsedMs: Date.now() - started,
         });
+        let liveToolTimeoutMs: number | undefined;
+        if (liveTool.toolName === 'ocr_scanned_pdf') {
+          const ocrTimeoutMs = ocrMutationTimeoutForRemainingWall({ startedAtMs: started });
+          if (ocrTimeoutMs == null) {
+            ocrRuntimeBudgetExhausted = true;
+            noteEarlyExit(runtimeSummary, 'ocr_runtime_budget_exhausted_before_tool');
+            await reportRuntimeTrace({
+              kind: 'tool_finish',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: liveTool.toolName,
+              outcome: 'rejected',
+              durationMs: 0,
+              stateSignatureBefore: sameStateRuntimeSignature,
+              details: 'ocr_runtime_budget_exhausted_before_tool',
+              elapsedMs: Date.now() - started,
+            });
+            break;
+          }
+          liveToolTimeoutMs = ocrTimeoutMs;
+        }
         const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, liveTool, workingSnapshot, {
           signal: options?.signal,
+          timeoutMs: liveToolTimeoutMs,
         });
         let effectiveNext = next;
         let effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
@@ -8299,6 +8344,16 @@ export async function remediatePdf(
           sameStateNoGainRuntimeAttempts,
           sameStateRuntimeSignature,
         );
+        if (
+          liveTool.toolName === 'ocr_scanned_pdf' &&
+          effectiveOutcome === 'failed' &&
+          typeof effectiveDetails === 'string' &&
+          effectiveDetails.includes('timeout ')
+        ) {
+          ocrRuntimeBudgetExhausted = true;
+          noteEarlyExit(runtimeSummary, 'ocr_runtime_budget_exhausted_after_tool');
+          break;
+        }
         if (effectiveOutcome === 'applied') {
           const sequenceState = await tryAllInputDegenerateNativeSequence({
             filename,
@@ -8479,6 +8534,7 @@ export async function remediatePdf(
         'Checking results',
         `Pass ${round}, step ${stage.stageNumber}`,
       );
+      if (ocrRuntimeBudgetExhausted) break;
     }
     if (verifiedCheckpointReturned) break;
 
@@ -8507,7 +8563,7 @@ export async function remediatePdf(
 
   await returnVerifiedTimeoutCheckpoint('before_post_pass', { beforeRiskyWork: true });
 
-  const postPassesAllowedByRuntime = !verifiedCheckpointReturned && (
+  const postPassesAllowedByRuntime = !verifiedCheckpointReturned && !ocrRuntimeBudgetExhausted && (
     !shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) ||
     (
       !shouldSoftStopForRemediationDeadline({ startedAtMs: started }) &&
@@ -8517,7 +8573,9 @@ export async function remediatePdf(
   if (!verifiedCheckpointReturned && !postPassesAllowedByRuntime) {
     noteEarlyExit(
       runtimeSummary,
-      shouldSoftStopForRemediationDeadline({ startedAtMs: started })
+      ocrRuntimeBudgetExhausted
+        ? 'ocr_runtime_budget_exhausted_before_post_pass'
+        : shouldSoftStopForRemediationDeadline({ startedAtMs: started })
         ? 'soft_deadline_before_post_pass'
         : 'reanalysis_tail_soft_cap_before_post_pass',
     );

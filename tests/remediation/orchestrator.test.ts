@@ -24,6 +24,7 @@ import {
   protectedTransactionDecision,
   isAllInputTitleReadingSequenceFilename,
   lateOptionalToolReanalysisGuardReason,
+  ocrMutationTimeoutForRemainingWall,
   shouldReplaceVerifiedTimeoutCheckpoint,
   shouldGuardStageReanalysisAdmission,
   shouldReplaceProtectedSafeCheckpoint,
@@ -1729,6 +1730,36 @@ describe('late reanalysis runtime guards', () => {
 });
 
 describe('remediation runtime soft stops', () => {
+  it('bounds OCR mutation time to leave remediation wall budget for finalization', () => {
+    expect(ocrMutationTimeoutForRemainingWall({
+      startedAtMs: 0,
+      nowMs: 10_000,
+      wallTimeoutMs: 300_000,
+      reserveMs: 50_000,
+      maxTimeoutMs: 2_700_000,
+    })).toBe(240_000);
+  });
+
+  it('does not start OCR when less than the minimum useful budget remains', () => {
+    expect(ocrMutationTimeoutForRemainingWall({
+      startedAtMs: 0,
+      nowMs: 245_000,
+      wallTimeoutMs: 300_000,
+      reserveMs: 50_000,
+      minTimeoutMs: 60_000,
+    })).toBeNull();
+  });
+
+  it('caps OCR timeout at the configured maximum when wall budget is larger', () => {
+    expect(ocrMutationTimeoutForRemainingWall({
+      startedAtMs: 0,
+      nowMs: 0,
+      wallTimeoutMs: 3_600_000,
+      reserveMs: 50_000,
+      maxTimeoutMs: 2_700_000,
+    })).toBe(2_700_000);
+  });
+
   it('stops before starting new work when remaining wall budget is too low', () => {
     expect(shouldSoftStopForRemediationDeadline({
       startedAtMs: 0,

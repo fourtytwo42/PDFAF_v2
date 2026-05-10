@@ -168,7 +168,9 @@ async function main(): Promise<void> {
     getOpenAiCompatBaseUrl,
     SEMANTIC_REMEDIATE_FIGURE_PASSES,
     SEMANTIC_REMEDIATE_PROMOTE_PASSES,
+    REMEDIATION_ANALYSIS_TIMEOUT_MS,
     REMEDIATION_PDF_TIMEOUT_MS,
+    REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
     REMEDIATION_TARGET_SCORE,
   } = await import('../src/config.js');
 
@@ -295,7 +297,11 @@ async function main(): Promise<void> {
         }
       }
       // Second deterministic pass: planner/tool caps often leave headroom after the first re-analyze.
-      if (!verifiedCheckpointReturned && outAfter.score < REMEDIATION_TARGET_SCORE) {
+      const hasSecondPassBudget = (): boolean => {
+        const remainingMs = REMEDIATION_PDF_TIMEOUT_MS - (Date.now() - t0);
+        return remainingMs >= (REMEDIATION_ANALYSIS_TIMEOUT_MS + REMEDIATION_SOFT_DEADLINE_BUFFER_MS);
+      };
+      if (!verifiedCheckpointReturned && outAfter.score < REMEDIATION_TARGET_SCORE && hasSecondPassBudget()) {
         const memDb2 = new Database(':memory:');
         initSchema(memDb2);
         const r2 = await remediatePdf(outBuf, name, outAfter, outSnap, {
