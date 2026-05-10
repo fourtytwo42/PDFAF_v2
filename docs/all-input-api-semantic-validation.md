@@ -82,3 +82,31 @@ Next checkpoints should be:
 3. Look for the next high-yield deterministic/semantic lane among remaining
    `heading_reading_order` and `table_debt` rows. The current overlay still needs
    `929` points, so the next stage must recover multiple rows or a high-deficit family.
+
+## Top Heading Follow-Up
+
+Generated artifacts:
+
+- API semantic run: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-heading-top4-2026-05-10-r1/`
+- Progress overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0306-plus-api-semantic-top4-2026-05-10-r1/`
+
+This follow-up ran the four highest-ranked heading/reading rows after the `0306`
+proposal-buffer recovery, one API request at a time:
+
+| Row | Source reanalysis | Decision |
+| --- | ---: | --- |
+| `0034` / `v1-4716` | `36/F` | no source-scored semantic movement; request plus reanalysis was expensive |
+| `0086` / `4567` | `79/C` | useful source-scored lift, still below target |
+| `0181` / `4519` | `88/B` | useful source-scored lift, still below target |
+| `0283` / newsletter 5 | `52/F` | no source-scored semantic movement |
+
+Overlay result after deterministic accepted rows, prior source-reanalyzed semantic rows,
+the `0306` recovery, and this follow-up:
+
+- Mean: `88.5214 -> 90.5840`
+- Rows below target: `136 -> 125`
+- Points still needed for mean `93`: `848`
+
+The result reinforces the current policy: count only source-reanalyzed semantic PDFs,
+keep API semantic concurrency at one, and do not treat API response scores as final
+acceptance scores when source reanalysis disagrees.
