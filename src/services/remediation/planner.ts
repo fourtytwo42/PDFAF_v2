@@ -246,6 +246,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
   safe_cleanup: [
     'mark_untagged_content_as_artifact',
     'repair_annotation_alt_text',
+    'repair_top_level_parent_links',
   ],
 };
 
@@ -1012,6 +1013,19 @@ function hasOfficeFigureRoleMapAltDebt(snapshot: DocumentSnapshot): boolean {
   });
 }
 
+function hasStrictParentLinkCap(analysis: AnalysisResult): boolean {
+  const caps = [
+    ...(analysis.scoreCapsApplied ?? []),
+    ...analysis.categories.flatMap(category => category.scoreCapsApplied ?? []),
+  ];
+  return caps.some(cap =>
+    cap.cap <= 79 &&
+    cap.reason === 'PAC rule failure: pdfua.structure.parent_links_valid',
+  );
+}
+
+const STRICT_PARENT_LINK_REPAIR_MIN_SCORE = 85;
+
 function hasWeakVisibleLinkTexts(snapshot: DocumentSnapshot): boolean {
   return snapshot.links.some(link => {
     const raw = link.text.trim();
@@ -1656,6 +1670,18 @@ export function planForRemediation(
     if (toolName === 'repair_list_li_wrong_parent' && !hasListSignals) {
       return { allowed: false, reason: 'missing_precondition' };
     }
+    if (
+      toolName === 'repair_top_level_parent_links' &&
+      !(
+        analysis.score >= STRICT_PARENT_LINK_REPAIR_MIN_SCORE &&
+        analysis.score < REMEDIATION_TARGET_SCORE &&
+        analysis.pdfClass === 'native_tagged' &&
+        snapshot.structureTree !== null &&
+        hasStrictParentLinkCap(analysis)
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
     if (toolName === 'wrap_singleton_orphan_mcid' || toolName === 'remap_orphan_mcids_as_artifacts') {
       // Only attempt orphan MCID repair when pdf_ua_compliance is actually failing.
       // Without this gate, the repair runs on near-passing files where orphan MCIDs
@@ -1854,6 +1880,24 @@ export function planForRemediation(
         route,
       });
     }
+  }
+
+  if (
+    !toolSet.has('repair_top_level_parent_links') &&
+    analysis.score >= STRICT_PARENT_LINK_REPAIR_MIN_SCORE &&
+    analysis.score < REMEDIATION_TARGET_SCORE &&
+    analysis.pdfClass === 'native_tagged' &&
+    snapshot.structureTree !== null &&
+    hasStrictParentLinkCap(analysis) &&
+    !shouldSkipAfterSuccessfulApply('repair_top_level_parent_links', alreadyApplied, analysis, snapshot) &&
+    noEffectCountForTool(alreadyApplied, 'repair_top_level_parent_links') < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+  ) {
+    toolSet.set('repair_top_level_parent_links', {
+      toolName: 'repair_top_level_parent_links',
+      params: buildDefaultParams('repair_top_level_parent_links', analysis, snapshot, alreadyApplied),
+      rationale: 'Repair strict PAC top-level structure parent-link debt on an otherwise high-quality tagged document.',
+      route: 'safe_cleanup',
+    });
   }
 
   if (stage5PacCatalogCandidate && !toolSet.has('normalize_pdfua_catalog_settings')) {

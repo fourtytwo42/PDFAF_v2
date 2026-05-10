@@ -427,6 +427,7 @@ export function withHeadingTargetRef(
 
 const HEADING_STRUCTURE_TOOLS = new Set([
   'repair_structure_conformance',
+  'repair_top_level_parent_links',
   'synthesize_basic_structure_from_layout',
   'create_structure_from_degenerate_native_anchor',
   'create_heading_from_visible_text_anchor',

@@ -295,6 +295,75 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('normalize_pdfua_catalog_settings');
   });
 
+  it('plans top-level parent-link repair for high-quality rows capped by strict PAC parent-link evidence', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      metadata: { title: 'Program Report', language: 'en-US', author: '', subject: '' },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [{ type: 'H1', children: [] }, { type: 'P', children: [] }] },
+      headings: [{ level: 1, text: 'Program Report', page: 0 }],
+    };
+    const cap = {
+      category: 'reading_order' as const,
+      cap: 79,
+      rawScore: 96,
+      finalScore: 79,
+      reason: 'PAC rule failure: pdfua.structure.parent_links_valid',
+    };
+    const base = withCategoryScores(score(snap, META), { reading_order: 79 });
+    const analysis: AnalysisResult = {
+      ...base,
+      score: 92,
+      grade: 'A',
+      scoreCapsApplied: [cap],
+      categories: base.categories.map(category =>
+        category.key === 'reading_order'
+          ? { ...category, score: 79, scoreCapsApplied: [cap] }
+          : { ...category, score: 100 },
+      ),
+    };
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).toContain('repair_top_level_parent_links');
+  });
+
+  it('does not plan top-level parent-link repair for low-quality rows with the same cap', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      metadata: { title: 'Program Report', language: 'en-US', author: '', subject: '' },
+      structureTree: { type: 'Document', children: [{ type: 'P', children: [] }] },
+    };
+    const cap = {
+      category: 'reading_order' as const,
+      cap: 79,
+      rawScore: 96,
+      finalScore: 79,
+      reason: 'PAC rule failure: pdfua.structure.parent_links_valid',
+    };
+    const base = withCategoryScores(score(snap, META), { reading_order: 79, heading_structure: 45 });
+    const analysis: AnalysisResult = {
+      ...base,
+      score: 59,
+      grade: 'F',
+      scoreCapsApplied: [cap],
+      categories: base.categories.map(category =>
+        category.key === 'reading_order'
+          ? { ...category, score: 79, scoreCapsApplied: [cap] }
+          : category,
+      ),
+    };
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('repair_top_level_parent_links');
+  });
+
   it('retries annotation ownership repair when debt appears after an earlier zero-debt no-effect', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
