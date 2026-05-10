@@ -308,3 +308,24 @@ Decision:
 - Next selection should not retry deterministic alt or association-only table/header. The practical next checkpoint is either:
   - source/API semantic validation for rows with true visual/alt debt, with VM-local LLM concurrency kept low; or
   - a route/repeatability diagnostic for high-deficit heading rows, accepting only if a stable proposal-buffer recovery is proven.
+
+## API Semantic Planning Overlay
+
+Generated artifacts:
+
+- Heading semantic source overlay: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-heading-remaining-source-overlay-2026-05-10-r1/`
+- Alt semantic source overlay: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-alt-focused-2026-05-10-r1/`
+- Combined progress overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0297-plus-api-semantic-heading-alt-2026-05-10-r1/`
+
+Finding:
+
+- API semantic PDFs were reanalyzed with the current source scorer before overlaying, because API response scores can differ from source scoring.
+- Useful source-scored semantic rows: `0114 91/A`, `0108 91/A`, `0119 91/A`, `0200 91/A`, and `0184 86/B`.
+- `4213` remains expensive semantic-alt debt: API request took about `204s` and source reanalysis stayed `59/F`.
+- The combined planning overlay moves mean `88.5214 -> 90.3533`, with `929` points still needed for mean `93`.
+
+Decision:
+
+- Semantic/AI is a real recovery lane, but not enough alone from this small sample.
+- Treat these rows as planning candidates until validated through current source or current production API images with source-side reanalysis.
+- Keep multimodal LLM concurrency at `1` for now; broad semantic batches should not run with parallel LLM calls on this VM.
