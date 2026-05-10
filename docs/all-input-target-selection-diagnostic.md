@@ -329,3 +329,20 @@ Decision:
 - Semantic/AI is a real recovery lane, but not enough alone from this small sample.
 - Treat these rows as planning candidates until validated through current source or current production API images with source-side reanalysis.
 - Keep multimodal LLM concurrency at `1` for now; broad semantic batches should not run with parallel LLM calls on this VM.
+
+## 0306 Tagged-Heading Admission Probe
+
+Generated artifacts:
+
+- One-row target run: `Output/goal-all-input-mean-2026-05-09-r1/run-0306-tagged-heading-target-2026-05-10-r2/`
+
+Finding:
+
+- `0306` has a high-confidence first-page tagged-visible candidate (`THE 2021 SAFE-T ACT: ICJIA ROLES AND RESPONSIBILITIES`) that superficially matches the proven `0317` admission shape.
+- A temporary row-scoped planner admission was tested and rejected. The Python mutator returned `mcid_owner_not_found` for `create_heading_from_tagged_visible_anchor`, and the row still completed `53/F -> 59/F`.
+- Later heading/title-owner proposals were blocked by `pdfua.annotations.tagged_annotations_present` with `103` visible annotations missing structure, so this row is a structure-plus-annotation sequence problem, not a simple tagged-heading admission.
+
+Decision:
+
+- Do not add `0306` to the tagged-heading admission allow-list.
+- If `0306` is revisited, start from the rejected title/heading proposal buffer and require a final annotation-cleaned state; do not broaden the `0317` planner gate.
