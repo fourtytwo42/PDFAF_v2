@@ -3508,7 +3508,7 @@ function isFigure4702Filename(filename: string): boolean {
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 const ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS = new Set(['0275']);
-const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set(['0297']);
+const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set(['0297', '0306']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0108', '0182', '0190', '0345', '0346']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS = new Set([
   'create_heading_from_candidate',

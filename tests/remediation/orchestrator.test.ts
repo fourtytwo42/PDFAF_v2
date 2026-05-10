@@ -685,18 +685,23 @@ describe('all-input heading annotation seed acceptance', () => {
 });
 
 describe('all-input proposal-buffer sequence trigger', () => {
-  it('fires only for the diagnosed 0297 rejected heading/structure replay-buffer tools', () => {
+  it('fires only for diagnosed rejected heading/structure replay-buffer tools', () => {
     for (const toolName of [
       'create_heading_from_candidate',
       'create_heading_from_tagged_visible_anchor',
       'repair_structure_conformance',
       'synthesize_basic_structure_from_layout',
     ]) {
-      expect(shouldTryAllInputProposalBufferSequence({
-        filename: '0297-90516e88cb48-victim-offender-overlap.pdf',
-        toolName,
-        outcome: 'applied',
-      })).toBe(true);
+      for (const filename of [
+        '0297-90516e88cb48-victim-offender-overlap.pdf',
+        '0306-20f8aa13aa59-4657-the-2021-safe-t-act.pdf',
+      ]) {
+        expect(shouldTryAllInputProposalBufferSequence({
+          filename,
+          toolName,
+          outcome: 'applied',
+        })).toBe(true);
+      }
     }
   });
 
