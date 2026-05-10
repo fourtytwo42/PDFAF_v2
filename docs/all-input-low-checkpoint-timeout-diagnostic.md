@@ -37,3 +37,30 @@ Parked timeout rows:
 Decision:
 
 Do not lower checkpoint floors directly from this evidence. Existing eligibility checks evaluate the score floor before page/text/tag/PAC safety, so a `checkpoint_below_floor(...)` trace does not prove the checkpoint is safe. The next runtime stage should add or run a safety replay that evaluates the same checkpoint without the score floor, and only then consider an honest low-score timeout return. Even if all seven candidates pass, the projected mean is still below `93`, so another score lane remains necessary.
+
+Follow-up implementation:
+
+- Added a row-scoped `verified_low_score_checkpoint_timeout_return` path for only the seven diagnostic candidate filenames.
+- This path does not change normal verified checkpoint floors; it evaluates false-positive, score improvement, page/text/tag safety, and PAC gate safety before allowing the low-score return.
+- `structure-4438` and `0217` are excluded.
+- `baseline-corpus-batch.ts` treats both normal and low-score checkpoint returns as terminal so a returned checkpoint is not sent into a second deterministic pass.
+
+Targeted validation:
+
+- Run: `Output/goal-all-input-mean-2026-05-09-r1/run-low-checkpoint-timeout-target-2026-05-10-r1`
+- `false_positive_applied = 0`
+- Completed without hard timeout:
+  - `4215`: `25/F -> 59/F`
+  - `4690`: `25/F -> 75/C`
+  - `4453`: `30/F -> 59/F`
+  - `4503`: `30/F -> 59/F`
+  - `4105`: `25/F -> 68/D`
+- Still hard-timeout:
+  - `long-4683`
+  - `4446`
+- Updated planning overlay: `Output/goal-all-input-mean-2026-05-09-r1/fresh-overlay-low-checkpoint-timeout-target-2026-05-10-r2`
+  - mean `92.2934`
+  - rows below target `56`
+  - points still needed for mean `93`: `248`
+
+The low-score return path is honest runtime recovery, not quality recovery. The next stage still needs a score-moving lane worth at least `248` points, or additional timeout/route recovery plus score movement.

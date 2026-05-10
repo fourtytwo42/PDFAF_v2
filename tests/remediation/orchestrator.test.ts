@@ -48,6 +48,7 @@ import {
   shouldSkipSameStateNoGainRuntimeAttempt,
   shouldSkipProtectedFigureAlt,
   shouldStopProtectedHeadingCandidateAfterHardNoEffect,
+  verifiedLowScoreTimeoutCheckpointEligibility,
   structure3775ArtifactRouteNoEffectStabilizationDecision,
   verifiedTimeoutCheckpointEligibility,
   withHeadingTargetRef,
@@ -1671,6 +1672,87 @@ describe('late reanalysis runtime guards', () => {
       appliedTools: [runtimeToolRow({ toolName: 'repair_list_li_wrong_parent', outcome: 'applied' })],
       nearWallBudget: true,
     })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(80<85)' });
+  });
+
+  it('allows configured low-score timeout checkpoints only after safety checks pass', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const checkpoint = {
+      analysis: makeAnalysis({ score: 59 }),
+      snapshot: makeSnapshot({ depth: 2, textCharCount: 2000 }),
+      appliedToolCount: 1,
+    };
+
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '0020-cbe531e850f8-long-4683.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({ eligible: false, floor: 80, reason: 'checkpoint_below_floor(59<80)' });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0020-cbe531e850f8-long-4683.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: true,
+      floor: 59,
+      reason: 'low_score_timeout_checkpoint_eligible',
+    });
+  });
+
+  it('does not allow low-score timeout checkpoints for unconfigured rows or unsafe snapshots', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const checkpoint = {
+      analysis: makeAnalysis({ score: 59 }),
+      snapshot: makeSnapshot({ depth: 2, textCharCount: 1000 }),
+      appliedToolCount: 1,
+    };
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: 'generic-report.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: null,
+      reason: 'low_score_timeout_return_not_configured',
+    });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0085-e82f2da97632-4215-juvenile-justice-data-2008.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
+      nearWallBudget: true,
+    }).reason).toBe('text_dropped(2000->1000)');
+  });
+
+  it('keeps structure-4438 out of low-score timeout returns', () => {
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0031-9d63e648dc78-structure-4438.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot: makeSnapshot({ depth: 2 }),
+      checkpoint: {
+        analysis: makeAnalysis({ score: 89 }),
+        snapshot: makeSnapshot({ depth: 2 }),
+        appliedToolCount: 0,
+      },
+      appliedTools: [],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: null,
+      reason: 'low_score_timeout_return_not_configured',
+    });
   });
 
   it('rejects checkpoints with page text tag or mutation-truth regressions', () => {
