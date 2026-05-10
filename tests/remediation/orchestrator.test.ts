@@ -560,6 +560,43 @@ describe('all-input heading annotation seed acceptance', () => {
     })).toMatchObject({ reject: false, reason: null });
   });
 
+  it('allows only the diagnosed all-input structure/heading seed tools', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const afterSnapshot = makeSnapshot({ depth: 3 });
+    afterSnapshot.visibleAnnotationsMissingStructure = [{ page: 0, objectRef: '22 0 R', subtype: 'Link' }];
+    afterSnapshot.detectionProfile!.annotationSignals.linkAnnotationsMissingStructure = 1;
+
+    expect(shouldRejectStageResult({
+      filename: '0345-31c7928bf540-4633-exploring-school-violence-and-safety-concerns.pdf',
+      before: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 80, pdf_ua_compliance: 79 } }),
+      after: makeAnalysis({ score: 79, categories: { heading_structure: 94, reading_order: 96, pdf_ua_compliance: 71 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('synthesize_basic_structure_from_layout'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'synthesize_basic_structure_from_layout',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 79,
+      })],
+    })).toMatchObject({ reject: false, reason: null });
+
+    expect(shouldRejectStageResult({
+      filename: '0345-31c7928bf540-4633-exploring-school-violence-and-safety-concerns.pdf',
+      before: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 80, pdf_ua_compliance: 79 } }),
+      after: makeAnalysis({ score: 79, categories: { heading_structure: 94, reading_order: 96, pdf_ua_compliance: 71 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('repair_native_link_structure'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'repair_native_link_structure',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 79,
+      })],
+    })).toMatchObject({ reject: true });
+  });
+
   it('rejects the 0190 heading seed when mixed PAC debt or reading regression appears', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     const mixedSnapshot = makeSnapshot({ depth: 3 });

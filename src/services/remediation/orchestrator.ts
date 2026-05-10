@@ -3508,7 +3508,12 @@ function isFigure4702Filename(filename: string): boolean {
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 const ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS = new Set(['0275']);
-const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0190']);
+const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0182', '0190', '0345', '0346']);
+const ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS = new Set([
+  'create_heading_from_candidate',
+  'create_heading_from_tagged_visible_anchor',
+  'synthesize_basic_structure_from_layout',
+]);
 
 function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS, ...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
@@ -3595,7 +3600,7 @@ function shouldAllowAllInputHeadingAnnotationSeed(input: {
   stageApplied: AppliedRemediationTool[];
 }): boolean {
   if (!input.filename || !isAllInputHeadingAnnotationSeedFilename(input.filename)) return false;
-  if (!input.stageApplied.some(row => row.toolName === 'create_heading_from_candidate')) return false;
+  if (!input.stageApplied.some(row => ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS.has(row.toolName))) return false;
   const regressions = pacRuleAcceptanceRegressions({
     beforeSnapshot: input.beforeSnapshot,
     afterSnapshot: input.afterSnapshot,
