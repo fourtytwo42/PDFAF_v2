@@ -262,7 +262,8 @@ Generated artifacts:
 - Control batch: `Output/goal-all-input-mean-2026-05-09-r1/run-0297-proposal-buffer-controls-2026-05-10-r1/`
 - Post-probe sequence diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-0297-proposal-buffer-2026-05-10-r1/`
 - Progress overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0297-proposal-buffer-2026-05-10-r1/`
-- Refreshed target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-after-0297-proposal-buffer-2026-05-10-r1/`
+- Observed-heading progress overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0297-plus-observed-heading-2026-05-10-r1/`
+- Refreshed target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-after-0297-plus-observed-heading-2026-05-10-r1/`
 
 Source change:
 
@@ -276,9 +277,10 @@ Validation:
 - One-row validation moved `0297 58/F -> 91/A` in `61.6s`, with `false_positive_applied = 0`.
 - The accepted tool evidence includes `structure_annotation_sequence_recovered` on `synthesize_basic_structure_from_layout` plus annotation/link/orphan/PDF-UA cleanup rows; no broad PAC gate change was made.
 - Control batch preserved the already promoted core sequence rows `0032 97/A`, `0033 94/A`, `4646 97/A`, `4593 94/A`, and `0275 94/A`. `0317` and `0319` were volatile in the mixed batch, matching prior larger-control volatility and not caused by the `0297` row-scoped path.
-- Overlay now estimates mean `88.5214 -> 89.9487`, rows below target `136 -> 125`, and remaining points needed for mean `93` at `1071`.
+- Overlaying only accepted/promoted runs plus `0297` estimates mean `88.5214 -> 89.9487`, rows below target `136 -> 125`, and remaining points needed for mean `93` at `1071`.
+- Adding already-observed non-regressing deterministic heading sample rows (`0086 90/A`, `0181 71/C`) raises the planning overlay to mean `90.0712`, with remaining points needed for mean `93` at `1028`. This is planning evidence only; those rows still need repeatability/targeted acceptance before being treated as promoted behavior.
 
 Next selection:
 
-- Refreshed target selection still chooses `heading_reading_recovery_target`, now with `11` rows and `320` deficit points.
-- Top remaining rows are `0034`, `0086`, `0181`, `0283`, `0085`, and `0114`; several are runtime/route-heavy, so the next step should be diagnostic-first rather than broadening the new `0297` probe.
+- Refreshed target selection after including observed heading rows chooses `alt_recovery_target` first (`8` rows, `280` deficit), with table/header close behind (`9` rows, `254` deficit) and heading/reading third (`9` rows, `252` deficit).
+- Top remaining low rows include `0034`, `0283`, `0084`, `0347`, `0085`, and `0114`. Several heading rows are runtime/route-heavy, so the next behavior stage should be diagnostic-first and probably shift to the stable alt lane unless a quick heading repeatability check proves otherwise.
