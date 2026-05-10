@@ -42,10 +42,11 @@ This means the next behavior stage should not widen `set_table_header_cells` or 
 
 - Keep `0034/v1-4716` parked as font/CMap-heavy diagnostic debt. PAC detects direct ToUnicode/CMap failures there, but font/CMap remains too noisy for immediate numeric or repair behavior.
 - Do not promote another table-header association repair from this evidence; the object diagnostic found no safe association candidates.
+- `0086/4567` has a prior deterministic `90/A` route, but route comparison `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0086-2026-05-10-r2` classifies it as `upstream_route_volatility`, not a same-state guard candidate. The good and bad runs diverge at `artifact_repeating_page_furniture` from the same replay signature, but no same-tool rejected score-moving state was proven. Do not add a guard yet.
 - The best next narrow candidates are:
-  - `0086/4567`: investigate missing-header creation or source-reanalyzed semantic route, because it has a prior observed `90/A` route and direct PAC table/ParentTree evidence.
   - `0283` and `3924`: semantic/source candidates if deterministic object traces remain weak.
   - `4178`/`4735`: table-structure-first diagnostics, not header association metadata.
+  - `0086/4567`: repeatability or route-admission research only, because the current proof is upstream volatility.
 - Keep API semantic requests sequential on this VM and count only source-reanalyzed saved PDFs.
 
 No scoring, PAC gate, planner, mutation, timeout, API, or AI-default behavior changed in this checkpoint.
