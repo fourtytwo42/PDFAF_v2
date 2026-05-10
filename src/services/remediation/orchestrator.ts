@@ -3539,6 +3539,10 @@ function isAllInputHeadingAnnotationSeedFilename(filename: string): boolean {
   );
 }
 
+export function isAllInputTitleReadingSequenceFilename(filename: string): boolean {
+  return /(?:^|[^0-9])0319(?:[^0-9]|$)/.test(filename);
+}
+
 export function shouldTryAllInputHeadingAnnotationSequence(input: {
   filename: string;
   toolName: string;
@@ -3707,6 +3711,160 @@ export function shouldConfirmLong4516MetadataVolatility(input: {
   const beforeTable = categoryScore(input.before, 'table_markup') ?? 100;
   const afterTable = categoryScore(input.after, 'table_markup') ?? beforeTable;
   return beforeAlt - afterAlt >= 20 || beforeTable - afterTable >= 20;
+}
+
+async function tryAllInput0319TitleReadingSequence(args: {
+  filename: string;
+  stateBeforeStage: RemediationState;
+  analyzedState: RemediationState;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+  stageStartScore: number;
+  rejectionDecision: { reject: boolean; reason: string | null; details?: string };
+  signal?: AbortSignal;
+}): Promise<RemediationState | null> {
+  if (!isAllInputTitleReadingSequenceFilename(args.filename)) return null;
+  if (!args.rejectionDecision.reject) return null;
+  if (!args.stageApplied.some(row => row.toolName === 'bridge_native_title_text_owner')) return null;
+  if (args.analyzedState.analysis.score <= args.stateBeforeStage.analysis.score) return null;
+
+  const intermediateRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    afterSnapshot: args.analyzedState.snapshot,
+    toolNames: args.stageApplied.map(row => row.toolName),
+  });
+  if (
+    intermediateRegressions.length === 0 ||
+    intermediateRegressions.some(row => row.ruleId !== 'pdfua.content.orphan_mcids_absent')
+  ) {
+    return null;
+  }
+
+  const beforeHeading = categoryScore(args.stateBeforeStage.analysis, 'heading_structure');
+  const intermediateHeading = categoryScore(args.analyzedState.analysis, 'heading_structure');
+  const intermediateReading = categoryScore(args.analyzedState.analysis, 'reading_order');
+  if (
+    beforeHeading == null ||
+    intermediateHeading == null ||
+    intermediateHeading <= beforeHeading ||
+    intermediateReading == null
+  ) {
+    return null;
+  }
+
+  let sequenceBuffer = args.analyzedState.buffer;
+  let sequenceAnalysis = args.analyzedState.analysis;
+  let sequenceSnapshot = args.analyzedState.snapshot;
+  const sequenceRows: AppliedRemediationTool[] = [];
+  const cleanupToolNames = [
+    'repair_degenerate_native_reading_order_shell',
+    'remap_orphan_mcids_as_artifacts',
+    'set_pdfua_identification',
+  ] as const;
+
+  for (const toolName of cleanupToolNames) {
+    const result = await runSingleTool(
+      sequenceBuffer,
+      {
+        toolName,
+        params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...sequenceRows]),
+        rationale: 'All-input 0319 title bridge plus reading-order cleanup sequence.',
+      },
+      sequenceSnapshot,
+      { signal: args.signal },
+    );
+    let nextAnalysis = sequenceAnalysis;
+    let nextSnapshot = sequenceSnapshot;
+    let effectiveOutcome = result.outcome;
+    if (result.outcome === 'applied' && !result.buffer.equals(sequenceBuffer)) {
+      const analyzed = await reanalyzeBufferForMutation(result.buffer, args.filename, `pdfaf-0319-title-reading-${toolName}`, {
+        signal: args.signal,
+      });
+      nextAnalysis = analyzed.result;
+      nextSnapshot = analyzed.snapshot;
+      sequenceBuffer = result.buffer;
+      sequenceAnalysis = nextAnalysis;
+      sequenceSnapshot = nextSnapshot;
+    } else if (result.outcome === 'applied') {
+      effectiveOutcome = 'no_effect';
+    }
+    sequenceRows.push({
+      toolName,
+      stage: args.stage.stageNumber,
+      round: 1,
+      scoreBefore: args.stageStartScore,
+      scoreAfter: nextAnalysis.score,
+      delta: nextAnalysis.score - args.stageStartScore,
+      outcome: effectiveOutcome,
+      details: enrichDetailsWithReplayState(result.details ?? effectiveOutcome, {
+        beforeAnalysis: args.analyzedState.analysis,
+        beforeSnapshot: args.analyzedState.snapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+      }),
+      durationMs: result.durationMs,
+      source: 'post_pass',
+    });
+  }
+
+  const finalHeading = categoryScore(sequenceAnalysis, 'heading_structure');
+  const finalReading = categoryScore(sequenceAnalysis, 'reading_order');
+  if (
+    sequenceAnalysis.score < 88 ||
+    sequenceAnalysis.score <= args.stateBeforeStage.analysis.score ||
+    finalHeading == null ||
+    finalHeading < intermediateHeading ||
+    finalReading == null ||
+    finalReading < 79 ||
+    finalReading <= intermediateReading ||
+    !pageTextTagEvidenceStillPreserved(args.stateBeforeStage.snapshot, sequenceSnapshot)
+  ) {
+    return null;
+  }
+  const finalRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    afterSnapshot: sequenceSnapshot,
+    toolNames: [...args.stageApplied, ...sequenceRows].map(row => row.toolName),
+  });
+  if (finalRegressions.length > 0) return null;
+
+  const firstBridgeRow = args.stageApplied.find(row => row.toolName === 'bridge_native_title_text_owner');
+  if (firstBridgeRow) {
+    firstBridgeRow.details = JSON.stringify({
+      outcome: 'applied',
+      note: 'title_reading_sequence_recovered(0319)',
+      originalDetails: parseMutationDetails(firstBridgeRow.details) ?? firstBridgeRow.details ?? null,
+      sequenceRecovery: {
+        intermediateRegressions,
+        beforeScore: args.stateBeforeStage.analysis.score,
+        intermediateScore: args.analyzedState.analysis.score,
+        finalScore: sequenceAnalysis.score,
+        beforeHeadingScore: beforeHeading,
+        intermediateHeadingScore: intermediateHeading,
+        finalHeadingScore: finalHeading,
+        intermediateReadingOrderScore: intermediateReading,
+        finalReadingOrderScore: finalReading,
+      },
+    });
+  }
+  for (const row of sequenceRows) {
+    row.details = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: row.outcome,
+      note: 'title_reading_sequence_recovered(0319)',
+      originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
+    }), {
+      beforeAnalysis: args.analyzedState.analysis,
+      beforeSnapshot: args.analyzedState.snapshot,
+      afterAnalysis: sequenceAnalysis,
+      afterSnapshot: sequenceSnapshot,
+    });
+  }
+  args.stageApplied.push(...sequenceRows);
+  return {
+    buffer: sequenceBuffer,
+    analysis: sequenceAnalysis,
+    snapshot: sequenceSnapshot,
+  };
 }
 
 async function tryFigure4702StructureAnnotationSequence(args: {
@@ -4179,6 +4337,29 @@ async function finalizeAnalyzedStage(args: {
   });
 
   if (rejectionDecision.reject) {
+    const titleReadingSequenceRecovered = await tryAllInput0319TitleReadingSequence({
+      filename,
+      stateBeforeStage,
+      analyzedState,
+      stage,
+      stageApplied,
+      stageStartScore,
+      rejectionDecision,
+      signal,
+    });
+    if (titleReadingSequenceRecovered) {
+      for (const row of stageApplied) {
+        row.scoreAfter = titleReadingSequenceRecovered.analysis.score;
+        row.delta = titleReadingSequenceRecovered.analysis.score - stageStartScore;
+        enrichRowDetailsWithReplayState(row, {
+          beforeAnalysis: stateBeforeStage.analysis,
+          beforeSnapshot: stateBeforeStage.snapshot,
+          afterAnalysis: titleReadingSequenceRecovered.analysis,
+          afterSnapshot: titleReadingSequenceRecovered.snapshot,
+        });
+      }
+      return titleReadingSequenceRecovered;
+    }
     const sequenceRecovered = await tryFigure4702StructureAnnotationSequence({
       filename,
       stateBeforeStage,

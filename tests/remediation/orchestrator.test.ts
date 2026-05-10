@@ -20,6 +20,7 @@ import {
   protectedStrongAltPreservationViolation,
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
+  isAllInputTitleReadingSequenceFilename,
   lateOptionalToolReanalysisGuardReason,
   shouldReplaceVerifiedTimeoutCheckpoint,
   shouldGuardStageReanalysisAdmission,
@@ -538,6 +539,31 @@ describe('all-input degenerate native sequence seed acceptance', () => {
 });
 
 describe('all-input heading annotation seed acceptance', () => {
+  it('keeps the 0319 title-reading sequence row-scoped and rejects the orphan intermediate alone', () => {
+    expect(isAllInputTitleReadingSequenceFilename('0319-89b00cc3b414-4760-title.pdf')).toBe(true);
+    expect(isAllInputTitleReadingSequenceFilename('0297-90516e88cb48-title.pdf')).toBe(false);
+
+    const beforeSnapshot = makeSnapshot({ depth: 4 });
+    const intermediateSnapshot = makeSnapshot({ depth: 2 });
+    intermediateSnapshot.orphanMcids = [{ page: 0, mcid: 21 }];
+    intermediateSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 21;
+
+    expect(shouldRejectStageResult({
+      filename: '0319-89b00cc3b414-4760-the-evaluation.pdf',
+      before: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 80, pdf_ua_compliance: 80 } }),
+      after: makeAnalysis({ score: 69, categories: { heading_structure: 95, reading_order: 35, pdf_ua_compliance: 67 } }),
+      beforeSnapshot,
+      afterSnapshot: intermediateSnapshot,
+      stage: makeStage('bridge_native_title_text_owner'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'bridge_native_title_text_owner',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 69,
+      })],
+    })).toMatchObject({ reject: true });
+  });
+
   it('allows the diagnosed 0190 heading seed only for annotation/orphan PAC debt with score movement', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     const afterSnapshot = makeSnapshot({ depth: 3 });

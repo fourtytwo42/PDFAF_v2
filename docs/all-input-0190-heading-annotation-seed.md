@@ -28,8 +28,10 @@ filename-scoped and only admits the seed when structural movement is clear.
   `Output/goal-all-input-mean-2026-05-09-r1/run-0108-heading-seed-target-2026-05-09-r1`
 - `0317` tagged-heading planner admission validation:
   `Output/goal-all-input-mean-2026-05-09-r1/run-0317-tagged-heading-admission-controls-2026-05-10-r1`
+- `0319` title bridge plus reading-order sequence validation:
+  `Output/goal-all-input-mean-2026-05-09-r1/run-0319-title-reading-sequence-target-2026-05-10-r3`
 - Progress overlay:
-  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0317-tagged-heading-2026-05-10-r1`
+  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0319-title-reading-2026-05-10-r1`
 
 Targeted validation results:
 
@@ -39,6 +41,7 @@ Targeted validation results:
 | `0182-...-4583-an-overview-of-medication-assisted-treatment...pdf` | `40/F` | `92/A` | `0` |
 | `0190-...-3468-chicago-homicide-codebook...pdf` | `55/F` | `95/A` | `0` |
 | `0317-...-4574-juvenile-justice-in-illinois-2015.pdf` | `47/F` | `93/A` | `0` |
+| `0319-...-4760-the-evaluation-of-the-illinois-multi-site-police-initiated-deflection-in.pdf` | `59/F` | `93/A` | `0` |
 | `0345-...-4633-exploring-school-violence-and-safety-concerns.pdf` | `42/F` | `91/A` | `0` |
 | `0346-...-4673-understanding-police-officer-stress...pdf` | `42/F` | `91/A` | `0` |
 | `0032-...-v1-4637.pdf` | `46/F` | `97/A` | `0` |
@@ -73,18 +76,28 @@ zero heading score, strong text extractability, missing annotation tabs, and a
 high-confidence page-0 `tagged_visible_line_mcid_first_page` candidate. The
 generic supporting-structure checks still apply to unrelated rows.
 
+The `0319` recovery uses a separate row-scoped sequence guard. It does not
+accept the PAC-regressed title bridge by itself. For `0319` only, when
+`bridge_native_title_text_owner` improves total score and heading evidence but
+exposes only orphan-MCID debt, the orchestrator immediately tries existing
+`repair_degenerate_native_reading_order_shell`, orphan-MCID cleanup, and PDF/UA
+metadata cleanup. The combined state is accepted only when final score is at
+least `88`, heading is preserved, reading order recovers from the intermediate
+state to at least `79`, page/text/tag evidence is preserved, and final PAC gate
+regressions are empty.
+
 ## All-Input Impact Estimate
 
 Overlaying the current proven target runs estimates:
 
-- Mean: `88.5214 -> 89.7151`
-- Rows below target: `136 -> 129`
-- Points still needed for mean `93`: `1153`
+- Mean: `88.5214 -> 89.8120`
+- Rows below target: `136 -> 128`
+- Points still needed for mean `93`: `1119`
 - Runtime p95 unchanged in the overlay: `351416ms`
 
 ## Next Direction
 
-After adding `0317`, rerun target selection before selecting the next lane.
+After adding `0319`, rerun target selection before selecting the next lane.
 `0297` has API evidence but still does not reproduce as a source-side
 deterministic recovery, so do not include it without a different route proof.
 `0114` needs runtime/route isolation before any behavior.
