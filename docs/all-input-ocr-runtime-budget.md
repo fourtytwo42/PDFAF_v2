@@ -73,3 +73,18 @@ Fresh-run overlay from the OCR budget target runs:
 - Applied overlay rows had `false_positive_applied = 0`.
 
 This is still not goal completion; it is a reproducible runtime/operational improvement that leaves major route and object-evidence debt.
+
+Additional timeout sample:
+
+- Output: `Output/goal-all-input-mean-2026-05-09-r1/run-timeout-next-2026-05-10-r1`
+- `0170`: `10/F -> 97/A`, no hard timeout.
+- `0114`: hard timeout converted to `59/F`, still score debt.
+- `long-4683`, `4215`, and `0136`: still hard-timeout.
+
+Updated fresh overlay:
+
+- Output: `Output/goal-all-input-mean-2026-05-09-r1/fresh-overlay-runtime-budget-2026-05-10-r1`
+- Mean: `89.2365 -> 90.9858`
+- Points needed for mean `93`: `1321 -> 707`
+- `?` rows: `18 -> 9`
+- p95: `300001ms -> 270349ms`
