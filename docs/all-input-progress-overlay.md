@@ -7,34 +7,33 @@ results over the baseline to estimate current mean movement and select the next 
 Current overlay:
 
 - Baseline root: `Output/goal-all-input-mean-2026-05-09-r1/shard-runs`
-- Overlay run: `Output/goal-all-input-mean-2026-05-09-r1/run-heading-sequence-parent-targets-2026-05-09-r1`
-- Output: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-sequence-parent-2026-05-09-r2`
+- Output: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-near-pass-87-89-current-2026-05-10-r1`
 
 ## Current Estimate
 
 | Metric | Baseline | Overlay |
 | --- | ---: | ---: |
-| Mean | `88.5214` | `88.9373` |
+| Mean | `88.5214` | `91.7521` |
 | Median | `93` | `93` |
-| Rows below target | `136` | `132` |
-| Points needed for mean 93 | `1572` | `1426` |
-| Runtime p95 ms | `351416` | `351416` |
+| Rows below target | `136` | `91` |
+| Points needed for mean 93 | `1572` | `438` |
+| Runtime p95 ms | `351416` | `351023` |
 
-Applied overlays:
+Recently added validation overlays:
 
-- `0032`: `59/F -> 97/A`
-- `0033`: `59/F -> 94/A`
-- `4646`: `59/F -> 97/A`
-- `4593`: `59/F -> 94/A`
+- Near-pass current repeat `Output/goal-all-input-mean-2026-05-09-r1/run-near-pass-current-targets-2026-05-10-r1` moved the stale `87/B` set to mostly `93-94/A`, with `0127` only `88/B` and `false_positive_applied=0`.
+- Near-pass `87-89` current repeat `Output/goal-all-input-mean-2026-05-09-r1/run-near-pass-87-89-current-2026-05-10-r1` moved many remaining low-runtime `87-89` rows to `93-94/A`, with `false_positive_applied=0`.
+- A larger `90-92` exploratory repeat was stopped after roughly 20 minutes because it entered long mutation paths and produced no report; do not use it as evidence.
 
 All applied overlay rows had `false_positive_applied = 0` in targeted validation.
 
 ## Next Selection
 
-Target selection after this overlay is at
-`Output/goal-all-input-mean-2026-05-09-r1/target-selection-after-sequence-parent-2026-05-09-r1`.
-The selected direction remains `heading_reading_recovery_target`, now with `17` rows and `588`
-remaining deficit points. Table/header and alt debt remain second-tier score lanes.
+The remaining gap is too large for near-pass polish alone. The next source of score movement should
+come from higher-deficit rows that still have direct object or PAC/POC evidence, especially
+heading/reading rows with stable proposal-buffer proof, table rows with a safe structure/header target,
+or explicitly source-reanalyzed semantic rows. Keep strict PAC caps visible; do not raise scores by
+hiding verified PAC failures.
 
 Do not treat the overlay as final acceptance evidence; it is a planning artifact that avoids rerunning
 all 351 PDFs after every small targeted change. Any behavior change still needs targeted validation,
