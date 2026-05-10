@@ -341,8 +341,9 @@ Finding:
 - `0306` has a high-confidence first-page tagged-visible candidate (`THE 2021 SAFE-T ACT: ICJIA ROLES AND RESPONSIBILITIES`) that superficially matches the proven `0317` admission shape.
 - A temporary row-scoped planner admission was tested and rejected. The Python mutator returned `mcid_owner_not_found` for `create_heading_from_tagged_visible_anchor`, and the row still completed `53/F -> 59/F`.
 - Later heading/title-owner proposals were blocked by `pdfua.annotations.tagged_annotations_present` with `103` visible annotations missing structure, so this row is a structure-plus-annotation sequence problem, not a simple tagged-heading admission.
+- Structure/annotation diagnostic `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-0306-2026-05-10-r2/` classifies it as a sequence probe candidate, but the useful proposal is only present inside rejected/no-effect replay details in the current route. Extending the existing `0297` applied-stage proposal-buffer hook to `0306` did not recover the row (`run-0306-proposal-buffer-target-2026-05-10-r1` stayed `59/F`) and was not kept.
 
 Decision:
 
 - Do not add `0306` to the tagged-heading admission allow-list.
-- If `0306` is revisited, start from the rejected title/heading proposal buffer and require a final annotation-cleaned state; do not broaden the `0317` planner gate.
+- If `0306` is revisited, it needs a deeper rejected-proposal replay implementation that can materialize one rejected title/heading proposal and then run annotation cleanup. Do not broaden the `0317` planner gate or the existing `0297` applied-stage hook from this evidence.
