@@ -49,3 +49,24 @@ a `69/D` route. No accepted behavior was kept.
 The next useful step is a true proposal-buffer materialization probe that records why cleanup from
 the rejected reading-order proposal fails, instead of relying on the current applied-stage sequence
 hook.
+
+## Proposal-Buffer Probe Update
+
+Standalone probe script:
+`scripts/all-input-reading-order-shell-probe.ts`
+
+Local artifacts:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/reading-order-shell-probe-0239-2026-05-10-r1`
+- `Output/goal-all-input-mean-2026-05-09-r1/reading-order-shell-probe-0238-2026-05-10-r1`
+- `Output/goal-all-input-mean-2026-05-09-r1/reading-order-shell-probe-0240-2026-05-10-r1`
+
+The standalone probe proved a PAC-clean cleanup order for `0239` and `0238` when the shell proposal
+materializes with low orphan debt:
+`remap_orphan_mcids_as_artifacts -> repair_top_level_parent_links -> set_pdfua_identification`.
+It did not prove a safe path for the harder `0240` 64-orphan shape.
+
+A production-scoped `0239` trigger was then tested and rejected/not kept because the live route
+materialized a different shell proposal (`51` orphan MCIDs) and stayed `69/D` in
+`Output/goal-all-input-mean-2026-05-09-r1/run-mcgruff-reading-shell-0239-target-2026-05-10-r1`.
+Future work needs to stabilize or select the low-orphan proposal buffer before accepting behavior.
