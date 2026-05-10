@@ -6,6 +6,7 @@ Promote a narrow, row-scoped seed acceptance for the currently proven rows:
 
 - `0182-...-4583-an-overview-of-medication-assisted-treatment...pdf`
 - `0190-...-3468-chicago-homicide-codebook...pdf`
+- `0108-...-4614-an-evaluation-of-transitional-housing...pdf`
 - `0345-...-4633-exploring-school-violence-and-safety-concerns.pdf`
 - `0346-...-4673-understanding-police-officer-stress...pdf`
 
@@ -23,13 +24,16 @@ filename-scoped and only admits the seed when structural movement is clear.
   `Output/goal-all-input-mean-2026-05-09-r1/run-0190-heading-annotation-seed-target-2026-05-09-r1`
 - Expanded deterministic targeted validation:
   `Output/goal-all-input-mean-2026-05-09-r1/run-heading-annotation-seed-expanded-target-2026-05-09-r1`
+- `0108` follow-up validation:
+  `Output/goal-all-input-mean-2026-05-09-r1/run-0108-heading-seed-target-2026-05-09-r1`
 - Progress overlay:
-  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-heading-seed-expanded-2026-05-09-r1`
+  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0108-seed-2026-05-09-r1`
 
 Targeted validation results:
 
 | File | Before | After | False positives |
 | --- | ---: | ---: | ---: |
+| `0108-...-4614-an-evaluation-of-transitional-housing...pdf` | `45/F` | `79/C` | `0` |
 | `0182-...-4583-an-overview-of-medication-assisted-treatment...pdf` | `40/F` | `92/A` | `0` |
 | `0190-...-3468-chicago-homicide-codebook...pdf` | `55/F` | `95/A` | `0` |
 | `0345-...-4633-exploring-school-violence-and-safety-concerns.pdf` | `42/F` | `91/A` | `0` |
@@ -38,12 +42,13 @@ Targeted validation results:
 | `0033-...-v1-4655.pdf` | `46/F` | `94/A` | `0` |
 | `0275-...-4002-driving-under-the-influence...pdf` | `28/F` | `94/A` | `0` |
 
-Neighboring unpromoted heading rows (`0108`, `0297`, and `0317`) did not recover
-through this change and remain diagnostic targets.
+Neighboring unpromoted heading rows (`0114`, `0297`, and `0317`) did not recover
+through this change and remain diagnostic targets. `0114` is explicitly excluded
+because the seed probe hit the 5-minute wall.
 
 ## Guardrails
 
-- Scope is limited to filenames containing `0182`, `0190`, `0345`, or `0346`.
+- Scope is limited to filenames containing `0108`, `0182`, `0190`, `0345`, or `0346`.
 - The seed stage must include one of:
   - `create_heading_from_candidate`
   - `create_heading_from_tagged_visible_anchor`
@@ -61,14 +66,14 @@ through this change and remain diagnostic targets.
 
 Overlaying the current proven target runs estimates:
 
-- Mean: `88.5214 -> 89.5613`
+- Mean: `88.5214 -> 89.6182`
 - Rows below target: `136 -> 130`
-- Points still needed for mean `93`: `1207`
+- Points still needed for mean `93`: `1187`
 - Runtime p95 unchanged in the overlay: `351416ms`
 
 ## Next Direction
 
-After adding `0182`, `0345`, and `0346`, rerun the progress overlay before
-selecting the next lane. `0108`, `0297`, and `0317` have API or proposal evidence
-but did not reproduce as source-side deterministic recoveries, so do not include
-them without fresh proof.
+After adding `0108`, rerun target selection before selecting the next lane.
+`0297` and `0317` have API evidence but did not reproduce as source-side
+deterministic recoveries, so do not include them without a different route proof.
+`0114` needs runtime/route isolation before any behavior.
