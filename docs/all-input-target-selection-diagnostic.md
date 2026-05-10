@@ -279,6 +279,7 @@ Validation:
 - Control batch preserved the already promoted core sequence rows `0032 97/A`, `0033 94/A`, `4646 97/A`, `4593 94/A`, and `0275 94/A`. `0317` and `0319` were volatile in the mixed batch, matching prior larger-control volatility and not caused by the `0297` row-scoped path.
 - Overlaying only accepted/promoted runs plus `0297` estimates mean `88.5214 -> 89.9487`, rows below target `136 -> 125`, and remaining points needed for mean `93` at `1071`.
 - Adding already-observed non-regressing deterministic heading sample rows (`0086 90/A`, `0181 71/C`) raises the planning overlay to mean `90.0712`, with remaining points needed for mean `93` at `1028`. This is planning evidence only; those rows still need repeatability/targeted acceptance before being treated as promoted behavior.
+- Repeat `Output/goal-all-input-mean-2026-05-09-r1/run-observed-heading-repeat-0086-0181-2026-05-10-r1/` did not reproduce those observed heading gains: `0086 39/F -> 59/F`, `0181 35/F -> 59/F`, and `0297 58/F -> 59/F`, all with `false_positive_applied = 0`. This classifies the observed-heading overlay as optimistic route evidence, not an accepted stable overlay.
 
 Next selection:
 
