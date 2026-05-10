@@ -55,3 +55,21 @@ Follow-up extra OCR shard:
 - `0221` and `0287`: still hard-timeout; they need separate analyzer/runtime handling.
 
 The shard left no OCR child processes after completion. Python now also receives the OCR timeout budget through mutation params so `ocrmypdf` can time out internally before the outer mutation process is killed.
+
+Final remaining OCR check:
+
+- Output: `Output/goal-all-input-mean-2026-05-09-r1/run-ocr-budget-remaining-2026-05-10-r1`
+- `0221`: `10/F -> 87/B`, no hard timeout.
+- `0287`: `25/F -> 90/A`, no hard timeout.
+- `0219`: preserved at `95/A`.
+
+Fresh-run overlay from the OCR budget target runs:
+
+- Output: `Output/goal-all-input-mean-2026-05-09-r1/fresh-overlay-ocr-budget-2026-05-10-r1`
+- Mean: `89.2365 -> 90.5413`
+- Points needed for mean `93`: `1321 -> 863`
+- `?` rows: `18 -> 11`
+- p95: `300001ms -> 272940ms`
+- Applied overlay rows had `false_positive_applied = 0`.
+
+This is still not goal completion; it is a reproducible runtime/operational improvement that leaves major route and object-evidence debt.
