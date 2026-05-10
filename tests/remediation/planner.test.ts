@@ -1032,6 +1032,175 @@ describe('planForRemediation', () => {
     expect(names).toContain('ocr_scanned_pdf');
   });
 
+  it('admits the diagnosed 0317 tagged heading candidate before annotation cleanup', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 20,
+      textByPage: ['JUVENILE JUSTICE IN ILLINOIS 2015 body text'],
+      textCharCount: 18000,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 3,
+        resolvedText: 'JUVENILE JUSTICE IN ILLINOIS 2015',
+        snippet: '/Span << /MCID 3 >> BDC /F1 24 Tf (JUVENILE JUSTICE IN ILLINOIS 2015) Tj EMC',
+      }],
+      detectionProfile: {
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 2,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 20,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 2,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 2,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 31,
+          suspectedPathPaintOutsideMc: 200,
+          taggedAnnotationRiskCount: 2,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      },
+    };
+    const base = score(snap, { ...META, filename: '0317-d01b945ec9f3-4574-juvenile-justice-in-illinois-2015.pdf' });
+    const analysis = withRoutingContext(
+      withCategoryScores(base, {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 0,
+        alt_text: 80,
+        table_markup: 100,
+        pdf_ua_compliance: 43,
+        link_quality: 79,
+        reading_order: 0,
+      }),
+      {
+        filename: '0317-d01b945ec9f3-4574-juvenile-justice-in-illinois-2015.pdf',
+        pdfClass: 'native_tagged',
+        detectionProfile: snap.detectionProfile,
+      },
+    );
+
+    const plan = planForRemediation(analysis, snap, []);
+    const planned = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_tagged_visible_anchor');
+    expect(planned?.params).toMatchObject({
+      page: 0,
+      mcid: 3,
+      text: 'JUVENILE JUSTICE IN ILLINOIS 2015',
+      allowExistingHeadingRolesForPartialReachability: true,
+    });
+  });
+
+  it('does not broaden tagged heading admission for unrelated rows with weak supporting structure', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 20,
+      textByPage: ['JUVENILE JUSTICE IN ILLINOIS 2015 body text'],
+      textCharCount: 18000,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 3,
+        resolvedText: 'JUVENILE JUSTICE IN ILLINOIS 2015',
+        snippet: '/Span << /MCID 3 >> BDC /F1 24 Tf (JUVENILE JUSTICE IN ILLINOIS 2015) Tj EMC',
+      }],
+      detectionProfile: {
+        headingSignals: { extractedHeadingCount: 0, treeHeadingCount: 0, headingTreeDepth: 0, extractedHeadingsMissingFromTree: false },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 2,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 20,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 2,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 2,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        pdfUaSignals: { orphanMcidCount: 31, suspectedPathPaintOutsideMc: 200, taggedAnnotationRiskCount: 2 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      },
+    };
+    const base = score(snap, { ...META, filename: 'unrelated-heading.pdf' });
+    const analysis = withRoutingContext(
+      withCategoryScores(base, {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 0,
+        alt_text: 80,
+        table_markup: 100,
+        pdf_ua_compliance: 43,
+        link_quality: 79,
+        reading_order: 0,
+      }),
+      {
+        filename: 'unrelated-heading.pdf',
+        pdfClass: 'native_tagged',
+        detectionProfile: snap.detectionProfile,
+      },
+    );
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).not.toContain('create_heading_from_tagged_visible_anchor');
+  });
+
   it('prefers font_ocr_repair for font-heavy documents', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

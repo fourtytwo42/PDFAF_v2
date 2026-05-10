@@ -26,8 +26,10 @@ filename-scoped and only admits the seed when structural movement is clear.
   `Output/goal-all-input-mean-2026-05-09-r1/run-heading-annotation-seed-expanded-target-2026-05-09-r1`
 - `0108` follow-up validation:
   `Output/goal-all-input-mean-2026-05-09-r1/run-0108-heading-seed-target-2026-05-09-r1`
+- `0317` tagged-heading planner admission validation:
+  `Output/goal-all-input-mean-2026-05-09-r1/run-0317-tagged-heading-admission-controls-2026-05-10-r1`
 - Progress overlay:
-  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0108-seed-2026-05-09-r1`
+  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0317-tagged-heading-2026-05-10-r1`
 
 Targeted validation results:
 
@@ -36,15 +38,16 @@ Targeted validation results:
 | `0108-...-4614-an-evaluation-of-transitional-housing...pdf` | `45/F` | `79/C` | `0` |
 | `0182-...-4583-an-overview-of-medication-assisted-treatment...pdf` | `40/F` | `92/A` | `0` |
 | `0190-...-3468-chicago-homicide-codebook...pdf` | `55/F` | `95/A` | `0` |
+| `0317-...-4574-juvenile-justice-in-illinois-2015.pdf` | `47/F` | `93/A` | `0` |
 | `0345-...-4633-exploring-school-violence-and-safety-concerns.pdf` | `42/F` | `91/A` | `0` |
 | `0346-...-4673-understanding-police-officer-stress...pdf` | `42/F` | `91/A` | `0` |
 | `0032-...-v1-4637.pdf` | `46/F` | `97/A` | `0` |
 | `0033-...-v1-4655.pdf` | `46/F` | `94/A` | `0` |
 | `0275-...-4002-driving-under-the-influence...pdf` | `28/F` | `94/A` | `0` |
 
-Neighboring unpromoted heading rows (`0114`, `0297`, and `0317`) did not recover
-through this change and remain diagnostic targets. `0114` is explicitly excluded
-because the seed probe hit the 5-minute wall.
+Neighboring unpromoted heading rows (`0114` and `0297`) did not recover through
+this change and remain diagnostic targets. `0114` is explicitly excluded because
+the seed probe hit the 5-minute wall.
 
 ## Guardrails
 
@@ -62,18 +65,26 @@ because the seed probe hit the 5-minute wall.
 - Mixed PAC regressions, page/text/tag loss, no score movement, and unrelated
   tools still reject.
 
+The `0317` recovery uses a separate planner admission guard, not a new PAC
+acceptance rule. It schedules `create_heading_from_tagged_visible_anchor` only
+for the diagnosed `0317` filename when the analyzer exposes the exact
+content-backed first-page tagged heading candidate shape: native tagged PDF,
+zero heading score, strong text extractability, missing annotation tabs, and a
+high-confidence page-0 `tagged_visible_line_mcid_first_page` candidate. The
+generic supporting-structure checks still apply to unrelated rows.
+
 ## All-Input Impact Estimate
 
 Overlaying the current proven target runs estimates:
 
-- Mean: `88.5214 -> 89.6182`
-- Rows below target: `136 -> 130`
-- Points still needed for mean `93`: `1187`
+- Mean: `88.5214 -> 89.7151`
+- Rows below target: `136 -> 129`
+- Points still needed for mean `93`: `1153`
 - Runtime p95 unchanged in the overlay: `351416ms`
 
 ## Next Direction
 
-After adding `0108`, rerun target selection before selecting the next lane.
-`0297` and `0317` have API evidence but did not reproduce as source-side
-deterministic recoveries, so do not include them without a different route proof.
+After adding `0317`, rerun target selection before selecting the next lane.
+`0297` has API evidence but still does not reproduce as a source-side
+deterministic recovery, so do not include it without a different route proof.
 `0114` needs runtime/route isolation before any behavior.
