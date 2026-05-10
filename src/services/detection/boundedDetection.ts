@@ -26,11 +26,20 @@ function walkTree(
 function headingSignals(snapshot: DocumentSnapshot) {
   const nodes = walkTree(snapshot.structureTree);
   const headingNodes = nodes.filter(node => /^H([1-6])?$/.test(node.type));
+  const rootReachableHeadingCount = snapshot.structureDebug?.rootReachableHeadingCount ?? 0;
+  const rootReachableDepth = snapshot.structureDebug?.rootReachableDepth ?? 0;
+  const treeHeadingCount = Math.max(headingNodes.length, rootReachableHeadingCount);
+  const headingTreeDepth = Math.max(
+    headingNodes.length > 0 ? Math.max(...headingNodes.map(node => node.depth)) : 0,
+    rootReachableHeadingCount > 0 ? rootReachableDepth : 0,
+  );
   return {
     extractedHeadingCount: snapshot.headings.length,
-    treeHeadingCount: headingNodes.length,
-    headingTreeDepth: headingNodes.length > 0 ? Math.max(...headingNodes.map(node => node.depth)) : 0,
-    extractedHeadingsMissingFromTree: snapshot.headings.length > 0 && headingNodes.length === 0,
+    treeHeadingCount,
+    headingTreeDepth,
+    rootReachableHeadingCount,
+    rootReachableDepth,
+    extractedHeadingsMissingFromTree: snapshot.headings.length > 0 && treeHeadingCount === 0,
   };
 }
 

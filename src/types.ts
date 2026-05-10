@@ -78,6 +78,8 @@ export interface HeadingSignals {
   extractedHeadingCount: number;
   treeHeadingCount: number;
   headingTreeDepth: number;
+  rootReachableHeadingCount?: number;
+  rootReachableDepth?: number;
   extractedHeadingsMissingFromTree: boolean;
 }
 
@@ -492,6 +494,11 @@ export interface DocumentSnapshot {
     page: number;
   }>;
   structureTree: StructNode | null;
+  /** Direct pikepdf structure counts that may exceed the bounded JSON tree. */
+  structureDebug?: {
+    rootReachableHeadingCount?: number;
+    rootReachableDepth?: number;
+  };
   /**
    * Stage 15: structural bootstrap commit-floor gate input.
    * `candidateCount` = heading/figure candidates collected from layout; `disorderScore` in [0,1]
@@ -641,6 +648,7 @@ export interface PythonAnalysisResult {
   bookmarks: DocumentSnapshot['bookmarks'];
   formFields: DocumentSnapshot['formFields'];
   structureTree: StructNode | null;
+  structureDebug?: DocumentSnapshot['structureDebug'];
   paragraphStructElems?: DocumentSnapshot['paragraphStructElems'];
   threeCcGoldenV1?: boolean;
   threeCcGoldenOrphanV1?: boolean;

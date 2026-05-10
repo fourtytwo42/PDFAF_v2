@@ -114,4 +114,15 @@ describe('deriveDetectionProfile', () => {
     expect(profile.sampledPages.length).toBeLessThanOrEqual(10);
     expect([...profile.sampledPages].sort((a, b) => a - b)).not.toEqual(profile.sampledPages);
   });
+
+  it('uses direct root-reachable heading evidence beyond the bounded JSON tree', () => {
+    const profile = deriveDetectionProfile(makeSnapshot({
+      structureTree: { type: 'Document', children: [] },
+      structureDebug: { rootReachableHeadingCount: 9, rootReachableDepth: 6 },
+    }));
+    expect(profile.headingSignals.treeHeadingCount).toBe(9);
+    expect(profile.headingSignals.headingTreeDepth).toBe(6);
+    expect(profile.headingSignals.rootReachableHeadingCount).toBe(9);
+    expect(profile.headingSignals.extractedHeadingsMissingFromTree).toBe(false);
+  });
 });

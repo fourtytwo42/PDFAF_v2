@@ -3425,6 +3425,8 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
     form_fields= []
     paragraph_struct_elems = []
     struct_tree_json = None
+    root_reachable_heading_count = 0
+    root_reachable_depth = 0
 
     try:
         root = pdf.Root
@@ -3446,7 +3448,11 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                     "checkerFigureTargets": checker_figure_targets,
                     "tables": tables_out, "formFields": form_fields,
                     "paragraphStructElems": paragraph_struct_elems,
-                    "structureTree": None}
+                    "structureTree": None,
+                    "structureDebug": {
+                        "rootReachableHeadingCount": 0,
+                        "rootReachableDepth": 0,
+                    }}
 
         # Build a minimal JSON struct tree for reading-order heuristic (depth-limited)
         struct_tree_json = _build_mini_tree(str_root, depth=0, max_depth=4)
@@ -3494,11 +3500,13 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                 _struct_elem_visit_key(root_elem)
                 for root_elem in _iter_root_reachable_struct_elems(str_root)
             }
+            root_reachable_depth = _root_reachable_depth(str_root)
             if trace is not None:
                 trace.setdefault("counters", {})["rootReachableKeyCount"] = len(root_reachable_keys)
         except Exception as e:
             _trace_exception(trace, "root_reachable_keys", e, str_root)
             root_reachable_keys = set()
+            root_reachable_depth = 0
 
         def _root_reachable(elem) -> bool:
             try:
@@ -3569,6 +3577,8 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                 phase = "heading_collector"
                 level = normalize_heading_level(tag)
                 if level is not None:
+                    if _root_reachable(elem):
+                        root_reachable_heading_count += 1
                     if len(headings) >= MAX_ITEMS:
                         _trace_cap(trace, "headings")
                     else:
@@ -3751,6 +3761,10 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
         "formFields": form_fields,
         "paragraphStructElems": paragraph_struct_elems,
         "structureTree": struct_tree_json,
+        "structureDebug": {
+            "rootReachableHeadingCount": root_reachable_heading_count,
+            "rootReachableDepth": root_reachable_depth,
+        },
     }
 
 
@@ -6724,6 +6738,10 @@ def main():
         result["formFields"]   = struct["formFields"]
         result["structureTree"]= struct["structureTree"]
         result["paragraphStructElems"] = struct.get("paragraphStructElems") or []
+        result["structureDebug"] = struct.get("structureDebug") or {
+            "rootReachableHeadingCount": 0,
+            "rootReachableDepth": 0,
+        }
 
         # Fonts
         result["fonts"] = extract_fonts(pdf)
