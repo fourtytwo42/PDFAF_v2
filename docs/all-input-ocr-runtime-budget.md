@@ -40,3 +40,7 @@ Run a broader timeout-focused shard before another full all-input validation. Th
 - controls: successful OCR rows such as `0204`, `0219`, `0220`
 
 Acceptance for the next checkpoint is fewer hard timeouts, no `false_positive_applied`, and preserved A-grade OCR controls.
+
+## Resource Note
+
+An attempted broader timeout shard at `Output/goal-all-input-mean-2026-05-09-r1/run-timeout-broader-2026-05-10-r1` was stopped before completion because OCR mutation timeouts left `ocrmypdf`/Tesseract/Ghostscript children running after the Python parent was killed. The Python mutation bridge now starts mutation workers in their own process group and kills the full group on timeout or abort. Retry broader OCR/runtime shards only after confirming no orphan OCR children remain.

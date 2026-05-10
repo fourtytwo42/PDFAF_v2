@@ -318,18 +318,32 @@ export async function runPythonMutationBatch(
     };
 
     const proc = spawn('python3', [PYTHON_SCRIPT_PATH, '--mutate', requestPath], {
+      detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    const killProcessGroup = () => {
+      if (proc.pid == null) return;
+      try {
+        process.kill(-proc.pid, 'SIGKILL');
+      } catch {
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // Process already exited.
+        }
+      }
+    };
+
     timer = setTimeout(() => {
       if (!settled) {
-        proc.kill('SIGKILL');
+        killProcessGroup();
         done({ success: false, applied: [], failed: [{ op: '_batch', error: `timeout ${timeoutMs}ms` }] });
       }
     }, timeoutMs);
 
     const onAbort = () => {
-      proc.kill('SIGKILL');
+      killProcessGroup();
       done({ success: false, applied: [], failed: [{ op: '_batch', error: 'aborted' }] });
     };
     if (options?.signal) {
