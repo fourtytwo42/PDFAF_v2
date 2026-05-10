@@ -3530,6 +3530,7 @@ const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set([
   '0318',
   '0347',
 ]);
+const ALL_INPUT_TABLE_STRUCTURE_HEADER_SEQUENCE_IDS = new Set(['4765']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0108', '0182', '0190', '0345', '0346']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS = new Set([
   'create_heading_from_candidate',
@@ -3563,6 +3564,12 @@ function isAllInputDegenerateNativeSequenceFilename(filename: string): boolean {
 
 function isAllInputProposalBufferSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS].some(id =>
+    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+  );
+}
+
+export function isAllInputTableStructureHeaderSequenceFilename(filename: string): boolean {
+  return [...ALL_INPUT_TABLE_STRUCTURE_HEADER_SEQUENCE_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
   );
 }
@@ -3605,6 +3612,115 @@ export function shouldTryAllInputProposalBufferSequence(input: {
   return isAllInputProposalBufferSequenceFilename(input.filename) &&
     ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_TOOLS.has(input.toolName) &&
     input.outcome === 'applied';
+}
+
+function pacTableHeaderDebt(snapshot: DocumentSnapshot): number {
+  const audit = snapshot.tableHeaderAudit;
+  if (!audit || (audit.tablesChecked ?? 0) === 0) return 0;
+  return Math.max(0, audit.dataCellsWithoutHeaderCount ?? audit.headerAssociationMissingCount ?? 0) +
+    Math.max(0, audit.orphanHeaderCellCount ?? 0);
+}
+
+function tableRegularityDebt(snapshot: DocumentSnapshot): number {
+  const signals = snapshot.detectionProfile?.tableSignals;
+  return Math.max(0, signals?.irregularTableCount ?? 0) +
+    Math.max(0, signals?.stronglyIrregularTableCount ?? 0);
+}
+
+export function buildAllInputTableHeaderAssociationParams(
+  snapshot: DocumentSnapshot,
+  applied: AppliedRemediationTool[],
+): Record<string, unknown> {
+  const audit = snapshot.tableHeaderAudit;
+  const signals = snapshot.detectionProfile?.tableSignals;
+  const hasAssociationDebt = Boolean(audit && audit.tablesChecked > 0 && (
+    audit.headerAssociationMissingCount > 0 ||
+    audit.dataCellsWithoutHeaderCount > 0 ||
+    audit.orphanHeaderCellCount > 0
+  ));
+  const hasUnsafeTableShape = Boolean(signals && (
+    (signals.directCellUnderTableCount ?? 0) > 0 ||
+    (signals.misplacedCellCount ?? 0) > 0 ||
+    (signals.irregularTableCount ?? 0) > 0 ||
+    (signals.stronglyIrregularTableCount ?? 0) > 0
+  ));
+  if (!hasAssociationDebt || hasUnsafeTableShape) return {};
+
+  const attemptedRefs = new Set(
+    applied
+      .filter(row => row.toolName === 'set_table_header_cells')
+      .flatMap(row => {
+        const parsed = parseMutationDetails(row.details) as ({ mutation?: { targetRef?: unknown; targetRefs?: unknown } } | null);
+        const mutation = parsed?.mutation;
+        const refs = Array.isArray(mutation?.targetRefs) ? mutation.targetRefs : [mutation?.targetRef];
+        return refs.filter((ref): ref is string => typeof ref === 'string' && ref.length > 0);
+      }),
+  );
+  const targets = snapshot.tables
+    .filter(row =>
+      row.structRef &&
+      !attemptedRefs.has(row.structRef) &&
+      row.hasHeaders &&
+      (row.headerCount ?? 0) > 0 &&
+      (row.cellsMisplacedCount ?? 0) === 0 &&
+      (row.irregularRows ?? 0) === 0 &&
+      (row.rowCount ?? 0) > 1 &&
+      (row.totalCells ?? 0) > (row.headerCount ?? 0)
+    )
+    .sort((a, b) =>
+      ((b.totalCells ?? 0) - (b.headerCount ?? 0)) - ((a.totalCells ?? 0) - (a.headerCount ?? 0))
+      || (b.totalCells ?? 0) - (a.totalCells ?? 0)
+      || (b.headerCount ?? 0) - (a.headerCount ?? 0)
+      || a.page - b.page
+      || (a.structRef ?? '').localeCompare(b.structRef ?? '')
+    );
+  const refs: string[] = [];
+  let estimatedTdDebt = 0;
+  for (const target of targets) {
+    if (!target.structRef) continue;
+    const targetDebt = Math.max(1, (target.totalCells ?? 0) - (target.headerCount ?? 0));
+    if (refs.length > 0 && estimatedTdDebt + targetDebt > 120) continue;
+    refs.push(target.structRef);
+    estimatedTdDebt += targetDebt;
+    if (refs.length >= 4) break;
+  }
+  if (refs.length > 1) {
+    return { structRefs: refs, tableHeaderAssociation: true, maxTableHeaderAssociationTargets: 4 };
+  }
+  return refs[0] ? { structRef: refs[0], tableHeaderAssociation: true } : {};
+}
+
+export function shouldTryAllInputTableStructureHeaderSequence(input: {
+  filename: string;
+  before: AnalysisResult;
+  intermediate: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  intermediateSnapshot: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+  rejectionDecision: { reject: boolean; reason: string | null };
+}): boolean {
+  if (!isAllInputTableStructureHeaderSequenceFilename(input.filename)) return false;
+  if (!input.rejectionDecision.reject || input.rejectionDecision.reason !== 'pac_rule_regressed(pdfua.table.header_association_present)') {
+    return false;
+  }
+  if (!input.stageApplied.some(row => row.toolName === 'normalize_table_structure' && row.outcome === 'applied')) return false;
+  const beforeTable = categoryScore(input.before, 'table_markup');
+  const intermediateTable = categoryScore(input.intermediate, 'table_markup');
+  if (
+    input.intermediate.score <= input.before.score ||
+    beforeTable == null ||
+    intermediateTable == null ||
+    intermediateTable <= beforeTable ||
+    !pageTextTagEvidenceStillPreserved(input.beforeSnapshot, input.intermediateSnapshot)
+  ) {
+    return false;
+  }
+  const regressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.intermediateSnapshot,
+    toolNames: input.stageApplied.map(row => row.toolName),
+  });
+  return regressions.length > 0 && regressions.every(row => row.ruleId === 'pdfua.table.header_association_present');
 }
 
 function shouldAllowAllInputDegenerateNativeSeed(input: {
@@ -4203,6 +4319,158 @@ async function tryAllInput0297ProposalBufferSequence(args: {
   };
 }
 
+async function tryAllInput4765TableStructureHeaderSequence(args: {
+  filename: string;
+  stateBeforeStage: RemediationState;
+  analyzedState: RemediationState;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+  stageStartScore: number;
+  rejectionDecision: { reject: boolean; reason: string | null; details?: string };
+  signal?: AbortSignal;
+}): Promise<RemediationState | null> {
+  if (!shouldTryAllInputTableStructureHeaderSequence({
+    filename: args.filename,
+    before: args.stateBeforeStage.analysis,
+    intermediate: args.analyzedState.analysis,
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    intermediateSnapshot: args.analyzedState.snapshot,
+    stageApplied: args.stageApplied,
+    rejectionDecision: args.rejectionDecision,
+  })) {
+    return null;
+  }
+
+  let sequenceBuffer = args.analyzedState.buffer;
+  let sequenceAnalysis = args.analyzedState.analysis;
+  let sequenceSnapshot = args.analyzedState.snapshot;
+  const sequenceRows: AppliedRemediationTool[] = [];
+  const runSequenceTool = async (
+    toolName: 'normalize_table_structure' | 'set_table_header_cells',
+    params: Record<string, unknown>,
+  ): Promise<void> => {
+    const beforeToolAnalysis = sequenceAnalysis;
+    const beforeToolSnapshot = sequenceSnapshot;
+    const started = performance.now();
+    const result = await runSingleTool(
+      sequenceBuffer,
+      {
+        toolName,
+        params,
+        rationale: 'All-input 4765 table structure/header sequence recovery.',
+      },
+      sequenceSnapshot,
+      { signal: args.signal },
+    );
+    const durationMs = result.durationMs || (performance.now() - started);
+    let nextAnalysis = sequenceAnalysis;
+    let nextSnapshot = sequenceSnapshot;
+    let effectiveOutcome = result.outcome;
+    if (result.outcome === 'applied' && !result.buffer.equals(sequenceBuffer)) {
+      const analyzed = await reanalyzeBufferForMutation(result.buffer, args.filename, `pdfaf-4765-table-sequence-${toolName}`, {
+        signal: args.signal,
+      });
+      sequenceBuffer = result.buffer;
+      nextAnalysis = analyzed.result;
+      nextSnapshot = analyzed.snapshot;
+      sequenceAnalysis = nextAnalysis;
+      sequenceSnapshot = nextSnapshot;
+    } else if (result.outcome === 'applied') {
+      effectiveOutcome = 'no_effect';
+    }
+    sequenceRows.push({
+      toolName,
+      stage: args.stage.stageNumber,
+      round: 1,
+      scoreBefore: beforeToolAnalysis.score,
+      scoreAfter: nextAnalysis.score,
+      delta: nextAnalysis.score - beforeToolAnalysis.score,
+      outcome: effectiveOutcome,
+      details: enrichDetailsWithReplayState(JSON.stringify({
+        outcome: effectiveOutcome,
+        originalDetails: parseMutationDetails(result.details) ?? result.details ?? null,
+      }), {
+        beforeAnalysis: beforeToolAnalysis,
+        beforeSnapshot: beforeToolSnapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+      }),
+      durationMs,
+      source: 'planner',
+    });
+  };
+
+  await runSequenceTool(
+    'normalize_table_structure',
+    buildDefaultParams('normalize_table_structure', sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...sequenceRows]),
+  );
+  const secondNormalize = sequenceRows.find(row => row.toolName === 'normalize_table_structure');
+  if (!secondNormalize || secondNormalize.outcome !== 'applied') return null;
+
+  const headerParams = (() => {
+    const planned = buildDefaultParams('set_table_header_cells', sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...sequenceRows]);
+    return Object.keys(planned).length > 0
+      ? planned
+      : buildAllInputTableHeaderAssociationParams(sequenceSnapshot, [...args.stageApplied, ...sequenceRows]);
+  })();
+  if (Object.keys(headerParams).length === 0) return null;
+  await runSequenceTool('set_table_header_cells', headerParams);
+  const headerRow = sequenceRows.find(row => row.toolName === 'set_table_header_cells');
+  if (!headerRow || headerRow.outcome !== 'applied') return null;
+
+  const beforeTable = categoryScore(args.stateBeforeStage.analysis, 'table_markup');
+  const finalTable = categoryScore(sequenceAnalysis, 'table_markup');
+  const beforeHeaderDebt = pacTableHeaderDebt(args.stateBeforeStage.snapshot);
+  const finalHeaderDebt = pacTableHeaderDebt(sequenceSnapshot);
+  if (
+    sequenceAnalysis.score < 93 ||
+    sequenceAnalysis.score <= args.stateBeforeStage.analysis.score ||
+    beforeTable == null ||
+    finalTable == null ||
+    finalTable <= beforeTable ||
+    finalHeaderDebt >= beforeHeaderDebt ||
+    tableRegularityDebt(sequenceSnapshot) >= tableRegularityDebt(args.stateBeforeStage.snapshot) ||
+    !pageTextTagEvidenceStillPreserved(args.stateBeforeStage.snapshot, sequenceSnapshot)
+  ) {
+    return null;
+  }
+  const finalRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    afterSnapshot: sequenceSnapshot,
+    toolNames: [...args.stageApplied, ...sequenceRows].map(row => row.toolName),
+  });
+  if (finalRegressions.length > 0) return null;
+
+  const reason = 'table_structure_header_sequence_recovered(4765)';
+  for (const row of [...args.stageApplied, ...sequenceRows]) {
+    row.details = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: row.outcome,
+      note: reason,
+      originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
+      sequenceRecovery: {
+        beforeScore: args.stateBeforeStage.analysis.score,
+        intermediateScore: args.analyzedState.analysis.score,
+        finalScore: sequenceAnalysis.score,
+        beforeTableScore: beforeTable,
+        finalTableScore: finalTable,
+        beforeTableHeaderDebt: beforeHeaderDebt,
+        finalTableHeaderDebt: finalHeaderDebt,
+      },
+    }), {
+      beforeAnalysis: args.stateBeforeStage.analysis,
+      beforeSnapshot: args.stateBeforeStage.snapshot,
+      afterAnalysis: sequenceAnalysis,
+      afterSnapshot: sequenceSnapshot,
+    });
+  }
+  args.stageApplied.push(...sequenceRows);
+  return {
+    buffer: sequenceBuffer,
+    analysis: sequenceAnalysis,
+    snapshot: sequenceSnapshot,
+  };
+}
+
 async function tryAllInput4646HeadingAnnotationSequence(args: {
   filename: string;
   headingBuffer: Buffer;
@@ -4622,6 +4890,29 @@ async function finalizeAnalyzedStage(args: {
         });
       }
       return allInputProposalBufferSequenceRecovered;
+    }
+    const allInputTableSequenceRecovered = await tryAllInput4765TableStructureHeaderSequence({
+      filename,
+      stateBeforeStage,
+      analyzedState,
+      stage,
+      stageApplied,
+      stageStartScore,
+      rejectionDecision,
+      signal,
+    });
+    if (allInputTableSequenceRecovered) {
+      for (const row of stageApplied) {
+        row.scoreAfter = allInputTableSequenceRecovered.analysis.score;
+        row.delta = allInputTableSequenceRecovered.analysis.score - stageStartScore;
+        enrichRowDetailsWithReplayState(row, {
+          beforeAnalysis: stateBeforeStage.analysis,
+          beforeSnapshot: stateBeforeStage.snapshot,
+          afterAnalysis: allInputTableSequenceRecovered.analysis,
+          afterSnapshot: allInputTableSequenceRecovered.snapshot,
+        });
+      }
+      return allInputTableSequenceRecovered;
     }
     const noEffectRouteDecision = structure3775ArtifactRouteNoEffectStabilizationDecision({
       before: stateBeforeStage.analysis,

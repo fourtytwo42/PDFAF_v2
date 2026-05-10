@@ -203,6 +203,9 @@ async function analyzeBuffer(buffer: Buffer, filename: string): Promise<{ result
 
 function toolParams(toolName: string, analysis: AnalysisResult, snapshot: DocumentSnapshot, applied: AppliedRemediationTool[]): Record<string, unknown> {
   const params = buildDefaultParams(toolName, analysis, snapshot, applied);
+  if (toolName === 'set_table_header_cells' && Object.keys(params).length === 0) {
+    return diagnosticTableHeaderAssociationParams(snapshot, applied);
+  }
   if (toolName === 'repair_structure_conformance') return params;
   if (toolName === 'synthesize_basic_structure_from_layout') return params;
   if (toolName === 'repair_native_table_headers') return params;
@@ -211,6 +214,72 @@ function toolParams(toolName: string, analysis: AnalysisResult, snapshot: Docume
   if (toolName === 'repair_native_link_structure') return params;
   if (toolName === 'normalize_annotation_tab_order') return params;
   return params;
+}
+
+function diagnosticTableHeaderAssociationParams(
+  snapshot: DocumentSnapshot,
+  applied: AppliedRemediationTool[],
+): Record<string, unknown> {
+  const audit = snapshot.tableHeaderAudit;
+  const signals = snapshot.detectionProfile?.tableSignals;
+  const hasAssociationDebt = Boolean(audit && audit.tablesChecked > 0 && (
+    audit.headerAssociationMissingCount > 0 ||
+    audit.dataCellsWithoutHeaderCount > 0 ||
+    audit.orphanHeaderCellCount > 0
+  ));
+  const hasUnsafeTableShape = Boolean(signals && (
+    (signals.directCellUnderTableCount ?? 0) > 0 ||
+    (signals.misplacedCellCount ?? 0) > 0 ||
+    (signals.irregularTableCount ?? 0) > 0 ||
+    (signals.stronglyIrregularTableCount ?? 0) > 0
+  ));
+  if (!hasAssociationDebt || hasUnsafeTableShape) return {};
+  const attemptedRefs = new Set(
+    applied
+      .filter(row => row.toolName === 'set_table_header_cells')
+      .flatMap(row => {
+        if (!row.details?.startsWith('{')) return [];
+        try {
+          const parsed = JSON.parse(row.details) as { mutation?: { targetRef?: unknown; targetRefs?: unknown } };
+          const refs = Array.isArray(parsed.mutation?.targetRefs) ? parsed.mutation.targetRefs : [parsed.mutation?.targetRef];
+          return refs.filter((ref): ref is string => typeof ref === 'string' && ref.length > 0);
+        } catch {
+          return [];
+        }
+      }),
+  );
+  const targets = snapshot.tables
+    .filter(row =>
+      row.structRef &&
+      !attemptedRefs.has(row.structRef) &&
+      row.hasHeaders &&
+      (row.headerCount ?? 0) > 0 &&
+      (row.cellsMisplacedCount ?? 0) === 0 &&
+      (row.irregularRows ?? 0) === 0 &&
+      (row.rowCount ?? 0) > 1 &&
+      (row.totalCells ?? 0) > (row.headerCount ?? 0)
+    )
+    .sort((a, b) =>
+      ((b.totalCells ?? 0) - (b.headerCount ?? 0)) - ((a.totalCells ?? 0) - (a.headerCount ?? 0))
+      || (b.totalCells ?? 0) - (a.totalCells ?? 0)
+      || (b.headerCount ?? 0) - (a.headerCount ?? 0)
+      || a.page - b.page
+      || (a.structRef ?? '').localeCompare(b.structRef ?? '')
+    );
+  const refs: string[] = [];
+  let estimatedTdDebt = 0;
+  for (const target of targets) {
+    if (!target.structRef) continue;
+    const targetDebt = Math.max(1, (target.totalCells ?? 0) - (target.headerCount ?? 0));
+    if (refs.length > 0 && estimatedTdDebt + targetDebt > 120) continue;
+    refs.push(target.structRef);
+    estimatedTdDebt += targetDebt;
+    if (refs.length >= 4) break;
+  }
+  if (refs.length > 1) {
+    return { structRefs: refs, tableHeaderAssociation: true, maxTableHeaderAssociationTargets: 4 };
+  }
+  return refs[0] ? { structRef: refs[0], tableHeaderAssociation: true } : {};
 }
 
 async function runSequence(
@@ -355,6 +424,10 @@ function sequenceDefinitions(): Array<{ name: string; tools: string[] }> {
       tools: [tool, ...TABLE_CLEANUP_TOOLS, ...ANNOTATION_CLEANUP_TOOLS],
     });
   }
+  sequences.push({
+    name: 'normalize_table_structure_twice_then_header_cleanup',
+    tools: ['normalize_table_structure', 'normalize_table_structure', ...TABLE_CLEANUP_TOOLS, ...ANNOTATION_CLEANUP_TOOLS],
+  });
   return sequences;
 }
 
