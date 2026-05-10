@@ -11729,7 +11729,15 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
     pages_with_existing_marked_content = 0
     pages_without_promotable_segments = 0
 
+    try:
+        max_pages_param = int((_params or {}).get("maxPages", 0))
+    except (TypeError, ValueError):
+        max_pages_param = 0
+    max_pages = max_pages_param if max_pages_param > 0 else len(pdf.pages)
+
     for page_idx, page in enumerate(pdf.pages):
+        if page_idx >= max_pages:
+            break
         page_obj = page.obj
         try:
             insts = list(pikepdf.parse_content_stream(page_obj))

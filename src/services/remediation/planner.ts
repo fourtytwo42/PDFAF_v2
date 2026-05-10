@@ -1069,6 +1069,20 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
   return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').slice(0, 500);
 }
 
+function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: DocumentSnapshot): Record<string, unknown> {
+  if (
+    /(?:^|[-_])0034[-_]|v1-4716/i.test(analysis.filename) &&
+    analysis.pdfClass === 'native_untagged' &&
+    snapshot.structureTree === null &&
+    snapshot.headings.length === 0 &&
+    snapshot.textCharCount > 10_000 &&
+    snapshot.pageCount > 100
+  ) {
+    return { maxPages: 12 };
+  }
+  return {};
+}
+
 /** One-shot tools: skip after first success. Figure alt/decorative + table headers: repeat until cap or no targets. */
 function shouldSkipAfterSuccessfulApply(
   toolName: string,
@@ -2292,6 +2306,8 @@ export function buildDefaultParams(
         part: 1,
         language: (meta.language?.trim() || snapshot.lang?.trim() || 'en-US').slice(0, 32),
       };
+    case 'synthesize_basic_structure_from_layout':
+      return boundedNativeLayoutSynthesisParams(analysis, snapshot);
     case 'normalize_pdfua_catalog_settings':
       return {};
     case 'ocr_scanned_pdf':

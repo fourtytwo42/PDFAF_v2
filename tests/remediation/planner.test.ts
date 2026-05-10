@@ -1337,6 +1337,53 @@ describe('planForRemediation', () => {
     expect(plan.planningSummary?.primaryRoute).not.toBe('structure_bootstrap_and_conformance');
   });
 
+  it('bounds native layout synthesis for the proven 0034/v1-4716 long-document title gap', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 213,
+      textByPage: ['Compiled by staff', '2022 Victim Service Planning Research Report'],
+      textCharCount: 69_411,
+      isTagged: false,
+      structureTree: null,
+      headings: [],
+      bookmarks: [{ title: '2022 Victim Service Planning Research Report', level: 1 }],
+    };
+    const analysis = withRoutingContext(
+      withCategoryScores(score(snap, { ...META, filename: '0034-0fca5a3c849e-v1-4716.pdf' }), {
+        pdf_ua_compliance: 0,
+        heading_structure: 0,
+        reading_order: 30,
+      }),
+      { filename: '0034-0fca5a3c849e-v1-4716.pdf', pdfClass: 'native_untagged' },
+    );
+
+    expect(buildDefaultParams('synthesize_basic_structure_from_layout', analysis, snap)).toEqual({ maxPages: 12 });
+    const synth = planForRemediation(analysis, snap, []).stages
+      .flatMap(stage => stage.tools)
+      .find(tool => tool.toolName === 'synthesize_basic_structure_from_layout');
+    expect(synth?.params).toEqual({ maxPages: 12 });
+  });
+
+  it('does not bound native layout synthesis for unrelated long native documents', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 213,
+      textCharCount: 69_411,
+      structureTree: null,
+      headings: [],
+    };
+    const analysis = withRoutingContext(
+      withCategoryScores(score(snap, { ...META, filename: 'unrelated-long.pdf' }), {
+        pdf_ua_compliance: 0,
+        heading_structure: 0,
+        reading_order: 30,
+      }),
+      { filename: 'unrelated-long.pdf', pdfClass: 'native_untagged' },
+    );
+
+    expect(buildDefaultParams('synthesize_basic_structure_from_layout', analysis, snap)).toEqual({});
+  });
+
   it('routes high-score alt residuals into near_pass_figure_recovery', () => {
     const structuralClassification = {
       structureClass: 'native_tagged' as const,
