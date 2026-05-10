@@ -247,6 +247,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'mark_untagged_content_as_artifact',
     'repair_annotation_alt_text',
     'repair_top_level_parent_links',
+    'repair_parent_tree_mcid_references',
   ],
 };
 
@@ -1026,6 +1027,19 @@ function hasStrictParentLinkCap(analysis: AnalysisResult): boolean {
 
 const STRICT_PARENT_LINK_REPAIR_MIN_SCORE = 85;
 
+function hasStrictAnnotationObjectRefCap(analysis: AnalysisResult): boolean {
+  const caps = [
+    ...(analysis.scoreCapsApplied ?? []),
+    ...analysis.categories.flatMap(category => category.scoreCapsApplied ?? []),
+  ];
+  return caps.some(cap =>
+    cap.cap <= 79 &&
+    cap.reason === 'PAC rule failure: pdfua.parent_tree.annotation_object_refs_consistent',
+  );
+}
+
+const STRICT_PARENT_TREE_REF_REPAIR_MIN_SCORE = 80;
+
 function hasWeakVisibleLinkTexts(snapshot: DocumentSnapshot): boolean {
   return snapshot.links.some(link => {
     const raw = link.text.trim();
@@ -1682,6 +1696,19 @@ export function planForRemediation(
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
+    if (
+      toolName === 'repair_parent_tree_mcid_references' &&
+      !(
+        analysis.score >= STRICT_PARENT_TREE_REF_REPAIR_MIN_SCORE &&
+        analysis.score < REMEDIATION_TARGET_SCORE &&
+        analysis.pdfClass === 'native_tagged' &&
+        snapshot.structureTree !== null &&
+        (snapshot.parentTreeAudit?.objectReferenceMismatchCount ?? 0) > 0 &&
+        hasStrictAnnotationObjectRefCap(analysis)
+      )
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
     if (toolName === 'wrap_singleton_orphan_mcid' || toolName === 'remap_orphan_mcids_as_artifacts') {
       // Only attempt orphan MCID repair when pdf_ua_compliance is actually failing.
       // Without this gate, the repair runs on near-passing files where orphan MCIDs
@@ -1896,6 +1923,25 @@ export function planForRemediation(
       toolName: 'repair_top_level_parent_links',
       params: buildDefaultParams('repair_top_level_parent_links', analysis, snapshot, alreadyApplied),
       rationale: 'Repair strict PAC top-level structure parent-link debt on an otherwise high-quality tagged document.',
+      route: 'safe_cleanup',
+    });
+  }
+
+  if (
+    !toolSet.has('repair_parent_tree_mcid_references') &&
+    analysis.score >= STRICT_PARENT_TREE_REF_REPAIR_MIN_SCORE &&
+    analysis.score < REMEDIATION_TARGET_SCORE &&
+    analysis.pdfClass === 'native_tagged' &&
+    snapshot.structureTree !== null &&
+    (snapshot.parentTreeAudit?.objectReferenceMismatchCount ?? 0) > 0 &&
+    hasStrictAnnotationObjectRefCap(analysis) &&
+    !shouldSkipAfterSuccessfulApply('repair_parent_tree_mcid_references', alreadyApplied, analysis, snapshot) &&
+    noEffectCountForTool(alreadyApplied, 'repair_parent_tree_mcid_references') < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
+  ) {
+    toolSet.set('repair_parent_tree_mcid_references', {
+      toolName: 'repair_parent_tree_mcid_references',
+      params: buildDefaultParams('repair_parent_tree_mcid_references', analysis, snapshot, alreadyApplied),
+      rationale: 'Repair direct PAC ParentTree MCID reference mismatch debt on an otherwise high-quality tagged document.',
       route: 'safe_cleanup',
     });
   }

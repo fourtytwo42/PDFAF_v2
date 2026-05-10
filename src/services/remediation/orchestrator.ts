@@ -439,6 +439,10 @@ const HEADING_STRUCTURE_TOOLS = new Set([
   'normalize_heading_hierarchy',
 ]);
 
+const PARENT_TREE_STRUCTURE_TOOLS = new Set([
+  'repair_parent_tree_mcid_references',
+]);
+
 const TABLE_STRUCTURE_TOOLS = new Set([
   'normalize_table_structure',
   'repair_native_table_headers',
@@ -561,6 +565,11 @@ function stageHasCheckerFacingStructuralBenefit(input: {
     ) {
       return true;
     }
+  }
+  if ([...toolNames].some(name => PARENT_TREE_STRUCTURE_TOOLS.has(name))) {
+    const beforeRefDebt = beforeSnapshot.parentTreeAudit?.objectReferenceMismatchCount ?? 0;
+    const afterRefDebt = afterSnapshot.parentTreeAudit?.objectReferenceMismatchCount ?? 0;
+    if (afterRefDebt < beforeRefDebt) return true;
   }
 
   if ([...toolNames].some(name => TABLE_STRUCTURE_TOOLS.has(name))) {
@@ -2253,6 +2262,7 @@ const STAGE35_STRUCTURAL_TOOLS = new Set([
   'normalize_table_structure',
   'repair_native_table_headers',
   'set_table_header_cells',
+  'repair_parent_tree_mcid_references',
   'tag_unowned_annotations',
   'repair_native_link_structure',
   'set_link_annotation_contents',
@@ -5277,6 +5287,7 @@ export async function runSingleTool(
       case 'synthesize_basic_structure_from_layout':
       case 'repair_structure_conformance':
       case 'repair_top_level_parent_links':
+      case 'repair_parent_tree_mcid_references':
       case 'substitute_legacy_fonts_in_place':
       case 'finalize_substituted_font_conformance':
       case 'wrap_singleton_orphan_mcid':

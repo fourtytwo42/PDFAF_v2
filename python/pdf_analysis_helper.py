@@ -5331,6 +5331,53 @@ def _annotation_has_struct_parent_tag(annot, nums, expected_tag: str) -> bool:
     return str(entry.get("/S", "")) == expected_tag
 
 
+def _struct_elem_has_annotation_objr(elem, annot) -> bool:
+    q: deque = deque([elem])
+    seen: set = set()
+    while q and len(seen) < MAX_ITEMS:
+        cur = q.popleft()
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        vk = _struct_elem_visit_key(cur)
+        if vk in seen:
+            continue
+        seen.add(vk)
+        try:
+            k = cur.get("/K")
+        except Exception:
+            k = None
+        kids = list(k) if isinstance(k, pikepdf.Array) else ([k] if k is not None else [])
+        for kid in kids:
+            if _objr_targets_annotation(kid, annot):
+                return True
+            if _is_struct_elem_dict(kid):
+                q.append(kid)
+    return False
+
+
+def _append_annotation_objr_to_struct_elem(pdf: pikepdf.Pdf, elem, annot, page_obj) -> bool:
+    if not isinstance(elem, pikepdf.Dictionary):
+        return False
+    if _struct_elem_has_annotation_objr(elem, annot):
+        return False
+    objr = pdf.make_indirect(pikepdf.Dictionary({
+        "/Type": pikepdf.Name("/OBJR"),
+        "/Obj": annot,
+        "/Pg": page_obj,
+    }))
+    try:
+        k = elem.get("/K")
+    except Exception:
+        k = None
+    if isinstance(k, pikepdf.Array):
+        k.append(objr)
+    elif k is None:
+        elem["/K"] = objr
+    else:
+        elem["/K"] = pikepdf.Array([k, objr])
+    return True
+
+
 def _ensure_parent_tree(struct_root: pikepdf.Dictionary, pdf: pikepdf.Pdf):
     parent_tree = struct_root.get("/ParentTree")
     if not isinstance(parent_tree, pikepdf.Dictionary):
@@ -5769,7 +5816,10 @@ def _repair_annotation_struct_ownership(
                 except Exception:
                     pass
 
-    if _annotation_has_struct_parent_tag(annot, nums, expected_tag):
+    _, existing_entry = _annotation_struct_parent_entry(annot, nums)
+    if isinstance(existing_entry, pikepdf.Dictionary) and str(existing_entry.get("/S", "")) == expected_tag:
+        if _append_annotation_objr_to_struct_elem(pdf, existing_entry, annot, page_obj):
+            changed = True
         return changed, next_key
 
     struct_parent = annot.get("/StructParent")
@@ -8445,6 +8495,136 @@ def _op_repair_top_level_parent_links(pdf: pikepdf.Pdf, _params: dict) -> bool:
     if changed:
         _set_last_mutation_note("top_level_parent_links_repaired")
     return changed
+
+
+def _remove_mcid_ref_from_struct_elem(elem, mcid: int) -> bool:
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return False
+    if isinstance(k, (int, pikepdf.Integer)):
+        if int(k) == int(mcid):
+            try:
+                del elem["/K"]
+            except Exception:
+                elem["/K"] = pikepdf.Array()
+            return True
+        return False
+    if isinstance(k, pikepdf.Dictionary):
+        try:
+            if k.get("/Type") == pikepdf.Name("/MCR") and int(k.get("/MCID")) == int(mcid):
+                del elem["/K"]
+                return True
+        except Exception:
+            return False
+        return False
+    if not isinstance(k, pikepdf.Array):
+        return False
+    kept = []
+    removed = False
+    for item in k:
+        if isinstance(item, (int, pikepdf.Integer)) and int(item) == int(mcid):
+            removed = True
+            continue
+        if isinstance(item, pikepdf.Dictionary):
+            try:
+                if item.get("/Type") == pikepdf.Name("/MCR") and int(item.get("/MCID")) == int(mcid):
+                    removed = True
+                    continue
+            except Exception:
+                pass
+        kept.append(item)
+    if not removed:
+        return False
+    if len(kept) == 0:
+        try:
+            del elem["/K"]
+        except Exception:
+            elem["/K"] = pikepdf.Array()
+    elif len(kept) == 1:
+        elem["/K"] = kept[0]
+    else:
+        elem["/K"] = pikepdf.Array(kept)
+    return True
+
+
+def _op_repair_parent_tree_mcid_references(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    """Repair direct ParentTree MCID entries that point at the wrong owning structure element."""
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        if not isinstance(sr, pikepdf.Dictionary):
+            return False
+        pt = sr.get("/ParentTree")
+        if not isinstance(pt, pikepdf.Dictionary):
+            return False
+        parent_entries = _flatten_parent_tree_nums(pt)
+        page_key_by_ref = {}
+        for page in pdf.pages:
+            try:
+                key = page.obj.get("/StructParents")
+                if isinstance(key, (int, pikepdf.Integer)):
+                    page_key_by_ref[_obj_key(page.obj)] = int(key)
+            except Exception:
+                pass
+
+        refs_by_slot: dict[tuple[int, int], list[pikepdf.Dictionary]] = {}
+        for elem, ref in _iter_struct_content_refs(pdf):
+            try:
+                if ref.get("type") != "mcid":
+                    continue
+                page_key = page_key_by_ref.get(ref.get("pageRef"))
+                if page_key is None:
+                    continue
+                mcid = int(ref.get("mcid"))
+                if mcid < 0:
+                    continue
+                refs_by_slot.setdefault((page_key, mcid), []).append(elem)
+            except Exception:
+                continue
+
+        changed = False
+        fixed = 0
+        duplicate_removed = 0
+        ambiguous = 0
+        for (page_key, mcid), elems in refs_by_slot.items():
+            unique: list[pikepdf.Dictionary] = []
+            seen: set = set()
+            for elem in elems:
+                ek = _obj_key(elem)
+                if ek is None or ek in seen:
+                    continue
+                seen.add(ek)
+                unique.append(elem)
+            if len(unique) != 1:
+                entry = parent_entries.get(page_key)
+                if isinstance(entry, pikepdf.Array) and mcid < len(entry):
+                    owner_key = _obj_key(entry[mcid])
+                    if owner_key in seen:
+                        for elem in unique:
+                            if _obj_key(elem) == owner_key:
+                                continue
+                            if _remove_mcid_ref_from_struct_elem(elem, mcid):
+                                changed = True
+                                duplicate_removed += 1
+                        continue
+                ambiguous += 1
+                continue
+            entry = parent_entries.get(page_key)
+            if not isinstance(entry, pikepdf.Array) or mcid >= len(entry):
+                continue
+            target = unique[0]
+            if _obj_key(entry[mcid]) == _obj_key(target):
+                continue
+            entry[mcid] = target
+            changed = True
+            fixed += 1
+        if changed:
+            _set_last_mutation_note(
+                f"parent_tree_mcid_references_repaired({fixed},duplicates:{duplicate_removed},ambiguous:{ambiguous})"
+            )
+        return changed
+    except Exception:
+        return False
 
 
 def _struct_elem_heading_level(elem) -> int | None:
@@ -12299,6 +12479,7 @@ MUTATORS = {
     "repair_alt_text_structure": _op_repair_alt_text_structure,
     "repair_structure_conformance": _op_repair_structure_conformance,
     "repair_top_level_parent_links": _op_repair_top_level_parent_links,
+    "repair_parent_tree_mcid_references": _op_repair_parent_tree_mcid_references,
     "substitute_legacy_fonts_in_place": _op_substitute_legacy_fonts_in_place,
     "finalize_substituted_font_conformance": _op_finalize_substituted_font_conformance,
     "bootstrap_struct_tree": _op_bootstrap_struct_tree,

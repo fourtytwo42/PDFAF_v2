@@ -364,6 +364,90 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('repair_top_level_parent_links');
   });
 
+  it('plans ParentTree MCID reference repair for high-quality rows capped by direct object-ref evidence', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      metadata: { title: 'Program Report', language: 'en-US', author: '', subject: '' },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [{ type: 'H1', children: [] }, { type: 'P', children: [] }] },
+      headings: [{ level: 1, text: 'Program Report', page: 0 }],
+      parentTreeAudit: {
+        missingParentTree: false,
+        pagesMissingStructParents: 0,
+        missingMcidParentTreeEntries: 0,
+        invalidParentTreeEntries: 0,
+        annotationReferenceMismatchCount: 0,
+        objectReferenceMismatchCount: 1,
+      },
+    };
+    const cap = {
+      category: 'link_quality' as const,
+      cap: 79,
+      rawScore: 100,
+      finalScore: 79,
+      reason: 'PAC rule failure: pdfua.parent_tree.annotation_object_refs_consistent',
+    };
+    const base = withCategoryScores(score(snap, META), { link_quality: 79 });
+    const analysis: AnalysisResult = {
+      ...base,
+      score: 85,
+      grade: 'B',
+      scoreCapsApplied: [cap],
+      categories: base.categories.map(category =>
+        category.key === 'link_quality'
+          ? { ...category, score: 79, scoreCapsApplied: [cap] }
+          : { ...category, score: 100 },
+      ),
+    };
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).toContain('repair_parent_tree_mcid_references');
+  });
+
+  it('does not plan ParentTree MCID reference repair without direct object-ref debt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'P', children: [] }] },
+      parentTreeAudit: {
+        missingParentTree: false,
+        pagesMissingStructParents: 0,
+        missingMcidParentTreeEntries: 0,
+        invalidParentTreeEntries: 0,
+        annotationReferenceMismatchCount: 1,
+        objectReferenceMismatchCount: 0,
+      },
+    };
+    const cap = {
+      category: 'link_quality' as const,
+      cap: 79,
+      rawScore: 100,
+      finalScore: 79,
+      reason: 'PAC rule failure: pdfua.parent_tree.annotation_object_refs_consistent',
+    };
+    const base = withCategoryScores(score(snap, META), { link_quality: 79 });
+    const analysis: AnalysisResult = {
+      ...base,
+      score: 85,
+      grade: 'B',
+      scoreCapsApplied: [cap],
+      categories: base.categories.map(category =>
+        category.key === 'link_quality'
+          ? { ...category, score: 79, scoreCapsApplied: [cap] }
+          : { ...category, score: 100 },
+      ),
+    };
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('repair_parent_tree_mcid_references');
+  });
+
   it('retries annotation ownership repair when debt appears after an earlier zero-debt no-effect', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
