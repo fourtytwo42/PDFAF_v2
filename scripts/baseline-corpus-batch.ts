@@ -17,7 +17,14 @@ import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { AnalysisResult, AppliedRemediationTool, CategoryKey, SemanticRemediationSummary } from '../src/types.js';
+import type {
+  AnalysisResult,
+  AppliedRemediationTool,
+  CategoryKey,
+  RemediationRuntimeSummary,
+  SemanticRemediationSummary,
+} from '../src/types.js';
+import type { RemediationRuntimeTraceEvent } from '../src/services/remediation/orchestrator.js';
 import { initSchema } from '../src/db/schema.js';
 import { createPlaybookStore } from '../src/services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js';
@@ -34,6 +41,93 @@ function categoryRows(a: AnalysisResult): Array<{ key: CategoryKey; score: numbe
 
 function countFalsePositiveApplied(tools: AppliedRemediationTool[]): number {
   return tools.filter(tool => tool.details?.includes('false_positive_applied')).length;
+}
+
+function hasVerifiedCheckpointTimeoutReturn(result: { runtimeSummary?: RemediationRuntimeSummary }): boolean {
+  const reasons = result.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons;
+  return reasons?.some(row => row.key === 'verified_checkpoint_timeout_return' && row.count > 0) ?? false;
+}
+
+function sanitizeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTimeoutLikeError(error: string | undefined): boolean {
+  return /timeout|aborted|abort/i.test(error ?? '');
+}
+
+function runtimeEventCounts(events: RemediationRuntimeTraceEvent[]): Array<{ key: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const event of events) counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function parseTraceReason(details: string | undefined): string | null {
+  if (!details) return null;
+  if (!details.startsWith('{')) return details;
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    const reason = parsed['reason'] ?? parsed['note'] ?? parsed['raw'];
+    return typeof reason === 'string' && reason.length > 0 ? reason : null;
+  } catch {
+    return details;
+  }
+}
+
+async function writeRuntimeTimeoutTrace(input: {
+  outRoot: string;
+  base: string;
+  file: string;
+  error: string | undefined;
+  durationMs: number;
+  events: RemediationRuntimeTraceEvent[];
+}): Promise<void> {
+  if (!isTimeoutLikeError(input.error)) return;
+  const lastEvent = input.events.at(-1) ?? null;
+  const toolFinishes = input.events.filter(event => event.kind === 'tool_finish');
+  const lastToolFinish = toolFinishes.at(-1) ?? null;
+  const checkpoints = input.events.filter(event => event.kind === 'verified_checkpoint');
+  const lastCheckpoint = checkpoints.at(-1) ?? null;
+  const artifact = {
+    file: input.file,
+    rowId: input.base,
+    generatedAt: new Date().toISOString(),
+    error: input.error ?? '',
+    elapsedMs: input.durationMs,
+    eventCount: input.events.length,
+    eventCounts: runtimeEventCounts(input.events),
+    lastEvent,
+    lastToolName: lastToolFinish?.toolName ?? null,
+    lastToolOutcome: lastToolFinish?.outcome ?? null,
+    lastToolDurationMs: lastToolFinish ? Math.round(lastToolFinish.durationMs) : null,
+    lastStateSignatureBefore: lastToolFinish?.stateSignatureBefore ?? null,
+    lastRejectedOrNoEffectReason:
+      lastToolFinish && (lastToolFinish.outcome === 'rejected' || lastToolFinish.outcome === 'no_effect')
+        ? parseTraceReason(lastToolFinish.details)
+        : null,
+    lastVerifiedCheckpointScore: lastCheckpoint?.score ?? null,
+    lastVerifiedCheckpointGrade: lastCheckpoint?.grade ?? null,
+    lastVerifiedCheckpointReason: lastCheckpoint?.reason ?? null,
+    lastVerifiedCheckpointEligible: lastCheckpoint?.eligible ?? null,
+    lastVerifiedCheckpointEligibilityReason: lastCheckpoint?.eligibilityReason ?? null,
+    lastVerifiedCheckpointReturned: lastCheckpoint?.returned === true,
+    verifiedCheckpointHistory: checkpoints.map(event => ({
+      reason: event.reason,
+      score: event.score,
+      grade: event.grade ?? null,
+      appliedToolCount: event.appliedToolCount,
+      eligible: event.eligible,
+      eligibilityReason: event.eligibilityReason,
+      returned: event.returned === true,
+      elapsedMs: Math.round(event.elapsedMs),
+    })),
+    recentEvents: input.events.slice(-100),
+  };
+  const dir = join(input.outRoot, 'runtime-timeouts');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${input.base}.json`), JSON.stringify(artifact, null, 2), 'utf8');
 }
 
 /** Returns false when URL is unset or the OpenAI-compatible server is not reachable. */
@@ -159,6 +253,8 @@ async function main(): Promise<void> {
     let semanticRan = false;
     let categoryGap: { before: ReturnType<typeof categoryRows>; after: ReturnType<typeof categoryRows> } | undefined;
     const appliedTools: AppliedRemediationTool[] = [];
+    const runtimeTraceEvents: RemediationRuntimeTraceEvent[] = [];
+    let verifiedCheckpointReturned = false;
 
     try {
       const buf = await readFile(inputPath);
@@ -181,12 +277,16 @@ async function main(): Promise<void> {
         playbookStore,
         toolOutcomeStore,
         signal,
+        onRuntimeTrace: event => {
+          runtimeTraceEvents.push(event);
+        },
       });
       appliedTools.push(...remediation.appliedTools);
+      verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(remediation);
       let outBuf = buffer;
       let outAfter = remediation.after;
       let outSnap = snap2;
-      if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
+      if (!verifiedCheckpointReturned && outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
         const ar = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
         if (shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
           outBuf = ar.buffer;
@@ -195,7 +295,7 @@ async function main(): Promise<void> {
         }
       }
       // Second deterministic pass: planner/tool caps often leave headroom after the first re-analyze.
-      if (outAfter.score < REMEDIATION_TARGET_SCORE) {
+      if (!verifiedCheckpointReturned && outAfter.score < REMEDIATION_TARGET_SCORE) {
         const memDb2 = new Database(':memory:');
         initSchema(memDb2);
         const r2 = await remediatePdf(outBuf, name, outAfter, outSnap, {
@@ -203,6 +303,9 @@ async function main(): Promise<void> {
           playbookStore: createPlaybookStore(memDb2),
           toolOutcomeStore: createToolOutcomeStore(memDb2),
           signal,
+          onRuntimeTrace: event => {
+            runtimeTraceEvents.push(event);
+          },
         });
         memDb2.close();
         if (r2.remediation.after.score >= outAfter.score) {
@@ -210,8 +313,9 @@ async function main(): Promise<void> {
           outAfter = r2.remediation.after;
           outSnap = r2.snapshot;
           appliedTools.push(...r2.remediation.appliedTools);
+          verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(r2.remediation);
         }
-        if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
+        if (!verifiedCheckpointReturned && outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
           const ar2 = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
           if (shouldKeepPostRemediationAltRepair(outAfter, ar2.analysis)) {
             outBuf = ar2.buffer;
@@ -224,7 +328,7 @@ async function main(): Promise<void> {
       afterDeterministicGrade = outAfter.grade;
 
       const llm = getOpenAiCompatBaseUrl();
-      if (useSemantic && outAfter.score < REMEDIATION_TARGET_SCORE && llm) {
+      if (!verifiedCheckpointReturned && useSemantic && outAfter.score < REMEDIATION_TARGET_SCORE && llm) {
         semanticRan = true;
         const opts = { timeoutMs: SEMANTIC_TIMEOUT_MS, signal };
 
@@ -302,7 +406,7 @@ async function main(): Promise<void> {
         for (let wave = 0; wave < 8 && outAfter.score < REMEDIATION_TARGET_SCORE; wave++) {
           await runSemanticWave();
         }
-      } else if (useSemantic && outAfter.score < REMEDIATION_TARGET_SCORE && !llm) {
+      } else if (!verifiedCheckpointReturned && useSemantic && outAfter.score < REMEDIATION_TARGET_SCORE && !llm) {
         console.warn(
           `[${name}] Semantic pass skipped (set OPENAI_COMPAT_BASE_URL or use --no-semantic to silence).`,
         );
@@ -325,10 +429,18 @@ async function main(): Promise<void> {
       }
       memDb.close();
     } catch (e) {
-      error = (e as Error).message;
+      error = sanitizeError(e);
     }
     clearTimeout(timeout);
     const durationMs = Date.now() - t0;
+    await writeRuntimeTimeoutTrace({
+      outRoot,
+      base,
+      file: name,
+      error,
+      durationMs,
+      events: runtimeTraceEvents,
+    });
     rows.push({
       file: name,
       pdfClassBefore,
