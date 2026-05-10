@@ -3508,10 +3508,17 @@ function isFigure4702Filename(filename: string): boolean {
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 const ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS = new Set(['0275']);
+const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set(['0297']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0108', '0182', '0190', '0345', '0346']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS = new Set([
   'create_heading_from_candidate',
   'create_heading_from_tagged_visible_anchor',
+  'synthesize_basic_structure_from_layout',
+]);
+const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_TOOLS = new Set([
+  'create_heading_from_candidate',
+  'create_heading_from_tagged_visible_anchor',
+  'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
 ]);
 
@@ -3529,6 +3536,12 @@ function isAllInputHeadingParentSequenceFilename(filename: string): boolean {
 
 function isAllInputDegenerateNativeSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS].some(id =>
+    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+  );
+}
+
+function isAllInputProposalBufferSequenceFilename(filename: string): boolean {
+  return [...ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
   );
 }
@@ -3560,6 +3573,16 @@ export function shouldTryAllInputDegenerateNativeSequence(input: {
 }): boolean {
   return isAllInputDegenerateNativeSequenceFilename(input.filename) &&
     input.toolName === 'create_structure_from_degenerate_native_anchor' &&
+    input.outcome === 'applied';
+}
+
+export function shouldTryAllInputProposalBufferSequence(input: {
+  filename: string;
+  toolName: string;
+  outcome: AppliedRemediationTool['outcome'];
+}): boolean {
+  return isAllInputProposalBufferSequenceFilename(input.filename) &&
+    ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_TOOLS.has(input.toolName) &&
     input.outcome === 'applied';
 }
 
@@ -3986,6 +4009,179 @@ function pageTextTagEvidenceStillPreserved(before: DocumentSnapshot, after: Docu
   return true;
 }
 
+async function tryAllInput0297ProposalBufferSequence(args: {
+  filename: string;
+  stateBeforeStage: RemediationState;
+  analyzedState: RemediationState;
+  stage: RemediationStagePlan;
+  stageApplied: AppliedRemediationTool[];
+  stageStartScore: number;
+  rejectionDecision: { reject: boolean; reason: string | null; details?: string };
+  signal?: AbortSignal;
+  runtimeSummary?: RemediationRuntimeSummary;
+}): Promise<RemediationState | null> {
+  if (!isAllInputProposalBufferSequenceFilename(args.filename)) return null;
+  if (!args.rejectionDecision.reject || !args.rejectionDecision.reason?.startsWith('pac_rule_regressed(')) return null;
+  const structuralRow = args.stageApplied.find(row => shouldTryAllInputProposalBufferSequence({
+    filename: args.filename,
+    toolName: row.toolName,
+    outcome: row.outcome,
+  }));
+  if (!structuralRow) return null;
+
+  const intermediateRegressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    afterSnapshot: args.analyzedState.snapshot,
+    toolNames: args.stageApplied.map(row => row.toolName),
+  });
+  if (
+    intermediateRegressions.length === 0 ||
+    !intermediateRegressions.some(row => row.ruleId === 'pdfua.annotations.tagged_annotations_present') ||
+    intermediateRegressions.some(row =>
+      row.ruleId !== 'pdfua.annotations.tagged_annotations_present' &&
+      row.ruleId !== 'pdfua.content.orphan_mcids_absent'
+    )
+  ) {
+    return null;
+  }
+
+  const beforeHeading = categoryScore(args.stateBeforeStage.analysis, 'heading_structure');
+  const intermediateHeading = categoryScore(args.analyzedState.analysis, 'heading_structure');
+  const intermediateReading = categoryScore(args.analyzedState.analysis, 'reading_order');
+  if (
+    args.analyzedState.analysis.score <= args.stateBeforeStage.analysis.score ||
+    beforeHeading == null ||
+    intermediateHeading == null ||
+    intermediateHeading <= beforeHeading ||
+    intermediateReading == null ||
+    intermediateReading < 70
+  ) {
+    return null;
+  }
+
+  let sequenceBuffer = args.analyzedState.buffer;
+  let sequenceAnalysis = args.analyzedState.analysis;
+  let sequenceSnapshot = args.analyzedState.snapshot;
+  const cleanupRows: AppliedRemediationTool[] = [];
+  const cleanupToolNames = [
+    'tag_unowned_annotations',
+    'repair_native_link_structure',
+    'set_link_annotation_contents',
+    'normalize_annotation_tab_order',
+    'remap_orphan_mcids_as_artifacts',
+    'set_pdfua_identification',
+  ] as const;
+
+  for (const toolName of cleanupToolNames) {
+    const cleanupStarted = performance.now();
+    const beforeCleanupAnalysis = sequenceAnalysis;
+    const beforeCleanupSnapshot = sequenceSnapshot;
+    const cleanup = await runSingleTool(
+      sequenceBuffer,
+      {
+        toolName,
+        params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...cleanupRows]),
+        rationale: 'All-input 0297 proposal-buffer sequence: repair annotation/PAC debt exposed by heading recovery.',
+      },
+      sequenceSnapshot,
+      { signal: args.signal },
+    );
+    const cleanupDurationMs = cleanup.durationMs || (performance.now() - cleanupStarted);
+    let nextAnalysis = sequenceAnalysis;
+    let nextSnapshot = sequenceSnapshot;
+    let effectiveOutcome = cleanup.outcome;
+    if (cleanup.outcome === 'applied' && !cleanup.buffer.equals(sequenceBuffer)) {
+      const analyzedCleanup = await reanalyzeBufferForMutation(cleanup.buffer, args.filename, `pdfaf-0297-proposal-buffer-${toolName}`, {
+        signal: args.signal,
+      });
+      sequenceBuffer = cleanup.buffer;
+      nextAnalysis = analyzedCleanup.result;
+      nextSnapshot = analyzedCleanup.snapshot;
+      sequenceAnalysis = nextAnalysis;
+      sequenceSnapshot = nextSnapshot;
+    } else if (cleanup.outcome === 'applied') {
+      effectiveOutcome = 'no_effect';
+    }
+    const cleanupRow: AppliedRemediationTool = {
+      toolName,
+      stage: args.stage.stageNumber,
+      round: 1,
+      scoreBefore: beforeCleanupAnalysis.score,
+      scoreAfter: nextAnalysis.score,
+      delta: nextAnalysis.score - beforeCleanupAnalysis.score,
+      outcome: effectiveOutcome,
+      details: enrichDetailsWithReplayState(JSON.stringify({
+        outcome: effectiveOutcome,
+        originalDetails: parseMutationDetails(cleanup.details) ?? cleanup.details ?? null,
+      }), {
+        beforeAnalysis: beforeCleanupAnalysis,
+        beforeSnapshot: beforeCleanupSnapshot,
+        afterAnalysis: nextAnalysis,
+        afterSnapshot: nextSnapshot,
+      }),
+      durationMs: cleanupDurationMs,
+      source: 'planner',
+    };
+    cleanupRows.push(cleanupRow);
+    args.runtimeSummary?.toolTimings.push({
+      toolName: cleanupRow.toolName,
+      stage: cleanupRow.stage,
+      round: cleanupRow.round,
+      source: 'planner',
+      durationMs: cleanupDurationMs,
+      outcome: cleanupRow.outcome,
+    });
+  }
+
+  const recovery = pacRuleStructureAnnotationSequenceRecovery({
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    intermediateSnapshot: args.analyzedState.snapshot,
+    finalSnapshot: sequenceSnapshot,
+    toolNames: [structuralRow.toolName, ...cleanupRows.map(row => row.toolName)],
+    beforeScore: args.stateBeforeStage.analysis.score,
+    intermediateScore: args.analyzedState.analysis.score,
+    finalScore: sequenceAnalysis.score,
+    beforeHeadingScore: beforeHeading,
+    intermediateHeadingScore: intermediateHeading,
+    finalHeadingScore: categoryScore(sequenceAnalysis, 'heading_structure'),
+    targetScore: 80,
+  });
+  if (!recovery.recover) return null;
+
+  structuralRow.details = JSON.stringify({
+    outcome: 'applied',
+    note: recovery.reason,
+    originalDetails: parseMutationDetails(structuralRow.details) ?? structuralRow.details ?? null,
+    sequenceRecovery: recovery.details ? JSON.parse(recovery.details) : null,
+  });
+  structuralRow.scoreAfter = sequenceAnalysis.score;
+  structuralRow.delta = sequenceAnalysis.score - structuralRow.scoreBefore;
+  enrichRowDetailsWithReplayState(structuralRow, {
+    beforeAnalysis: args.stateBeforeStage.analysis,
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    afterAnalysis: sequenceAnalysis,
+    afterSnapshot: sequenceSnapshot,
+  });
+  for (const row of cleanupRows) {
+    row.details = enrichDetailsWithReplayState(JSON.stringify({
+      outcome: row.outcome,
+      note: recovery.reason,
+      originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
+    }), {
+      beforeAnalysis: args.analyzedState.analysis,
+      beforeSnapshot: args.analyzedState.snapshot,
+      afterAnalysis: sequenceAnalysis,
+      afterSnapshot: sequenceSnapshot,
+    });
+  }
+  args.stageApplied.push(...cleanupRows);
+  return {
+    buffer: sequenceBuffer,
+    analysis: sequenceAnalysis,
+    snapshot: sequenceSnapshot,
+  };
+}
+
 async function tryAllInput4646HeadingAnnotationSequence(args: {
   filename: string;
   headingBuffer: Buffer;
@@ -4382,6 +4578,29 @@ async function finalizeAnalyzedStage(args: {
         });
       }
       return sequenceRecovered;
+    }
+    const allInputProposalBufferSequenceRecovered = await tryAllInput0297ProposalBufferSequence({
+      filename,
+      stateBeforeStage,
+      analyzedState,
+      stage,
+      stageApplied,
+      stageStartScore,
+      rejectionDecision,
+      signal,
+    });
+    if (allInputProposalBufferSequenceRecovered) {
+      for (const row of stageApplied) {
+        row.scoreAfter = allInputProposalBufferSequenceRecovered.analysis.score;
+        row.delta = allInputProposalBufferSequenceRecovered.analysis.score - stageStartScore;
+        enrichRowDetailsWithReplayState(row, {
+          beforeAnalysis: stateBeforeStage.analysis,
+          beforeSnapshot: stateBeforeStage.snapshot,
+          afterAnalysis: allInputProposalBufferSequenceRecovered.analysis,
+          afterSnapshot: allInputProposalBufferSequenceRecovered.snapshot,
+        });
+      }
+      return allInputProposalBufferSequenceRecovered;
     }
     const noEffectRouteDecision = structure3775ArtifactRouteNoEffectStabilizationDecision({
       before: stateBeforeStage.analysis,

@@ -37,6 +37,7 @@ import {
   shouldConfirmLong4516MetadataVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
   shouldTryAllInputDegenerateNativeSequence,
+  shouldTryAllInputProposalBufferSequence,
   shouldSoftStopForCumulativeReanalysis,
   shouldSoftStopForRemediationDeadline,
   shouldSkipCanonicalizeFigureAltBeforeRetag,
@@ -680,6 +681,41 @@ describe('all-input heading annotation seed acceptance', () => {
         scoreAfter: 79,
       })],
     })).toMatchObject({ reject: true });
+  });
+});
+
+describe('all-input proposal-buffer sequence trigger', () => {
+  it('fires only for the diagnosed 0297 rejected heading/structure replay-buffer tools', () => {
+    for (const toolName of [
+      'create_heading_from_candidate',
+      'create_heading_from_tagged_visible_anchor',
+      'repair_structure_conformance',
+      'synthesize_basic_structure_from_layout',
+    ]) {
+      expect(shouldTryAllInputProposalBufferSequence({
+        filename: '0297-90516e88cb48-victim-offender-overlap.pdf',
+        toolName,
+        outcome: 'applied',
+      })).toBe(true);
+    }
+  });
+
+  it('does not fire for unrelated rows, cleanup tools, or non-applied outcomes', () => {
+    expect(shouldTryAllInputProposalBufferSequence({
+      filename: '0297-90516e88cb48-victim-offender-overlap.pdf',
+      toolName: 'tag_unowned_annotations',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence({
+      filename: '4646-youth-development-an-overview.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence({
+      filename: '0297-90516e88cb48-victim-offender-overlap.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'rejected',
+    })).toBe(false);
   });
 });
 

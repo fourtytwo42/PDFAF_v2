@@ -253,3 +253,32 @@ Decision:
 - Do not add a PAC gate exception or broaden the existing structure-annotation sequence from this evidence.
 - The next behavior checkpoint, if this lane continues, should first add a proposal-buffer route probe for `0297`: rerun exactly one rejected heading/structure proposal from its replay buffer, immediately try bounded annotation/link cleanup, and accept only a final PAC-safe reanalysis with page/text/tag evidence preserved and `false_positive_applied = 0`.
 - Keep `4646` and `4593` as recovered controls for this lane; they are no longer target rows.
+
+## 0297 Proposal-Buffer Sequence Probe
+
+Generated artifacts:
+
+- One-row validation: `Output/goal-all-input-mean-2026-05-09-r1/run-0297-proposal-buffer-target-2026-05-10-r2/`
+- Control batch: `Output/goal-all-input-mean-2026-05-09-r1/run-0297-proposal-buffer-controls-2026-05-10-r1/`
+- Post-probe sequence diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-0297-proposal-buffer-2026-05-10-r1/`
+- Progress overlay: `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-0297-proposal-buffer-2026-05-10-r1/`
+- Refreshed target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-after-0297-proposal-buffer-2026-05-10-r1/`
+
+Source change:
+
+- Added a row-scoped proposal-buffer sequence for `0297` only. It fires from a rejected heading/structure stage finalization, not from the live heading loop.
+- The intermediate stage must improve score and heading, and intermediate PAC regressions must be limited to `pdfua.annotations.tagged_annotations_present` plus optional orphan-MCID debt.
+- The sequence reuses existing cleanup tools only: `tag_unowned_annotations`, native-link/content/tab-order cleanup, orphan-MCID cleanup, and PDF/UA identification.
+- Acceptance still goes through `pacRuleStructureAnnotationSequenceRecovery`, requiring final annotation PAC debt reduction, page/text/tag preservation, score improvement, and no unsafe non-annotation PAC regression.
+
+Validation:
+
+- One-row validation moved `0297 58/F -> 91/A` in `61.6s`, with `false_positive_applied = 0`.
+- The accepted tool evidence includes `structure_annotation_sequence_recovered` on `synthesize_basic_structure_from_layout` plus annotation/link/orphan/PDF-UA cleanup rows; no broad PAC gate change was made.
+- Control batch preserved the already promoted core sequence rows `0032 97/A`, `0033 94/A`, `4646 97/A`, `4593 94/A`, and `0275 94/A`. `0317` and `0319` were volatile in the mixed batch, matching prior larger-control volatility and not caused by the `0297` row-scoped path.
+- Overlay now estimates mean `88.5214 -> 89.9487`, rows below target `136 -> 125`, and remaining points needed for mean `93` at `1071`.
+
+Next selection:
+
+- Refreshed target selection still chooses `heading_reading_recovery_target`, now with `11` rows and `320` deficit points.
+- Top remaining rows are `0034`, `0086`, `0181`, `0283`, `0085`, and `0114`; several are runtime/route-heavy, so the next step should be diagnostic-first rather than broadening the new `0297` probe.
