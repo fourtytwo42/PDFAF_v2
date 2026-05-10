@@ -537,6 +537,89 @@ describe('all-input degenerate native sequence seed acceptance', () => {
   });
 });
 
+describe('all-input heading annotation seed acceptance', () => {
+  it('allows the diagnosed 0190 heading seed only for annotation/orphan PAC debt with score movement', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const afterSnapshot = makeSnapshot({ depth: 3 });
+    afterSnapshot.visibleAnnotationsMissingStructure = [{ page: 0, objectRef: '22 0 R', subtype: 'Link' }];
+    afterSnapshot.detectionProfile!.annotationSignals.linkAnnotationsMissingStructure = 1;
+
+    expect(shouldRejectStageResult({
+      filename: '0190-621b9b1cc3b8-3468-chicago-homicide-codebook.pdf',
+      before: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 80, pdf_ua_compliance: 79 } }),
+      after: makeAnalysis({ score: 79, categories: { heading_structure: 94, reading_order: 96, pdf_ua_compliance: 71 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('create_heading_from_candidate'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'create_heading_from_candidate',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 79,
+      })],
+    })).toMatchObject({ reject: false, reason: null });
+  });
+
+  it('rejects the 0190 heading seed when mixed PAC debt or reading regression appears', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2 });
+    const mixedSnapshot = makeSnapshot({ depth: 3 });
+    mixedSnapshot.visibleAnnotationsMissingStructure = [{ page: 0, objectRef: '22 0 R', subtype: 'Link' }];
+    mixedSnapshot.detectionProfile!.annotationSignals.linkAnnotationsMissingStructure = 1;
+    mixedSnapshot.orphanMcids = [{ page: 0, mcid: 7 }];
+    mixedSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+    beforeSnapshot.parentTreeAudit = {
+      missingParentTree: false,
+      pagesMissingStructParents: 0,
+      missingMcidParentTreeEntries: 0,
+      invalidParentTreeEntries: 0,
+      annotationReferenceMismatchCount: 0,
+      objectReferenceMismatchCount: 0,
+    };
+    mixedSnapshot.parentTreeAudit = {
+      missingParentTree: false,
+      pagesMissingStructParents: 0,
+      missingMcidParentTreeEntries: 1,
+      invalidParentTreeEntries: 0,
+      annotationReferenceMismatchCount: 0,
+      objectReferenceMismatchCount: 0,
+    };
+
+    expect(shouldRejectStageResult({
+      filename: '0190-621b9b1cc3b8-3468-chicago-homicide-codebook.pdf',
+      before: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 80, pdf_ua_compliance: 79 } }),
+      after: makeAnalysis({ score: 79, categories: { heading_structure: 94, reading_order: 96, pdf_ua_compliance: 71 } }),
+      beforeSnapshot,
+      afterSnapshot: mixedSnapshot,
+      stage: makeStage('create_heading_from_candidate'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'create_heading_from_candidate',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 79,
+      })],
+    })).toMatchObject({ reject: true });
+
+    const annotationSnapshot = makeSnapshot({ depth: 3 });
+    annotationSnapshot.visibleAnnotationsMissingStructure = [{ page: 0, objectRef: '22 0 R', subtype: 'Link' }];
+    annotationSnapshot.detectionProfile!.annotationSignals.linkAnnotationsMissingStructure = 1;
+
+    expect(shouldRejectStageResult({
+      filename: '0190-621b9b1cc3b8-3468-chicago-homicide-codebook.pdf',
+      before: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 80, pdf_ua_compliance: 79 } }),
+      after: makeAnalysis({ score: 79, categories: { heading_structure: 94, reading_order: 60, pdf_ua_compliance: 71 } }),
+      beforeSnapshot,
+      afterSnapshot: annotationSnapshot,
+      stage: makeStage('create_heading_from_candidate'),
+      stageApplied: [runtimeToolRow({
+        toolName: 'create_heading_from_candidate',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 79,
+      })],
+    })).toMatchObject({ reject: true });
+  });
+});
+
 describe('long-4516 orphan drain post-pass guard', () => {
   it('fires only after the row reaches B quality through score-moving PDF/UA top-up', () => {
     expect(shouldSkipLong4516OrphanDrainPostPassGuard({

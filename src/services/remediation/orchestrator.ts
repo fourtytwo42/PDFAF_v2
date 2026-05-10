@@ -1483,6 +1483,16 @@ export function shouldRejectStageResult(input: {
     })) {
       return { reject: false, reason: null };
     }
+    if (shouldAllowAllInputHeadingAnnotationSeed({
+      filename: input.filename,
+      before: input.before,
+      after: input.after,
+      beforeSnapshot: input.beforeSnapshot,
+      afterSnapshot: input.afterSnapshot,
+      stageApplied: input.stageApplied,
+    })) {
+      return { reject: false, reason: null };
+    }
     const recovery = pacRuleUsefulRepairRecovery({
       beforeSnapshot: input.beforeSnapshot,
       afterSnapshot: input.afterSnapshot,
@@ -3498,6 +3508,7 @@ function isFigure4702Filename(filename: string): boolean {
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 const ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS = new Set(['0275']);
+const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0190']);
 
 function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS, ...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
@@ -3513,6 +3524,12 @@ function isAllInputHeadingParentSequenceFilename(filename: string): boolean {
 
 function isAllInputDegenerateNativeSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS].some(id =>
+    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+  );
+}
+
+function isAllInputHeadingAnnotationSeedFilename(filename: string): boolean {
+  return [...ALL_INPUT_HEADING_ANNOTATION_SEED_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
   );
 }
@@ -3566,6 +3583,45 @@ function shouldAllowAllInputDegenerateNativeSeed(input: {
     beforeReading != null &&
     afterReading != null &&
     afterReading > beforeReading &&
+    pageTextTagEvidenceStillPreserved(input.beforeSnapshot, input.afterSnapshot);
+}
+
+function shouldAllowAllInputHeadingAnnotationSeed(input: {
+  filename?: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  afterSnapshot: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (!input.filename || !isAllInputHeadingAnnotationSeedFilename(input.filename)) return false;
+  if (!input.stageApplied.some(row => row.toolName === 'create_heading_from_candidate')) return false;
+  const regressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot: input.beforeSnapshot,
+    afterSnapshot: input.afterSnapshot,
+    toolNames: input.stageApplied.map(row => row.toolName),
+  });
+  if (
+    regressions.length === 0 ||
+    regressions.some(row =>
+      row.ruleId !== 'pdfua.annotations.tagged_annotations_present' &&
+      row.ruleId !== 'pdfua.content.orphan_mcids_absent'
+    )
+  ) {
+    return false;
+  }
+  const beforeHeading = categoryScore(input.before, 'heading_structure');
+  const afterHeading = categoryScore(input.after, 'heading_structure');
+  const beforeReading = categoryScore(input.before, 'reading_order');
+  const afterReading = categoryScore(input.after, 'reading_order');
+  return input.after.score >= 79 &&
+    input.after.score > input.before.score &&
+    beforeHeading != null &&
+    afterHeading != null &&
+    afterHeading > beforeHeading &&
+    beforeReading != null &&
+    afterReading != null &&
+    afterReading >= beforeReading &&
     pageTextTagEvidenceStillPreserved(input.beforeSnapshot, input.afterSnapshot);
 }
 
