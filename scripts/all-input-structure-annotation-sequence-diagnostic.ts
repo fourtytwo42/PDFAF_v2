@@ -24,6 +24,9 @@ const CLEANUP_TOOLS = new Set([
 
 export type SequenceDiagnosticClassification =
   | 'sequence_probe_candidate'
+  | 'proposal_buffer_route_gap'
+  | 'existing_recovery_observed'
+  | 'runtime_route_heavy'
   | 'annotation_blocked_no_score_movement'
   | 'mixed_non_annotation_pac_blockers'
   | 'cleanup_unproven_or_regressive'
@@ -44,6 +47,10 @@ export interface TraceRunRow {
   afterScore?: number;
   afterGrade?: string;
   afterCategories?: Array<{ key: CategoryKey | string; score: number; applicable?: boolean }>;
+  categoryGap?: {
+    after?: Array<{ key: CategoryKey | string; score: number; applicable?: boolean }>;
+  };
+  durationMs?: number;
   appliedTools?: TraceToolRow[];
 }
 
@@ -147,7 +154,7 @@ function categoryScores(value: unknown): Partial<Record<CategoryKey, number>> {
 
 function rowCategoryScores(row: TraceRunRow): Partial<Record<CategoryKey, number>> {
   const out: Partial<Record<CategoryKey, number>> = {};
-  for (const category of row.afterCategories ?? []) {
+  for (const category of row.afterCategories ?? row.categoryGap?.after ?? []) {
     if (typeof category.score === 'number') out[category.key as CategoryKey] = category.score;
   }
   return out;
@@ -210,8 +217,20 @@ function classify(row: TraceRunRow, proposals: SequenceProposal[], cleanupAttemp
       recommendation: 'Regenerate the trace with appliedTools before considering sequence behavior.',
     };
   }
+  if ((row.afterScore ?? 0) >= 90) {
+    return {
+      classification: 'existing_recovery_observed',
+      recommendation: 'Already recovered in this run; keep as a control rather than adding behavior.',
+    };
+  }
   const annotationBlocked = proposals.filter(item => item.pacRuleIds.includes('pdfua.annotations.tagged_annotations_present'));
   if (annotationBlocked.length === 0) {
+    if ((row.durationMs ?? 0) >= 240_000) {
+      return {
+        classification: 'runtime_route_heavy',
+        recommendation: 'No annotation-blocked structural proposal is visible; inspect runtime/checkpoint traces before adding behavior.',
+      };
+    }
     return {
       classification: 'no_annotation_blocked_structure',
       recommendation: 'No rejected structural proposal is blocked by tagged-annotation PAC debt.',
@@ -239,6 +258,12 @@ function classify(row: TraceRunRow, proposals: SequenceProposal[], cleanupAttemp
     };
   }
   if (cleanupAttemptCount === 0 || cleanupRegressiveCount > 0) {
+    if (cleanupAttemptCount === 0) {
+      return {
+        classification: 'proposal_buffer_route_gap',
+        recommendation: 'Score-moving proposal is visible only in rejected replay evidence; diagnose a proposal-buffer cleanup path before adding behavior.',
+      };
+    }
     return {
       classification: 'cleanup_unproven_or_regressive',
       recommendation: 'A sequence could be investigated, but current cleanup attempts are missing or regressive; run a bounded cleanup proof first.',
@@ -298,6 +323,15 @@ export function buildStructureAnnotationSequenceDiagnostic(input: {
   };
 }
 
+function normalizedRows(parsed: unknown): TraceRunRow[] {
+  if (Array.isArray(parsed)) return parsed as TraceRunRow[];
+  const record = asRecord(parsed);
+  if (!record) return [];
+  if (Array.isArray(record.rows)) return record.rows as TraceRunRow[];
+  if (Array.isArray(record.results)) return record.results as TraceRunRow[];
+  return [];
+}
+
 function renderMarkdown(report: StructureAnnotationSequenceDiagnostic): string {
   const lines: string[] = [];
   lines.push('# All-Input Structure/Annotation Sequence Diagnostic');
@@ -307,6 +341,11 @@ function renderMarkdown(report: StructureAnnotationSequenceDiagnostic): string {
   lines.push(`- Rows: ${report.summary.rowCount}`);
   lines.push(`- Sequence probe candidates: ${report.summary.sequenceProbeCandidateCount}`);
   lines.push(`- Annotation-blocked no-score-movement rows: ${report.summary.annotationBlockedNoScoreMovementCount}`);
+  const classificationCounts = new Map<string, number>();
+  for (const row of report.rows) {
+    classificationCounts.set(row.classification, (classificationCounts.get(row.classification) ?? 0) + 1);
+  }
+  lines.push(`- Classifications: ${[...classificationCounts.entries()].map(([key, count]) => `${key}=${count}`).join(', ') || 'none'}`);
   lines.push('');
   lines.push('| File | Score | Class | Annotation-blocked | Score-moving | Cleanup attempts | Cleanup regressions | Best proposal | Recommendation |');
   lines.push('| --- | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |');
@@ -339,9 +378,9 @@ function renderMarkdown(report: StructureAnnotationSequenceDiagnostic): string {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const parsed = JSON.parse(await readFile(args.trace, 'utf8')) as { rows?: TraceRunRow[] };
+  const parsed = JSON.parse(await readFile(args.trace, 'utf8')) as unknown;
   const report = buildStructureAnnotationSequenceDiagnostic({
-    rows: parsed.rows ?? [],
+    rows: normalizedRows(parsed),
     traceSource: args.trace,
   });
   await mkdir(args.out, { recursive: true });

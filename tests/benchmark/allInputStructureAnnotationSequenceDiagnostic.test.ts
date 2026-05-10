@@ -203,4 +203,108 @@ describe('all-input structure annotation sequence diagnostic', () => {
       scoreMovingProposalCount: 2,
     }));
   });
+
+  it('classifies missing cleanup as a proposal-buffer route gap', () => {
+    const report = buildStructureAnnotationSequenceDiagnostic({
+      rows: [
+        row({
+          file: 'proposal-buffer-gap.pdf',
+          appliedTools: [
+            tool({
+              toolName: 'create_heading_from_candidate',
+              details: details({
+                pacRules: ['pdfua.annotations.tagged_annotations_present', 'pdfua.content.orphan_mcids_absent'],
+                scoreBefore: 56,
+                scoreAfter: 79,
+                headingBefore: 0,
+                headingAfter: 95,
+                readingBefore: 96,
+                readingAfter: 79,
+              }),
+            }),
+          ],
+        }),
+      ],
+    });
+
+    expect(report.rows[0]).toEqual(expect.objectContaining({
+      classification: 'proposal_buffer_route_gap',
+      cleanupAttemptCount: 0,
+      scoreMovingProposalCount: 1,
+    }));
+  });
+
+  it('reads final category scores from baseline_report categoryGap rows', () => {
+    const report = buildStructureAnnotationSequenceDiagnostic({
+      rows: [
+        {
+          file: 'baseline-report-row.pdf',
+          afterScore: 77,
+          afterGrade: 'C',
+          categoryGap: {
+            after: [
+              { key: 'heading_structure', score: 95 },
+              { key: 'reading_order', score: 79 },
+            ],
+          },
+          appliedTools: [
+            tool({
+              toolName: 'create_heading_from_candidate',
+              details: details({
+                pacRules: ['pdfua.annotations.tagged_annotations_present'],
+                scoreBefore: 50,
+                scoreAfter: 80,
+                headingBefore: 0,
+                headingAfter: 95,
+              }),
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(report.rows[0].categories).toEqual(expect.objectContaining({
+      heading_structure: 95,
+      reading_order: 79,
+    }));
+    expect(report.rows[0].classification).toBe('proposal_buffer_route_gap');
+  });
+
+  it('separates already recovered and runtime-heavy rows from behavior candidates', () => {
+    const report = buildStructureAnnotationSequenceDiagnostic({
+      rows: [
+        row({
+          file: 'already-a.pdf',
+          afterScore: 94,
+          afterGrade: 'A',
+          appliedTools: [
+            tool({
+              toolName: 'create_heading_from_candidate',
+              details: details({
+                pacRules: ['pdfua.annotations.tagged_annotations_present'],
+                scoreBefore: 48,
+                scoreAfter: 82,
+                headingBefore: 0,
+                headingAfter: 94,
+              }),
+            }),
+          ],
+        }),
+        {
+          file: 'runtime-heavy.pdf',
+          afterScore: 59,
+          afterGrade: 'F',
+          durationMs: 300_001,
+          appliedTools: [
+            tool({ toolName: 'set_document_title', outcome: 'applied', details: JSON.stringify({ outcome: 'applied' }) }),
+          ],
+        },
+      ],
+    });
+
+    expect(report.rows.map(item => `${item.file}:${item.classification}`).sort()).toEqual([
+      'already-a.pdf:existing_recovery_observed',
+      'runtime-heavy.pdf:runtime_route_heavy',
+    ]);
+  });
 });

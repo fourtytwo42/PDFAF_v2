@@ -229,3 +229,27 @@ Source change:
 - The API route and `scripts/baseline-corpus-batch.ts` now use that guard for direct post-alt cleanup paths. The main orchestrator was already using guarded post-pass acceptance.
 - Focused source validation on `4519` completed `35/F -> 60/D` without accepting a lower final cleanup state.
 - Focused 12-row heading/reading validation after the guard completed at mean `42.58 -> 59.25`; every row improved, `4574` reached `93/A`, and `4519` completed `35/F -> 59/F` instead of accepting the API-observed `45/F` cleanup regression. This guard is an honesty fix, not a mean-recovery stage by itself.
+
+## Structure/Annotation Route-Gap Diagnostic Refresh
+
+Generated artifacts:
+
+- Current `0297` diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-0297-current-2026-05-10-r1/`
+- Existing-code heading batch diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-next-heading-existing-2026-05-10-r1/`
+
+Source update:
+
+- `scripts/all-input-structure-annotation-sequence-diagnostic.ts` now reads both older `trace.results.json` rows and newer `baseline_report.json` rows where final categories live under `categoryGap.after`.
+- The diagnostic now separates already recovered rows, runtime-heavy rows, and `proposal_buffer_route_gap` rows where score-moving structural proposals only exist inside rejected replay details and cleanup tools were never attempted from that proposal buffer.
+
+Findings:
+
+- `0297` is classified as `proposal_buffer_route_gap`, not a safe behavior candidate yet. It has `8` score-moving heading/structure proposals blocked by `pdfua.annotations.tagged_annotations_present`, including proposals from replay state `39e7ccfa445072673b7fd69d` moving score `56 -> 79` and heading `0 -> 95`, but the production route has `0` annotation/link cleanup attempts after those rejected proposal buffers.
+- The current `0297` evidence matches prior API/source artifacts showing an A-grade path may exist, but the source orchestrator does not yet expose a reliable extension point for accepting the combined proposal-buffer plus cleanup state.
+- The latest existing-code heading batch has `4` rows already recovered (`0072`, `0097`, `0149`, `0235`) and `4` rows with no annotation-blocked structural proposal in the current route (`0068`, `0069`, `0073`, `0284`).
+
+Decision:
+
+- Do not add a PAC gate exception or broaden the existing structure-annotation sequence from this evidence.
+- The next behavior checkpoint, if this lane continues, should first add a proposal-buffer route probe for `0297`: rerun exactly one rejected heading/structure proposal from its replay buffer, immediately try bounded annotation/link cleanup, and accept only a final PAC-safe reanalysis with page/text/tag evidence preserved and `false_positive_applied = 0`.
+- Keep `4646` and `4593` as recovered controls for this lane; they are no longer target rows.
