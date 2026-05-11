@@ -117,3 +117,40 @@ Overlay impact after deterministic accepted rows plus source-reanalyzed semantic
 - Estimated mean: `88.5214 -> 91.1453`
 - Rows below target: `136 -> 124`
 - Points still needed for mean `93`: `651`
+
+## Fresh r3 Follow-Up: 0184
+
+Fresh all-input validation r3 exposed the same rejected proposal-buffer shape on a new high-deficit row:
+
+- `0184-cf903e931d5d-4605-addressing-opioid-use-disorders-in-community-corrections-a-survey-of-ill.pdf`
+
+Diagnostic artifact:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/proposal-materialization-current-high-deficit-2026-05-11-r1/`
+
+The best rejected proposal was PAC-bounded by `pdfua.annotations.tagged_annotations_present`, improved total score and heading structure, and had no cleanup attempted from the proposed buffer. The row is now added to the existing row-scoped proposal-buffer sequence ID set. This does not change PAC scoring, PAC gates, timeout policy, planner breadth outside the diagnosed ID, or add a new mutator.
+
+Focused validation:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-proposal-buffer-0184-target-2026-05-11-r1`
+
+Results:
+
+| Row | Result | Notes |
+| --- | ---: | --- |
+| `0184` | `46/F -> 95/A` | Accepted through `structure_annotation_sequence_recovered`; `false_positive_applied = 0`. |
+| `0194` | `42/F -> 94/A` | Existing proposal-buffer control remains recovered; `false_positive_applied = 0`. |
+| `0200` | `49/F -> 59/F` | Still does not reproduce deterministic recovery; remains excluded. |
+
+Updated planning overlay:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-reading-shell-prefixed-plus-0184-2026-05-11-r1`
+
+Overlay impact relative to fresh r3:
+
+- Mean: `91.2023 -> 92.5356`
+- Rows below `93`: `58 -> 45`
+- Points still needed for mean `93`: `631 -> 163`
+- `false_positive_applied = 0`
+
+The all-input goal remains open. The next behavior should target the remaining stable high-deficit rows; do not promote `0200` without fresh deterministic proof.

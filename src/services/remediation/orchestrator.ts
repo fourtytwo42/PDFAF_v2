@@ -3598,6 +3598,7 @@ const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set([
   '0057',
   '0119',
   '0121',
+  '0184',
   '0194',
   '0201',
   '0297',

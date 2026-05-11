@@ -701,6 +701,7 @@ describe('all-input proposal-buffer sequence trigger', () => {
         '0057-0a57112fbecb-4057-chri-audit.pdf',
         '0119-dcdceee8fe93-focus-groups.pdf',
         '0121-b22fc444e9cf-school-personnel-readiness.pdf',
+        '0184-cf903e931d5d-addressing-opioid-use-disorders.pdf',
         '0194-9ea32badb1b4-juvenile-recidivism.pdf',
         '0201-d57d1ae9986e-statewide-violence-prevention.pdf',
         '0297-90516e88cb48-victim-offender-overlap.pdf',
