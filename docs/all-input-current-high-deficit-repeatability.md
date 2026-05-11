@@ -142,3 +142,66 @@ Validation:
 - `npx -y node@22 /usr/bin/pnpm lint`
 
 The temporary `llama-server` was stopped after the smoke. This did not add score movement, but it keeps future semantic probes honest.
+
+## Residual Route And Tail Follow-Up
+
+After the `0184` proposal-buffer recovery, the updated overlay is:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-reading-shell-prefixed-plus-0184-2026-05-11-r1`
+- Mean: `91.2023 -> 92.5356`
+- Rows below `93`: `58 -> 45`
+- Points still needed for mean `93`: `631 -> 163`
+- `false_positive_applied = 0`
+
+Updated target selection:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/target-selection-after-0184-overlay-2026-05-11-r1`
+
+The top remaining classes are:
+
+- `needs_more_pac_object_evidence`: `8` rows / `198` raw deficit.
+- `heading_reading_recovery_target`: `7` rows / `188` raw deficit.
+- `alt_recovery_target`: `4` rows / `122` raw deficit.
+- `table_header_recovery_target`: `5` rows / `93` raw deficit.
+- parked runtime debt: `structure-4438`.
+
+Focused residual route rerun:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-current-residual-route-2026-05-11-r1`
+
+Results:
+
+| Row | Result | Decision |
+| --- | ---: | --- |
+| `0085 / 4215` | `59/F` | No current-code route movement. |
+| `0108 / 4614` | `59/F` | Confirms prior text-semantic/no-route result. |
+| `0114 / 4587` | hard timeout | Trace shows only `38/F` verified checkpoints and late repeated `set_figure_alt_text`; no safe checkpoint return. |
+| `0181 / 4519` | `69/D` | Small non-regressive route movement only. |
+| `0208 / 4446` | hard timeout | Trace shows only `44/F` verified checkpoints and late repeated `set_figure_alt_text`; no safe checkpoint return. |
+| `0236 / 4705` | `59/F` | No current-code route movement. |
+
+Overlay with the residual rerun:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-plus-residual-route-2026-05-11-r1`
+- Mean: `91.2023 -> 92.5641`
+- Rows below `93`: `58 -> 45`
+- Points still needed for mean `93`: `631 -> 153`
+
+Focused alt/table rerun:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-current-alt-table-2026-05-11-r1`
+
+Rows `0120`, `0135`, `0136`, and `0223` repeated their low outcomes (`65/D`, `59/F`, `59/F`, `68/D`). This did not add overlay movement.
+
+Special diagnostic timeout run:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-0208-alt-tail-long-timeout-2026-05-11-r1`
+
+`0208` was allowed a one-off `600000ms` wall for evidence only and still finished `59/F`. Late `set_figure_alt_text` churn is therefore not hiding a high-quality final state; do not raise default timeouts or add a broad final-reanalysis/alt-tail guard from this evidence.
+
+Decision:
+
+- Do not continue retry-only validation for these residual rows.
+- Do not lower PAC strictness, checkpoint floors, or timeout defaults.
+- `0200` remains excluded from proposal-buffer behavior; it still does not reproduce deterministic recovery.
+- The remaining path to mean `93` needs real object-level remediation or PAC parity evidence, likely from table/alt mixed rows or a dedicated `structure-4438`/runtime project, not another overlay-only rerun.
