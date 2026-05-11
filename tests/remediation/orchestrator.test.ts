@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allInput0316TabOrderRouteGuardDecision,
   allInput0346OrphanRemapRouteGuardDecision,
   compareStructuralConfidence,
   buildReplayStateSignature,
@@ -1062,6 +1063,76 @@ describe('all-input 0346 orphan remap route guard', () => {
       before,
       after: makeAnalysis({ score: 59, categories: { heading_structure: 60, reading_order: 79, link_quality: 0 } }),
       stageApplied: [remapTool],
+    }).reject).toBe(false);
+  });
+});
+
+describe('all-input 0316 tab-order route guard', () => {
+  const tabOrderTool = makePostPassTool({
+    toolName: 'normalize_annotation_tab_order',
+    outcome: 'applied',
+    scoreBefore: 59,
+    scoreAfter: 59,
+    source: 'planner',
+    stage: 3,
+    details: JSON.stringify({
+      debug: {
+        replayState: {
+          stateSignatureBefore: 'e86a81707834dced17a90956',
+        },
+      },
+    }),
+  });
+
+  it('rejects only the proven no-category-movement tab-order route on 0316', () => {
+    expect(allInput0316TabOrderRouteGuardDecision({
+      filename: '0316-6671b1751c26-4553-reducing-substance-use-disorders-and-related-offending-a-continuum-of-ev.pdf',
+      before: makeAnalysis({
+        score: 59,
+        categories: { heading_structure: 0, reading_order: 96, link_quality: 100 },
+      }),
+      after: makeAnalysis({
+        score: 59,
+        categories: { heading_structure: 0, reading_order: 96, link_quality: 100 },
+      }),
+      stageApplied: [tabOrderTool],
+    })).toMatchObject({
+      reject: true,
+      reason: 'all_input_0316_tab_order_route_guard',
+    });
+  });
+
+  it('does not reject unrelated rows, replay states, or category-beneficial tab-order work', () => {
+    const before = makeAnalysis({
+      score: 59,
+      categories: { heading_structure: 0, reading_order: 79, link_quality: 79 },
+    });
+    const after = makeAnalysis({
+      score: 59,
+      categories: { heading_structure: 0, reading_order: 79, link_quality: 79 },
+    });
+    expect(allInput0316TabOrderRouteGuardDecision({
+      filename: '0315-report.pdf',
+      before,
+      after,
+      stageApplied: [tabOrderTool],
+    }).reject).toBe(false);
+    expect(allInput0316TabOrderRouteGuardDecision({
+      filename: '0316-report.pdf',
+      before,
+      after,
+      stageApplied: [
+        {
+          ...tabOrderTool,
+          details: JSON.stringify({ debug: { replayState: { stateSignatureBefore: 'other-state' } } }),
+        },
+      ],
+    }).reject).toBe(false);
+    expect(allInput0316TabOrderRouteGuardDecision({
+      filename: '0316-report.pdf',
+      before,
+      after: makeAnalysis({ score: 59, categories: { heading_structure: 0, reading_order: 96, link_quality: 79 } }),
+      stageApplied: [tabOrderTool],
     }).reject).toBe(false);
   });
 });
