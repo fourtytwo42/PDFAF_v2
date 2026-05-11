@@ -2,7 +2,7 @@
 
 Date: 2026-05-11
 
-This diagnostic aggregates the existing per-row route recovery reports for the all-input mean goal after the fresh r4 checkpoint.
+This diagnostic aggregates the existing per-row route recovery reports for the all-input mean goal. The original report was written after fresh r4; the update below records the complete-r5 refresh after all eight shards finished.
 
 ## Artifacts
 
@@ -92,3 +92,28 @@ Decision refinement:
 - `0086`, `4139`, and `0325` need analyzer determinism or evidence canonicalization before route behavior.
 - `0108`, `0236`, `0097`, and `0316` should be treated as remediation-stage transaction/planner volatility, not raw source-analyzer volatility.
 - `0108` remains the best focused same-state transaction probe, but prior evidence shows its bad route can regress alt/table evidence, so any behavior must materialize and accept only a final PAC-safe combined state.
+
+## Complete-r5 Refresh
+
+Follow-up artifact:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/route-volatility-aggregate-r5-complete-2026-05-11-r1`
+
+The complete-r5 aggregate scanned `25` route recovery diagnostics:
+
+- `4` same-state guard probes needed
+- `17` upstream route-volatility rows
+- `3` missing score-moving tool rows
+- `1` no-safe-route-proof row
+- Total observed score spread: `900`
+
+The same-state probe rows remain:
+
+- `0108 / 4614`: still the cleanest focused transaction probe, but prior explicit sequence probing did not reproduce the one-off `94/A` route and showed unsafe alt/table movement in intermediate states.
+- `0086 / 4567`: shared native-link state exists, but source analyzer repeats showed initial analysis variance; do not add a route guard without analyzer-stable proof.
+- `0248`: already recovered by accepted reading-shell behavior; do not reopen unless it regresses in a fresh full run.
+- `4139`: has same-state language/title evidence in older route diagnostics, but source/repeat evidence is mixed with analyzer or route volatility; keep diagnostic-only.
+
+The new `0346` repeats do not create a guard candidate. Three one-row current-code repeats landed `59/F`, `91/A`, and `94/A`, but route comparisons classify the miss as `upstream_route_volatility`: the low route takes `remap_orphan_mcids_as_artifacts@312fa263390e741c26f9476b:51->59`, while the high routes later reach heading/link/parent-link recovery. There is no shared rejected score-moving state.
+
+Decision remains unchanged: do not weaken PAC gates, do not add broad route suppression, and do not count volatile one-off high routes toward the mean goal. The next behavior branch should be either one final PAC-safe transaction probe for an analyzer-stable same-state row, or a separate analyzer/route determinism design.
