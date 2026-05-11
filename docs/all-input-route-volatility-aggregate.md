@@ -65,3 +65,30 @@ Unsafe branches:
 - Counting one-off high routes as mean-goal completion.
 - Broad table/header batching.
 - Lowering timeout defaults or checkpoint floors.
+
+## Source Analyzer Repeat
+
+Follow-up artifact:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/source-analyzer-repeat-volatile-2026-05-11-r1`
+
+This repeated source analysis three times for the volatile focus rows before remediation tools ran.
+
+Initial analyzer score variance was present on:
+
+- `0086 / 4567`: `59, 46, 46`; largest category swings were `table_markup 0 -> 100`, `alt_text 0 -> 88`, and `heading_structure 0 -> 60`.
+- `0084 / 4139`: `29, 31, 47`; largest swings were `alt_text 20 -> 100` and `heading_structure 0 -> 74`.
+- `0325 / 4693`: `54, 59, 59`; largest swings were `alt_text 0 -> 100`, `heading_structure 0 -> 96`, and `table_markup 79 -> 100`.
+
+Initial analyzer scores were stable on:
+
+- `0108 / 4614`: `45, 45, 45`.
+- `0236 / 4705`: `45, 45, 45`.
+- `0097 / 4694`: `52, 52, 52`.
+- `0316 / 4553`: `51, 51, 51`.
+
+Decision refinement:
+
+- `0086`, `4139`, and `0325` need analyzer determinism or evidence canonicalization before route behavior.
+- `0108`, `0236`, `0097`, and `0316` should be treated as remediation-stage transaction/planner volatility, not raw source-analyzer volatility.
+- `0108` remains the best focused same-state transaction probe, but prior evidence shows its bad route can regress alt/table evidence, so any behavior must materialize and accept only a final PAC-safe combined state.
