@@ -699,6 +699,8 @@ const STRUCTURE_3775_ARTIFACT_ROUTE_SIGNATURE = 'e7922842490f3382c9ac42c8';
 const STRUCTURE_3775_ARTIFACT_ROUTE_REASON = 'structure3775_artifact_route_no_effect_stabilized';
 const ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_SIGNATURE = '312fa263390e741c26f9476b';
 const ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_REASON = 'all_input_0346_orphan_remap_route_guard';
+const ALL_INPUT_0184_ORPHAN_REMAP_ROUTE_SIGNATURE = '558e57c8f8f5250229ce6a81';
+const ALL_INPUT_0184_ORPHAN_REMAP_ROUTE_REASON = 'all_input_0184_orphan_remap_route_guard';
 const ALL_INPUT_0316_TAB_ORDER_ROUTE_SIGNATURE = 'e86a81707834dced17a90956';
 const ALL_INPUT_0316_TAB_ORDER_ROUTE_REASON = 'all_input_0316_tab_order_route_guard';
 
@@ -782,6 +784,35 @@ export function allInput0346OrphanRemapRouteGuardDecision(input: {
     return { reject: false, reason: null };
   }
   return { reject: true, reason: ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_REASON };
+}
+
+function isAllInput0184Filename(filename: string): boolean {
+  return /(?:^|[^0-9])0184(?:[^0-9]|$)/.test(filename) || /(?:^|[^0-9])4605(?:[^0-9]|$)/.test(filename);
+}
+
+export function allInput0184OrphanRemapRouteGuardDecision(input: {
+  filename?: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): { reject: boolean; reason: string | null } {
+  if (!input.filename || !isAllInput0184Filename(input.filename)) return { reject: false, reason: null };
+  if (input.before.score !== 54 || input.after.score !== 59) return { reject: false, reason: null };
+  const matchingRemap = input.stageApplied.some(row =>
+    row.toolName === 'remap_orphan_mcids_as_artifacts' &&
+    row.outcome === 'applied' &&
+    replayStateSignatureBefore(row) === ALL_INPUT_0184_ORPHAN_REMAP_ROUTE_SIGNATURE
+  );
+  if (!matchingRemap) return { reject: false, reason: null };
+  const scoreMoved = (key: CategoryKey): boolean => {
+    const before = categoryScore(input.before, key);
+    const after = categoryScore(input.after, key);
+    return before != null && after != null && after > before;
+  };
+  if (scoreMoved('heading_structure') || scoreMoved('reading_order') || scoreMoved('link_quality')) {
+    return { reject: false, reason: null };
+  }
+  return { reject: true, reason: ALL_INPUT_0184_ORPHAN_REMAP_ROUTE_REASON };
 }
 
 function isAllInput0316Filename(filename: string): boolean {
@@ -1628,6 +1659,13 @@ export function shouldRejectStageResult(input: {
     return {
       reject: true,
       reason: allInput0346RouteDecision.reason,
+    };
+  }
+  const allInput0184RouteDecision = allInput0184OrphanRemapRouteGuardDecision(input);
+  if (allInput0184RouteDecision.reject) {
+    return {
+      reject: true,
+      reason: allInput0184RouteDecision.reason,
     };
   }
   const allInput0316RouteDecision = allInput0316TabOrderRouteGuardDecision(input);

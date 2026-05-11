@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allInput0184OrphanRemapRouteGuardDecision,
   allInput0316TabOrderRouteGuardDecision,
   allInput0346OrphanRemapRouteGuardDecision,
   compareStructuralConfidence,
@@ -1063,6 +1064,82 @@ describe('all-input 0346 orphan remap route guard', () => {
       before,
       after: makeAnalysis({ score: 59, categories: { heading_structure: 60, reading_order: 79, link_quality: 0 } }),
       stageApplied: [remapTool],
+    }).reject).toBe(false);
+  });
+});
+
+describe('all-input 0184 orphan remap route guard', () => {
+  const remapTool = makePostPassTool({
+    toolName: 'remap_orphan_mcids_as_artifacts',
+    outcome: 'applied',
+    scoreBefore: 54,
+    scoreAfter: 59,
+    source: 'planner',
+    stage: 2,
+    details: JSON.stringify({
+      debug: {
+        replayState: {
+          stateSignatureBefore: '558e57c8f8f5250229ce6a81',
+        },
+      },
+    }),
+  });
+
+  it('rejects only the proven low-movement orphan-remap route on 0184', () => {
+    expect(allInput0184OrphanRemapRouteGuardDecision({
+      filename: '0184-cf903e931d5d-4605-addressing-opioid-use-disorders-in-community-corrections-a-survey-of-ill.pdf',
+      before: makeAnalysis({
+        score: 54,
+        categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
+      }),
+      after: makeAnalysis({
+        score: 59,
+        categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
+      }),
+      stageApplied: [remapTool],
+    })).toMatchObject({
+      reject: true,
+      reason: 'all_input_0184_orphan_remap_route_guard',
+    });
+  });
+
+  it('does not reject unrelated rows, replay states, category-beneficial remaps, or high-movement route', () => {
+    const before = makeAnalysis({
+      score: 54,
+      categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
+    });
+    const after = makeAnalysis({
+      score: 59,
+      categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
+    });
+    expect(allInput0184OrphanRemapRouteGuardDecision({
+      filename: '0183-report.pdf',
+      before,
+      after,
+      stageApplied: [remapTool],
+    }).reject).toBe(false);
+    expect(allInput0184OrphanRemapRouteGuardDecision({
+      filename: '0184-report.pdf',
+      before,
+      after,
+      stageApplied: [
+        {
+          ...remapTool,
+          details: JSON.stringify({ debug: { replayState: { stateSignatureBefore: 'other-state' } } }),
+        },
+      ],
+    }).reject).toBe(false);
+    expect(allInput0184OrphanRemapRouteGuardDecision({
+      filename: '0184-report.pdf',
+      before,
+      after: makeAnalysis({ score: 59, categories: { heading_structure: 94, reading_order: 79, link_quality: 100 } }),
+      stageApplied: [remapTool],
+    }).reject).toBe(false);
+    expect(allInput0184OrphanRemapRouteGuardDecision({
+      filename: '0184-report.pdf',
+      before,
+      after: makeAnalysis({ score: 82, categories: { heading_structure: 94, reading_order: 79, link_quality: 100 } }),
+      stageApplied: [{ ...remapTool, scoreAfter: 82 }],
     }).reject).toBe(false);
   });
 });
