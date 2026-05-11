@@ -115,3 +115,35 @@ Next diagnostic direction:
   pattern. The current behavior is intentionally row-scoped.
 - Keep `0057` and `4722` parked for this lane until a safer object-level table/ParentTree target is
   proven.
+
+## 2026-05-11 Fresh R3 Follow-Up
+
+After the fresh all-input r3 checkpoint and the validated reading-shell / proposal-buffer overlays,
+`4722` was rechecked as a possible source of the remaining mean gap because older edge-mix history
+had shown a table-normalization lift on a similarly named row.
+
+Artifacts:
+
+- Current one-row run:
+  `Output/goal-all-input-mean-2026-05-09-r1/run-current-probe-4722-2026-05-11-r1`
+- Current one-row sequence probe:
+  `Output/goal-all-input-mean-2026-05-09-r1/table-structure-sequence-probe-4722-2026-05-11-r1`
+- Companion current one-row run for `4147`:
+  `Output/goal-all-input-mean-2026-05-09-r1/run-current-probe-4147-2026-05-11-r1`
+
+Results:
+
+- `4722` repeats at `69/D` under current source. `normalize_table_structure` can move table markup
+  locally, but it is rejected in the production path because
+  `pdfua.table.header_association_present` worsens.
+- The explicit table/structure sequence probe for `4722` found `0` safe sequence candidates. The
+  best table sequence moved table markup `0 -> 72` but increased table-header PAC debt
+  `1150 -> 1209` and was classified as `harmful_pac_regression`.
+- `4147` also repeats at `69/D` under current source.
+
+Decision:
+
+- Do not use the older edge-mix `4722` result as current all-input acceptance evidence.
+- Do not add a PAC exception for table-header count increases.
+- Keep the table lane parked until a direct object-level header/ParentTree repair can reduce PAC
+  table debt after normalization, not merely improve the internal table markup category.

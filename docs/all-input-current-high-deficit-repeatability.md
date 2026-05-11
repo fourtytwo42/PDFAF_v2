@@ -205,3 +205,18 @@ Decision:
 - Do not lower PAC strictness, checkpoint floors, or timeout defaults.
 - `0200` remains excluded from proposal-buffer behavior; it still does not reproduce deterministic recovery.
 - The remaining path to mean `93` needs real object-level remediation or PAC parity evidence, likely from table/alt mixed rows or a dedicated `structure-4438`/runtime project, not another overlay-only rerun.
+
+Additional 2026-05-11 route checks:
+
+- Semantic reproduction check for `0114`:
+  `Output/goal-all-input-mean-2026-05-09-r1/semantic-smoke-0114-2026-05-11-r1`.
+  A temporary local text-only `llama-server` was started on `127.0.0.1:1234` and stopped after the
+  one-row run. The run reached semantic promote-heading calls but accepted `0` semantic proposals
+  and finished `59/F`. The older source-reanalyzed semantic overlay for `0114` is therefore not
+  reproducible with the available local text model and current source guards.
+- Route comparison diagnostics:
+  `route-recovery-0108-semantic-vs-current-2026-05-11-r1` classifies `0108` as upstream route
+  volatility; `route-recovery-0114-semantic-vs-current-2026-05-11-r1` confirms the current route
+  hard-times out before the old score-moving sequence is emitted.
+- Table follow-up checks for `4722` and `4147` are documented in
+  `docs/all-input-table-structure-sequence-probe.md`; both remain parked under current source.
