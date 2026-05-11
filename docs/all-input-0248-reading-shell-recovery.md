@@ -57,6 +57,26 @@ Targeted:
 
 The first targeted run contains one stale-symlink `0216` row with `ENOENT`; it is superseded by the corrected single-row control run above.
 
+Cluster validation:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-reading-shell-cluster-2026-05-11-r1`
+  - `0238`: `97/A`
+  - `0239`: `97/A`
+  - `0240`: `97/A`
+  - `0241`: `97/A`
+  - `0242`: `95/A`
+  - `0243`: `97/A`
+  - `0248`: `98/A`
+  - `0213`: remained `69/D`
+  - `false_positive_applied = 0`
+
+Progress overlay:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-reading-shell-cluster-2026-05-11-r1`
+  - Fresh r3 mean projection: `91.2023 -> 91.7578`
+  - Rows below `93`: `58 -> 51`
+  - Points needed for mean `93`: `631 -> 436`
+
 Source checks:
 
 - `python3 -m py_compile python/pdf_analysis_helper.py`
