@@ -60,3 +60,21 @@ The next behavior stage, if pursued, should be a narrow `0136` many-figure-alt b
 - validate targeted controls before any all-input shard refresh.
 
 Do not promote one-by-one second-pass alt routing from the current evidence.
+
+## Rejected Behavior Probe
+
+A first row-scoped planner/Python batch attempt was tested and rejected after this diagnostic. Targeted validation:
+
+`Output/goal-all-input-mean-2026-05-09-r1/run-alt-batch-0136-target-2026-05-11-r1`
+
+Result:
+
+- `0136` stayed `59/F`.
+- `0149` regressed to `79/C` in the same control run.
+- `false_positive_applied` stayed `0`, but the score movement was not acceptable.
+
+Decision:
+
+- the attempted source behavior was backed out;
+- do not reintroduce that planner-level `structRefs` batch shape without new proof;
+- the next alt branch needs a different route, likely a protected second-pass or post-ownership design that proves `0136` movement from the real source route before touching controls.
