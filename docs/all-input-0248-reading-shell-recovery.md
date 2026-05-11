@@ -70,12 +70,32 @@ Cluster validation:
   - `0213`: remained `69/D`
   - `false_positive_applied = 0`
 
+Follow-up branch-order validation:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-reading-shell-cluster-2026-05-11-r2`
+  - `0213`: `97/A`
+  - `0238`: `97/A`
+  - `0239`: `97/A`
+  - `0240`: `97/A`
+  - `0241`: `97/A`
+  - `0242`: `95/A`
+  - `0243`: `93/A`
+  - `0248`: `98/A`
+  - `false_positive_applied = 0`
+
+The follow-up fixed the useful-repair recovery branch order. A mixed stage containing both `normalize_heading_hierarchy` and `repair_degenerate_native_reading_order_shell` can now use the stricter reading-shell criteria instead of being rejected by the heading-only no-movement branch. Heading-only no-movement proposals still reject.
+
 Progress overlay:
 
 - `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-reading-shell-cluster-2026-05-11-r1`
   - Fresh r3 mean projection: `91.2023 -> 91.7578`
   - Rows below `93`: `58 -> 51`
   - Points needed for mean `93`: `631 -> 436`
+- `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-reading-shell-r2-plus-alt-candidates-2026-05-11-r1`
+  - Includes the follow-up cluster plus the `0216` alt-candidate repeat.
+  - Fresh r3 mean projection: `91.2023 -> 91.8775`
+  - Rows below `93`: `58 -> 49`
+  - Points needed for mean `93`: `631 -> 394`
 
 Source checks:
 

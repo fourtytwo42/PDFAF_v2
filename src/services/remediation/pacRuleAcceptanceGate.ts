@@ -208,10 +208,7 @@ export function pacRuleUsefulRepairRecovery(input: {
     input.afterHeadingScore != null &&
     input.afterHeadingScore > input.beforeHeadingScore
   );
-  if (isHeadingCandidateRepair || isHeadingHierarchyRepair) {
-    if (!scoreImproved || !headingImproved) {
-      return { recover: false, reason: null };
-    }
+  if ((isHeadingCandidateRepair || isHeadingHierarchyRepair) && scoreImproved && headingImproved) {
     const toolName = isHeadingCandidateRepair ? 'create_heading_from_candidate' : 'normalize_heading_hierarchy';
     const reason = `pac_orphan_mcid_recovery(${toolName})`;
     return {
@@ -326,22 +323,25 @@ export function pacRuleUsefulRepairRecovery(input: {
       }),
     };
   }
-  if (!scoreImproved && !pdfUaImproved) {
-    return { recover: false, reason: null };
+  if (isAltStructureRepair) {
+    if (!scoreImproved && !pdfUaImproved) {
+      return { recover: false, reason: null };
+    }
+    return {
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
+      details: JSON.stringify({
+        outcome: 'accepted',
+        note: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
+        pacRuleRegressions: regressions,
+        beforeScore: input.beforeScore,
+        afterScore: input.afterScore,
+        beforePdfUaScore: input.beforePdfUaScore ?? null,
+        afterPdfUaScore: input.afterPdfUaScore ?? null,
+      }),
+    };
   }
-  return {
-    recover: true,
-    reason: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
-    details: JSON.stringify({
-      outcome: 'accepted',
-      note: 'pac_orphan_mcid_recovery(repair_alt_text_structure)',
-      pacRuleRegressions: regressions,
-      beforeScore: input.beforeScore,
-      afterScore: input.afterScore,
-      beforePdfUaScore: input.beforePdfUaScore ?? null,
-      afterPdfUaScore: input.afterPdfUaScore ?? null,
-    }),
-  };
+  return { recover: false, reason: null };
 }
 
 const STRUCTURE_ANNOTATION_SEQUENCE_STRUCTURAL_TOOLS = new Set([

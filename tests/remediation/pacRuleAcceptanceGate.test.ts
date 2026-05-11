@@ -596,6 +596,35 @@ describe('pacRuleAcceptanceGate', () => {
     })).toEqual({ recover: false, reason: null });
   });
 
+  it('allows mixed heading hierarchy plus degenerate shell stage to use reading-order recovery', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_heading_hierarchy', 'repair_degenerate_native_reading_order_shell'],
+      beforeScore: 69,
+      afterScore: 93,
+      beforeHeadingScore: 94,
+      afterHeadingScore: 94,
+      beforeReadingOrderScore: 35,
+      afterReadingOrderScore: 79,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(repair_degenerate_native_reading_order_shell)',
+    });
+
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: orphanMcidDebtSnapshot(1),
+      afterSnapshot: orphanMcidDebtSnapshot(2),
+      toolNames: ['normalize_heading_hierarchy'],
+      beforeScore: 69,
+      afterScore: 93,
+      beforeHeadingScore: 94,
+      afterHeadingScore: 94,
+      beforeReadingOrderScore: 35,
+      afterReadingOrderScore: 79,
+    })).toEqual({ recover: false, reason: null });
+  });
+
   it('does not recover orphan-MCID increases when page text or tag evidence regresses', () => {
     expect(pacRuleUsefulRepairRecovery({
       beforeSnapshot: orphanMcidDebtSnapshot(1),
