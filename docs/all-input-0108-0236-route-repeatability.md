@@ -31,3 +31,9 @@ Decision:
 - Do not add PAC allow-listing, checkpoint-floor changes, or route guards for `0108`/`0236` from this evidence.
 - Treat both as repeatability targets. The next score-moving stage should either improve analyzer determinism for the relevant initial states or find a different stable row family.
 - `long-4516` remains the clearest runtime-tail regression from fresh r3 and should be handled separately.
+
+Related rejected behavior probe:
+
+- Fresh r2/r3 regressions `0316`, `0194`, and `0325` were checked separately. Repeats `Output/goal-all-input-mean-2026-05-09-r1/run-repeat-0316-0194-0325-2026-05-11-r{1,2}` recovered `0316` and `0194` to A-grade in both repeats; `0325` remained volatile.
+- A narrow `0316` same-state artifact guard was tested and reverted. Target run `Output/goal-all-input-mean-2026-05-09-r1/run-0316-0194-route-guards-target-2026-05-11-r1` left `0316` at `59/F`; the proposed guard did not prove a stable recovery path.
+- Do not re-add a `0316` or `0194` route guard from the current evidence. These rows are better classified as analyzer/route repeatability debt.
