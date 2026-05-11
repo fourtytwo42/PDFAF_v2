@@ -237,3 +237,17 @@ Current-code exact-name repeat checks:
   guard without same-state proof.
 - Near-pass exact-name checks for `0071`, `0091`, `0092`, `0127`, and `0231` repeated their current
   full-run scores and added no overlay movement.
+- `0296 / redeploy` repeated a partial lift to `88/B` in
+  `Output/goal-all-input-mean-2026-05-09-r1/run-current-probe-mid-deficit-prefixed-2026-05-11-r1`,
+  adding `+15` overlay points. It still remains below target and should not drive a broad behavior
+  change.
+- Overlay with `0034`, `0244`, and `0296`:
+  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-plus-0034-0244-0296-2026-05-11-r1`
+  projects mean `92.7664`, rows below `93` `42`, and `82` points still needed.
+- Route diagnostics for `0084` and `0086`:
+  `route-recovery-0084-r1-vs-r2-2026-05-11-r1` and
+  `route-recovery-0086-r1-vs-r2-2026-05-11-r1` both classify the high/low repeats as
+  `upstream_route_volatility`; no same-state recovery guard is proven.
+- A broad six-row `92/A` near-pass sweep was stopped after it ran for more than eleven minutes with
+  no completed report. The maximum possible score movement from that lane is too small for the
+  runtime cost, so do not repeat it as a broad batch.
