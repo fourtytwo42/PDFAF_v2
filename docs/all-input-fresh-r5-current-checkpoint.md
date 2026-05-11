@@ -2,32 +2,30 @@
 
 Date: 2026-05-11
 
-This checkpoint refreshes the stale first six shards from the fresh r4 merge under current source. It uses deterministic no-semantic remediation and skips writing remediated PDFs.
+This checkpoint refreshes all eight shards under current source. It uses deterministic no-semantic remediation. Shards 1-6 were run without PDFs; shards 7-8 were completed afterward with PDFs written.
 
 ## Artifacts
 
-- Refreshed shards: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-2026-05-11-r5/shard-01` through `shard-06`
-- Merged root: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-2026-05-11-r5-merged`
-- Merged diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-diagnostic-2026-05-11-r5/all-input-mean-diagnostic.md`
-
-Shards `07` and `08` are carried forward from the prior r4 completion because they were already refreshed.
+- Complete shard root: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-2026-05-11-r5`
+- Complete merged baseline report: `Output/goal-all-input-mean-2026-05-09-r1/r5-complete-baseline-report-2026-05-11-r1/baseline_report.json`
+- Complete diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-diagnostic-2026-05-11-r5-complete/all-input-mean-diagnostic.md`
 
 ## Result
 
 - PDFs processed: `351`
-- Mean after remediation: `91.9915`
+- Mean after remediation: `92.0456`
 - Median after remediation: `94`
-- Grade distribution: `322 A / 6 B / 1 C / 10 D / 9 F`
-- Rows below `93`: `48`
-- Points needed for mean `93`: `354`
-- Runtime mean / median / p95 / max: `47065.2ms / 16427ms / 245500ms / 300025ms`
+- Grade distribution: `323 A / 6 B / 1 C / 9 D / 9 F`
+- Rows below `93`: `49`
+- Points needed for mean `93`: `335`
+- Runtime mean / median / p95 / max: `47196.4ms / 16141ms / 245505ms / 300021ms`
 - `false_positive_applied`: `0`
 
 Hard timeouts:
 
 - `0114-9f229330b403-4587-an-inventory-and-examination-of-restorative-justice-practices-for-youth-.pdf`
 - `0031-9d63e648dc78-structure-4438.pdf`
-- `0208-d966f95ddc9f-4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house-.pdf`
+- `0120-a9de52a274a8-4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec.pdf`
 
 ## Interpretation
 
@@ -37,22 +35,25 @@ The refresh confirms that several earlier low rows were stale measurement rather
 - `0236` completes at `97/A`.
 - `0347` completes at `94/A`.
 - `long-4516` completes at `89/B`, not a hard timeout.
+- `0208` completes at `59/F` in the full shard, but a focused repeat hard-timed out, so it remains runtime-route debt.
 
 The goal is still not complete. The remaining deficit is concentrated in:
 
-- hard timeouts/runtime debt: `0114`, `structure-4438`, `0208`
-- heading/reading route debt: `4139`, `4215`, `0316`, `0346`
+- hard timeouts/runtime debt: `0114`, `0120`, `structure-4438`
+- heading/reading/runtime route debt: `0208`, `4139`, `4215`, `0316`, `0346`
 - table/alt mixed debt: `4453`, `4567`, `4690`, `4105`, `4678`, `4519`
 - table debt: `4722`, `4694`, `4147`, `4735`, `0287`
 - alt debt: `long-4683`, `4503`, `4687`, `0296`, `4635`, `4693`
 
-Follow-up diagnostics run against the r5 merged artifact:
+Follow-up diagnostics run against the complete r5 artifact:
 
-- Target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-diagnostic-r5-2026-05-11-r1/target-selection-diagnostic.md`
-- Timeout checkpoint check: `Output/goal-all-input-mean-2026-05-09-r1/low-checkpoint-timeout-diagnostic-r5-runonly-2026-05-11-r1/low-checkpoint-timeout-diagnostic.md`
-- Structure/annotation sequence check: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-r5-2026-05-11-r1/structure-annotation-sequence-diagnostic.md`
-- Proposal materialization check: `Output/goal-all-input-mean-2026-05-09-r1/proposal-materialization-diagnostic-r5-2026-05-11-r1/proposal-materialization-diagnostic.md`
+- Target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-diagnostic-r5-complete-2026-05-11-r1/target-selection-diagnostic.md`
+- Heading residual object diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/heading-residual-object-diagnostic-r5-complete-2026-05-11-r2/heading-residual-object-diagnostic.md`
+- Runtime-heavy repeat: `Output/goal-all-input-mean-2026-05-09-r1/run-runtime-route-heavy-r5-complete-2026-05-11-r1`
+- Route comparisons:
+  - `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-4215-runtime-repeat-vs-r5-complete-2026-05-11-r1`
+  - `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0208-runtime-repeat-vs-r5-complete-2026-05-11-r1`
 
-The target selector still ranks `heading_reading_recovery_target` first, with `326` points of deficit across seven rows. The timeout checkpoint diagnostic found three current hard timeouts and no safe timeout-return behavior: `0114` has a best verified checkpoint of only `38/F`, `0208` has only `51/F` in the carried r4 trace, and `structure-4438` remains parked with best known `36/F` below its `90/A` floor. The r5 structure/annotation diagnostic found no ready sequence probe candidates; `0200` is the only low row with a proposal-buffer route gap, but it remains excluded because prior deterministic validation did not reproduce recovery. The r5 proposal materialization diagnostic likewise identifies `0200` as requiring a rejected proposal buffer, with no target evidence and a prior failed probe.
+The complete target selector still ranks `heading_reading_recovery_target` first, with `360` points of deficit across eight non-parked heading rows. The complete heading residual diagnostic splits that into `2` parked hard timeouts (`0114`, `0120`), `2` runtime-route-heavy rows (`0208`, `4215`), and only one direct content-tagging object candidate (`0346`). A focused `0208`/`4215` repeat did not prove a safe recovery: `4215` repeated at `59/F` with upstream route volatility, while `0208` changed from slow `59/F` to hard timeout with no applied tools.
 
-Next work should not be a checkpoint-return or broad proposal-buffer behavior change from this evidence. The most defensible branches are a focused object-level diagnostic for the remaining non-timeout heading rows (`4139`, `4215`, `0316`, `0346`, `4082-two-bad-headings`) or a fresh direct-table/alt object diagnostic for the larger table/alt mixed deficit. Do not mark the goal complete from this checkpoint.
+Next work should not be a checkpoint-return or broad proposal-buffer behavior change from this evidence. The most defensible branches are a bounded many-figure-alt design diagnostic for direct checker-visible missing-alt rows such as `0136`, or a deeper runtime/analyzer design for `0114`/`0120`/`0208`. Do not mark the goal complete from this checkpoint.

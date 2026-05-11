@@ -35,3 +35,24 @@ Decision:
 - Do not add a broad alt-route or second-pass ordering change from this evidence.
 - Keep `0136` as a direct object-level alt candidate, but it needs either a safe many-target alt strategy or semantic/visual alt support before promotion.
 - Treat `0200` and `0236` as heading/table/PDF-UA rows, not alt rows.
+
+## Fresh r5 Complete Follow-Up
+
+After all eight r5 shards completed, the focused alt set was rerun:
+
+- Run: `Output/goal-all-input-mean-2026-05-09-r1/run-alt-r5-complete-2026-05-11-r1`
+- Object diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/alt-object-diagnostic-r5-complete-2026-05-11-r1/all-input-alt-object-diagnostic.md`
+- Second-pass `0136` probe: `Output/goal-all-input-mean-2026-05-09-r1/run-alt-0136-secondpass-r5-complete-2026-05-11-r1`
+
+Findings:
+
+- `0149-...field-observations.pdf` is a current-code recovery/control: `54/F -> 94/A`, reanalysis stays `94/A`.
+- `long-4683` reaches run score `92/A`, but direct reanalysis of the remediated PDF drops to `59/F`; treat this as protected/analyzer drift, not an accepted recovery.
+- `0136-...methamphetamine-study.pdf` remains the cleanest direct alt candidate: the first pass stays `59/F` with `102/102` checker-visible figures missing alt.
+- A second pass over the `0136` remediated PDF reaches only `80/B`, with `alt_text=20`, after five `set_figure_alt_text` applications and one `retag_as_figure`.
+- `0200`, `0296`, and `0325` are not clean alt-first rows in this diagnostic; their remaining debt is heading/table/PDF-UA or protected drift.
+
+Decision:
+
+- Do not promote a one-by-one second-pass alt route; it is too slow and only gets `0136` to `80/B`.
+- A future behavior stage, if selected, should first design and test bounded many-figure alt batching on direct checker-visible missing-alt evidence, with protected reanalysis proving real `alt_text`/score movement and no weak-alt/manual-review hiding.
