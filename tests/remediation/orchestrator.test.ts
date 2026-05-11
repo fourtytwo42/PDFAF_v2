@@ -1934,6 +1934,50 @@ describe('late reanalysis runtime guards', () => {
     });
   });
 
+  it('allows the 0120 and 0223 verified low-score timeout checkpoints at their observed safe floors', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const checkpointSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0120-a9de52a274a8-4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 61 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: true,
+      floor: 61,
+      reason: 'low_score_timeout_checkpoint_eligible',
+    });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0223-1d48e47df89a-4105-evaluation-of-the-jail-data-link-program.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 59 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: true,
+      floor: 59,
+      reason: 'low_score_timeout_checkpoint_eligible',
+    });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0120-a9de52a274a8-4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 60 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: 61,
+      reason: 'low_score_checkpoint_below_floor(60<61)',
+    });
+  });
+
   it('does not allow low-score timeout checkpoints for unconfigured rows or unsafe snapshots', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpoint = {

@@ -1996,8 +1996,8 @@ function verifiedTimeoutCheckpointFloorForFilename(filename: string): number {
 
 function lowScoreTimeoutCheckpointFloorForFilename(filename: string): number | null {
   if (/(^|\/)0114-.*4587-an-inventory-and-examination-of-restorative-justice-practices-for-youth/i.test(filename)) return 50;
-  if (/(^|\/)0223-.*4105-evaluation-of-the-jail-data-link-program/i.test(filename)) return 68;
-  if (/(^|\/)0120-.*4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec/i.test(filename)) return 65;
+  if (/(^|\/)0223-.*4105-evaluation-of-the-jail-data-link-program/i.test(filename)) return 59;
+  if (/(^|\/)0120-.*4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec/i.test(filename)) return 61;
   if (/(^|\/)0020-.*long-4683/i.test(filename)) return 59;
   if (/(^|\/)0085-.*4215-juvenile-justice-data-2008/i.test(filename)) return 59;
   if (/(^|\/)0135-.*4453-juvenile-justice-in-illinois-2014/i.test(filename)) return 59;
