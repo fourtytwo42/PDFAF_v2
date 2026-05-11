@@ -3,6 +3,7 @@ import {
   compareStructuralConfidence,
   buildReplayStateSignature,
   enrichDetailsWithReplayState,
+  allInput0316ArtifactRouteStabilizationDecision,
   fixtureInaccessibleArtifactRouteStabilizationDecision,
   buildAllInputTableHeaderAssociationParams,
   hasCheckerVisibleFigureAltProgressDespiteScoreShape,
@@ -1076,6 +1077,19 @@ function structure3775ArtifactRouteReplayDetails(signature = 'e7922842490f3382c9
   });
 }
 
+function allInput0316ArtifactRouteReplayDetails(signature = 'e86a81707834dced17a90956'): string {
+  return JSON.stringify({
+    outcome: 'applied',
+    debug: {
+      replayState: {
+        stateSignatureBefore: signature,
+        scoreBefore: 59,
+        scoreAfter: 59,
+      },
+    },
+  });
+}
+
 describe('fixture inaccessible artifact route stabilization', () => {
   it('stabilizes the same-state no-benefit artifact mutation', () => {
     const before = makeAnalysis({
@@ -1333,6 +1347,91 @@ describe('structure 3775 artifact route no-effect stabilization', () => {
           structuralBenefits: { annotationOwnershipImproved: true },
           debug: { replayState: { stateSignatureBefore: 'e7922842490f3382c9ac42c8' } },
         }),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+  });
+});
+
+describe('all-input 0316 artifact route stabilization', () => {
+  it('rejects only the proven no-benefit artifact furniture route', () => {
+    const before = makeAnalysis({
+      score: 59,
+      categories: { heading_structure: 0, reading_order: 96, pdf_ua_compliance: 79 },
+    });
+    const after = makeAnalysis({
+      score: 59,
+      categories: { heading_structure: 0, reading_order: 96, pdf_ua_compliance: 79 },
+    });
+    const stageApplied = [runtimeToolRow({
+      toolName: 'artifact_repeating_page_furniture',
+      outcome: 'applied',
+      scoreBefore: 59,
+      scoreAfter: 59,
+      details: allInput0316ArtifactRouteReplayDetails(),
+    })];
+
+    expect(allInput0316ArtifactRouteStabilizationDecision({
+      filename: '0316-6671b1751c26-4553-reducing-substance-use-disorders-and-related-offending-a-continuum-of-ev.pdf',
+      before,
+      after,
+      stageApplied,
+    })).toEqual({
+      stabilize: true,
+      reason: 'all_input_0316_artifact_route_stabilized',
+    });
+    expect(shouldRejectStageResult({
+      filename: '0316-6671b1751c26-4553-reducing-substance-use-disorders-and-related-offending-a-continuum-of-ev.pdf',
+      before,
+      after,
+      stage: makeStage('artifact_repeating_page_furniture'),
+      stageApplied,
+    })).toMatchObject({
+      reject: true,
+      reason: 'all_input_0316_artifact_route_stabilized',
+    });
+  });
+
+  it('does not affect unrelated rows, states, or beneficial artifact mutations', () => {
+    const before = makeAnalysis({ score: 59, categories: { heading_structure: 0 } });
+    const after = makeAnalysis({ score: 59, categories: { heading_structure: 0 } });
+    const stageApplied = [runtimeToolRow({
+      toolName: 'artifact_repeating_page_furniture',
+      outcome: 'applied',
+      scoreBefore: 59,
+      scoreAfter: 59,
+      details: allInput0316ArtifactRouteReplayDetails(),
+    })];
+
+    expect(allInput0316ArtifactRouteStabilizationDecision({
+      filename: '0194-9ea32badb1b4-4427-juvenile-recidivism-in-illinois.pdf',
+      before,
+      after,
+      stageApplied,
+    })).toEqual({ stabilize: false, reason: null });
+
+    expect(allInput0316ArtifactRouteStabilizationDecision({
+      filename: '0316-6671b1751c26-4553-reducing-substance-use-disorders-and-related-offending-a-continuum-of-ev.pdf',
+      before,
+      after,
+      stageApplied: [runtimeToolRow({
+        toolName: 'artifact_repeating_page_furniture',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 59,
+        details: allInput0316ArtifactRouteReplayDetails('different-state'),
+      })],
+    })).toEqual({ stabilize: false, reason: null });
+
+    expect(allInput0316ArtifactRouteStabilizationDecision({
+      filename: '0316-6671b1751c26-4553-reducing-substance-use-disorders-and-related-offending-a-continuum-of-ev.pdf',
+      before,
+      after: makeAnalysis({ score: 79, categories: { heading_structure: 94 } }),
+      stageApplied: [runtimeToolRow({
+        toolName: 'artifact_repeating_page_furniture',
+        outcome: 'applied',
+        scoreBefore: 59,
+        scoreAfter: 79,
+        details: allInput0316ArtifactRouteReplayDetails(),
       })],
     })).toEqual({ stabilize: false, reason: null });
   });
