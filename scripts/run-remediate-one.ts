@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const { applySemanticPromoteHeadingRepairs } = await import('../src/services/semantic/promoteHeadingSemantic.js');
   const { applySemanticUntaggedHeadingRepairs } = await import('../src/services/semantic/untaggedHeadingSemantic.js');
   const { mergeSequentialSemanticSummaries } = await import('../src/routes/remediate.js');
-  const { applyPostRemediationAltRepair } = await import('../src/services/remediation/altStructureRepair.js');
+  const { applyPostRemediationAltRepair, shouldKeepPostRemediationAltRepair } = await import('../src/services/remediation/altStructureRepair.js');
 
   const filename = basename(inputPath);
   const tmpPath = join(tmpdir(), `pdfaf-cli-${randomUUID()}.pdf`);
@@ -168,10 +168,14 @@ async function main(): Promise<void> {
 
   if (outSnapshot.isTagged) {
     const ar = await applyPostRemediationAltRepair(outBuffer, filename, outAfter, outSnapshot, { signal });
-    outBuffer = ar.buffer;
-    outAfter = ar.analysis;
-    outSnapshot = ar.snapshot;
-    console.log('Alt structure repair (nested / orphan alt) applied; after:', outAfter.score, outAfter.grade);
+    if (shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
+      outBuffer = ar.buffer;
+      outAfter = ar.analysis;
+      outSnapshot = ar.snapshot;
+      console.log('Alt structure repair (nested / orphan alt) applied; after:', outAfter.score, outAfter.grade);
+    } else {
+      console.log('Alt structure repair (nested / orphan alt) rejected; would regress to:', ar.analysis.score, ar.analysis.grade);
+    }
   }
 
   await mkdir(outDir, { recursive: true });

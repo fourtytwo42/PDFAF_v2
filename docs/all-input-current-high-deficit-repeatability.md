@@ -115,3 +115,30 @@ Next useful branch:
   - table: `4587`, `4722`, `4694`, `4147`, `4735`, `0287`, `4057`
 - Prefer object/proposal diagnostics or targeted semantic smoke over another overlay-only full run.
 - Keep `structure-4438` parked unless a real eligible high-quality checkpoint appears.
+
+## Semantic Smoke
+
+The local API listener was up, but `/v1/health` reported `llm.configured=false`. A temporary text-only `llama-server` was started on `127.0.0.1:1234` using the local `gemma-4-E2B-it-Q4_K_M.gguf`; the multimodal projector failed to load, so visual/figure AI was not used.
+
+Smoke target:
+
+- `0108 / 4614-an-evaluation-of-transitional-housing-programs...`
+
+Runs:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/semantic-smoke-0108-2026-05-11-r1`
+- `Output/goal-all-input-mean-2026-05-09-r1/semantic-smoke-0108-2026-05-11-r2`
+
+Result:
+
+- Text-only semantic passes found no heading/promote candidates.
+- `0108` remained `59/F`.
+- The first smoke exposed that `scripts/run-remediate-one.ts` could keep an unsafe post-alt cleanup and drop `59/F -> 51/F`, even though batch/API paths already guard this.
+- `scripts/run-remediate-one.ts` now uses `shouldKeepPostRemediationAltRepair(...)`; rerun `r2` kept `59/F` and did not accept the regressing cleanup.
+
+Validation:
+
+- `npx -y node@22 /usr/bin/pnpm exec vitest run tests/remediation/altStructureRepair.test.ts tests/remediation/pacRuleAcceptanceGate.test.ts`
+- `npx -y node@22 /usr/bin/pnpm lint`
+
+The temporary `llama-server` was stopped after the smoke. This did not add score movement, but it keeps future semantic probes honest.
