@@ -46,4 +46,13 @@ The goal is still not complete. The remaining deficit is concentrated in:
 - table debt: `4722`, `4694`, `4147`, `4735`, `0287`
 - alt debt: `long-4683`, `4503`, `4687`, `0296`, `4635`, `4693`
 
-Next work should target one direct object-level family or a proven runtime timeout path. Do not mark the goal complete from this checkpoint.
+Follow-up diagnostics run against the r5 merged artifact:
+
+- Target selection: `Output/goal-all-input-mean-2026-05-09-r1/target-selection-diagnostic-r5-2026-05-11-r1/target-selection-diagnostic.md`
+- Timeout checkpoint check: `Output/goal-all-input-mean-2026-05-09-r1/low-checkpoint-timeout-diagnostic-r5-runonly-2026-05-11-r1/low-checkpoint-timeout-diagnostic.md`
+- Structure/annotation sequence check: `Output/goal-all-input-mean-2026-05-09-r1/structure-annotation-sequence-diagnostic-r5-2026-05-11-r1/structure-annotation-sequence-diagnostic.md`
+- Proposal materialization check: `Output/goal-all-input-mean-2026-05-09-r1/proposal-materialization-diagnostic-r5-2026-05-11-r1/proposal-materialization-diagnostic.md`
+
+The target selector still ranks `heading_reading_recovery_target` first, with `326` points of deficit across seven rows. The timeout checkpoint diagnostic found three current hard timeouts and no safe timeout-return behavior: `0114` has a best verified checkpoint of only `38/F`, `0208` has only `51/F` in the carried r4 trace, and `structure-4438` remains parked with best known `36/F` below its `90/A` floor. The r5 structure/annotation diagnostic found no ready sequence probe candidates; `0200` is the only low row with a proposal-buffer route gap, but it remains excluded because prior deterministic validation did not reproduce recovery. The r5 proposal materialization diagnostic likewise identifies `0200` as requiring a rejected proposal buffer, with no target evidence and a prior failed probe.
+
+Next work should not be a checkpoint-return or broad proposal-buffer behavior change from this evidence. The most defensible branches are a focused object-level diagnostic for the remaining non-timeout heading rows (`4139`, `4215`, `0316`, `0346`, `4082-two-bad-headings`) or a fresh direct-table/alt object diagnostic for the larger table/alt mixed deficit. Do not mark the goal complete from this checkpoint.
