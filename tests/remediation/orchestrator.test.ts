@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allInput0346OrphanRemapRouteGuardDecision,
   compareStructuralConfidence,
   buildReplayStateSignature,
   enrichDetailsWithReplayState,
@@ -37,6 +38,7 @@ import {
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipLong4516OrphanDrainPostPassGuard,
+  shouldConfirmAllInput0346MetadataVolatility,
   shouldConfirmLong4516MetadataVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
   shouldTryAllInputDegenerateNativeSequence,
@@ -941,6 +943,126 @@ describe('long-4516 metadata volatility confirmation', () => {
         makePostPassTool({ toolName: 'repair_structure_conformance', outcome: 'applied', scoreBefore: 76, scoreAfter: 76, source: 'planner', stage: 2 }),
       ],
     })).toBe(false);
+  });
+});
+
+describe('all-input 0346 metadata volatility confirmation', () => {
+  const metadataTools = [
+    makePostPassTool({ toolName: 'set_document_language', outcome: 'applied', scoreBefore: 42, scoreAfter: 42, source: 'planner', stage: 1 }),
+    makePostPassTool({ toolName: 'set_document_title', outcome: 'applied', scoreBefore: 42, scoreAfter: 42, source: 'planner', stage: 1 }),
+  ];
+
+  it('requests confirmation for the proven same-state metadata route below the useful threshold', () => {
+    expect(shouldConfirmAllInput0346MetadataVolatility({
+      filename: '0346-03919ce2e4ea-4673-understanding-police-officer-stress-a-review-of-the-literature.pdf',
+      before: makeAnalysis({
+        score: 42,
+        categories: { title_language: 0, heading_structure: 0 },
+      }),
+      after: makeAnalysis({
+        score: 51,
+        categories: { title_language: 100, heading_structure: 0 },
+      }),
+      stageApplied: metadataTools,
+    })).toBe(true);
+  });
+
+  it('does not apply to unrelated rows, mixed stages, or already useful metadata analyses', () => {
+    const before = makeAnalysis({
+      score: 42,
+      categories: { title_language: 0, heading_structure: 0 },
+    });
+    expect(shouldConfirmAllInput0346MetadataVolatility({
+      filename: '0345-report.pdf',
+      before,
+      after: makeAnalysis({ score: 51, categories: { title_language: 100, heading_structure: 0 } }),
+      stageApplied: metadataTools,
+    })).toBe(false);
+    expect(shouldConfirmAllInput0346MetadataVolatility({
+      filename: '0346-report.pdf',
+      before,
+      after: makeAnalysis({ score: 59, categories: { title_language: 100, heading_structure: 0 } }),
+      stageApplied: metadataTools,
+    })).toBe(false);
+    expect(shouldConfirmAllInput0346MetadataVolatility({
+      filename: '0346-report.pdf',
+      before,
+      after: makeAnalysis({ score: 51, categories: { title_language: 100, heading_structure: 0 } }),
+      stageApplied: [
+        ...metadataTools,
+        makePostPassTool({ toolName: 'repair_structure_conformance', outcome: 'applied', scoreBefore: 42, scoreAfter: 51, source: 'planner', stage: 2 }),
+      ],
+    })).toBe(false);
+  });
+});
+
+describe('all-input 0346 orphan remap route guard', () => {
+  const remapTool = makePostPassTool({
+    toolName: 'remap_orphan_mcids_as_artifacts',
+    outcome: 'applied',
+    scoreBefore: 51,
+    scoreAfter: 59,
+    source: 'planner',
+    stage: 2,
+    details: JSON.stringify({
+      debug: {
+        replayState: {
+          stateSignatureBefore: '312fa263390e741c26f9476b',
+        },
+      },
+    }),
+  });
+
+  it('rejects only the proven no-category-movement remap route on 0346', () => {
+    expect(allInput0346OrphanRemapRouteGuardDecision({
+      filename: '0346-03919ce2e4ea-4673-understanding-police-officer-stress-a-review-of-the-literature.pdf',
+      before: makeAnalysis({
+        score: 51,
+        categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
+      }),
+      after: makeAnalysis({
+        score: 59,
+        categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
+      }),
+      stageApplied: [remapTool],
+    })).toMatchObject({
+      reject: true,
+      reason: 'all_input_0346_orphan_remap_route_guard',
+    });
+  });
+
+  it('does not reject unrelated rows, replay states, or category-beneficial remaps', () => {
+    const before = makeAnalysis({
+      score: 51,
+      categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
+    });
+    const after = makeAnalysis({
+      score: 59,
+      categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
+    });
+    expect(allInput0346OrphanRemapRouteGuardDecision({
+      filename: '0345-report.pdf',
+      before,
+      after,
+      stageApplied: [remapTool],
+    }).reject).toBe(false);
+    expect(allInput0346OrphanRemapRouteGuardDecision({
+      filename: '0346-report.pdf',
+      before,
+      after,
+      stageApplied: [
+        {
+          ...remapTool,
+          details: JSON.stringify({ debug: { replayState: { stateSignatureBefore: 'other-state' } } }),
+        },
+      ],
+    }).reject).toBe(false);
+    expect(allInput0346OrphanRemapRouteGuardDecision({
+      filename: '0346-report.pdf',
+      before,
+      after: makeAnalysis({ score: 59, categories: { heading_structure: 60, reading_order: 79, link_quality: 0 } }),
+      stageApplied: [remapTool],
+    }).reject).toBe(false);
   });
 });
 

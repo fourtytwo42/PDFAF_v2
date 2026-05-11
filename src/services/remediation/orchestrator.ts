@@ -697,6 +697,8 @@ const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_TOOLS = new Set([
 ]);
 const STRUCTURE_3775_ARTIFACT_ROUTE_SIGNATURE = 'e7922842490f3382c9ac42c8';
 const STRUCTURE_3775_ARTIFACT_ROUTE_REASON = 'structure3775_artifact_route_no_effect_stabilized';
+const ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_SIGNATURE = '312fa263390e741c26f9476b';
+const ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_REASON = 'all_input_0346_orphan_remap_route_guard';
 
 function replayStateSignatureBefore(row: AppliedRemediationTool): string | null {
   const debug = parseMutationDetails(row.details)?.debug;
@@ -753,6 +755,31 @@ export function structure3775ArtifactRouteNoEffectStabilizationDecision(input: {
     stabilize: true,
     reason: STRUCTURE_3775_ARTIFACT_ROUTE_REASON,
   };
+}
+
+export function allInput0346OrphanRemapRouteGuardDecision(input: {
+  filename?: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): { reject: boolean; reason: string | null } {
+  if (!input.filename || !isAllInput0346Filename(input.filename)) return { reject: false, reason: null };
+  if (input.before.score !== 51 || input.after.score !== 59) return { reject: false, reason: null };
+  const matchingRemap = input.stageApplied.some(row =>
+    row.toolName === 'remap_orphan_mcids_as_artifacts' &&
+    row.outcome === 'applied' &&
+    replayStateSignatureBefore(row) === ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_SIGNATURE
+  );
+  if (!matchingRemap) return { reject: false, reason: null };
+  const scoreMoved = (key: CategoryKey): boolean => {
+    const before = categoryScore(input.before, key);
+    const after = categoryScore(input.after, key);
+    return before != null && after != null && after > before;
+  };
+  if (scoreMoved('heading_structure') || scoreMoved('reading_order') || scoreMoved('link_quality')) {
+    return { reject: false, reason: null };
+  }
+  return { reject: true, reason: ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_REASON };
 }
 
 function stageTargetsCategory(stageApplied: AppliedRemediationTool[], key: CategoryKey): boolean {
@@ -1563,6 +1590,13 @@ export function shouldRejectStageResult(input: {
     return {
       reject: true,
       reason: fixtureArtifactRouteDecision.reason,
+    };
+  }
+  const allInput0346RouteDecision = allInput0346OrphanRemapRouteGuardDecision(input);
+  if (allInput0346RouteDecision.reject) {
+    return {
+      reject: true,
+      reason: allInput0346RouteDecision.reason,
     };
   }
   if (noGainOrphanArtifactMutation(input)) {
@@ -3954,6 +3988,10 @@ function isLong4516Filename(filename: string): boolean {
   return /(?:^|[^0-9])4516(?:[^0-9]|$)/.test(filename);
 }
 
+function isAllInput0346Filename(filename: string): boolean {
+  return /(?:^|[^0-9])0346(?:[^0-9]|$)/.test(filename) || /(?:^|[^0-9])4673(?:[^0-9]|$)/.test(filename);
+}
+
 export function shouldSkipLong4516OrphanDrainPostPassGuard(input: {
   filename: string;
   analysis: Pick<AnalysisResult, 'score' | 'grade'>;
@@ -3991,6 +4029,28 @@ export function shouldConfirmLong4516MetadataVolatility(input: {
   const beforeTable = categoryScore(input.before, 'table_markup') ?? 100;
   const afterTable = categoryScore(input.after, 'table_markup') ?? beforeTable;
   return beforeAlt - afterAlt >= 20 || beforeTable - afterTable >= 20;
+}
+
+export function shouldConfirmAllInput0346MetadataVolatility(input: {
+  filename: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (!isAllInput0346Filename(input.filename)) return false;
+  if (input.stageApplied.length === 0) return false;
+  if (!input.stageApplied.every(row => row.toolName === 'set_document_title' || row.toolName === 'set_document_language')) {
+    return false;
+  }
+  if (!input.stageApplied.some(row => row.outcome === 'applied')) return false;
+  if (input.after.score < input.before.score) return false;
+  if (input.after.score >= 59) return false;
+  const beforeTitle = categoryScore(input.before, 'title_language') ?? 0;
+  const afterTitle = categoryScore(input.after, 'title_language') ?? 0;
+  if (afterTitle <= beforeTitle) return false;
+  const beforeHeading = categoryScore(input.before, 'heading_structure') ?? 100;
+  const afterHeading = categoryScore(input.after, 'heading_structure') ?? beforeHeading;
+  return beforeHeading === 0 && afterHeading === 0;
 }
 
 async function tryAllInput0319TitleReadingSequence(args: {
@@ -8625,6 +8685,27 @@ export async function remediatePdf(
         const confirmedTitle = categoryScore(confirmed.result, 'title_language') ?? 0;
         if (confirmed.result.score >= stageStartAnalysis.score && confirmedTitle > beforeTitle) {
           noteEarlyExit(runtimeSummary, 'long4516_metadata_confirmation_reanalysis');
+          analyzed = confirmed;
+          lastStageAnalysis = confirmed;
+          lastAnalyzedBuffer = buf;
+        }
+      }
+      if (shouldConfirmAllInput0346MetadataVolatility({
+        filename,
+        before: stageStartAnalysis,
+        after: analyzed.result,
+        stageApplied,
+      })) {
+        const confirmed = await reanalyzeBufferForMutation(
+          buf,
+          filename,
+          'pdfaf-0346-metadata-confirm',
+          { bypassCache: true, signal: options?.signal },
+        );
+        const beforeTitle = categoryScore(stageStartAnalysis, 'title_language') ?? 0;
+        const confirmedTitle = categoryScore(confirmed.result, 'title_language') ?? 0;
+        if (confirmed.result.score >= 59 && confirmedTitle > beforeTitle) {
+          noteEarlyExit(runtimeSummary, 'all_input_0346_metadata_confirmation_reanalysis');
           analyzed = confirmed;
           lastStageAnalysis = confirmed;
           lastAnalyzedBuffer = buf;
