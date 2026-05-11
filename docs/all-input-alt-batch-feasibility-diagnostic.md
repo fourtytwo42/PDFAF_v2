@@ -78,3 +78,9 @@ Decision:
 - the attempted source behavior was backed out;
 - do not reintroduce that planner-level `structRefs` batch shape without new proof;
 - the next alt branch needs a different route, likely a protected second-pass or post-ownership design that proves `0136` movement from the real source route before touching controls.
+
+Follow-up route comparison:
+
+`Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0136-secondpass-vs-source-r5-complete-2026-05-11-r1`
+
+This classified the second-pass recovery as `upstream_route_volatility`: the `80/B` route starts from a different state (`normalize_pdfua_catalog_settings` first) and has no shared rejected score-moving state with the source route. That makes `0136` unsuitable for an acceptance-path patch until a source-route proof exists.
