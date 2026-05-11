@@ -49,3 +49,19 @@ Other heading rows are not ready for the same behavior:
 - `4082-two-bad-headings` is near-pass debt and should be lower priority.
 
 Next branch should inspect content-stream/object ownership on `0346` using PAC/POC content-tagging logic before any remediation change.
+
+## 0346 Follow-Up
+
+Focused deterministic rerun:
+
+- Run: `Output/goal-all-input-mean-2026-05-09-r1/run-content-tagging-0346-2026-05-11-r1`
+- Result: `42/F -> 94/A`
+- `false_positive_applied`: `0`
+
+Route comparison:
+
+- Diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0346-rerun-vs-r5-2026-05-11-r1/all-input-route-recovery-diagnostic.md`
+- Classification: `upstream_route_volatility`
+- First divergence: at replay state `312fa263390e741c26f9476b`, the good route rejects `create_heading_from_tagged_visible_anchor` and later applies `create_heading_from_candidate`, while the r5 route treats the same first tool as `no_effect` and then follows a lower-scoring orphan-remap path.
+
+This is useful overlay evidence but not a source behavior proof. Do not add a same-state guard or PAC recovery from this comparison; the route diverges before the score-moving tool sequence.
