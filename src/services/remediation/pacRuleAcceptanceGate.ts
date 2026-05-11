@@ -176,13 +176,15 @@ export function pacRuleUsefulRepairRecovery(input: {
   const isAltStructureRepair = input.toolNames.includes('repair_alt_text_structure');
   const isNativeLinkRepair = input.toolNames.includes('repair_native_link_structure');
   const isNativeTextTaggingRepair = input.toolNames.includes('tag_native_text_blocks');
+  const isDegenerateNativeReadingOrderRepair = input.toolNames.includes('repair_degenerate_native_reading_order_shell');
   if (
     !isHeadingCandidateRepair &&
     !isHeadingHierarchyRepair &&
     !isAnnotationTabOrderRepair &&
     !isAltStructureRepair &&
     !isNativeLinkRepair &&
-    !isNativeTextTaggingRepair
+    !isNativeTextTaggingRepair &&
+    !isDegenerateNativeReadingOrderRepair
   ) {
     return { recover: false, reason: null };
   }
@@ -271,6 +273,31 @@ export function pacRuleUsefulRepairRecovery(input: {
         afterScore: input.afterScore,
         beforeLinkQualityScore: input.beforeLinkQualityScore ?? null,
         afterLinkQualityScore: input.afterLinkQualityScore ?? null,
+        beforeReadingOrderScore: input.beforeReadingOrderScore ?? null,
+        afterReadingOrderScore: input.afterReadingOrderScore ?? null,
+      }),
+    };
+  }
+  if (isDegenerateNativeReadingOrderRepair) {
+    const headingRegressed = (
+      input.beforeHeadingScore != null &&
+      input.afterHeadingScore != null &&
+      input.afterHeadingScore < input.beforeHeadingScore
+    );
+    if (!scoreImproved || !readingOrderImproved || headingRegressed) {
+      return { recover: false, reason: null };
+    }
+    return {
+      recover: true,
+      reason: 'pac_orphan_mcid_recovery(repair_degenerate_native_reading_order_shell)',
+      details: JSON.stringify({
+        outcome: 'accepted',
+        note: 'pac_orphan_mcid_recovery(repair_degenerate_native_reading_order_shell)',
+        pacRuleRegressions: regressions,
+        beforeScore: input.beforeScore,
+        afterScore: input.afterScore,
+        beforeHeadingScore: input.beforeHeadingScore ?? null,
+        afterHeadingScore: input.afterHeadingScore ?? null,
         beforeReadingOrderScore: input.beforeReadingOrderScore ?? null,
         afterReadingOrderScore: input.afterReadingOrderScore ?? null,
       }),
