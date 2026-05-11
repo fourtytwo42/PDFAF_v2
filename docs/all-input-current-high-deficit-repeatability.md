@@ -220,3 +220,20 @@ Additional 2026-05-11 route checks:
   hard-times out before the old score-moving sequence is emitted.
 - Table follow-up checks for `4722` and `4147` are documented in
   `docs/all-input-table-structure-sequence-probe.md`; both remain parked under current source.
+
+Current-code exact-name repeat checks:
+
+- `0244 / 4611` was rerun with the exact all-input prefixed filename in
+  `Output/goal-all-input-mean-2026-05-09-r1/run-current-probe-0244-4611-prefixed-2026-05-11-r1`
+  and repeated at `95/A`. This adds `+16` overlay points over fresh r3.
+- `0034 / v1-4716` was rerun with the exact all-input prefixed filename in
+  `Output/goal-all-input-mean-2026-05-09-r1/run-current-probe-0034-v1-4716-prefixed-2026-05-11-r2`
+  and repeated at `93/A`. This adds `+14` overlay points over fresh r3.
+- Overlay with these exact-name repeats:
+  `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-plus-0034-0244-2026-05-11-r1`
+  projects mean `92.7236`, rows below `93` `42`, and `97` points still needed.
+- `0084 / 4139` and `0086 / 4567` are still route/analyzer volatile. One repeat reached
+  `97/A` and `93/A`, but the next repeat dropped to `69/D` and `61/D`; do not count these or add a
+  guard without same-state proof.
+- Near-pass exact-name checks for `0071`, `0091`, `0092`, `0127`, and `0231` repeated their current
+  full-run scores and added no overlay movement.
