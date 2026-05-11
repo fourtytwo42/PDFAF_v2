@@ -1828,6 +1828,41 @@ describe('late reanalysis runtime guards', () => {
     });
   });
 
+  it('allows the 0114 verified low-score timeout checkpoint without changing the default floor', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const checkpoint = {
+      analysis: makeAnalysis({ score: 50 }),
+      snapshot: makeSnapshot({ depth: 2, textCharCount: 2000 }),
+      appliedToolCount: 1,
+    };
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0114-9f229330b403-4587-an-inventory-and-examination-of-restorative-justice-practices-for-youth-.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: true,
+      floor: 50,
+      reason: 'low_score_timeout_checkpoint_eligible',
+    });
+
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '0114-9f229330b403-4587-an-inventory-and-examination-of-restorative-justice-practices-for-youth-.pdf',
+      beforeAnalysis: makeAnalysis({ score: 25 }),
+      beforeSnapshot,
+      checkpoint,
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: 85,
+      reason: 'checkpoint_below_floor(50<85)',
+    });
+  });
+
   it('does not allow low-score timeout checkpoints for unconfigured rows or unsafe snapshots', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpoint = {
