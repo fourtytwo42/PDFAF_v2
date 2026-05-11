@@ -154,3 +154,24 @@ Overlay impact relative to fresh r3:
 - `false_positive_applied = 0`
 
 The all-input goal remains open. The next behavior should target the remaining stable high-deficit rows; do not promote `0200` without fresh deterministic proof.
+
+## Fresh r4 Follow-Up: 0114 Rejected
+
+Fresh r4 proposal scan:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/proposal-materialization-r4-heading-2026-05-11-r1`
+
+The scan found `0114-...4587...pdf` had a rejected `create_heading_from_tagged_visible_anchor` proposal:
+
+- Score: `59 -> 69`
+- Heading: `0 -> 94`
+- Reading order remained `0`
+- PAC blocker: `pdfua.annotations.tagged_annotations_present`
+
+A row-scoped probe temporarily added `0114` to the existing proposal-buffer ID set and reran only that row:
+
+- Probe: `Output/goal-all-input-mean-2026-05-09-r1/run-proposal-buffer-0114-probe-2026-05-11-r2`
+- Result: `25/F -> 59/F`
+- Decision: rejected/not kept.
+
+Do not promote `0114` from the proposal-buffer evidence. Its proposal only reaches `69/D` in replay and did not materialize into a useful final state under the existing strict sequence path.
