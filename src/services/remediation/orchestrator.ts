@@ -696,8 +696,6 @@ const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_TOOLS = new Set([
 ]);
 const STRUCTURE_3775_ARTIFACT_ROUTE_SIGNATURE = 'e7922842490f3382c9ac42c8';
 const STRUCTURE_3775_ARTIFACT_ROUTE_REASON = 'structure3775_artifact_route_no_effect_stabilized';
-const ALL_INPUT_0316_ARTIFACT_ROUTE_SIGNATURE = 'e86a81707834dced17a90956';
-const ALL_INPUT_0316_ARTIFACT_ROUTE_REASON = 'all_input_0316_artifact_route_stabilized';
 
 function replayStateSignatureBefore(row: AppliedRemediationTool): string | null {
   const debug = parseMutationDetails(row.details)?.debug;
@@ -753,29 +751,6 @@ export function structure3775ArtifactRouteNoEffectStabilizationDecision(input: {
   return {
     stabilize: true,
     reason: STRUCTURE_3775_ARTIFACT_ROUTE_REASON,
-  };
-}
-
-export function allInput0316ArtifactRouteStabilizationDecision(input: {
-  filename?: string;
-  before: AnalysisResult;
-  after: AnalysisResult;
-  beforeSnapshot?: DocumentSnapshot;
-  afterSnapshot?: DocumentSnapshot;
-  stageApplied: AppliedRemediationTool[];
-}): { stabilize: boolean; reason: string | null } {
-  if (!input.filename?.includes('0316-6671b1751c26-4553')) return { stabilize: false, reason: null };
-  if (input.before.score !== 59 || input.after.score !== input.before.score) return { stabilize: false, reason: null };
-  const matchingArtifactMutation = input.stageApplied.some(row =>
-    row.toolName === 'artifact_repeating_page_furniture' &&
-    row.outcome === 'applied' &&
-    replayStateSignatureBefore(row) === ALL_INPUT_0316_ARTIFACT_ROUTE_SIGNATURE
-  );
-  if (!matchingArtifactMutation) return { stabilize: false, reason: null };
-  if (stageHasCheckerFacingStructuralBenefit(input)) return { stabilize: false, reason: null };
-  return {
-    stabilize: true,
-    reason: ALL_INPUT_0316_ARTIFACT_ROUTE_REASON,
   };
 }
 
@@ -1551,13 +1526,6 @@ export function shouldRejectStageResult(input: {
     return {
       reject: true,
       reason: fixtureArtifactRouteDecision.reason,
-    };
-  }
-  const allInput0316ArtifactRouteDecision = allInput0316ArtifactRouteStabilizationDecision(input);
-  if (allInput0316ArtifactRouteDecision.stabilize) {
-    return {
-      reject: true,
-      reason: allInput0316ArtifactRouteDecision.reason,
     };
   }
   if (noGainOrphanArtifactMutation(input)) {
