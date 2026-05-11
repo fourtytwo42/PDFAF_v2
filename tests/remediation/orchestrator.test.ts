@@ -2934,6 +2934,68 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('allows metadata-only score gain when analyzer drifts an unrelated structural category without PAC/page/text/tag harm', () => {
+    const snapshot = makeSnapshot({ depth: 2 });
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { title_language: 0, reading_order: 100 } }),
+      after: makeAnalysis({ score: 67, confidence: 'medium', categories: { title_language: 100, reading_order: 96 } }),
+      beforeSnapshot: snapshot,
+      afterSnapshot: { ...snapshot },
+      stage: makeStage('set_document_title'),
+      stageApplied: [
+        {
+          toolName: 'set_document_title',
+          stage: 1,
+          round: 1,
+          scoreBefore: 59,
+          scoreAfter: 67,
+          delta: 8,
+          outcome: 'applied',
+        },
+        {
+          toolName: 'set_document_language',
+          stage: 1,
+          round: 1,
+          scoreBefore: 59,
+          scoreAfter: 67,
+          delta: 8,
+          outcome: 'applied',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('still rejects metadata-only category drift when a non-metadata PAC failure appears', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { title_language: 0, reading_order: 100 } }),
+      after: makeAnalysis({ score: 67, confidence: 'medium', categories: { title_language: 100, reading_order: 96 } }),
+      beforeSnapshot: makeSnapshot({ depth: 2 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 1, figuresWithAlt: 0 }),
+      stage: makeStage('set_document_title'),
+      stageApplied: [
+        {
+          toolName: 'set_document_title',
+          stage: 1,
+          round: 1,
+          scoreBefore: 59,
+          scoreAfter: 67,
+          delta: 8,
+          outcome: 'applied',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:100->96)',
+    });
+  });
+
   it('allows excellent reading-order drift when weak-alt protected recovery improves alt text', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 59, confidence: 'medium', categories: { reading_order: 100, alt_text: 0 } }),

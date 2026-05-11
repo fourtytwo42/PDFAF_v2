@@ -66,6 +66,7 @@ import { embedFontsWithGhostscript, shouldTryLocalFontSubstitution, shouldTryUrw
 import { hasExternalReadinessDebt } from './externalReadiness.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCandidates.js';
 import { buildIcjiaParity, isFilenameLikeTitle } from '../compliance/icjiaParity.js';
+import { buildPacRuleEvidence } from '../compliance/pacRuleEvidence.js';
 import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristics.js';
 import {
   shouldTryOcrCollectionCoverTitleHeadingRecovery,
@@ -829,6 +830,42 @@ function unexplainedProtectedCategoryRegression(input: {
     return `stage_regressed_category(${key}:${before}->${after})`;
   }
   return null;
+}
+
+function isMetadataOnlyStage(stageApplied: AppliedRemediationTool[]): boolean {
+  return stageApplied.length > 0 &&
+    stageApplied.every(row => row.toolName === 'set_document_title' || row.toolName === 'set_document_language');
+}
+
+function metadataOnlyStageCanTolerateAnalyzerDrift(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+  regressionReason: string;
+}): boolean {
+  if (!isMetadataOnlyStage(input.stageApplied)) return false;
+  if (!input.beforeSnapshot || !input.afterSnapshot) return false;
+  if (!/^stage_regressed_category\((heading_structure|reading_order):/.test(input.regressionReason)) return false;
+  const beforeTitle = categoryScore(input.before, 'title_language') ?? 0;
+  const afterTitle = categoryScore(input.after, 'title_language') ?? beforeTitle;
+  if (afterTitle <= beforeTitle) return false;
+  if (input.after.score < input.before.score) return false;
+  if (input.beforeSnapshot.pageCount !== input.afterSnapshot.pageCount) return false;
+  if ((input.beforeSnapshot.textCharCount ?? 0) !== (input.afterSnapshot.textCharCount ?? 0)) return false;
+  if (input.beforeSnapshot.isTagged !== input.afterSnapshot.isTagged) return false;
+  const beforeFailures = new Set(
+    buildPacRuleEvidence(input.beforeSnapshot)
+      .filter(row => row.status === 'fail')
+      .map(row => row.ruleId),
+  );
+  const addedNonMetadataFailures = buildPacRuleEvidence(input.afterSnapshot)
+    .filter(row => row.status === 'fail')
+    .map(row => row.ruleId)
+    .filter(ruleId => !beforeFailures.has(ruleId))
+    .filter(ruleId => !ruleId.includes('metadata') && !ruleId.includes('language'));
+  return addedNonMetadataFailures.length === 0;
 }
 
 export interface ProtectedBaselineFloor {
@@ -1598,6 +1635,13 @@ export function shouldRejectStageResult(input: {
         baseline: input.protectedBaseline,
         before: input.before,
         after: input.after,
+        stageApplied: input.stageApplied,
+        regressionReason: categoryRegression,
+      }) || metadataOnlyStageCanTolerateAnalyzerDrift({
+        before: input.before,
+        after: input.after,
+        beforeSnapshot: input.beforeSnapshot,
+        afterSnapshot: input.afterSnapshot,
         stageApplied: input.stageApplied,
         regressionReason: categoryRegression,
       })) {
