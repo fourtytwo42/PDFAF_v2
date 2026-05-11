@@ -66,6 +66,21 @@ Route comparison:
 
 This is useful overlay evidence but not a source behavior proof. Do not add a same-state guard or PAC recovery from this comparison; the route diverges before the score-moving tool sequence.
 
+### 0346 Repeatability Check
+
+Three current-code one-row repeats were run from the same source input:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/run-0346-repeat-2026-05-11-r1`: `42/F -> 59/F`
+- `Output/goal-all-input-mean-2026-05-09-r1/run-0346-repeat-2026-05-11-r2`: `42/F -> 91/A`
+- `Output/goal-all-input-mean-2026-05-09-r1/run-0346-repeat-2026-05-11-r3`: `42/F -> 94/A`
+
+All repeats had `false_positive_applied = 0`. Route comparisons against the low repeat are stored at:
+
+- `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0346-repeat-r2-vs-r1-2026-05-11-r1`
+- `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-0346-repeat-r3-vs-r1-2026-05-11-r1`
+
+Both comparisons classify the miss as `upstream_route_volatility`. The good routes apply `create_heading_from_candidate`, `normalize_annotation_tab_order`, and `repair_native_link_structure`; the bad route instead takes `remap_orphan_mcids_as_artifacts@312fa263390e741c26f9476b:51->59`. There is still no shared rejected score-moving state, so this row remains a repeatability/route-admission problem rather than a safe guard or PAC-recovery target.
+
 ## Table/Header Cross-Check
 
 Because the heading branch did not yield a behavior proof, the r5 table/header candidates were rechecked with the existing object diagnostic:
