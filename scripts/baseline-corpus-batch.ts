@@ -15,6 +15,7 @@ import 'dotenv/config';
 import Database from 'better-sqlite3';
 import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -30,6 +31,8 @@ import { createPlaybookStore } from '../src/services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js';
 
 const SEMANTIC_TIMEOUT_MS = 600_000;
+const DEFAULT_REMEDIATION_TARGET_SCORE = parseInt(process.env['REMEDIATION_TARGET_SCORE'] ?? '95', 10);
+const SECOND_PASS_MIN_SCORE = parseInt(process.env['PDFAF_SECOND_PASS_MIN_SCORE'] ?? '93', 10);
 
 function safeBase(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, '_');
@@ -50,6 +53,21 @@ function hasVerifiedCheckpointTimeoutReturn(result: { runtimeSummary?: Remediati
       row.key === 'verified_low_score_checkpoint_timeout_return') &&
     row.count > 0
   ) ?? false;
+}
+
+export function shouldRunSecondDeterministicPass(input: {
+  verifiedCheckpointReturned: boolean;
+  score: number;
+  remediationTargetScore?: number;
+  secondPassMinScore?: number;
+  hasBudget: boolean;
+}): boolean {
+  if (input.verifiedCheckpointReturned) return false;
+  if (!input.hasBudget) return false;
+  const targetScore = input.remediationTargetScore ?? DEFAULT_REMEDIATION_TARGET_SCORE;
+  if (input.score >= targetScore) return false;
+  const secondPassMinScore = input.secondPassMinScore ?? SECOND_PASS_MIN_SCORE;
+  return input.score < secondPassMinScore;
 }
 
 function sanitizeError(error: unknown): string {
@@ -305,7 +323,11 @@ async function main(): Promise<void> {
         const remainingMs = REMEDIATION_PDF_TIMEOUT_MS - (Date.now() - t0);
         return remainingMs >= (REMEDIATION_ANALYSIS_TIMEOUT_MS + REMEDIATION_SOFT_DEADLINE_BUFFER_MS);
       };
-      if (!verifiedCheckpointReturned && outAfter.score < REMEDIATION_TARGET_SCORE && hasSecondPassBudget()) {
+      if (shouldRunSecondDeterministicPass({
+        verifiedCheckpointReturned,
+        score: outAfter.score,
+        hasBudget: hasSecondPassBudget(),
+      })) {
         const memDb2 = new Database(':memory:');
         initSchema(memDb2);
         const r2 = await remediatePdf(outBuf, name, outAfter, outSnap, {
@@ -519,7 +541,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(e => {
-  console.error(e);
-  process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch(e => {
+    console.error(e);
+    process.exit(1);
+  });
+}
