@@ -45,3 +45,19 @@ Any future behavior must be a row-scoped transaction probe that materializes onl
 - `false_positive_applied` remains `0`
 
 Until that transaction can be replayed and validated, `0108` remains remediation-stage transaction volatility, not a safe same-state guard.
+
+## Live Sequence Probe
+
+Follow-up script:
+
+- Script: `scripts/all-input-0108-sequence-probe.ts`
+- Local output: `Output/goal-all-input-mean-2026-05-09-r1/0108-sequence-probe-2026-05-11-r1`
+
+The live probe tried two explicit tool orders on the source PDF:
+
+- `heading_tab_link_parent`: `59/F -> 77/C`
+- `heading_link_tab_parent`: `45/F -> 78/C`
+
+Both runs preserved the important alt/table evidence by the end, but neither reached the `90/A` transaction floor. Both also retained harmful strict PAC failures such as content path tagging, font CMap, metadata/language, heading first-H1, and annotation object reference consistency.
+
+Decision: no behavior is accepted from the `0108` transaction evidence. The row remains a diagnostic target, but this stage does not justify a row guard, PAC recovery expansion, or transaction materialization in production remediation.
