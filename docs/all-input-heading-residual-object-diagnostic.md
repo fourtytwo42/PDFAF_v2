@@ -65,3 +65,17 @@ Route comparison:
 - First divergence: at replay state `312fa263390e741c26f9476b`, the good route rejects `create_heading_from_tagged_visible_anchor` and later applies `create_heading_from_candidate`, while the r5 route treats the same first tool as `no_effect` and then follows a lower-scoring orphan-remap path.
 
 This is useful overlay evidence but not a source behavior proof. Do not add a same-state guard or PAC recovery from this comparison; the route diverges before the score-moving tool sequence.
+
+## Table/Header Cross-Check
+
+Because the heading branch did not yield a behavior proof, the r5 table/header candidates were rechecked with the existing object diagnostic:
+
+- Diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/table-header-object-diagnostic-r5-2026-05-11-r1/all-input-table-header-object-diagnostic.md`
+- Candidate files: none
+
+Classifications:
+
+- `irregular_or_direct_table_shape`: `4057`, `4722`, `4147`, `4678`
+- `needs_stable_table_identity`: `4567`, `4519`
+
+This keeps table-header association batching parked for these r5 rows. The evidence points to irregular table-structure or table-identity work first, not a `/TH` association metadata broadening.
