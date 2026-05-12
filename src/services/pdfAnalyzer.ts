@@ -55,6 +55,10 @@ function setCached(hash: string, result: AnalysisResult, snapshot: DocumentSnaps
   cache.set(hash, { result, snapshot, expiresAt: Date.now() + ANALYSIS_CACHE_TTL_MS });
 }
 
+export function analysisCacheKey(fileHash: string, filename: string): string {
+  return `${fileHash}\0${filename}`;
+}
+
 async function hashFile(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
@@ -97,7 +101,8 @@ export async function analyzePdf(
     options?.signal?.throwIfAborted();
     // Check cache by file content hash
     const fileHash = await hashFile(pdfPath);
-    const cached = options?.bypassCache ? null : getCached(fileHash);
+    const cacheKey = analysisCacheKey(fileHash, filename);
+    const cached = options?.bypassCache ? null : getCached(cacheKey);
     if (cached) {
       const cacheMs = Date.now() - startMs;
       return {
@@ -200,7 +205,7 @@ export async function analyzePdf(
       classificationMs,
     };
 
-    setCached(fileHash, analysisResult, snap);
+    setCached(cacheKey, analysisResult, snap);
     persistResult(analysisResult);
 
     return { result: analysisResult, snapshot: snap };
