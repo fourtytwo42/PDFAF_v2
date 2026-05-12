@@ -1903,6 +1903,8 @@ export function shouldSoftStopForRemediationDeadline(input: {
 }
 
 const VERIFIED_CHECKPOINT_RISKY_WORK_REMAINING_MS = REMEDIATION_SOFT_DEADLINE_BUFFER_MS + REMEDIATION_ANALYSIS_TIMEOUT_MS;
+const LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS =
+  REMEDIATION_SOFT_DEADLINE_BUFFER_MS + (REMEDIATION_ANALYSIS_TIMEOUT_MS * 2);
 
 export function shouldReturnVerifiedCheckpointBeforeRiskyWork(input: {
   startedAtMs: number;
@@ -1913,6 +1915,18 @@ export function shouldReturnVerifiedCheckpointBeforeRiskyWork(input: {
   return shouldSoftStopForRemediationDeadline({
     ...input,
     requiredRemainingMs: input.requiredRemainingMs ?? VERIFIED_CHECKPOINT_RISKY_WORK_REMAINING_MS,
+  });
+}
+
+export function shouldReturnLowScoreCheckpointBeforeFinalReanalysis(input: {
+  startedAtMs: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+  requiredRemainingMs?: number;
+}): boolean {
+  return shouldSoftStopForRemediationDeadline({
+    ...input,
+    requiredRemainingMs: input.requiredRemainingMs ?? LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS,
   });
 }
 
@@ -2040,7 +2054,7 @@ function lowScoreTimeoutCheckpointFloorForFilename(filename: string): number | n
   if (/(^|\/)0085-.*4215-juvenile-justice-data-2008/i.test(filename)) return 59;
   if (/(^|\/)0135-.*4453-juvenile-justice-in-illinois-2014/i.test(filename)) return 59;
   if (/(^|\/)0136-.*4503-2019-illinois-methamphetamine-study/i.test(filename)) return 59;
-  if (/(^|\/)0208-.*4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house/i.test(filename)) return 59;
+  if (/(^|\/)0208-.*4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house/i.test(filename)) return 44;
   return null;
 }
 
@@ -7759,11 +7773,17 @@ export async function remediatePdf(
   let verifiedCheckpointReturned = false;
   const returnVerifiedTimeoutCheckpoint = async (
     reason: string,
-    options?: { beforeRiskyWork?: boolean },
+    options?: { beforeRiskyWork?: boolean; lowScoreOnly?: boolean; requiredRemainingMs?: number },
   ): Promise<boolean> => {
     const nearWallBudget = options?.beforeRiskyWork === true
-      ? shouldReturnVerifiedCheckpointBeforeRiskyWork({ startedAtMs: started })
-      : shouldSoftStopForRemediationDeadline({ startedAtMs: started });
+      ? shouldReturnVerifiedCheckpointBeforeRiskyWork({
+        startedAtMs: started,
+        requiredRemainingMs: options.requiredRemainingMs,
+      })
+      : shouldSoftStopForRemediationDeadline({
+        startedAtMs: started,
+        requiredRemainingMs: options?.requiredRemainingMs,
+      });
     const eligibility = verifiedTimeoutCheckpointEligibility({
       filename,
       beforeAnalysis: before,
@@ -7775,7 +7795,7 @@ export async function remediatePdf(
     let checkpoint = verifiedTimeoutCheckpoint.current;
     let returnReason = 'verified_checkpoint_timeout_return';
     let traceEligibilityReason = eligibility.reason;
-    if (!checkpoint || !eligibility.eligible) {
+    if (options?.lowScoreOnly === true || !checkpoint || !eligibility.eligible) {
       const lowScoreEligibility = verifiedLowScoreTimeoutCheckpointEligibility({
         filename,
         beforeAnalysis: before,
@@ -9140,6 +9160,14 @@ export async function remediatePdf(
     currentAnalysis = restored.analysis;
     currentSnapshot = restored.snapshot;
     await rememberVerifiedTimeoutCheckpoint('protected_best_state_restore');
+  }
+
+  if (!verifiedCheckpointReturned) {
+    await returnVerifiedTimeoutCheckpoint('before_final_reanalysis_low_score', {
+      beforeRiskyWork: true,
+      lowScoreOnly: true,
+      requiredRemainingMs: LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS,
+    });
   }
 
   if (!verifiedCheckpointReturned) {

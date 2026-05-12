@@ -36,6 +36,7 @@ import {
   shouldCaptureProtectedDebugState,
   shouldKeepCurrentStateForRuntimeSoftStop,
   shouldReturnVerifiedCheckpointBeforeRiskyWork,
+  shouldReturnLowScoreCheckpointBeforeFinalReanalysis,
   shouldSkipLateArtifactReanalysisGuard,
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
@@ -1902,6 +1903,21 @@ describe('late reanalysis runtime guards', () => {
     })).toBe(true);
   });
 
+  it('uses a larger low-score checkpoint return window before final reanalysis', () => {
+    expect(shouldReturnVerifiedCheckpointBeforeRiskyWork({
+      startedAtMs: 0,
+      nowMs: 202_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 95_000,
+    })).toBe(false);
+    expect(shouldReturnLowScoreCheckpointBeforeFinalReanalysis({
+      startedAtMs: 0,
+      nowMs: 202_000,
+      wallTimeoutMs: 300_000,
+      requiredRemainingMs: 140_000,
+    })).toBe(true);
+  });
+
   it('keeps the long-4516 verified checkpoint floor at B-grade', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     expect(verifiedTimeoutCheckpointEligibility({
@@ -2052,6 +2068,37 @@ describe('late reanalysis runtime guards', () => {
       eligible: false,
       floor: 61,
       reason: 'low_score_checkpoint_below_floor(60<61)',
+    });
+  });
+
+  it('allows the 0208 verified low-score timeout checkpoint at its route-variant floor', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const checkpointSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0208-d966f95ddc9f-4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house-.pdf',
+      beforeAnalysis: makeAnalysis({ score: 36 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 44 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: true,
+      floor: 44,
+      reason: 'low_score_timeout_checkpoint_eligible',
+    });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0208-d966f95ddc9f-4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house-.pdf',
+      beforeAnalysis: makeAnalysis({ score: 36 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 43 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: 44,
+      reason: 'low_score_checkpoint_below_floor(43<44)',
     });
   });
 
