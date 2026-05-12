@@ -57,3 +57,17 @@ Findings:
 | `ad762d4a` / `0296` | `30/F, 30/F, 30/F` | `stable_source_analysis` | Source stable, but route comparison still diverges upstream; no same-state patch. |
 
 The hash-seed probe did not stabilize the volatile rows in a useful direction. `4655` and `4487` still varied across object families, while `long-4683` stabilized only at the lower-quality `48/F` shape. Do not use `PYTHONHASHSEED=0` as a quality-preserving analyzer fix from this evidence.
+
+## r18 Table/Alt Tail Refresh
+
+The next low-row group was checked for source-analysis stability:
+
+- Analyzer variance output: `Output/goal-all-input-mean-2026-05-09-r1/analyzer-variance-r18-table-alt-candidates-2026-05-12-r1`
+- Table/header object output: `Output/goal-all-input-mean-2026-05-09-r1/table-header-object-r18-stable-candidates-2026-05-12-r1`
+- `4722` sequence probe: `Output/goal-all-input-mean-2026-05-09-r1/table-structure-sequence-probe-4722-r18-2026-05-12-r1`
+
+Stable source-analysis rows include `4453`, `4105`, `4678`, `4722`, `4147`, `4735`, and `4057`. `4690` and `4519` still show analyzer-object variance, so they should not drive route guards.
+
+The table/header object diagnostic found no simple header-association candidates. Most stable table rows are `irregular_or_direct_table_shape`, meaning table normalization must happen before header association metadata can be trusted.
+
+`4722` remains diagnostic-only. The current probe can produce a high apparent score (`94/A`) through `normalize_table_structure_twice_then_header_cleanup`, but PAC-style table-header debt worsens from `1150` to `1209`, so accepting it would violate the strict-grader goal. Do not add a PAC table-header exception or accept this sequence unless a later cleanup proves final table-header debt is neutral or improved.
