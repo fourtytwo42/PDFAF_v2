@@ -2108,6 +2108,50 @@ describe('late reanalysis runtime guards', () => {
     });
   });
 
+  it('allows the 0296 verified low-score timeout checkpoint at its latest verified floor', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+    const checkpointSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0296-68a201d8ed16-05-ad762d4a-an-evaluation-of-redeploy-illinois-st.pdf',
+      beforeAnalysis: makeAnalysis({ score: 34 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 74 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'post_pass_bookmarks', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: true,
+      floor: 74,
+      reason: 'low_score_timeout_checkpoint_eligible',
+    });
+
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
+      filename: '0296-68a201d8ed16-05-ad762d4a-an-evaluation-of-redeploy-illinois-st.pdf',
+      beforeAnalysis: makeAnalysis({ score: 34 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 73 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'post_pass_bookmarks', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: 74,
+      reason: 'low_score_checkpoint_below_floor(73<74)',
+    });
+
+    expect(verifiedTimeoutCheckpointEligibility({
+      filename: '0296-68a201d8ed16-05-ad762d4a-an-evaluation-of-redeploy-illinois-st.pdf',
+      beforeAnalysis: makeAnalysis({ score: 34 }),
+      beforeSnapshot,
+      checkpoint: { analysis: makeAnalysis({ score: 74 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      appliedTools: [runtimeToolRow({ toolName: 'post_pass_bookmarks', outcome: 'applied' })],
+      nearWallBudget: true,
+    })).toMatchObject({
+      eligible: false,
+      floor: 85,
+      reason: 'checkpoint_below_floor(74<85)',
+    });
+  });
+
   it('does not allow low-score timeout checkpoints for unconfigured rows or unsafe snapshots', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpoint = {

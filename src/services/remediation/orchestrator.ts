@@ -2119,6 +2119,7 @@ function lowScoreTimeoutCheckpointFloorForFilename(filename: string): number | n
   if (/(^|\/)0135-.*4453-juvenile-justice-in-illinois-2014/i.test(filename)) return 59;
   if (/(^|\/)0136-.*4503-2019-illinois-methamphetamine-study/i.test(filename)) return 59;
   if (/(^|\/)0208-.*4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house/i.test(filename)) return 44;
+  if (/(^|\/)0296-.*ad762d4a-an-evaluation-of-redeploy-illinois-st/i.test(filename)) return 74;
   return null;
 }
 
