@@ -1,0 +1,62 @@
+# All-Input API Semantic r18 Overlay Checkpoint
+
+Date: 2026-05-12
+
+This checkpoint measures API-produced remediated PDFs against the current source analyzer using the remediation analysis budget. It is planning evidence only: it does not replace a fresh all-input validation run and does not complete the active mean goal by itself.
+
+## Artifacts
+
+- Baseline checkpoint: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-diagnostic-2026-05-12-r18-cachekey-affected-merged-r1/all-input-mean-diagnostic.md`
+- API/source overlay: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-source-overlay-2026-05-12-r2-remediation-budget/api-semantic-r18-source-overlay.md`
+- Overlay JSON: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-source-overlay-2026-05-12-r2-remediation-budget/api-semantic-r18-source-overlay.json`
+- Virtual 351-row report root: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-virtual-merged-report-2026-05-12-r1/`
+- Virtual mean diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-virtual-merged-diagnostic-2026-05-12-r1/all-input-mean-diagnostic.md`
+- API candidate output roots:
+  - `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-0033-2026-05-12-r1/`
+  - `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-batch-2026-05-12-r1/`
+  - `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-batch-2026-05-12-r2/`
+  - `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-0287-2026-05-12-r1/`
+
+## Result
+
+- Baseline rows: `351`
+- Baseline mean: `92.5442`
+- Points needed for mean `93`: `160`
+- Source reanalysis timeout: `45000ms`
+- Counted source-reanalyzed gain: `164`
+- Projected overlay mean: `93.011396`
+- Existing diagnostic virtual mean: `93.0114`
+- Crosses mean `93`: yes
+
+Counted rows:
+
+| Row | Current r18 | Source reanalysis | Gain |
+| --- | ---: | ---: | ---: |
+| `0033 / v1-4655` | `59/F` | `91/A` | `32` |
+| `0075 / v1-4487` | `59/F` | `93/A` | `34` |
+| `0114` | `59/F` | `91/A` | `32` |
+| `0208` | `59/F` | `87/B` | `28` |
+| `0136 / v1-4503` | `59/F` | `64/D` | `5` |
+| `0296 / ad762d4a` | `73/C` | `94/A` | `21` |
+| `0108 / v1-4614` | `79/C` | `91/A` | `12` |
+
+Excluded rows:
+
+| Row | Current r18 | Source reanalysis | Reason |
+| --- | ---: | ---: | --- |
+| `0181 / v1-4519` | `69/D` | `59/F` | Source reanalysis did not improve the current row. |
+| `0287` | `69/D` | `69/D` | API headline reached `92/A`, but source reanalysis did not improve the current row. |
+
+## Decision
+
+The overlay proves that the current engine plus API semantic route has enough source-reanalyzed candidate movement to cross the mean target, while preserving the existing strict-grader posture. The virtual 351-row report replaces only the counted rows and lets the existing all-input mean diagnostic reproduce the `93.0114` projection. It is not sufficient to close the goal because the result has not been validated as a fresh all-input run or a reproducible controlled shard plan.
+
+The next checkpoint should validate the counted API-produced PDFs in a controlled way that avoids overloading the VM:
+
+- keep API/LLM requests sequential or very low concurrency;
+- reanalyze all returned PDFs with the remediation analysis budget;
+- exclude candidates that do not improve under source reanalysis;
+- preserve `false_positive_applied = 0`;
+- keep generated PDFs and API JSON under `Output/` only.
+
+Do not mark the long-running goal complete until an audit maps the all-input objective to concrete evidence and confirms the current validation path covers it.
