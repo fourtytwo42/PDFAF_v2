@@ -2,6 +2,12 @@
 
 Date: 2026-05-12
 
+Update: this audit is superseded by
+`docs/all-input-mean-93-conservative-remix-audit.md`, which records the later
+controlled conservative r18 remix audit at mean `93.0057` with
+`false_positive_applied=0`. The decision below reflects the earlier API-overlay
+state before the conservative repeat-supported remix was assembled.
+
 Objective: across the roughly `300` PDFs under `Input`, raise the overall remediated mean above `93` while keeping runtime bounded and repairs honest, using PAC/POC evidence as a reference, preserving `false_positive_applied = 0`, and avoiding weakened strictness, hidden failures, broad planner behavior, or timeout default increases.
 
 ## Checklist
