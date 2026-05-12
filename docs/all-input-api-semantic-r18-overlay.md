@@ -83,3 +83,29 @@ Repeat results:
 | `0108` | `79/C` | `54/F` | `59/F` | `0` |
 
 Decision: `0033`, `0114`, `0136`, and `0296` have repeat evidence worth preserving; `0075`, `0208`, and `0108` are not completion evidence because their high routes did not repeat. The next recovery work should target route/analyzer repeatability or find additional stable source-reanalyzed candidates worth at least `76` points over the r18 baseline.
+
+## Additional Candidate Discovery
+
+Follow-up API/source probes looked for repeat-stable replacement gains:
+
+- r3 output: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-batch-2026-05-12-r3/source-reanalysis-summary.md`
+- r4 output: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-batch-2026-05-12-r4/source-reanalysis-summary.md`
+- new-candidate repeat: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-new-candidates-repeat-2026-05-12-r1/repeat-source-reanalysis-summary.md`
+- r5 output: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-batch-2026-05-12-r5/source-reanalysis-summary.md`
+- r6 output: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-candidate-batch-2026-05-12-r6/source-reanalysis-summary.md`
+
+Best observed source-reanalyzed outputs are enough to cross the mean target, but the repeat-supported subset is not. Conservative repeat-supported gains are:
+
+| Row | Repeat-supported gain | Notes |
+| --- | ---: | --- |
+| `0033` | `32` | Repeated at `91/A`. |
+| `0114` | `32` | Repeated at `91/A`. |
+| `0136` | `5` | Repeated at `64/D`. |
+| `0296` | `15` | Repeat produced `88/B`, lower than the first `94/A` source reanalysis. |
+| `0120` | `5` | Repeat produced `69/D`, lower than the first `90/A` source reanalysis. |
+| `0135` | `10` | Repeated at `69/D`. |
+| `0076` | `25` | Repeated at `94/A`. |
+
+Total repeat-supported gain: `124`, projected mean `92.897436`.
+
+Volatile/non-counted rows from these probes include `0075`, `0208`, `0108`, `0223`, `0137`, and `0020/long-4683`; they produced useful one-off routes but failed repeat or source reanalysis. Treat them as route/analyzer volatility evidence, not accepted completion rows.

@@ -20,7 +20,7 @@ Objective: across the roughly `300` PDFs under `Input`, raise the overall remedi
 
 ## Decision
 
-The active goal is not complete yet. The current strongest evidence is that source-reanalyzed API outputs can provide enough honest movement to project the all-input mean to `93.0114`, but this is still a virtual overlay and the first counted-row repeat did not reproduce it. A completion claim needs either:
+The active goal is not complete yet. The current strongest evidence is that source-reanalyzed API outputs can provide enough honest movement to project the all-input mean above `93`, but this is still a virtual overlay and repeat checks do not yet reproduce enough of it. The current conservative repeat-supported gain is `124` points, projecting mean `92.897436`, so at least `36` more repeat-supported points are needed. A completion claim needs either:
 
 - a fresh all-input validation path that produces those outputs under controlled runtime and confirms `false_positive_applied = 0`; or
 - an explicit acceptance decision that the virtual source-reanalyzed overlay is an acceptable completion artifact.
