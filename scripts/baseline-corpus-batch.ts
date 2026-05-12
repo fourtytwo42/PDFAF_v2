@@ -70,6 +70,16 @@ export function shouldRunSecondDeterministicPass(input: {
   return input.score < secondPassMinScore;
 }
 
+export function remediationBenchmarkInitialAnalysisOptions(input: {
+  remediationAnalysisTimeoutMs: number;
+  signal?: AbortSignal;
+}): { timeoutMs: number; signal?: AbortSignal } {
+  return {
+    timeoutMs: input.remediationAnalysisTimeoutMs,
+    signal: input.signal,
+  };
+}
+
 function sanitizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -284,7 +294,14 @@ async function main(): Promise<void> {
       const buf = await readFile(inputPath);
       const tmpPath = join(tmpdir(), `pdfaf-baseline-${randomUUID()}.pdf`);
       await writeFile(tmpPath, buf);
-      const { result, snapshot } = await analyzePdf(tmpPath, name);
+      const { result, snapshot } = await analyzePdf(
+        tmpPath,
+        name,
+        remediationBenchmarkInitialAnalysisOptions({
+          remediationAnalysisTimeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+          signal,
+        }),
+      );
       await unlink(tmpPath).catch(() => {});
       beforeScore = result.score;
       beforeGrade = result.grade;

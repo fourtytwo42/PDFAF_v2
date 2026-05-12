@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { shouldRunSecondDeterministicPass } from '../../scripts/baseline-corpus-batch.js';
+import {
+  remediationBenchmarkInitialAnalysisOptions,
+  shouldRunSecondDeterministicPass,
+} from '../../scripts/baseline-corpus-batch.js';
 
 describe('baseline corpus deterministic pass admission', () => {
   it('does not start a second pass for already A-grade rows below the global 95 target', () => {
@@ -49,5 +52,16 @@ describe('baseline corpus deterministic pass admission', () => {
       secondPassMinScore: 93,
       hasBudget: false,
     })).toBe(false);
+  });
+
+  it('uses the remediation analysis budget for benchmark remediation input analysis', () => {
+    const controller = new AbortController();
+    expect(remediationBenchmarkInitialAnalysisOptions({
+      remediationAnalysisTimeoutMs: 45_000,
+      signal: controller.signal,
+    })).toEqual({
+      timeoutMs: 45_000,
+      signal: controller.signal,
+    });
   });
 });
