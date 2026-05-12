@@ -109,3 +109,14 @@ Best observed source-reanalyzed outputs are enough to cross the mean target, but
 Total repeat-supported gain: `124`, projected mean `92.897436`.
 
 Volatile/non-counted rows from these probes include `0075`, `0208`, `0108`, `0223`, `0137`, and `0020/long-4683`; they produced useful one-off routes but failed repeat or source reanalysis. Treat them as route/analyzer volatility evidence, not accepted completion rows.
+
+## Later Probe Result
+
+Additional volatile/near-pass probing did not close the repeat-supported gap:
+
+- volatile repeat: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-volatile-repeat-2026-05-12-r1/repeat-source-reanalysis-summary.md`
+- near-pass batch: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-near-pass-batch-2026-05-12-r1/source-reanalysis-summary.md`
+
+The volatile repeat recovered `0108` again at `91/A` (`+12`), but `0075`, `0208`, and `0020/long-4683` did not recover. Near-pass candidates `0092`, `0071`, `0073`, and `0061` had high API headline scores in some cases, but current-source reanalysis did not improve any of them.
+
+Conservative decision: do not count API headline-only gains, and do not count one-off volatile high routes as completion evidence. The remaining gap is no longer a candidate-discovery problem; it needs a targeted route/analyzer repeatability stage for high-value volatile rows such as `0075`, `0208`, `0108`, and `0020/long-4683`.
