@@ -60,3 +60,26 @@ The next checkpoint should validate the counted API-produced PDFs in a controlle
 - keep generated PDFs and API JSON under `Output/` only.
 
 Do not mark the long-running goal complete until an audit maps the all-input objective to concrete evidence and confirms the current validation path covers it.
+
+## Repeatability Check
+
+A sequential rerun of the seven counted API rows did not reproduce the crossing overlay:
+
+- Repeat output: `Output/goal-all-input-mean-2026-05-09-r1/api-semantic-r18-counted-repeat-2026-05-12-r1/repeat-source-reanalysis-summary.md`
+- Counted repeat gain: `84`
+- Projected repeat mean: `92.783476`
+- Crosses mean `93`: no
+
+Repeat results:
+
+| Row | Current r18 | Repeat API | Repeat source reanalysis | Repeat gain |
+| --- | ---: | ---: | ---: | ---: |
+| `0033` | `59/F` | `97/A` | `91/A` | `32` |
+| `0075` | `59/F` | `59/F` | `59/F` | `0` |
+| `0114` | `59/F` | `96/A` | `91/A` | `32` |
+| `0208` | `59/F` | `59/F` | `59/F` | `0` |
+| `0136` | `59/F` | `64/D` | `64/D` | `5` |
+| `0296` | `73/C` | `91/A` | `88/B` | `15` |
+| `0108` | `79/C` | `54/F` | `59/F` | `0` |
+
+Decision: `0033`, `0114`, `0136`, and `0296` have repeat evidence worth preserving; `0075`, `0208`, and `0108` are not completion evidence because their high routes did not repeat. The next recovery work should target route/analyzer repeatability or find additional stable source-reanalyzed candidates worth at least `76` points over the r18 baseline.
