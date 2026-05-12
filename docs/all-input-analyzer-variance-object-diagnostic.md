@@ -38,3 +38,22 @@ Unsafe directions:
 - route guards for `4567` or `4693`;
 - counting one-off high routes toward completion;
 - weakening PAC scoring/gates or hiding strict PAC failures.
+
+## r18 Candidate Refresh
+
+After the filename-aware analyzer cache-key refresh, the r18 merged checkpoint still needed `160` points for mean `93`. The highest remaining route-candidate rows were checked with repeated source analysis:
+
+- Local output: `Output/goal-all-input-mean-2026-05-09-r1/analyzer-variance-r18-candidates-2026-05-12-r1`
+- `PYTHONHASHSEED=0` probe: `Output/goal-all-input-mean-2026-05-09-r1/analyzer-variance-r18-pythonhashseed0-2026-05-12-r1`
+
+Findings:
+
+| Row | Repeat scores | Classification | Decision |
+| --- | --- | --- | --- |
+| `4655` / `0033` | `42/F, 46/F, 46/F` | `mixed_object_variance` | Analyzer-object debt, not a route guard target. |
+| `4487` / `0075` | `52/F, 44/F, 52/F` | `figure_alt_object_variance` | Analyzer-object debt, not a route guard target. |
+| `4683` / `long-4683` | `59/F, 48/F, 48/F` | `mixed_object_variance` | Analyzer-object debt, not a route guard target. |
+| `4503` / `0136` | `44/F, 44/F, 44/F` | `stable_source_analysis` | Source stable, but route comparison still diverges upstream; no same-state patch. |
+| `ad762d4a` / `0296` | `30/F, 30/F, 30/F` | `stable_source_analysis` | Source stable, but route comparison still diverges upstream; no same-state patch. |
+
+The hash-seed probe did not stabilize the volatile rows in a useful direction. `4655` and `4487` still varied across object families, while `long-4683` stabilized only at the lower-quality `48/F` shape. Do not use `PYTHONHASHSEED=0` as a quality-preserving analyzer fix from this evidence.
