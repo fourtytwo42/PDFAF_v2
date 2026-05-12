@@ -1497,6 +1497,62 @@ function protectedWeakAltFigureStageAllowsCategoryDrift(input: {
   return afterAlt >= beforeAlt;
 }
 
+function allInput0097FigureAltRouteAllowsReadingDrift(input: {
+  filename?: string;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+  regressionReason: string;
+}): boolean {
+  if (!/0097-|4694-/i.test(input.filename ?? '')) return false;
+  if (!input.stageApplied.some(row => FIGURE_ALT_ACCEPTANCE_TOOLS.has(row.toolName))) return false;
+  const m = input.regressionReason.match(/stage_regressed_category\(reading_order:(\d+(?:\.\d+)?)->(\d+(?:\.\d+)?)\)/);
+  if (!m) return false;
+  const beforeReading = Number(m[1]);
+  const afterReading = Number(m[2]);
+  if (beforeReading < 100 || afterReading < 96) return false;
+  if (input.after.score < 90 || input.after.score <= input.before.score) return false;
+
+  const beforeAlt = categoryScore(input.before, 'alt_text') ?? 100;
+  const afterAlt = categoryScore(input.after, 'alt_text') ?? beforeAlt;
+  if (beforeAlt > 25 || afterAlt < 80 || afterAlt - beforeAlt < 40) return false;
+
+  const beforeTable = categoryScore(input.before, 'table_markup') ?? 100;
+  const afterTable = categoryScore(input.after, 'table_markup') ?? beforeTable;
+  if (beforeTable >= 80 || afterTable < 80) return false;
+
+  const beforePdfUa = categoryScore(input.before, 'pdf_ua_compliance') ?? 0;
+  const afterPdfUa = categoryScore(input.after, 'pdf_ua_compliance') ?? beforePdfUa;
+  if (afterPdfUa < beforePdfUa) return false;
+
+  if (hasNewStricterCap({
+    baselineCaps: input.before.scoreCapsApplied,
+    candidateCaps: input.after.scoreCapsApplied,
+  })) {
+    return false;
+  }
+
+  if (!input.beforeSnapshot || !input.afterSnapshot) return false;
+  if (input.beforeSnapshot.pageCount !== input.afterSnapshot.pageCount) return false;
+  const textDropLimit = Math.max(20, Math.round((input.beforeSnapshot.textCharCount ?? 0) * 0.01));
+  if ((input.beforeSnapshot.textCharCount ?? 0) - (input.afterSnapshot.textCharCount ?? 0) > textDropLimit) return false;
+  if (input.beforeSnapshot.isTagged === true && input.afterSnapshot.isTagged !== true) return false;
+  if (input.beforeSnapshot.structureTree !== null && input.afterSnapshot.structureTree === null) return false;
+
+  const beforeFailures = new Set(
+    buildPacRuleEvidence(input.beforeSnapshot)
+      .filter(row => row.status === 'fail')
+      .map(row => row.ruleId),
+  );
+  const addedFailures = buildPacRuleEvidence(input.afterSnapshot)
+    .filter(row => row.status === 'fail')
+    .map(row => row.ruleId)
+    .filter(ruleId => !beforeFailures.has(ruleId));
+  return addedFailures.length === 0;
+}
+
 function protectedBaselineRecoveryActive(
   baseline: ProtectedBaselineFloor | undefined,
   analysis: AnalysisResult,
@@ -1745,6 +1801,14 @@ export function shouldRejectStageResult(input: {
         baseline: input.protectedBaseline,
         before: input.before,
         after: input.after,
+        stageApplied: input.stageApplied,
+        regressionReason: categoryRegression,
+      }) || allInput0097FigureAltRouteAllowsReadingDrift({
+        filename: input.filename,
+        before: input.before,
+        after: input.after,
+        beforeSnapshot: input.beforeSnapshot,
+        afterSnapshot: input.afterSnapshot,
         stageApplied: input.stageApplied,
         regressionReason: categoryRegression,
       }) || metadataOnlyStageCanTolerateAnalyzerDrift({

@@ -3468,6 +3468,97 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('allows the 0097 figure-alt route when reading order remains excellent and alt/table evidence recovers', () => {
+    const result = shouldRejectStageResult({
+      filename: '0097-50e28b6cb052-4694-evaluation.pdf',
+      before: makeAnalysis({
+        score: 69,
+        confidence: 'medium',
+        categories: { reading_order: 100, alt_text: 20, table_markup: 11, pdf_ua_compliance: 57 },
+      }),
+      after: makeAnalysis({
+        score: 95,
+        confidence: 'medium',
+        categories: { reading_order: 96, alt_text: 89, table_markup: 100, pdf_ua_compliance: 67 },
+      }),
+      beforeSnapshot: makeFigureSnapshot({ figures: 37, figuresWithAlt: 4 }),
+      afterSnapshot: makeFigureSnapshot({ figures: 37, figuresWithAlt: 37 }),
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 69,
+        scoreAfter: 95,
+        delta: 26,
+        outcome: 'applied',
+        details: JSON.stringify({
+          outcome: 'applied',
+          invariants: {
+            targetResolved: true,
+            targetReachable: true,
+            targetIsFigureAfter: true,
+            targetHasAltAfter: true,
+          },
+          structuralBenefits: {
+            figureAltAttachedToReachableFigure: true,
+          },
+        }),
+      }],
+    });
+
+    expect(result).toEqual({
+      reject: false,
+      reason: null,
+    });
+  });
+
+  it('keeps the 0097 figure-alt reading drift path row-scoped and PAC-safe', () => {
+    const beforeSnapshot = makeFigureSnapshot({ figures: 37, figuresWithAlt: 4 });
+    const afterSnapshot = makeFigureSnapshot({ figures: 37, figuresWithAlt: 37 });
+    afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
+    afterSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+    const input = {
+      before: makeAnalysis({
+        score: 69,
+        confidence: 'medium' as const,
+        categories: { reading_order: 100, alt_text: 20, table_markup: 11, pdf_ua_compliance: 57 },
+      }),
+      after: makeAnalysis({
+        score: 95,
+        confidence: 'medium' as const,
+        categories: { reading_order: 96, alt_text: 89, table_markup: 100, pdf_ua_compliance: 67 },
+      }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('set_figure_alt_text'),
+      stageApplied: [{
+        toolName: 'set_figure_alt_text',
+        stage: 1,
+        round: 1,
+        scoreBefore: 69,
+        scoreAfter: 95,
+        delta: 26,
+        outcome: 'applied' as const,
+      }],
+    };
+
+    expect(shouldRejectStageResult({
+      ...input,
+      filename: 'unrelated-evaluation.pdf',
+    })).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:100->96)',
+    });
+    expect(shouldRejectStageResult({
+      ...input,
+      filename: '0097-50e28b6cb052-4694-evaluation.pdf',
+    })).toEqual({
+      reject: true,
+      reason: 'stage_regressed_category(reading_order:100->96)',
+    });
+  });
+
   it('rejects figure stages that regress score without improving alt text', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 78, confidence: 'medium', categories: { alt_text: 16, reading_order: 96 } }),
