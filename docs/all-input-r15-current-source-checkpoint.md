@@ -59,3 +59,38 @@ Result:
 - `false_positive_applied = 0`
 
 The refresh recovered `0345-...exploring-school...` in shard context to `97/A`, improving the measured mean but not completing the all-input goal. `0033` still repeats at `59/F` on current code, and `long-4516` / `structure-4438` remain hard-timeout debt in the merged result.
+
+## r17/r18 Affected-Shard Refresh
+
+After the filename-aware analyzer cache key landed, the affected shards were refreshed instead of rerunning all `351` PDFs:
+
+- r17 shard root: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-2026-05-12-r17-cachekey-affected-shards/`
+- r18 shard root: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-2026-05-12-r18-cachekey-affected-shards/`
+- r18 merged report root: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-2026-05-12-r18-cachekey-affected-merged-copy/`
+- r18 mean diagnostic: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-diagnostic-2026-05-12-r18-cachekey-affected-merged-r1/all-input-mean-diagnostic.md`
+
+Result:
+
+- PDFs processed: `351`
+- Mean after remediation: `92.5442`
+- Median after remediation: `94`
+- Grade distribution: `327 A / 4 B / 2 C / 7 D / 9 F`
+- Rows below `93`: `43`
+- Points needed for mean `93`: `160`
+- Runtime p95 / max: `245745ms / 300008ms`
+- `false_positive_applied = 0`
+
+This is the current best measured all-input checkpoint, but it is still below the active `93` mean goal.
+
+Rows that recovered in affected shard context:
+
+- `0325` recovered to `93/A` in r17 shard `05`.
+- `0216` recovered to `95/A` in r18 shard `08`.
+- `0351` recovered to `93/A` in r18 shard `07`.
+
+Rows that remain non-complete or volatile:
+
+- `long-4516` is currently a hard timeout. Current repeat `Output/goal-all-input-mean-2026-05-09-r1/run-single-long4516-current-cachekey-2026-05-12-r2` timed out with best checkpoint `53/F`, below the row-specific `80/B` floor. Diagnostic `Output/goal-all-input-mean-2026-05-09-r1/route-recovery-long4516-r1-vs-r17-cachekey-2026-05-12-r1` shows the older `89/B` route used score-moving tools, but the current route does not reproduce it. Do not lower the floor or return the `53/F` checkpoint.
+- `structure-4438` remains parked runtime/checkpoint debt at the `90/A` floor.
+- `0033`, `0075`, and `long-4683` still show upstream route volatility rather than a proven same-state guard candidate under current source.
+- `0136` and `0296` have historical high-score artifacts, but the best comparisons either lack tool timelines or classify as no safe route proof; do not patch from those artifacts alone.
