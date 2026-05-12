@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildHeadingResidualObjectDiagnostic } from '../../scripts/all-input-heading-residual-object-diagnostic.js';
+import {
+  baselineRowsFromJson,
+  buildHeadingResidualObjectDiagnostic,
+} from '../../scripts/all-input-heading-residual-object-diagnostic.js';
 
 describe('all-input heading residual object diagnostic', () => {
   it('classifies hard timeouts separately from repair candidates', () => {
@@ -77,5 +80,19 @@ describe('all-input heading residual object diagnostic', () => {
 
     expect(report.rows.find(row => row.file === '4215-runtime.pdf')?.classification).toBe('runtime_route_heavy');
     expect(report.rows.find(row => row.file === '4082-near.pdf')?.classification).toBe('near_pass_heading_cap');
+  });
+
+  it('loads merged all-input row arrays as baseline rows', () => {
+    expect(baselineRowsFromJson([
+      { file: '0236.pdf', afterScore: 59 },
+    ])).toEqual([
+      { file: '0236.pdf', afterScore: 59 },
+    ]);
+
+    expect(baselineRowsFromJson({
+      rows: [{ file: '0114.pdf', afterScore: 59 }],
+    })).toEqual([
+      { file: '0114.pdf', afterScore: 59 },
+    ]);
   });
 });

@@ -372,12 +372,18 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, 'utf8')) as unknown;
 }
 
+export function baselineRowsFromJson(value: unknown): BaselineRow[] {
+  if (Array.isArray(value)) return value as BaselineRow[];
+  const object = asRecord(value);
+  return Array.isArray(object?.rows) ? object.rows as BaselineRow[] : [];
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const baseline = asRecord(await readJson(args.baseline));
+  const baseline = await readJson(args.baseline);
   const selection = asRecord(await readJson(args.selection));
   const report = buildHeadingResidualObjectDiagnostic({
-    baselineRows: Array.isArray(baseline?.rows) ? baseline.rows as BaselineRow[] : [],
+    baselineRows: baselineRowsFromJson(baseline),
     selectionRows: Array.isArray(selection?.rows) ? selection.rows as SelectionRow[] : [],
     pocMatrix: await readJson(args.poc),
     baselineSource: args.baseline,
