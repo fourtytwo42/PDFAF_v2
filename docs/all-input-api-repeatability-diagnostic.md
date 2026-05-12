@@ -50,3 +50,20 @@ Behavior remains blocked unless a diagnostic proves one of these narrow safe sha
 - `false_positive_applied` remains `0`.
 
 Until that exists, the active all-input goal remains open.
+
+## Analyzer Signature Follow-Up
+
+The volatile rows were checked with a deeper source-analysis signature diagnostic:
+
+- Local output: `Output/goal-all-input-mean-2026-05-09-r1/analyzer-signature-api-volatile-2026-05-12-r1/analyzer-signature-diagnostic.md`
+
+Result:
+
+| Row | Classification | Notes |
+| --- | --- | --- |
+| `0075` | `python_structure_variance` | pdf.js signature stable; Python structure signature changes while score stays `52/F`. |
+| `0208` | `python_structure_variance` | pdf.js signature stable; Python structure and detection signatures change. |
+| `0108` | `python_structure_variance` | pdf.js signature stable; scores swing `59/F, 45/F, 45/F`. |
+| `0020 / long-4683` | `python_structure_variance` | pdf.js signature stable; scores swing `59/F, 59/F, 48/F`. |
+
+Decision: the remaining high-value volatility is extractor-level, not a safe same-state remediation guard. The next behavior-capable stage should be a Python structural-analysis stabilization design, with quality-preserving object identity checks. Do not add row-level mutator suppression or PAC exceptions from these API route artifacts.
