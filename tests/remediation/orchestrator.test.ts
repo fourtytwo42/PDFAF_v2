@@ -708,6 +708,7 @@ describe('all-input proposal-buffer sequence trigger', () => {
         '0121-b22fc444e9cf-school-personnel-readiness.pdf',
         '0184-cf903e931d5d-addressing-opioid-use-disorders.pdf',
         '0194-9ea32badb1b4-juvenile-recidivism.pdf',
+        '0200-d865fcb9718f-4687-adult-redeploy.pdf',
         '0201-d57d1ae9986e-statewide-violence-prevention.pdf',
         '0297-90516e88cb48-victim-offender-overlap.pdf',
         '0306-20f8aa13aa59-4657-the-2021-safe-t-act.pdf',
@@ -731,6 +732,11 @@ describe('all-input proposal-buffer sequence trigger', () => {
     })).toBe(false);
     expect(shouldTryAllInputProposalBufferSequence({
       filename: '4646-youth-development-an-overview.pdf',
+      toolName: 'create_heading_from_candidate',
+      outcome: 'applied',
+    })).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence({
+      filename: '0208-d966f95ddc9f-4446-grace-house.pdf',
       toolName: 'create_heading_from_candidate',
       outcome: 'applied',
     })).toBe(false);
