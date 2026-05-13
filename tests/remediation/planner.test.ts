@@ -2445,6 +2445,84 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('create_heading_from_candidate');
   });
 
+  it('defers title normalization until zero-heading bootstrap can use native paragraph evidence', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 13,
+      textByPage: ['Civil Legal Aid in Illinois', 'Body text'],
+      textCharCount: 25_000,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      paragraphStructElems: [
+        {
+          tag: 'P',
+          text: 'Unmet Need for Civil Legal Aid in Illinois',
+          page: 6,
+          structRef: '94_0',
+        },
+      ],
+      detectionProfile: {
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+          rootReachableHeadingCount: 0,
+        },
+        readingOrderSignals: {
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+        },
+        pdfUaSignals: { orphanMcidCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderRisk: 0,
+          linkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+        },
+        tableSignals: {
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+          malformedTableCount: 0,
+          misplacedCellCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      } as DocumentSnapshot['detectionProfile'],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      title_language: 0,
+      heading_structure: 0,
+      pdf_ua_compliance: 50,
+      reading_order: 96,
+    });
+
+    const initialNames = planForRemediation(analysis, snap, [])
+      .stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(initialNames).toContain('set_document_language');
+    expect(initialNames).not.toContain('set_document_title');
+
+    const afterLanguageNames = planForRemediation(analysis, snap, [
+      { toolName: 'set_document_language', stage: 1, round: 1, scoreBefore: 45, scoreAfter: 49, delta: 4, outcome: 'applied' },
+    ]).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(afterLanguageNames).toContain('create_heading_from_candidate');
+    expect(afterLanguageNames).not.toContain('set_document_title');
+
+    const afterHeadingNames = planForRemediation(analysis, snap, [
+      { toolName: 'set_document_language', stage: 1, round: 1, scoreBefore: 45, scoreAfter: 49, delta: 4, outcome: 'applied' },
+      { toolName: 'create_heading_from_candidate', stage: 4, round: 1, scoreBefore: 49, scoreAfter: 82, delta: 33, outcome: 'applied' },
+    ]).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(afterHeadingNames).toContain('set_document_title');
+  });
+
   it('routes native Type1 font survivors into font_unicode_tail_recovery', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

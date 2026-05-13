@@ -1551,6 +1551,21 @@ export function planForRemediation(
     (snapshot.detectionProfile?.readingOrderSignals.annotationOrderRiskCount ?? 0) <= 0 &&
     (snapshot.detectionProfile?.readingOrderSignals.annotationStructParentRiskCount ?? 0) <= 0 &&
     (snapshot.detectionProfile?.pdfUaSignals.orphanMcidCount ?? 0) > 0;
+  const shouldDeferTitleUntilZeroHeadingBootstrap = (): boolean => {
+    if (analysis.pdfClass !== 'native_tagged') return false;
+    if (!categoryFailing('title_language') || !headingNeedsRepair) return false;
+    if (snapshot.structureTree === null || snapshot.textCharCount <= 0) return false;
+    if (snapshot.headings.length > 0 || (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) > 0) {
+      return false;
+    }
+    if ((snapshot.paragraphStructElems?.length ?? 0) === 0) return false;
+    if (attemptCount(alreadyApplied, 'create_heading_from_candidate') > 0) return false;
+    const languageAlreadyApplied = alreadyApplied.some(row =>
+      row.toolName === 'set_document_language' &&
+      row.outcome === 'applied'
+    );
+    return !languageAlreadyApplied || eligibleHeadingCandidates.length > 0;
+  };
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {
     if (
@@ -1878,6 +1893,10 @@ export function planForRemediation(
       const routeGate = toolIsRouteRelevant(toolName);
       if (!routeGate.allowed) {
         addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
+        continue;
+      }
+      if (toolName === 'set_document_title' && shouldDeferTitleUntilZeroHeadingBootstrap()) {
+        addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
