@@ -1967,7 +1967,7 @@ describe('late reanalysis runtime guards', () => {
     })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(80<85)' });
   });
 
-  it('allows configured low-score timeout checkpoints only after safety checks pass', () => {
+  it('allows material low-score timeout checkpoints only after safety checks pass', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpoint = {
       analysis: makeAnalysis({ score: 59 }),
@@ -1985,7 +1985,7 @@ describe('late reanalysis runtime guards', () => {
     })).toMatchObject({ eligible: false, floor: 80, reason: 'checkpoint_below_floor(59<80)' });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0020-cbe531e850f8-long-4683.pdf',
+      filename: 'generic-long-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 25 }),
       beforeSnapshot,
       checkpoint,
@@ -1993,12 +1993,12 @@ describe('late reanalysis runtime guards', () => {
       nearWallBudget: true,
     })).toMatchObject({
       eligible: true,
-      floor: 59,
+      floor: 50,
       reason: 'low_score_timeout_checkpoint_eligible',
     });
   });
 
-  it('allows the 0114 verified low-score timeout checkpoint without changing the default floor', () => {
+  it('keeps low-score timeout checkpoints independent from filename-specific default floors', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpoint = {
       analysis: makeAnalysis({ score: 50 }),
@@ -2007,7 +2007,7 @@ describe('late reanalysis runtime guards', () => {
     };
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0114-9f229330b403-4587-an-inventory-and-examination-of-restorative-justice-practices-for-youth-.pdf',
+      filename: 'generic-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 25 }),
       beforeSnapshot,
       checkpoint,
@@ -2033,12 +2033,12 @@ describe('late reanalysis runtime guards', () => {
     });
   });
 
-  it('allows the 0120 and 0223 verified low-score timeout checkpoints at their observed safe floors', () => {
+  it('requires low-score timeout checkpoints to meet the general floor and material gain', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpointSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0120-a9de52a274a8-4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec.pdf',
+      filename: 'generic-strong-gain.pdf',
       beforeAnalysis: makeAnalysis({ score: 25 }),
       beforeSnapshot,
       checkpoint: { analysis: makeAnalysis({ score: 61 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
@@ -2046,74 +2046,56 @@ describe('late reanalysis runtime guards', () => {
       nearWallBudget: true,
     })).toMatchObject({
       eligible: true,
-      floor: 61,
+      floor: 50,
       reason: 'low_score_timeout_checkpoint_eligible',
     });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0223-1d48e47df89a-4105-evaluation-of-the-jail-data-link-program.pdf',
+      filename: 'generic-floor-pass.pdf',
       beforeAnalysis: makeAnalysis({ score: 25 }),
       beforeSnapshot,
-      checkpoint: { analysis: makeAnalysis({ score: 59 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      checkpoint: { analysis: makeAnalysis({ score: 50 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
       appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
       nearWallBudget: true,
     })).toMatchObject({
       eligible: true,
-      floor: 59,
+      floor: 50,
       reason: 'low_score_timeout_checkpoint_eligible',
     });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0120-a9de52a274a8-4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec.pdf',
+      filename: 'generic-below-floor.pdf',
       beforeAnalysis: makeAnalysis({ score: 25 }),
       beforeSnapshot,
-      checkpoint: { analysis: makeAnalysis({ score: 60 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      checkpoint: { analysis: makeAnalysis({ score: 49 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
       appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
       nearWallBudget: true,
     })).toMatchObject({
       eligible: false,
-      floor: 61,
-      reason: 'low_score_checkpoint_below_floor(60<61)',
-    });
-  });
-
-  it('allows the 0208 verified low-score timeout checkpoint at its route-variant floor', () => {
-    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
-    const checkpointSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
-
-    expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0208-d966f95ddc9f-4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house-.pdf',
-      beforeAnalysis: makeAnalysis({ score: 36 }),
-      beforeSnapshot,
-      checkpoint: { analysis: makeAnalysis({ score: 44 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
-      appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
-      nearWallBudget: true,
-    })).toMatchObject({
-      eligible: true,
-      floor: 44,
-      reason: 'low_score_timeout_checkpoint_eligible',
+      floor: 50,
+      reason: 'low_score_checkpoint_below_floor(49<50)',
     });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0208-d966f95ddc9f-4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house-.pdf',
-      beforeAnalysis: makeAnalysis({ score: 36 }),
+      filename: 'generic-small-gain.pdf',
+      beforeAnalysis: makeAnalysis({ score: 45 }),
       beforeSnapshot,
-      checkpoint: { analysis: makeAnalysis({ score: 43 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
+      checkpoint: { analysis: makeAnalysis({ score: 54 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
       appliedTools: [runtimeToolRow({ toolName: 'set_document_title', outcome: 'applied' })],
       nearWallBudget: true,
     })).toMatchObject({
       eligible: false,
-      floor: 44,
-      reason: 'low_score_checkpoint_below_floor(43<44)',
+      floor: 50,
+      reason: 'checkpoint_gain_below_minimum(9<10)',
     });
   });
 
-  it('allows the 0296 verified low-score timeout checkpoint at its latest verified floor', () => {
+  it('does not change the default verified checkpoint floor for normal timeout returns', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpointSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0296-68a201d8ed16-05-ad762d4a-an-evaluation-of-redeploy-illinois-st.pdf',
+      filename: 'generic-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 34 }),
       beforeSnapshot,
       checkpoint: { analysis: makeAnalysis({ score: 74 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
@@ -2121,25 +2103,12 @@ describe('late reanalysis runtime guards', () => {
       nearWallBudget: true,
     })).toMatchObject({
       eligible: true,
-      floor: 74,
+      floor: 50,
       reason: 'low_score_timeout_checkpoint_eligible',
     });
 
-    expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0296-68a201d8ed16-05-ad762d4a-an-evaluation-of-redeploy-illinois-st.pdf',
-      beforeAnalysis: makeAnalysis({ score: 34 }),
-      beforeSnapshot,
-      checkpoint: { analysis: makeAnalysis({ score: 73 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
-      appliedTools: [runtimeToolRow({ toolName: 'post_pass_bookmarks', outcome: 'applied' })],
-      nearWallBudget: true,
-    })).toMatchObject({
-      eligible: false,
-      floor: 74,
-      reason: 'low_score_checkpoint_below_floor(73<74)',
-    });
-
     expect(verifiedTimeoutCheckpointEligibility({
-      filename: '0296-68a201d8ed16-05-ad762d4a-an-evaluation-of-redeploy-illinois-st.pdf',
+      filename: 'generic-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 34 }),
       beforeSnapshot,
       checkpoint: { analysis: makeAnalysis({ score: 74 }), snapshot: checkpointSnapshot, appliedToolCount: 1 },
@@ -2152,7 +2121,7 @@ describe('late reanalysis runtime guards', () => {
     });
   });
 
-  it('does not allow low-score timeout checkpoints for unconfigured rows or unsafe snapshots', () => {
+  it('does not allow low-score timeout checkpoints with unsafe snapshots', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 2000 });
     const checkpoint = {
       analysis: makeAnalysis({ score: 59 }),
@@ -2167,29 +2136,16 @@ describe('late reanalysis runtime guards', () => {
       checkpoint,
       appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
       nearWallBudget: true,
-    })).toMatchObject({
-      eligible: false,
-      floor: null,
-      reason: 'low_score_timeout_return_not_configured',
-    });
-
-    expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0085-e82f2da97632-4215-juvenile-justice-data-2008.pdf',
-      beforeAnalysis: makeAnalysis({ score: 25 }),
-      beforeSnapshot,
-      checkpoint,
-      appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
-      nearWallBudget: true,
     }).reason).toBe('text_dropped(2000->1000)');
   });
 
-  it('keeps structure-4438 out of low-score timeout returns', () => {
+  it('does not allow low-score timeout checkpoints without applied tools', () => {
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
-      filename: '0031-9d63e648dc78-structure-4438.pdf',
+      filename: 'generic-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 25 }),
       beforeSnapshot: makeSnapshot({ depth: 2 }),
       checkpoint: {
-        analysis: makeAnalysis({ score: 89 }),
+        analysis: makeAnalysis({ score: 59 }),
         snapshot: makeSnapshot({ depth: 2 }),
         appliedToolCount: 0,
       },
@@ -2197,8 +2153,8 @@ describe('late reanalysis runtime guards', () => {
       nearWallBudget: true,
     })).toMatchObject({
       eligible: false,
-      floor: null,
-      reason: 'low_score_timeout_return_not_configured',
+      floor: 50,
+      reason: 'checkpoint_has_no_applied_tools',
     });
   });
 

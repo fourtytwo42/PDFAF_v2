@@ -2101,6 +2101,8 @@ export function lateOptionalToolReanalysisGuardReason(input: {
 }
 
 const VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR = 85;
+const LOW_SCORE_TIMEOUT_CHECKPOINT_FLOOR = 50;
+const LOW_SCORE_TIMEOUT_CHECKPOINT_MIN_GAIN = 10;
 
 function verifiedTimeoutCheckpointFloorForFilename(filename: string): number {
   if (/4076[-_]|structure-4076/i.test(filename)) return 70;
@@ -2110,17 +2112,8 @@ function verifiedTimeoutCheckpointFloorForFilename(filename: string): number {
   return VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR;
 }
 
-function lowScoreTimeoutCheckpointFloorForFilename(filename: string): number | null {
-  if (/(^|\/)0114-.*4587-an-inventory-and-examination-of-restorative-justice-practices-for-youth/i.test(filename)) return 50;
-  if (/(^|\/)0223-.*4105-evaluation-of-the-jail-data-link-program/i.test(filename)) return 59;
-  if (/(^|\/)0120-.*4690-evaluation-of-the-development-of-a-multijurisdictional-police-led-deflec/i.test(filename)) return 61;
-  if (/(^|\/)0020-.*long-4683/i.test(filename)) return 59;
-  if (/(^|\/)0085-.*4215-juvenile-justice-data-2008/i.test(filename)) return 59;
-  if (/(^|\/)0135-.*4453-juvenile-justice-in-illinois-2014/i.test(filename)) return 59;
-  if (/(^|\/)0136-.*4503-2019-illinois-methamphetamine-study/i.test(filename)) return 59;
-  if (/(^|\/)0208-.*4446-women-and-reentry-evaluation-of-the-st-leonard-s-ministries-grace-house/i.test(filename)) return 44;
-  if (/(^|\/)0296-.*ad762d4a-an-evaluation-of-redeploy-illinois-st/i.test(filename)) return 74;
-  return null;
+function lowScoreTimeoutCheckpointFloorForFilename(_filename: string): number {
+  return LOW_SCORE_TIMEOUT_CHECKPOINT_FLOOR;
 }
 
 function verifiedCheckpointSnapshotRegressionReason(input: {
@@ -2203,11 +2196,13 @@ export function verifiedLowScoreTimeoutCheckpointEligibility(input: {
   checkpoint?: { analysis: AnalysisResult; snapshot: DocumentSnapshot; appliedToolCount: number } | null;
   appliedTools: readonly AppliedRemediationTool[];
   nearWallBudget: boolean;
-}): { eligible: boolean; reason: string; floor: number | null } {
+}): { eligible: boolean; reason: string; floor: number } {
   const floor = lowScoreTimeoutCheckpointFloorForFilename(input.filename);
-  if (floor == null) return { eligible: false, reason: 'low_score_timeout_return_not_configured', floor };
   if (!input.nearWallBudget) return { eligible: false, reason: 'enough_wall_budget_remaining', floor };
   if (!input.checkpoint) return { eligible: false, reason: 'no_verified_checkpoint', floor };
+  if (input.checkpoint.appliedToolCount <= 0) {
+    return { eligible: false, reason: 'checkpoint_has_no_applied_tools', floor };
+  }
   const checkpointTools = input.appliedTools.slice(0, input.checkpoint.appliedToolCount);
   const falsePositiveReason = appliedToolsFalsePositiveReason(checkpointTools);
   if (falsePositiveReason) return { eligible: false, reason: falsePositiveReason, floor };
@@ -2218,10 +2213,11 @@ export function verifiedLowScoreTimeoutCheckpointEligibility(input: {
       floor,
     };
   }
-  if (input.checkpoint.analysis.score <= input.beforeAnalysis.score) {
+  const gain = input.checkpoint.analysis.score - input.beforeAnalysis.score;
+  if (gain < LOW_SCORE_TIMEOUT_CHECKPOINT_MIN_GAIN) {
     return {
       eligible: false,
-      reason: `checkpoint_no_score_improvement(${input.beforeAnalysis.score}->${input.checkpoint.analysis.score})`,
+      reason: `checkpoint_gain_below_minimum(${gain}<${LOW_SCORE_TIMEOUT_CHECKPOINT_MIN_GAIN})`,
       floor,
     };
   }

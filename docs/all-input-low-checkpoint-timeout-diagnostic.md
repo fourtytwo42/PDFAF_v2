@@ -64,3 +64,37 @@ Targeted validation:
   - points still needed for mean `93`: `248`
 
 The low-score return path is honest runtime recovery, not quality recovery. The next stage still needs a score-moving lane worth at least `248` points, or additional timeout/route recovery plus score movement.
+
+Generalized follow-up:
+
+- The row-scoped low-score timeout allow-list has been replaced with a general material-safe checkpoint predicate.
+- The low-score timeout path is now filename-independent and requires:
+  - near-wall budget pressure
+  - at least one applied tool in the checkpoint
+  - checkpoint score `>= 50`
+  - checkpoint score gain `>= 10`
+  - no mutation-truth false-positive evidence
+  - page/text/tag snapshot preservation
+  - no PAC-rule acceptance regression from the checkpoint tool prefix
+- Normal verified checkpoint floors are unchanged.
+- This keeps the runtime-return behavior based on repair evidence and state safety rather than known row identity.
+
+Focused validation:
+
+- Run: `Output/goal-all-input-mean-2026-05-09-r1/run-general-timeout-checkpoint-2026-05-13-r1`
+- Input: four r19 hard-timeout rows plus four timeout-return controls, deterministic `--no-semantic --no-pdfs`
+- `false_positive_applied = 0`
+- Completed without hard timeout:
+  - `0019/long-4516`: `58/F -> 85/B`
+  - `0114/4587`: `30/F -> 59/F`
+  - `0120/4690`: `53/F -> 63/D`
+  - `0136/4503`: `44/F -> 59/F`
+  - `0208/4446`: `40/F -> 59/F`
+  - `0223/4105`: `25/F -> 59/F`
+  - `0296`: `30/F -> 73/C`
+- Still hard-timeout:
+  - `0031/structure-4438`
+
+Decision:
+
+Keep the generalized predicate as a runtime-boundedness improvement candidate, not a completion claim. It removes filename-specific production gates and recovers meaningful scores on timeout-heavy rows, but the focused validation still leaves substantial score debt and `structure-4438` unresolved. A fresh all-unique-PDF run is still required before this can count toward closing the all-input mean goal.
