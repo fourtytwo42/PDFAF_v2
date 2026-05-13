@@ -18,7 +18,7 @@ goal under the updated generalization constraint.
 | Area | File | Current gate shape | Why it blocks acceptance |
 | --- | --- | --- | --- |
 | Heading/annotation sequence | `src/services/remediation/orchestrator.ts` | `0033`, `4593`, `4646`, plus `0032` | Recovery path is admitted by row/document ID. |
-| Proposal-buffer sequence | `src/services/remediation/orchestrator.ts` | `0057`, `0119`, `0121`, `0184`, `0194`, `0200`, `0201`, `0297`, `0306`, `0318`, `0347` | Sequence attempt is limited by known row IDs rather than the proposal/PAC state alone. |
+| Proposal-buffer sequence | `src/services/remediation/orchestrator.ts` | `0057`, `0119`, `0121`, `0184`, `0194`, `0200`, `0201`, `0297`, `0306`, `0318`, `0347` | Sequence attempt is limited by known row IDs rather than the proposal/PAC state alone. A 2026-05-13 broad generalization attempt was rejected because it dropped `0057` and did not recover `0297`. |
 | Heading annotation seed | `src/services/remediation/orchestrator.ts` | `0108`, `0182`, `0190`, `0345`, `0346` | Seed acceptance is row-scoped even though the safety checks are structural/PAC based. |
 | Title/reading sequence | `src/services/remediation/orchestrator.ts` | `0319` | Title bridge and reading-order cleanup sequence is row-scoped. |
 | Route guards | `src/services/remediation/orchestrator.ts` | `0346`, `0184`, `0316`, `0097` | Some guards are regression-prevention, but they still depend on document IDs plus replay signatures. |
