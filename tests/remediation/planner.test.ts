@@ -1563,7 +1563,7 @@ describe('planForRemediation', () => {
     expect(plan.planningSummary?.primaryRoute).not.toBe('structure_bootstrap_and_conformance');
   });
 
-  it('bounds native layout synthesis for the proven 0034/v1-4716 long-document title gap', () => {
+  it('bounds native layout synthesis for long native untagged documents without headings', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 213,
@@ -1590,12 +1590,12 @@ describe('planForRemediation', () => {
     expect(synth?.params).toEqual({ maxPages: 12 });
   });
 
-  it('does not bound native layout synthesis for unrelated long native documents', () => {
+  it('does not bound native layout synthesis for already-structured long native documents', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 213,
       textCharCount: 69_411,
-      structureTree: null,
+      structureTree: { type: 'Document', children: [] },
       headings: [],
     };
     const analysis = withRoutingContext(
@@ -1604,13 +1604,13 @@ describe('planForRemediation', () => {
         heading_structure: 0,
         reading_order: 30,
       }),
-      { filename: 'unrelated-long.pdf', pdfClass: 'native_untagged' },
+      { filename: 'structured-long.pdf', pdfClass: 'native_untagged' },
     );
 
     expect(buildDefaultParams('synthesize_basic_structure_from_layout', analysis, snap)).toEqual({});
   });
 
-  it('allows marked-content-preserving synthesis for the proven 0283 native text ownership gap', () => {
+  it('allows marked-content-preserving synthesis for short native text ownership gaps', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 2,

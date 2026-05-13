@@ -17,7 +17,6 @@ goal under the updated generalization constraint.
 
 | Area | File | Current gate shape | Why it blocks acceptance |
 | --- | --- | --- | --- |
-| Long-document native synthesis bounds | `src/services/remediation/planner.ts` | filename checks for `0034` / `v1-4716` and `0283` | Production route bounds depend on known row/document IDs. |
 | Heading/annotation sequence | `src/services/remediation/orchestrator.ts` | `0033`, `4593`, `4646`, plus `0032` | Recovery path is admitted by row/document ID. |
 | Degenerate native sequence | `src/services/remediation/orchestrator.ts` | `0275` | Recovery path is admitted by row ID. |
 | Proposal-buffer sequence | `src/services/remediation/orchestrator.ts` | `0057`, `0119`, `0121`, `0184`, `0194`, `0200`, `0201`, `0297`, `0306`, `0318`, `0347` | Sequence attempt is limited by known row IDs rather than the proposal/PAC state alone. |
@@ -32,6 +31,7 @@ goal under the updated generalization constraint.
 | Area | File | Replacement predicate | Evidence |
 | --- | --- | --- | --- |
 | Tagged-heading admission | `src/services/remediation/planner.ts` | Native tagged PDF, structure tree present, heading score `0`, reading-order score `<=30`, text extractability `>=90`, annotation tab debt present, and a high-confidence first-page `tagged_visible_line_mcid_first_page` marked-content candidate. | Unit coverage in `tests/remediation/planner.test.ts`; deterministic target/control run `Output/goal-all-input-mean-2026-05-09-r1/run-heading-top-generalized-tagged-anchor-2026-05-13-r2` preserved `0317 93/A`, `0033 94/A`, `0297 59/F`, and `false_positive_applied=0`. |
+| Native layout synthesis bounds | `src/services/remediation/planner.ts` | Long native untagged PDFs with no structure tree/headings, `textCharCount > 10000`, and `pageCount > 100` get bounded synthesis (`maxPages: 12`); short native untagged PDFs with no structure tree/headings and marked-content text outside MC/artifact get marked-content-preserving synthesis. | Unit coverage in `tests/remediation/planner.test.ts`; deterministic validation `Output/goal-all-input-mean-2026-05-09-r1/run-native-synth-generalized-2026-05-13-r1` reached `0034 93/A` and `0283 95/A`. |
 
 ## Required Follow-Up
 

@@ -1107,7 +1107,6 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
 
 function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: DocumentSnapshot): Record<string, unknown> {
   if (
-    /(?:^|[-_])0034[-_]|v1-4716/i.test(analysis.filename) &&
     analysis.pdfClass === 'native_untagged' &&
     snapshot.structureTree === null &&
     snapshot.headings.length === 0 &&
@@ -1117,7 +1116,6 @@ function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: 
     return { maxPages: 12 };
   }
   if (
-    /(?:^|[-_])0283[-_]/i.test(analysis.filename) &&
     analysis.pdfClass === 'native_untagged' &&
     snapshot.structureTree === null &&
     snapshot.headings.length === 0 &&
