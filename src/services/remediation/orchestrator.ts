@@ -689,6 +689,31 @@ function noGainOrphanArtifactMutation(input: {
   return !stageHasCheckerFacingStructuralBenefit(input);
 }
 
+function headingAnchorNoEffectCollapsedStructure(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  beforeSnapshot?: DocumentSnapshot;
+  afterSnapshot?: DocumentSnapshot;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  const beforeHeading = categoryScore(input.before, 'heading_structure');
+  const afterHeading = categoryScore(input.after, 'heading_structure');
+  if (beforeHeading == null || afterHeading == null || afterHeading > beforeHeading) return false;
+  if ((input.beforeSnapshot?.headings.length ?? 0) > 0 || (input.afterSnapshot?.headings.length ?? 0) > 0) return false;
+  if (stageHasCheckerFacingStructuralBenefit(input)) return false;
+  return input.stageApplied.some(row => {
+    if (row.toolName !== 'create_heading_from_tagged_visible_anchor' || row.outcome !== 'no_effect') return false;
+    const details = parseMutationDetails(row.details);
+    if (details?.note !== 'mcid_owner_not_found') return false;
+    const inv = details.invariants;
+    const beforeDepth = inv?.rootReachableDepthBefore ?? 0;
+    const afterDepth = inv?.rootReachableDepthAfter ?? beforeDepth;
+    const beforeRootHeadings = inv?.rootReachableHeadingCountBefore ?? 0;
+    const afterRootHeadings = inv?.rootReachableHeadingCountAfter ?? beforeRootHeadings;
+    return beforeDepth >= 2 && afterDepth <= 1 && afterRootHeadings <= beforeRootHeadings;
+  });
+}
+
 const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_SIGNATURE = '1d49f4344e1db6615a17c1f8';
 const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_REASON = 'fixture_inaccessible_artifact_route_stabilized';
 const FIXTURE_INACCESSIBLE_ARTIFACT_ROUTE_TOOLS = new Set([
@@ -1722,6 +1747,12 @@ export function shouldRejectStageResult(input: {
     return {
       reject: true,
       reason: 'stage_no_gain_orphan_artifact_mutation',
+    };
+  }
+  if (headingAnchorNoEffectCollapsedStructure(input)) {
+    return {
+      reject: true,
+      reason: 'heading_anchor_no_effect_collapsed_structure',
     };
   }
   if (input.stageApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings')) {

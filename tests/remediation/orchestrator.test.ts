@@ -3831,6 +3831,57 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects heading-anchor no-effect stages that collapse root reachability without heading benefit', () => {
+    const beforeSnapshot = makeSnapshot({ depth: 4 });
+    beforeSnapshot.headings = [];
+    beforeSnapshot.detectionProfile!.headingSignals = {
+      extractedHeadingCount: 0,
+      treeHeadingCount: 0,
+      headingTreeDepth: 0,
+      extractedHeadingsMissingFromTree: false,
+      rootReachableHeadingCount: 0,
+    };
+    const afterSnapshot = makeSnapshot({ depth: 1 });
+    afterSnapshot.headings = [];
+    afterSnapshot.detectionProfile!.headingSignals = {
+      extractedHeadingCount: 0,
+      treeHeadingCount: 0,
+      headingTreeDepth: 0,
+      extractedHeadingsMissingFromTree: false,
+      rootReachableHeadingCount: 0,
+    };
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 51, confidence: 'medium', categories: { heading_structure: 0, alt_text: 0, pdf_ua_compliance: 67 } }),
+      after: makeAnalysis({ score: 59, confidence: 'medium', categories: { heading_structure: 0, alt_text: 100, pdf_ua_compliance: 80 } }),
+      beforeSnapshot,
+      afterSnapshot,
+      stage: makeStage('create_heading_from_tagged_visible_anchor'),
+      stageApplied: [{
+        toolName: 'create_heading_from_tagged_visible_anchor',
+        stage: 1,
+        round: 1,
+        scoreBefore: 51,
+        scoreAfter: 59,
+        delta: 8,
+        outcome: 'no_effect',
+        details: JSON.stringify({
+          outcome: 'no_effect',
+          note: 'mcid_owner_not_found',
+          invariants: {
+            rootReachableDepthBefore: 7,
+            rootReachableDepthAfter: 1,
+            rootReachableHeadingCountBefore: 0,
+            rootReachableHeadingCountAfter: 0,
+          },
+        }),
+      }],
+    });
+    expect(result).toEqual({
+      reject: true,
+      reason: 'heading_anchor_no_effect_collapsed_structure',
+    });
+  });
+
   it('rejects structural stage when qpdfVerifiedDepth=0 even if pikepdf rootReachableDepth looks healthy', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),

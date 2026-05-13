@@ -62,6 +62,7 @@ describe('baseline corpus deterministic pass admission', () => {
     })).toEqual({
       timeoutMs: 45_000,
       signal: controller.signal,
+      bypassCache: true,
     });
   });
 });

@@ -73,10 +73,11 @@ export function shouldRunSecondDeterministicPass(input: {
 export function remediationBenchmarkInitialAnalysisOptions(input: {
   remediationAnalysisTimeoutMs: number;
   signal?: AbortSignal;
-}): { timeoutMs: number; signal?: AbortSignal } {
+}): { timeoutMs: number; signal?: AbortSignal; bypassCache: boolean } {
   return {
     timeoutMs: input.remediationAnalysisTimeoutMs,
     signal: input.signal,
+    bypassCache: true,
   };
 }
 
