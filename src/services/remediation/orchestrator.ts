@@ -3807,8 +3807,6 @@ function isFigure4702Filename(filename: string): boolean {
   return /(?:^|[^0-9])4702(?:[^0-9]|$)/.test(filename);
 }
 
-const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
-const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
 const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set([
   '0057',
   '0119',
@@ -3835,15 +3833,18 @@ const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_TOOLS = new Set([
   'synthesize_basic_structure_from_layout',
 ]);
 
-function isAllInputHeadingAnnotationSequenceFilename(filename: string): boolean {
-  return [...ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS, ...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
-    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
-  );
-}
-
-function isAllInputHeadingParentSequenceFilename(filename: string): boolean {
-  return [...ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS].some(id =>
-    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
+function headingSequenceNeedsOrphanParentCleanup(
+  beforeSnapshot: DocumentSnapshot,
+  intermediateSnapshot: DocumentSnapshot,
+): boolean {
+  const regressions = pacRuleAcceptanceRegressions({
+    beforeSnapshot,
+    afterSnapshot: intermediateSnapshot,
+    toolNames: ['create_heading_from_candidate'],
+  });
+  return regressions.some(row =>
+    row.ruleId === 'pdfua.content.orphan_mcids_absent' ||
+    row.ruleId === 'pdfua.structure.parent_links_valid'
   );
 }
 
@@ -3864,8 +3865,7 @@ export function shouldTryAllInputHeadingAnnotationSequence(input: {
   toolName: string;
   outcome: AppliedRemediationTool['outcome'];
 }): boolean {
-  return isAllInputHeadingAnnotationSequenceFilename(input.filename) &&
-    input.toolName === 'create_heading_from_candidate' &&
+  return input.toolName === 'create_heading_from_candidate' &&
     input.outcome === 'applied';
 }
 
@@ -4780,7 +4780,7 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
   if (beforeHeading == null || intermediateHeading == null || intermediateHeading <= beforeHeading) {
     return null;
   }
-  const cleanupToolNames = isAllInputHeadingParentSequenceFilename(args.filename)
+  const cleanupToolNames = headingSequenceNeedsOrphanParentCleanup(args.beforeState.snapshot, intermediate.snapshot)
     ? ['tag_unowned_annotations', 'remap_orphan_mcids_as_artifacts', 'repair_top_level_parent_links']
     : ['tag_unowned_annotations', 'repair_top_level_parent_links'];
   let sequenceBuffer = args.headingBuffer;
@@ -4855,7 +4855,7 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
     beforeHeadingScore: beforeHeading,
     intermediateHeadingScore: intermediateHeading,
     finalHeadingScore: categoryScore(final.result, 'heading_structure'),
-    targetScore: 79,
+    targetScore: 90,
   });
   if (!recovery.recover) return null;
 

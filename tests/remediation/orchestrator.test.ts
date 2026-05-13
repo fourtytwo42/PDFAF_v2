@@ -423,22 +423,15 @@ describe('figure-4702 sequence post-pass guard', () => {
 });
 
 describe('all-input heading annotation sequence trigger', () => {
-  it('fires only for diagnosed heading proposal buffers', () => {
-    for (const id of ['0033', '4593', '4646']) {
-      expect(shouldTryAllInputHeadingAnnotationSequence({
-        filename: `${id}-diagnosed-heading-row.pdf`,
-        toolName: 'create_heading_from_candidate',
-        outcome: 'applied',
-      })).toBe(true);
-    }
-  });
-
-  it('does not fire for unrelated rows, tools, or non-applied outcomes', () => {
+  it('fires for applied heading candidate recovery independent of filename', () => {
     expect(shouldTryAllInputHeadingAnnotationSequence({
-      filename: '4702.pdf',
+      filename: 'unseen-heading-row.pdf',
       toolName: 'create_heading_from_candidate',
       outcome: 'applied',
-    })).toBe(false);
+    })).toBe(true);
+  });
+
+  it('does not fire for unrelated tools or non-applied outcomes', () => {
     expect(shouldTryAllInputHeadingAnnotationSequence({
       filename: '4646-youth-development-an-overview.pdf',
       toolName: 'synthesize_basic_structure_from_layout',
