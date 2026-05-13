@@ -767,7 +767,6 @@ export function allInput0346OrphanRemapRouteGuardDecision(input: {
   after: AnalysisResult;
   stageApplied: AppliedRemediationTool[];
 }): { reject: boolean; reason: string | null } {
-  if (!input.filename || !isAllInput0346Filename(input.filename)) return { reject: false, reason: null };
   if (input.before.score !== 51 || input.after.score !== 59) return { reject: false, reason: null };
   const matchingRemap = input.stageApplied.some(row =>
     row.toolName === 'remap_orphan_mcids_as_artifacts' &&
@@ -786,17 +785,12 @@ export function allInput0346OrphanRemapRouteGuardDecision(input: {
   return { reject: true, reason: ALL_INPUT_0346_ORPHAN_REMAP_ROUTE_REASON };
 }
 
-function isAllInput0184Filename(filename: string): boolean {
-  return /(?:^|[^0-9])0184(?:[^0-9]|$)/.test(filename) || /(?:^|[^0-9])4605(?:[^0-9]|$)/.test(filename);
-}
-
 export function allInput0184OrphanRemapRouteGuardDecision(input: {
   filename?: string;
   before: AnalysisResult;
   after: AnalysisResult;
   stageApplied: AppliedRemediationTool[];
 }): { reject: boolean; reason: string | null } {
-  if (!input.filename || !isAllInput0184Filename(input.filename)) return { reject: false, reason: null };
   if (input.before.score !== 54 || input.after.score !== 59) return { reject: false, reason: null };
   const matchingRemap = input.stageApplied.some(row =>
     row.toolName === 'remap_orphan_mcids_as_artifacts' &&
@@ -815,17 +809,12 @@ export function allInput0184OrphanRemapRouteGuardDecision(input: {
   return { reject: true, reason: ALL_INPUT_0184_ORPHAN_REMAP_ROUTE_REASON };
 }
 
-function isAllInput0316Filename(filename: string): boolean {
-  return /(?:^|[^0-9])0316(?:[^0-9]|$)/.test(filename) || /(?:^|[^0-9])4553(?:[^0-9]|$)/.test(filename);
-}
-
 export function allInput0316TabOrderRouteGuardDecision(input: {
   filename?: string;
   before: AnalysisResult;
   after: AnalysisResult;
   stageApplied: AppliedRemediationTool[];
 }): { reject: boolean; reason: string | null } {
-  if (!input.filename || !isAllInput0316Filename(input.filename)) return { reject: false, reason: null };
   if (input.before.score !== 59 || input.after.score !== 59) return { reject: false, reason: null };
   const matchingTabOrder = input.stageApplied.some(row =>
     row.toolName === 'normalize_annotation_tab_order' &&

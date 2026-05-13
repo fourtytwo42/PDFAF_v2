@@ -1024,9 +1024,9 @@ describe('all-input 0346 orphan remap route guard', () => {
     }),
   });
 
-  it('rejects only the proven no-category-movement remap route on 0346', () => {
+  it('rejects the proven no-category-movement remap replay state independent of filename', () => {
     expect(allInput0346OrphanRemapRouteGuardDecision({
-      filename: '0346-03919ce2e4ea-4673-understanding-police-officer-stress-a-review-of-the-literature.pdf',
+      filename: 'unseen-route.pdf',
       before: makeAnalysis({
         score: 51,
         categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
@@ -1042,7 +1042,7 @@ describe('all-input 0346 orphan remap route guard', () => {
     });
   });
 
-  it('does not reject unrelated rows, replay states, or category-beneficial remaps', () => {
+  it('does not reject other replay states or category-beneficial remaps', () => {
     const before = makeAnalysis({
       score: 51,
       categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
@@ -1051,12 +1051,6 @@ describe('all-input 0346 orphan remap route guard', () => {
       score: 59,
       categories: { heading_structure: 0, reading_order: 79, link_quality: 0 },
     });
-    expect(allInput0346OrphanRemapRouteGuardDecision({
-      filename: '0345-report.pdf',
-      before,
-      after,
-      stageApplied: [remapTool],
-    }).reject).toBe(false);
     expect(allInput0346OrphanRemapRouteGuardDecision({
       filename: '0346-report.pdf',
       before,
@@ -1094,9 +1088,9 @@ describe('all-input 0184 orphan remap route guard', () => {
     }),
   });
 
-  it('rejects only the proven low-movement orphan-remap route on 0184', () => {
+  it('rejects the proven low-movement orphan-remap replay state independent of filename', () => {
     expect(allInput0184OrphanRemapRouteGuardDecision({
-      filename: '0184-cf903e931d5d-4605-addressing-opioid-use-disorders-in-community-corrections-a-survey-of-ill.pdf',
+      filename: 'unseen-route.pdf',
       before: makeAnalysis({
         score: 54,
         categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
@@ -1112,7 +1106,7 @@ describe('all-input 0184 orphan remap route guard', () => {
     });
   });
 
-  it('does not reject unrelated rows, replay states, category-beneficial remaps, or high-movement route', () => {
+  it('does not reject other replay states, category-beneficial remaps, or high-movement route', () => {
     const before = makeAnalysis({
       score: 54,
       categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
@@ -1121,12 +1115,6 @@ describe('all-input 0184 orphan remap route guard', () => {
       score: 59,
       categories: { heading_structure: 0, reading_order: 79, link_quality: 100 },
     });
-    expect(allInput0184OrphanRemapRouteGuardDecision({
-      filename: '0183-report.pdf',
-      before,
-      after,
-      stageApplied: [remapTool],
-    }).reject).toBe(false);
     expect(allInput0184OrphanRemapRouteGuardDecision({
       filename: '0184-report.pdf',
       before,
@@ -1170,9 +1158,9 @@ describe('all-input 0316 tab-order route guard', () => {
     }),
   });
 
-  it('rejects only the proven no-category-movement tab-order route on 0316', () => {
+  it('rejects the proven no-category-movement tab-order replay state independent of filename', () => {
     expect(allInput0316TabOrderRouteGuardDecision({
-      filename: '0316-6671b1751c26-4553-reducing-substance-use-disorders-and-related-offending-a-continuum-of-ev.pdf',
+      filename: 'unseen-route.pdf',
       before: makeAnalysis({
         score: 59,
         categories: { heading_structure: 0, reading_order: 96, link_quality: 100 },
@@ -1188,7 +1176,7 @@ describe('all-input 0316 tab-order route guard', () => {
     });
   });
 
-  it('does not reject unrelated rows, replay states, or category-beneficial tab-order work', () => {
+  it('does not reject other replay states or category-beneficial tab-order work', () => {
     const before = makeAnalysis({
       score: 59,
       categories: { heading_structure: 0, reading_order: 79, link_quality: 79 },
@@ -1197,12 +1185,6 @@ describe('all-input 0316 tab-order route guard', () => {
       score: 59,
       categories: { heading_structure: 0, reading_order: 79, link_quality: 79 },
     });
-    expect(allInput0316TabOrderRouteGuardDecision({
-      filename: '0315-report.pdf',
-      before,
-      after,
-      stageApplied: [tabOrderTool],
-    }).reject).toBe(false);
     expect(allInput0316TabOrderRouteGuardDecision({
       filename: '0316-report.pdf',
       before,
