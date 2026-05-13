@@ -39,9 +39,9 @@ import {
   shouldSkipLateArtifactReanalysisGuard,
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
-  shouldSkipLong4516OrphanDrainPostPassGuard,
+  shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard,
   shouldConfirmAllInput0346MetadataVolatility,
-  shouldConfirmLong4516MetadataVolatility,
+  shouldConfirmMetadataOnlyStructuralVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
   shouldTryAllInputDegenerateNativeSequence,
   shouldTryAllInputProposalBufferSequence,
@@ -841,10 +841,9 @@ describe('all-input table structure/header sequence trigger', () => {
   });
 });
 
-describe('long-4516 orphan drain post-pass guard', () => {
-  it('fires only after the row reaches B quality through score-moving PDF/UA top-up', () => {
-    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
-      filename: '4516-An Exploratory Study.pdf',
+describe('score-moving PDF/UA top-up orphan drain post-pass guard', () => {
+  it('fires only after a row reaches B quality through score-moving PDF/UA top-up', () => {
+    expect(shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard({
       analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
       appliedTools: [
         makePostPassTool({
@@ -856,7 +855,7 @@ describe('long-4516 orphan drain post-pass guard', () => {
     })).toBe(true);
   });
 
-  it('does not apply to unrelated rows or below-floor states', () => {
+  it('does not apply to below-floor states', () => {
     const tools = [
       makePostPassTool({
         toolName: 'set_pdfua_identification',
@@ -864,21 +863,14 @@ describe('long-4516 orphan drain post-pass guard', () => {
         scoreAfter: 84,
       }),
     ];
-    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
-      filename: '4683-report.pdf',
-      analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
-      appliedTools: tools,
-    })).toBe(false);
-    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
-      filename: '4516-report.pdf',
+    expect(shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard({
       analysis: { ...makeAnalysis({ score: 83 }), grade: 'B' },
       appliedTools: tools,
     })).toBe(false);
   });
 
   it('does not fire when PDF/UA top-up was no-gain or rejected', () => {
-    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
-      filename: '4516-report.pdf',
+    expect(shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard({
       analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
       appliedTools: [
         makePostPassTool({
@@ -888,8 +880,7 @@ describe('long-4516 orphan drain post-pass guard', () => {
         }),
       ],
     })).toBe(false);
-    expect(shouldSkipLong4516OrphanDrainPostPassGuard({
-      filename: '4516-report.pdf',
+    expect(shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard({
       analysis: { ...makeAnalysis({ score: 84 }), grade: 'B' },
       appliedTools: [
         makePostPassTool({
@@ -903,15 +894,14 @@ describe('long-4516 orphan drain post-pass guard', () => {
   });
 });
 
-describe('long-4516 metadata volatility confirmation', () => {
+describe('metadata-only structural volatility confirmation', () => {
   const metadataTools = [
     makePostPassTool({ toolName: 'set_document_language', outcome: 'applied', scoreBefore: 76, scoreAfter: 76, source: 'planner', stage: 1 }),
     makePostPassTool({ toolName: 'set_document_title', outcome: 'applied', scoreBefore: 76, scoreAfter: 76, source: 'planner', stage: 1 }),
   ];
 
-  it('requests confirmation for the proven metadata-only route with unrelated structural score drop', () => {
-    expect(shouldConfirmLong4516MetadataVolatility({
-      filename: '4516-An Exploratory Study.pdf',
+  it('requests confirmation for a metadata-only route with unrelated structural score drop', () => {
+    expect(shouldConfirmMetadataOnlyStructuralVolatility({
       before: makeAnalysis({
         score: 76,
         categories: { title_language: 0, alt_text: 80, table_markup: 100 },
@@ -924,7 +914,7 @@ describe('long-4516 metadata volatility confirmation', () => {
     })).toBe(true);
   });
 
-  it('does not apply to unrelated files, mixed stages, or non-regressing metadata analysis', () => {
+  it('does not apply to mixed stages or non-regressing metadata analysis', () => {
     const before = makeAnalysis({
       score: 76,
       categories: { title_language: 0, alt_text: 80, table_markup: 100 },
@@ -933,20 +923,12 @@ describe('long-4516 metadata volatility confirmation', () => {
       score: 85,
       categories: { title_language: 100, alt_text: 80, table_markup: 100 },
     });
-    expect(shouldConfirmLong4516MetadataVolatility({
-      filename: '4515-report.pdf',
-      before,
-      after: makeAnalysis({ score: 51, categories: { title_language: 100, alt_text: 0, table_markup: 0 } }),
-      stageApplied: metadataTools,
-    })).toBe(false);
-    expect(shouldConfirmLong4516MetadataVolatility({
-      filename: '4516-report.pdf',
+    expect(shouldConfirmMetadataOnlyStructuralVolatility({
       before,
       after,
       stageApplied: metadataTools,
     })).toBe(false);
-    expect(shouldConfirmLong4516MetadataVolatility({
-      filename: '4516-report.pdf',
+    expect(shouldConfirmMetadataOnlyStructuralVolatility({
       before,
       after: makeAnalysis({ score: 51, categories: { title_language: 100, alt_text: 0, table_markup: 0 } }),
       stageApplied: [

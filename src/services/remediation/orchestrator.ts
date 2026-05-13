@@ -4109,20 +4109,14 @@ export function shouldSkipFigure4702SequencePostPassGuard(input: {
   return pdfUaTopupAttempted;
 }
 
-function isLong4516Filename(filename: string): boolean {
-  return /(?:^|[^0-9])4516(?:[^0-9]|$)/.test(filename);
-}
-
 function isAllInput0346Filename(filename: string): boolean {
   return /(?:^|[^0-9])0346(?:[^0-9]|$)/.test(filename) || /(?:^|[^0-9])4673(?:[^0-9]|$)/.test(filename);
 }
 
-export function shouldSkipLong4516OrphanDrainPostPassGuard(input: {
-  filename: string;
+export function shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard(input: {
   analysis: Pick<AnalysisResult, 'score' | 'grade'>;
   appliedTools: AppliedRemediationTool[];
 }): boolean {
-  if (!isLong4516Filename(input.filename)) return false;
   if (input.analysis.score < 84 || (input.analysis.grade !== 'A' && input.analysis.grade !== 'B')) return false;
   return input.appliedTools.some(tool =>
     tool.toolName === 'set_pdfua_identification' &&
@@ -4133,13 +4127,11 @@ export function shouldSkipLong4516OrphanDrainPostPassGuard(input: {
   );
 }
 
-export function shouldConfirmLong4516MetadataVolatility(input: {
-  filename: string;
+export function shouldConfirmMetadataOnlyStructuralVolatility(input: {
   before: AnalysisResult;
   after: AnalysisResult;
   stageApplied: AppliedRemediationTool[];
 }): boolean {
-  if (!isLong4516Filename(input.filename)) return false;
   if (input.stageApplied.length === 0) return false;
   if (!input.stageApplied.every(row => row.toolName === 'set_document_title' || row.toolName === 'set_document_language')) {
     return false;
@@ -6575,8 +6567,8 @@ async function applyTaggedCleanupPostPasses(args: {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'figure4702_sequence_postpass_guard');
     return { buffer, analysis, snapshot };
   }
-  if (shouldSkipLong4516OrphanDrainPostPassGuard({ filename, analysis, appliedTools })) {
-    if (runtimeSummary) noteEarlyExit(runtimeSummary, 'long4516_orphan_drain_postpass_guard');
+  if (shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard({ analysis, appliedTools })) {
+    if (runtimeSummary) noteEarlyExit(runtimeSummary, 'score_moving_pdfua_topup_orphan_drain_postpass_guard');
     return { buffer, analysis, snapshot };
   }
 
@@ -8808,8 +8800,7 @@ export async function remediatePdf(
         analyzed = { result: currentAnalysis, snapshot: currentSnapshot };
       }
 
-      if (shouldConfirmLong4516MetadataVolatility({
-        filename,
+      if (shouldConfirmMetadataOnlyStructuralVolatility({
         before: stageStartAnalysis,
         after: analyzed.result,
         stageApplied,
@@ -8817,13 +8808,13 @@ export async function remediatePdf(
         const confirmed = await reanalyzeBufferForMutation(
           buf,
           filename,
-          'pdfaf-long4516-metadata-confirm',
+          'pdfaf-metadata-structural-volatility-confirm',
           { bypassCache: true, signal: options?.signal },
         );
         const beforeTitle = categoryScore(stageStartAnalysis, 'title_language') ?? 0;
         const confirmedTitle = categoryScore(confirmed.result, 'title_language') ?? 0;
         if (confirmed.result.score >= stageStartAnalysis.score && confirmedTitle > beforeTitle) {
-          noteEarlyExit(runtimeSummary, 'long4516_metadata_confirmation_reanalysis');
+          noteEarlyExit(runtimeSummary, 'metadata_structural_volatility_confirmation_reanalysis');
           analyzed = confirmed;
           lastStageAnalysis = confirmed;
           lastAnalyzedBuffer = buf;
