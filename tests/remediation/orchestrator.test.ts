@@ -3425,9 +3425,9 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
-  it('allows the 0097 figure-alt route when reading order remains excellent and alt/table evidence recovers', () => {
+  it('allows figure-alt reading drift when reading order remains excellent and alt/table evidence recovers', () => {
     const result = shouldRejectStageResult({
-      filename: '0097-50e28b6cb052-4694-evaluation.pdf',
+      filename: 'unseen-figure-alt-table-recovery.pdf',
       before: makeAnalysis({
         score: 69,
         confidence: 'medium',
@@ -3470,7 +3470,7 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
-  it('keeps the 0097 figure-alt reading drift path row-scoped and PAC-safe', () => {
+  it('keeps the figure-alt reading drift path PAC-safe', () => {
     const beforeSnapshot = makeFigureSnapshot({ figures: 37, figuresWithAlt: 4 });
     const afterSnapshot = makeFigureSnapshot({ figures: 37, figuresWithAlt: 37 });
     afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];

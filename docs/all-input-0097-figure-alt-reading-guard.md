@@ -4,15 +4,14 @@ Date: 2026-05-12
 
 ## Summary
 
-This stage keeps a narrow all-input route recovery for `0097-50e28b6cb052-4694-evaluation-of-the-development-of-a-multijurisdictional-police-based-defl.pdf`.
+This stage keeps a narrow figure-alt route recovery that was originally proven on `0097-50e28b6cb052-4694-evaluation-of-the-development-of-a-multijurisdictional-police-based-defl.pdf` and is now keyed by structural evidence rather than filename.
 
-The current r10 overlay had this row at `69/D`. A current-code repeat proved a safe `95/A` route, but another current repeat rejected the score-moving figure-alt stage because reading order moved from `100` to `96` while alt/table/PDF-UA evidence improved substantially. The guard accepts only that row-specific high-quality tradeoff.
+The current r10 overlay had this row at `69/D`. A current-code repeat proved a safe `95/A` route, but another current repeat rejected the score-moving figure-alt stage because reading order moved from `100` to `96` while alt/table/PDF-UA evidence improved substantially. The guard accepts only that high-quality structural tradeoff.
 
 ## Scope
 
 The guard applies only when all of these are true:
 
-- filename matches the all-input `0097` / `4694` row;
 - the stage contains a figure-alt recovery tool;
 - the only protected category drift is `reading_order:100->96` or better;
 - final score is at least `90`;
@@ -22,7 +21,7 @@ The guard applies only when all of these are true:
 - page count, text count, tagged state, and structure tree are preserved;
 - no new stricter score cap or new PAC failure appears.
 
-Generic figure-alt stages with the same reading-order drift still reject, and the row-specific path still rejects if PAC/page/text/tag safety is not preserved.
+Generic figure-alt stages with the same reading-order drift still reject unless the full structural predicate is met, and the path still rejects if PAC/page/text/tag safety is not preserved.
 
 ## Evidence
 
@@ -30,6 +29,13 @@ Generic figure-alt stages with the same reading-order drift still reject, and th
 - Result: `52/F -> 95/A`
 - `false_positive_applied`: `0`
 - Runtime: `261939ms`
+
+Generalized validation:
+
+- Target/control validation: `Output/goal-all-input-mean-2026-05-09-r1/run-0097-reading-generalized-2026-05-13-r1`
+- Target result: `0097/4694 52/F -> 95/A`
+- Controls: `4057 59/F`, `4722 69/D`, `figure-4702 93/A`
+- `false_positive_applied`: `0`
 
 Projected overlay against `Output/goal-all-input-mean-2026-05-09-r1/progress-overlay-current-repeats-2026-05-12-r1`:
 
@@ -43,3 +49,4 @@ Projected overlay against `Output/goal-all-input-mean-2026-05-09-r1/progress-ove
 - `python3 -m py_compile python/pdf_analysis_helper.py`
 - `npx -y node@22 /usr/bin/pnpm exec vitest run tests/remediation/orchestrator.test.ts tests/remediation/pacRuleAcceptanceGate.test.ts tests/services/pacRuleEvidence.test.ts tests/scorer.test.ts`
 - `npx -y node@22 /usr/bin/pnpm lint`
+- `npx -y node@22 /usr/bin/pnpm exec tsx scripts/baseline-corpus-batch.ts Output/goal-all-input-mean-2026-05-09-r1/input-0097-reading-generalized-2026-05-13-r1 Output/goal-all-input-mean-2026-05-09-r1/run-0097-reading-generalized-2026-05-13-r1 --no-semantic --no-pdfs`

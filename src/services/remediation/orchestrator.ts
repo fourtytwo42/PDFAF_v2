@@ -1487,7 +1487,6 @@ function protectedWeakAltFigureStageAllowsCategoryDrift(input: {
 }
 
 function allInput0097FigureAltRouteAllowsReadingDrift(input: {
-  filename?: string;
   before: AnalysisResult;
   after: AnalysisResult;
   beforeSnapshot?: DocumentSnapshot;
@@ -1495,7 +1494,6 @@ function allInput0097FigureAltRouteAllowsReadingDrift(input: {
   stageApplied: AppliedRemediationTool[];
   regressionReason: string;
 }): boolean {
-  if (!/0097-|4694-/i.test(input.filename ?? '')) return false;
   if (!input.stageApplied.some(row => FIGURE_ALT_ACCEPTANCE_TOOLS.has(row.toolName))) return false;
   const m = input.regressionReason.match(/stage_regressed_category\(reading_order:(\d+(?:\.\d+)?)->(\d+(?:\.\d+)?)\)/);
   if (!m) return false;
@@ -1793,7 +1791,6 @@ export function shouldRejectStageResult(input: {
         stageApplied: input.stageApplied,
         regressionReason: categoryRegression,
       }) || allInput0097FigureAltRouteAllowsReadingDrift({
-        filename: input.filename,
         before: input.before,
         after: input.after,
         beforeSnapshot: input.beforeSnapshot,
