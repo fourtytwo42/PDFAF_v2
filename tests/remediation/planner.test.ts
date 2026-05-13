@@ -1130,6 +1130,75 @@ describe('planForRemediation', () => {
     expect(names).toContain('tag_native_text_blocks');
   });
 
+  it('does not include tag_native_text_blocks for non-degenerate native_tagged structure', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [{ type: 'H1', children: [] }] }] },
+      metadata: { title: 'Structured doc', language: 'en-US', author: '', subject: '' },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      headings: [{ level: 1, text: 'Structured doc', page: 0 }],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'medium',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 90,
+      reading_order: 30,
+      pdf_ua_compliance: 100,
+      text_extractability: 96,
+    });
+    const plan = planForRemediation(analysis, snap, [
+      { toolName: 'ocr_scanned_pdf', stage: 1, round: 1, scoreBefore: 44, scoreAfter: 44, delta: 0, outcome: 'failed' },
+    ]);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('tag_native_text_blocks');
+  });
+
   it('includes fill_form_field_tooltips when form_accessibility fails (missing /TU)', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
