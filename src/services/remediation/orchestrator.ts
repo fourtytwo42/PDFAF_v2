@@ -7949,6 +7949,14 @@ export async function remediatePdf(
       if (ocrRuntimeBudgetExhausted) break;
       if (await returnVerifiedTimeoutCheckpoint('before_stage', { beforeRiskyWork: true })) break;
       if (
+        appliedTools.length > 0 &&
+        currentAnalysis.score >= before.score &&
+        shouldReturnVerifiedCheckpointBeforeRiskyWork({ startedAtMs: started })
+      ) {
+        noteEarlyExit(runtimeSummary, 'low_score_verified_state_soft_deadline_before_stage');
+        break;
+      }
+      if (
         shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
         shouldSoftStopForRemediationDeadline({ startedAtMs: started })
       ) {

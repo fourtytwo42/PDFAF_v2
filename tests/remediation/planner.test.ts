@@ -2647,7 +2647,24 @@ describe('planForRemediation', () => {
         subtreeMcidCount: 1,
       })),
     };
-    const analysis = withCategoryScores(score(snap, META), { alt_text: 20 });
+    const analysis = withRoutingContext({
+      ...withCategoryScores(score(snap, META), {
+        alt_text: 20,
+        heading_structure: 86,
+        reading_order: 100,
+        table_markup: 100,
+      }),
+      score: 69,
+      grade: 'D' as const,
+    }, {
+      failureProfile: {
+        primaryFailureFamily: 'mixed_structural',
+        deterministicIssues: ['alt_text'],
+        semanticIssues: [],
+        manualOnlyIssues: [],
+        routingHints: [],
+      },
+    });
     const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
       toolName: 'set_figure_alt_text',
       stage: 6,
@@ -2711,6 +2728,53 @@ describe('planForRemediation', () => {
     }));
 
     expect(maxFigureAltTargetsForRun(analysis, snap, applied, { protectedBaselineActive: true })).toBe(3);
+  });
+
+  it('keeps Stage 146 figure alt continuation at the default cap when heading remains a severe blocker', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 0,
+      reading_order: 96,
+      table_markup: 100,
+    });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 39,
+      scoreAfter: 39,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({
+        invariants: {
+          targetRef: `${index}_0`,
+          targetReachable: true,
+          targetIsFigureAfter: true,
+          targetHasAltAfter: true,
+        },
+      }),
+    }));
+
+    expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(false);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(3);
   });
 
   it('allows Stage 178 protected continuation only when the protected baseline already had weak alt', () => {
