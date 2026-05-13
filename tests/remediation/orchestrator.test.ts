@@ -9,7 +9,6 @@ import {
   fixtureInaccessibleArtifactRouteStabilizationDecision,
   buildAllInputTableHeaderAssociationParams,
   hasCheckerVisibleFigureAltProgressDespiteScoreShape,
-  isAllInputTableStructureHeaderSequenceFilename,
   mergePlanningSummaries,
   parseMutationDetails,
   protectedBaselineFloorViolation,
@@ -748,7 +747,7 @@ describe('all-input proposal-buffer sequence trigger', () => {
   });
 });
 
-describe('all-input 4765 table structure/header sequence trigger', () => {
+describe('all-input table structure/header sequence trigger', () => {
   function tableSnapshot(input: {
     tableHeaderDebt: number;
     orphanHeaderDebt?: number;
@@ -784,13 +783,12 @@ describe('all-input 4765 table structure/header sequence trigger', () => {
     return snapshot;
   }
 
-  it('identifies only the proven 4765 PAC-blocked table normalization shape', () => {
-    expect(isAllInputTableStructureHeaderSequenceFilename('0103-b8a7b583d03c-4765-analysis.pdf')).toBe(true);
+  it('identifies PAC-blocked table normalization shape independent of filename', () => {
     const beforeSnapshot = tableSnapshot({ tableHeaderDebt: 940, stronglyIrregular: 6 });
     const intermediateSnapshot = tableSnapshot({ tableHeaderDebt: 988, stronglyIrregular: 2 });
 
     expect(shouldTryAllInputTableStructureHeaderSequence({
-      filename: '0103-b8a7b583d03c-4765-analysis.pdf',
+      filename: 'unseen-irregular-table.pdf',
       before: makeAnalysis({ score: 69, categories: { table_markup: 0 } }),
       intermediate: makeAnalysis({ score: 88, categories: { table_markup: 44 } }),
       beforeSnapshot,
@@ -805,7 +803,7 @@ describe('all-input 4765 table structure/header sequence trigger', () => {
     })).toBe(true);
   });
 
-  it('does not trigger for unrelated rows or non-table-header PAC regressions', () => {
+  it('does not trigger for non-table-header PAC regressions or non-applied table tools', () => {
     const beforeSnapshot = tableSnapshot({ tableHeaderDebt: 10, stronglyIrregular: 2 });
     const intermediateSnapshot = tableSnapshot({ tableHeaderDebt: 20, stronglyIrregular: 0 });
     expect(shouldTryAllInputTableStructureHeaderSequence({
@@ -816,15 +814,24 @@ describe('all-input 4765 table structure/header sequence trigger', () => {
       intermediateSnapshot,
       stageApplied: [runtimeToolRow({ toolName: 'normalize_table_structure', outcome: 'applied' })],
       rejectionDecision: { reject: true, reason: 'pac_rule_regressed(pdfua.table.header_association_present)' },
-    })).toBe(false);
+    })).toBe(true);
     expect(shouldTryAllInputTableStructureHeaderSequence({
-      filename: '4765-table-row.pdf',
+      filename: 'other-table-row.pdf',
       before: makeAnalysis({ score: 69, categories: { table_markup: 0 } }),
       intermediate: makeAnalysis({ score: 88, categories: { table_markup: 44 } }),
       beforeSnapshot,
       intermediateSnapshot,
       stageApplied: [runtimeToolRow({ toolName: 'normalize_table_structure', outcome: 'applied' })],
       rejectionDecision: { reject: true, reason: 'pac_rule_regressed(pdfua.annotations.tagged_annotations_present)' },
+    })).toBe(false);
+    expect(shouldTryAllInputTableStructureHeaderSequence({
+      filename: 'other-table-row.pdf',
+      before: makeAnalysis({ score: 69, categories: { table_markup: 0 } }),
+      intermediate: makeAnalysis({ score: 88, categories: { table_markup: 44 } }),
+      beforeSnapshot,
+      intermediateSnapshot,
+      stageApplied: [runtimeToolRow({ toolName: 'normalize_table_structure', outcome: 'rejected' })],
+      rejectionDecision: { reject: true, reason: 'pac_rule_regressed(pdfua.table.header_association_present)' },
     })).toBe(false);
   });
 

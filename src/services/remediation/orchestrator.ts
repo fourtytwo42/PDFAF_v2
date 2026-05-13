@@ -3837,7 +3837,6 @@ const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set([
   '0318',
   '0347',
 ]);
-const ALL_INPUT_TABLE_STRUCTURE_HEADER_SEQUENCE_IDS = new Set(['4765']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0108', '0182', '0190', '0345', '0346']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS = new Set([
   'create_heading_from_candidate',
@@ -3871,12 +3870,6 @@ function isAllInputDegenerateNativeSequenceFilename(filename: string): boolean {
 
 function isAllInputProposalBufferSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS].some(id =>
-    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
-  );
-}
-
-export function isAllInputTableStructureHeaderSequenceFilename(filename: string): boolean {
-  return [...ALL_INPUT_TABLE_STRUCTURE_HEADER_SEQUENCE_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
   );
 }
@@ -4006,7 +3999,6 @@ export function shouldTryAllInputTableStructureHeaderSequence(input: {
   stageApplied: AppliedRemediationTool[];
   rejectionDecision: { reject: boolean; reason: string | null };
 }): boolean {
-  if (!isAllInputTableStructureHeaderSequenceFilename(input.filename)) return false;
   if (!input.rejectionDecision.reject || input.rejectionDecision.reason !== 'pac_rule_regressed(pdfua.table.header_association_present)') {
     return false;
   }
@@ -4652,7 +4644,7 @@ async function tryAllInput0297ProposalBufferSequence(args: {
   };
 }
 
-async function tryAllInput4765TableStructureHeaderSequence(args: {
+async function tryAllInputTableStructureHeaderSequence(args: {
   filename: string;
   stateBeforeStage: RemediationState;
   analyzedState: RemediationState;
@@ -4690,7 +4682,7 @@ async function tryAllInput4765TableStructureHeaderSequence(args: {
       {
         toolName,
         params,
-        rationale: 'All-input 4765 table structure/header sequence recovery.',
+        rationale: 'All-input table structure/header sequence recovery.',
       },
       sequenceSnapshot,
       { signal: args.signal },
@@ -4700,7 +4692,7 @@ async function tryAllInput4765TableStructureHeaderSequence(args: {
     let nextSnapshot = sequenceSnapshot;
     let effectiveOutcome = result.outcome;
     if (result.outcome === 'applied' && !result.buffer.equals(sequenceBuffer)) {
-      const analyzed = await reanalyzeBufferForMutation(result.buffer, args.filename, `pdfaf-4765-table-sequence-${toolName}`, {
+      const analyzed = await reanalyzeBufferForMutation(result.buffer, args.filename, `pdfaf-table-sequence-${toolName}`, {
         signal: args.signal,
       });
       sequenceBuffer = result.buffer;
@@ -4774,7 +4766,7 @@ async function tryAllInput4765TableStructureHeaderSequence(args: {
   });
   if (finalRegressions.length > 0) return null;
 
-  const reason = 'table_structure_header_sequence_recovered(4765)';
+  const reason = 'table_structure_header_sequence_recovered';
   for (const row of [...args.stageApplied, ...sequenceRows]) {
     row.details = enrichDetailsWithReplayState(JSON.stringify({
       outcome: row.outcome,
@@ -5224,7 +5216,7 @@ async function finalizeAnalyzedStage(args: {
       }
       return allInputProposalBufferSequenceRecovered;
     }
-    const allInputTableSequenceRecovered = await tryAllInput4765TableStructureHeaderSequence({
+    const allInputTableSequenceRecovered = await tryAllInputTableStructureHeaderSequence({
       filename,
       stateBeforeStage,
       analyzedState,
