@@ -24,7 +24,6 @@ import {
   protectedStrongAltPreservationViolation,
   protectedStrongAltFigureStageViolation,
   protectedTransactionDecision,
-  isAllInputTitleReadingSequenceFilename,
   lateOptionalToolReanalysisGuardReason,
   ocrMutationTimeoutForRemainingWall,
   shouldReplaceVerifiedTimeoutCheckpoint,
@@ -544,10 +543,7 @@ describe('all-input degenerate native sequence seed acceptance', () => {
 });
 
 describe('all-input heading annotation seed acceptance', () => {
-  it('keeps the 0319 title-reading sequence row-scoped and rejects the orphan intermediate alone', () => {
-    expect(isAllInputTitleReadingSequenceFilename('0319-89b00cc3b414-4760-title.pdf')).toBe(true);
-    expect(isAllInputTitleReadingSequenceFilename('0297-90516e88cb48-title.pdf')).toBe(false);
-
+  it('rejects the title-reading orphan intermediate alone', () => {
     const beforeSnapshot = makeSnapshot({ depth: 4 });
     const intermediateSnapshot = makeSnapshot({ depth: 2 });
     intermediateSnapshot.orphanMcids = [{ page: 0, mcid: 21 }];

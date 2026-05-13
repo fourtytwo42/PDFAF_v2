@@ -3859,10 +3859,6 @@ function isAllInputHeadingAnnotationSeedFilename(filename: string): boolean {
   );
 }
 
-export function isAllInputTitleReadingSequenceFilename(filename: string): boolean {
-  return /(?:^|[^0-9])0319(?:[^0-9]|$)/.test(filename);
-}
-
 export function shouldTryAllInputHeadingAnnotationSequence(input: {
   filename: string;
   toolName: string;
@@ -4171,7 +4167,6 @@ async function tryAllInput0319TitleReadingSequence(args: {
   rejectionDecision: { reject: boolean; reason: string | null; details?: string };
   signal?: AbortSignal;
 }): Promise<RemediationState | null> {
-  if (!isAllInputTitleReadingSequenceFilename(args.filename)) return null;
   if (!args.rejectionDecision.reject) return null;
   if (!args.stageApplied.some(row => row.toolName === 'bridge_native_title_text_owner')) return null;
   if (args.analyzedState.analysis.score <= args.stateBeforeStage.analysis.score) return null;
@@ -4216,7 +4211,7 @@ async function tryAllInput0319TitleReadingSequence(args: {
       {
         toolName,
         params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...sequenceRows]),
-        rationale: 'All-input 0319 title bridge plus reading-order cleanup sequence.',
+        rationale: 'Title bridge plus reading-order cleanup sequence.',
       },
       sequenceSnapshot,
       { signal: args.signal },
@@ -4280,7 +4275,7 @@ async function tryAllInput0319TitleReadingSequence(args: {
   if (firstBridgeRow) {
     firstBridgeRow.details = JSON.stringify({
       outcome: 'applied',
-      note: 'title_reading_sequence_recovered(0319)',
+      note: 'title_reading_sequence_recovered',
       originalDetails: parseMutationDetails(firstBridgeRow.details) ?? firstBridgeRow.details ?? null,
       sequenceRecovery: {
         intermediateRegressions,
@@ -4298,7 +4293,7 @@ async function tryAllInput0319TitleReadingSequence(args: {
   for (const row of sequenceRows) {
     row.details = enrichDetailsWithReplayState(JSON.stringify({
       outcome: row.outcome,
-      note: 'title_reading_sequence_recovered(0319)',
+      note: 'title_reading_sequence_recovered',
       originalDetails: parseMutationDetails(row.details) ?? row.details ?? null,
     }), {
       beforeAnalysis: args.analyzedState.analysis,
