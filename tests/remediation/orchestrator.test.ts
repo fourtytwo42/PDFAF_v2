@@ -1788,7 +1788,7 @@ describe('late reanalysis runtime guards', () => {
       beforeAnalysis: makeAnalysis({ score: 48, categories: { heading_structure: 40 } }),
       beforeSnapshot,
       checkpoint: {
-        analysis: makeAnalysis({ score: 81, categories: { heading_structure: 80 } }),
+        analysis: makeAnalysis({ score: 85, categories: { heading_structure: 80 } }),
         snapshot: checkpointSnapshot,
         appliedToolCount: 1,
       },
@@ -1796,13 +1796,13 @@ describe('late reanalysis runtime guards', () => {
       nearWallBudget: true,
     });
 
-    expect(result).toMatchObject({ eligible: true, floor: 80, reason: 'eligible' });
+    expect(result).toMatchObject({ eligible: true, floor: 85, reason: 'eligible' });
   });
 
-  it('does not return a checkpoint below the allowed floor or without deadline pressure', () => {
+  it('does not return a checkpoint below the default floor or without deadline pressure', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     const checkpoint = {
-      analysis: makeAnalysis({ score: 69 }),
+      analysis: makeAnalysis({ score: 84 }),
       snapshot: makeSnapshot({ depth: 2 }),
       appliedToolCount: 0,
     };
@@ -1813,22 +1813,30 @@ describe('late reanalysis runtime guards', () => {
       checkpoint,
       appliedTools: [],
       nearWallBudget: true,
-    })).toMatchObject({ eligible: false, reason: 'checkpoint_below_floor(69<70)' });
+    })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(84<85)' });
     expect(verifiedTimeoutCheckpointEligibility({
       filename: '30-structure-reading-order/4076-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 40 }),
       beforeSnapshot,
-      checkpoint: { ...checkpoint, analysis: makeAnalysis({ score: 70 }) },
+      checkpoint: { ...checkpoint, analysis: makeAnalysis({ score: 85 }) },
       appliedTools: [],
       nearWallBudget: false,
     })).toMatchObject({ eligible: false, reason: 'enough_wall_budget_remaining' });
   });
 
-  it('keeps the structure-4438 verified checkpoint floor at A-grade', () => {
+  it('uses a structural high-risk verified checkpoint floor without filename gates', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     expect(verifiedTimeoutCheckpointEligibility({
-      filename: '30-structure-reading-order/4438-report.pdf',
-      beforeAnalysis: makeAnalysis({ score: 25 }),
+      filename: 'generic-severe-structure-report.pdf',
+      beforeAnalysis: makeAnalysis({
+        score: 25,
+        categories: {
+          heading_structure: 0,
+          link_quality: 0,
+          pdf_ua_compliance: 0,
+          title_language: 0,
+        },
+      }),
       beforeSnapshot,
       checkpoint: {
         analysis: makeAnalysis({ score: 89 }),
@@ -1870,7 +1878,7 @@ describe('late reanalysis runtime guards', () => {
     })).toBe(true);
   });
 
-  it('keeps the long-4516 verified checkpoint floor at B-grade', () => {
+  it('uses the default verified checkpoint floor for normal timeout returns regardless of filename', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     expect(verifiedTimeoutCheckpointEligibility({
       filename: '50-long-report-mixed/4516-report.pdf',
@@ -1883,10 +1891,10 @@ describe('late reanalysis runtime guards', () => {
       },
       appliedTools: [],
       nearWallBudget: true,
-    })).toMatchObject({ eligible: false, floor: 80, reason: 'checkpoint_below_floor(79<80)' });
+    })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(79<85)' });
   });
 
-  it('uses the row-specific long-4683 verified checkpoint floor without lowering the default', () => {
+  it('keeps normal sub-85 timeout returns in the low-score checkpoint path', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     const checkpoint = {
       analysis: makeAnalysis({ score: 80 }),
@@ -1901,16 +1909,16 @@ describe('late reanalysis runtime guards', () => {
       checkpoint,
       appliedTools: [runtimeToolRow({ toolName: 'repair_list_li_wrong_parent', outcome: 'applied' })],
       nearWallBudget: true,
-    })).toMatchObject({ eligible: true, floor: 80, reason: 'eligible' });
+    })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(80<85)' });
 
-    expect(verifiedTimeoutCheckpointEligibility({
+    expect(verifiedLowScoreTimeoutCheckpointEligibility({
       filename: 'generic-report.pdf',
       beforeAnalysis: makeAnalysis({ score: 48 }),
       beforeSnapshot,
       checkpoint,
       appliedTools: [runtimeToolRow({ toolName: 'repair_list_li_wrong_parent', outcome: 'applied' })],
       nearWallBudget: true,
-    })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(80<85)' });
+    })).toMatchObject({ eligible: true, floor: 50, reason: 'low_score_timeout_checkpoint_eligible' });
   });
 
   it('allows material low-score timeout checkpoints only after safety checks pass', () => {
@@ -1928,7 +1936,7 @@ describe('late reanalysis runtime guards', () => {
       checkpoint,
       appliedTools: [runtimeToolRow({ toolName: 'set_table_header_cells', outcome: 'applied' })],
       nearWallBudget: true,
-    })).toMatchObject({ eligible: false, floor: 80, reason: 'checkpoint_below_floor(59<80)' });
+    })).toMatchObject({ eligible: false, floor: 85, reason: 'checkpoint_below_floor(59<85)' });
 
     expect(verifiedLowScoreTimeoutCheckpointEligibility({
       filename: 'generic-long-report.pdf',

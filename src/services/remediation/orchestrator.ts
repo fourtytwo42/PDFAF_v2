@@ -2087,15 +2087,25 @@ export function lateOptionalToolReanalysisGuardReason(input: {
 }
 
 const VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR = 85;
+const VERIFIED_TIMEOUT_CHECKPOINT_HIGH_RISK_FLOOR = 90;
 const LOW_SCORE_TIMEOUT_CHECKPOINT_FLOOR = 50;
 const LOW_SCORE_TIMEOUT_CHECKPOINT_MIN_GAIN = 10;
 
-function verifiedTimeoutCheckpointFloorForFilename(filename: string): number {
-  if (/4076[-_]|structure-4076/i.test(filename)) return 70;
-  if (/4516[-_]|long-4516/i.test(filename)) return 80;
-  if (/4683[-_]|long-4683/i.test(filename)) return 80;
-  if (/4438[-_]|structure-4438/i.test(filename)) return 90;
-  return VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR;
+function verifiedTimeoutCheckpointFloorForState(input: {
+  beforeAnalysis: AnalysisResult;
+}): number {
+  const heading = categoryScore(input.beforeAnalysis, 'heading_structure') ?? 100;
+  const link = categoryScore(input.beforeAnalysis, 'link_quality') ?? 100;
+  const pdfUa = categoryScore(input.beforeAnalysis, 'pdf_ua_compliance') ?? 100;
+  const title = categoryScore(input.beforeAnalysis, 'title_language') ?? 100;
+  const severeStructuralStart = input.beforeAnalysis.score <= 30 &&
+    heading <= 25 &&
+    link <= 25 &&
+    pdfUa <= 25 &&
+    title <= 25;
+  return severeStructuralStart
+    ? VERIFIED_TIMEOUT_CHECKPOINT_HIGH_RISK_FLOOR
+    : VERIFIED_TIMEOUT_CHECKPOINT_DEFAULT_FLOOR;
 }
 
 function lowScoreTimeoutCheckpointFloorForFilename(_filename: string): number {
@@ -2141,7 +2151,9 @@ export function verifiedTimeoutCheckpointEligibility(input: {
   appliedTools: readonly AppliedRemediationTool[];
   nearWallBudget: boolean;
 }): { eligible: boolean; reason: string; floor: number } {
-  const floor = verifiedTimeoutCheckpointFloorForFilename(input.filename);
+  const floor = verifiedTimeoutCheckpointFloorForState({
+    beforeAnalysis: input.beforeAnalysis,
+  });
   if (!input.nearWallBudget) return { eligible: false, reason: 'enough_wall_budget_remaining', floor };
   if (!input.checkpoint) return { eligible: false, reason: 'no_verified_checkpoint', floor };
   const checkpointTools = input.appliedTools.slice(0, input.checkpoint.appliedToolCount);
@@ -7730,7 +7742,7 @@ export async function remediatePdf(
       sequence,
       createdAtMs: Date.now(),
       eligibilityReason: 'unchecked',
-      floor: verifiedTimeoutCheckpointFloorForFilename(filename),
+      floor: verifiedTimeoutCheckpointFloorForState({ beforeAnalysis: before }),
     };
     const eligibility = verifiedTimeoutCheckpointEligibility({
       filename,

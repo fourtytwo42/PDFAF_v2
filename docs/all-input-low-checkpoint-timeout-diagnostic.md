@@ -79,6 +79,20 @@ Generalized follow-up:
 - Normal verified checkpoint floors are unchanged.
 - This keeps the runtime-return behavior based on repair evidence and state safety rather than known row identity.
 
+## Normal Floor Generalization
+
+The normal verified-checkpoint return path is also filename-independent now:
+
+- standard verified checkpoints use floor `85`;
+- severe initial structural failure states use the stricter floor `90` when the
+  initial score is at most `30` and heading, link, PDF/UA, and title/language
+  evidence are all severely absent;
+- sub-`85` returns must use the low-score checkpoint predicate above.
+
+This removes the former `structure-4076`, `long-4516`, `long-4683`, and
+`structure-4438` filename floor exceptions without lowering the strict floor for
+severe structure failures.
+
 Focused validation:
 
 - Run: `Output/goal-all-input-mean-2026-05-09-r1/run-general-timeout-checkpoint-2026-05-13-r1`
@@ -98,3 +112,31 @@ Focused validation:
 Decision:
 
 Keep the generalized predicate as a runtime-boundedness improvement candidate, not a completion claim. It removes filename-specific production gates and recovers meaningful scores on timeout-heavy rows, but the focused validation still leaves substantial score debt and `structure-4438` unresolved. A fresh all-unique-PDF run is still required before this can count toward closing the all-input mean goal.
+
+## State-Floor Follow-Up Validation
+
+After normal checkpoint floors were made filename-independent, the focused
+timeout set was rerun:
+
+- Run:
+  `Output/goal-all-input-mean-2026-05-09-r1/run-general-timeout-checkpoint-state-floor-2026-05-13-r1`
+- Command shape: deterministic `baseline-corpus-batch.ts --no-semantic --no-pdfs`
+- `false_positive_applied = 0`
+
+Results:
+
+| Row | Result |
+| --- | ---: |
+| `0019/long-4516` | `43/F -> 55/F` |
+| `0031/structure-4438` | hard timeout, best checkpoint `36/F` below the severe-state `90` floor |
+| `0114/4587` | `30/F -> 59/F` |
+| `0120/4690` | `54/F -> 75/C` |
+| `0136/4503` | `44/F -> 59/F` |
+| `0208/4446` | `40/F -> 97/A` |
+| `0223/4105` | `25/F -> 59/F` |
+| `0296` | `30/F -> 77/C` |
+
+The state-floor validation is useful for generalization, but it is not mean
+progress evidence: `long-4516` did not reproduce the earlier B-grade route,
+while `0208` did reproduce a high route. Treat the result as runtime-policy
+validation plus continued route volatility, not as a fresh full-run checkpoint.
