@@ -3823,7 +3823,6 @@ function isFigure4702Filename(filename: string): boolean {
 
 const ALL_INPUT_HEADING_ANNOTATION_SEQUENCE_IDS = new Set(['0033', '4593', '4646']);
 const ALL_INPUT_HEADING_PARENT_SEQUENCE_IDS = new Set(['0032']);
-const ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS = new Set(['0275']);
 const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set([
   '0057',
   '0119',
@@ -3862,12 +3861,6 @@ function isAllInputHeadingParentSequenceFilename(filename: string): boolean {
   );
 }
 
-function isAllInputDegenerateNativeSequenceFilename(filename: string): boolean {
-  return [...ALL_INPUT_DEGENERATE_NATIVE_SEQUENCE_IDS].some(id =>
-    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
-  );
-}
-
 function isAllInputProposalBufferSequenceFilename(filename: string): boolean {
   return [...ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
@@ -3899,8 +3892,7 @@ export function shouldTryAllInputDegenerateNativeSequence(input: {
   toolName: string;
   outcome: AppliedRemediationTool['outcome'];
 }): boolean {
-  return isAllInputDegenerateNativeSequenceFilename(input.filename) &&
-    input.toolName === 'create_structure_from_degenerate_native_anchor' &&
+  return input.toolName === 'create_structure_from_degenerate_native_anchor' &&
     input.outcome === 'applied';
 }
 
@@ -4030,7 +4022,6 @@ function shouldAllowAllInputDegenerateNativeSeed(input: {
   afterSnapshot: DocumentSnapshot;
   stageApplied: AppliedRemediationTool[];
 }): boolean {
-  if (!input.filename || !isAllInputDegenerateNativeSequenceFilename(input.filename)) return false;
   if (!input.stageApplied.some(row => row.toolName === 'create_structure_from_degenerate_native_anchor')) return false;
   const regressions = pacRuleAcceptanceRegressions({
     beforeSnapshot: input.beforeSnapshot,

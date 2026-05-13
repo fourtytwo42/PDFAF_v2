@@ -454,20 +454,15 @@ describe('all-input heading annotation sequence trigger', () => {
 });
 
 describe('all-input degenerate native sequence trigger', () => {
-  it('fires only for the diagnosed 0275 native structure proposal', () => {
+  it('fires for applied degenerate native structure proposals independent of filename', () => {
     expect(shouldTryAllInputDegenerateNativeSequence({
-      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      filename: 'unseen-degenerate-native.pdf',
       toolName: 'create_structure_from_degenerate_native_anchor',
       outcome: 'applied',
     })).toBe(true);
   });
 
-  it('does not fire for unrelated rows, tools, or non-applied outcomes', () => {
-    expect(shouldTryAllInputDegenerateNativeSequence({
-      filename: '0033-919b3d6f80f2-v1-4655.pdf',
-      toolName: 'create_structure_from_degenerate_native_anchor',
-      outcome: 'applied',
-    })).toBe(false);
+  it('does not fire for unrelated tools or non-applied outcomes', () => {
     expect(shouldTryAllInputDegenerateNativeSequence({
       filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
       toolName: 'create_heading_from_candidate',
@@ -482,14 +477,14 @@ describe('all-input degenerate native sequence trigger', () => {
 });
 
 describe('all-input degenerate native sequence seed acceptance', () => {
-  it('allows the diagnosed 0275 native structure seed only for orphan-MCID-only score movement', () => {
+  it('allows degenerate native structure seed only for orphan-MCID-only score movement', () => {
     const beforeSnapshot = makeSnapshot({ depth: 1 });
     const afterSnapshot = makeSnapshot({ depth: 3 });
     afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
     afterSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
 
     expect(shouldRejectStageResult({
-      filename: '0275-0af92eca8742-4002-driving-under-the-influence.pdf',
+      filename: 'unseen-degenerate-native.pdf',
       before: makeAnalysis({ score: 44, categories: { heading_structure: 0, reading_order: 0, pdf_ua_compliance: 80 } }),
       after: makeAnalysis({ score: 83, categories: { heading_structure: 99, reading_order: 79, pdf_ua_compliance: 57 } }),
       beforeSnapshot,
@@ -504,16 +499,16 @@ describe('all-input degenerate native sequence seed acceptance', () => {
     })).toMatchObject({ reject: false, reason: null });
   });
 
-  it('rejects the same native structure seed on unrelated rows or mixed PAC regressions', () => {
+  it('rejects the native structure seed without required movement or with mixed PAC regressions', () => {
     const beforeSnapshot = makeSnapshot({ depth: 1 });
     const afterSnapshot = makeSnapshot({ depth: 3 });
     afterSnapshot.orphanMcids = [{ page: 0, mcid: 1 }];
     afterSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
 
     expect(shouldRejectStageResult({
-      filename: '0034-unrelated.pdf',
+      filename: 'unseen-degenerate-native.pdf',
       before: makeAnalysis({ score: 44, categories: { heading_structure: 0, reading_order: 0, pdf_ua_compliance: 80 } }),
-      after: makeAnalysis({ score: 83, categories: { heading_structure: 99, reading_order: 79, pdf_ua_compliance: 57 } }),
+      after: makeAnalysis({ score: 83, categories: { heading_structure: 99, reading_order: 0, pdf_ua_compliance: 57 } }),
       beforeSnapshot,
       afterSnapshot,
       stage: makeStage('create_structure_from_degenerate_native_anchor'),

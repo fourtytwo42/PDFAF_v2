@@ -1,18 +1,23 @@
-# All-Input 0275 Degenerate Native Sequence
+# All-Input Degenerate Native Sequence
 
 ## Decision
 
-Promote a narrow, row-scoped recovery for `0275-...-4002-driving-under-the-influence...pdf`.
+Promote a narrow evidence-based recovery for degenerate native structure
+bootstrap states.
 
-The row exposes a degenerate native structure path where `create_structure_from_degenerate_native_anchor`
-is score-moving but trips `pdfua.content.orphan_mcids_absent` as an intermediate PAC regression. A direct
-proposal probe showed that existing cleanup tools can recover the final state without adding a new mutator.
+The original proof row was `0275-...-4002-driving-under-the-influence...pdf`.
+It exposes a degenerate native structure path where
+`create_structure_from_degenerate_native_anchor` is score-moving but can trip
+`pdfua.content.orphan_mcids_absent` as an intermediate PAC regression. Direct
+and production-route probes showed that existing guarded cleanup can recover
+the final state without adding a new mutator.
 
 ## Evidence
 
 - Direct sequence probe: `Output/goal-all-input-mean-2026-05-09-r1/0275-degenerate-native-sequence-probe-r1`
 - Production-route probe: `Output/goal-all-input-mean-2026-05-09-r1/0275-production-route-sequence-probe-r1`
 - Targeted validation: `Output/goal-all-input-mean-2026-05-09-r1/run-0275-degenerate-native-sequence-target-2026-05-09-r3`
+- Generalized validation: `Output/goal-all-input-mean-2026-05-09-r1/run-degenerate-native-generalized-2026-05-13-r1`
 
 Targeted validation results:
 
@@ -25,12 +30,17 @@ Targeted validation results:
 
 ## Guardrails
 
-- Scope is limited to filenames containing `0275`.
 - The seed stage must include `create_structure_from_degenerate_native_anchor`.
 - The only allowed seed-stage PAC regression is `pdfua.content.orphan_mcids_absent`.
 - The seed must improve total score, heading structure, and reading order.
 - Page count, text count, and tagged state must be preserved.
-- Later cleanup still runs through existing guarded post-pass acceptance; no PAC scoring caps or PAC gate allow-list changes were added.
+- The explicit sequence attempt is admitted only after an applied degenerate
+  native structure bootstrap.
+- Sequence acceptance, when needed, requires final score `>=93`, preserved or
+  improved heading and reading scores, alt score `>=90`, page/text/tag
+  preservation, and no final PAC regressions.
+- Later cleanup still runs through existing guarded post-pass acceptance; no
+  PAC scoring caps or PAC gate allow-list changes were added.
 
 ## All-Input Impact Estimate
 
@@ -46,4 +56,7 @@ Estimated 351-PDF movement after overlaying current proven target runs:
 
 ## Next Direction
 
-Continue with diagnostic-first target selection. The overlay still ranks heading/reading rows as the largest deficit family, followed by table debt and alt debt. Do not generalize this 0275 seed recovery without another row-level proposal-buffer proof and targeted validation.
+Continue with diagnostic-first target selection. The overlay still ranks
+heading/reading rows as the largest deficit family, followed by table debt and
+alt debt. This generalized predicate removes the row gate but does not close
+the fresh all-unique-PDF mean goal.
