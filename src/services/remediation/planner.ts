@@ -1560,11 +1560,7 @@ export function planForRemediation(
     }
     if ((snapshot.paragraphStructElems?.length ?? 0) === 0) return false;
     if (attemptCount(alreadyApplied, 'create_heading_from_candidate') > 0) return false;
-    const languageAlreadyApplied = alreadyApplied.some(row =>
-      row.toolName === 'set_document_language' &&
-      row.outcome === 'applied'
-    );
-    return !languageAlreadyApplied || eligibleHeadingCandidates.length > 0;
+    return eligibleHeadingCandidates.length > 0;
   };
 
   const toolIsRouteRelevant = (toolName: string): { allowed: boolean; reason?: PlanningSkipReason } => {

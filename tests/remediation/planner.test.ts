@@ -2523,6 +2523,73 @@ describe('planForRemediation', () => {
     expect(afterHeadingNames).toContain('set_document_title');
   });
 
+  it('keeps title normalization early when zero-heading paragraph evidence has no ranked heading target', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 13,
+      textByPage: ['ordinary body copy with punctuation.', 'more body copy.'],
+      textCharCount: 25_000,
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      paragraphStructElems: [
+        {
+          tag: 'P',
+          text: 'the',
+          page: 6,
+          structRef: '94_0',
+        },
+      ],
+      detectionProfile: {
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+          rootReachableHeadingCount: 0,
+        },
+        readingOrderSignals: {
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+        },
+        pdfUaSignals: { orphanMcidCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderRisk: 0,
+          linkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+        },
+        tableSignals: {
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+          malformedTableCount: 0,
+          misplacedCellCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      } as DocumentSnapshot['detectionProfile'],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      title_language: 0,
+      heading_structure: 0,
+      pdf_ua_compliance: 50,
+      reading_order: 96,
+    });
+
+    const names = planForRemediation(analysis, snap, [])
+      .stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('set_document_language');
+    expect(names).toContain('set_document_title');
+    expect(names).not.toContain('create_heading_from_candidate');
+  });
+
   it('routes native Type1 font survivors into font_unicode_tail_recovery', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
