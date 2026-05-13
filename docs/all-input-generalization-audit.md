@@ -17,7 +17,6 @@ goal under the updated generalization constraint.
 
 | Area | File | Current gate shape | Why it blocks acceptance |
 | --- | --- | --- | --- |
-| Tagged-heading admission | `src/services/remediation/planner.ts` | `ALL_INPUT_TAGGED_HEADING_ADMISSION_IDS = {'0317'}` | Planner behavior is admitted by row ID rather than by the structural candidate shape alone. |
 | Long-document native synthesis bounds | `src/services/remediation/planner.ts` | filename checks for `0034` / `v1-4716` and `0283` | Production route bounds depend on known row/document IDs. |
 | Heading/annotation sequence | `src/services/remediation/orchestrator.ts` | `0033`, `4593`, `4646`, plus `0032` | Recovery path is admitted by row/document ID. |
 | Degenerate native sequence | `src/services/remediation/orchestrator.ts` | `0275` | Recovery path is admitted by row ID. |
@@ -27,6 +26,12 @@ goal under the updated generalization constraint.
 | Title/reading sequence | `src/services/remediation/orchestrator.ts` | `0319` | Title bridge and reading-order cleanup sequence is row-scoped. |
 | Route guards | `src/services/remediation/orchestrator.ts` | `0346`, `0184`, `0316`, `0097` | Some guards are regression-prevention, but they still depend on document IDs plus replay signatures. |
 | Timeout checkpoint floors | `src/services/remediation/orchestrator.ts` | `structure-4076`, `long-4516`, `long-4683`, `structure-4438` | These are runtime policy exceptions tied to known documents; they need explicit waiver or general runtime-class predicates. |
+
+## Generalized This Pass
+
+| Area | File | Replacement predicate | Evidence |
+| --- | --- | --- | --- |
+| Tagged-heading admission | `src/services/remediation/planner.ts` | Native tagged PDF, structure tree present, heading score `0`, reading-order score `<=30`, text extractability `>=90`, annotation tab debt present, and a high-confidence first-page `tagged_visible_line_mcid_first_page` marked-content candidate. | Unit coverage in `tests/remediation/planner.test.ts`; deterministic target/control run `Output/goal-all-input-mean-2026-05-09-r1/run-heading-top-generalized-tagged-anchor-2026-05-13-r2` preserved `0317 93/A`, `0033 94/A`, `0297 59/F`, and `false_positive_applied=0`. |
 
 ## Required Follow-Up
 

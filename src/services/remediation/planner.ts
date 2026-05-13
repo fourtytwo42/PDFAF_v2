@@ -121,23 +121,13 @@ function categoryScore(analysis: AnalysisResult, key: CategoryKey): number | nul
   return category?.applicable === false ? null : category?.score ?? null;
 }
 
-const ALL_INPUT_TAGGED_HEADING_ADMISSION_IDS = new Set(['0317']);
-
-function filenameHasAnyId(filename: string, ids: ReadonlySet<string>): boolean {
-  const normalized = filename.toLowerCase();
-  for (const id of ids) {
-    if (normalized.includes(id.toLowerCase())) return true;
-  }
-  return false;
-}
-
-function shouldTryAllInputTaggedHeadingAdmission(
+function shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
 ): boolean {
-  if (!filenameHasAnyId(analysis.filename, ALL_INPUT_TAGGED_HEADING_ADMISSION_IDS)) return false;
   if (analysis.pdfClass !== 'native_tagged' || snapshot.structureTree === null || snapshot.isTagged !== true) return false;
   if ((categoryScore(analysis, 'heading_structure') ?? 100) !== 0) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) > 30) return false;
   if ((categoryScore(analysis, 'text_extractability') ?? 0) < 90 || snapshot.textCharCount <= 0) return false;
   if ((snapshot.detectionProfile?.annotationSignals.pagesMissingTabsS ?? 0) <= 0) return false;
   const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
@@ -1630,7 +1620,7 @@ export function planForRemediation(
     }
     if (
       toolName === 'create_heading_from_tagged_visible_anchor' &&
-      !((shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) || shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot) || shouldTryAllInputTaggedHeadingAdmission(analysis, snapshot)) && headingNeedsRepair)
+      !((shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) || shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot) || shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)) && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -2070,7 +2060,7 @@ export function planForRemediation(
         shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) ||
         shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot) ||
         shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot) ||
-        shouldTryAllInputTaggedHeadingAdmission(analysis, snapshot)
+        shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)
       ) &&
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
@@ -2089,8 +2079,8 @@ export function planForRemediation(
             ? 'Stage 149 partial-heading reachability recovery from a proven first-page content anchor.'
             : shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
               ? 'Stage 187 tagged heading topup from a proven first-page content anchor.'
-              : shouldTryAllInputTaggedHeadingAdmission(analysis, snapshot)
-                ? 'All-input row-scoped tagged heading admission from a PAC-safe API-good route.'
+              : shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)
+                ? 'Tagged heading admission from a high-confidence first-page marked-content anchor.'
             : 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
           route: 'post_bootstrap_heading_convergence',
         });
@@ -2531,7 +2521,7 @@ export function buildDefaultParams(
           ? selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot)
           : shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
             ? selectStage187TaggedHeadingTopupCandidate(analysis, snapshot)
-            : shouldTryAllInputTaggedHeadingAdmission(analysis, snapshot)
+            : shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)
               ? selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot)
               : null;
       if (!candidate) return {};
@@ -2544,7 +2534,7 @@ export function buildDefaultParams(
         text: candidate.text.slice(0, 200),
         source: candidate.source,
         confidenceScore: candidate.score,
-        ...(partialReachability || shouldTryAllInputTaggedHeadingAdmission(analysis, snapshot) ? { allowExistingHeadingRolesForPartialReachability: true } : {}),
+        ...(partialReachability || shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot) ? { allowExistingHeadingRolesForPartialReachability: true } : {}),
         ...(!partialReachability && shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
           ? { allowExistingHeadingRolesForPartialReachability: true, stage187HeadingTopup: true }
           : {}),

@@ -1185,7 +1185,7 @@ describe('planForRemediation', () => {
     expect(names).toContain('ocr_scanned_pdf');
   });
 
-  it('admits the diagnosed 0317 tagged heading candidate before annotation cleanup', () => {
+  it('admits a tagged heading candidate from a high-confidence first-page marked-content anchor before annotation cleanup', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 20,
@@ -1280,7 +1280,7 @@ describe('planForRemediation', () => {
     });
   });
 
-  it('does not broaden tagged heading admission for unrelated rows with weak supporting structure', () => {
+  it('does not admit tagged heading anchors when the best marked-content candidate is not on the first page', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       pageCount: 20,
@@ -1290,7 +1290,7 @@ describe('planForRemediation', () => {
       pdfClass: 'native_tagged',
       structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
       mcidTextSpans: [{
-        page: 0,
+        page: 1,
         mcid: 3,
         resolvedText: 'JUVENILE JUSTICE IN ILLINOIS 2015',
         snippet: '/Span << /MCID 3 >> BDC /F1 24 Tf (JUVENILE JUSTICE IN ILLINOIS 2015) Tj EMC',
@@ -1345,6 +1345,79 @@ describe('planForRemediation', () => {
       }),
       {
         filename: 'unrelated-heading.pdf',
+        pdfClass: 'native_tagged',
+        detectionProfile: snap.detectionProfile,
+      },
+    );
+
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).not.toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('does not admit tagged heading anchors when reading order is already stable', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 20,
+      textByPage: ['JUVENILE JUSTICE IN ILLINOIS 2015 body text'],
+      textCharCount: 18000,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 3,
+        resolvedText: 'JUVENILE JUSTICE IN ILLINOIS 2015',
+        snippet: '/Span << /MCID 3 >> BDC /F1 24 Tf (JUVENILE JUSTICE IN ILLINOIS 2015) Tj EMC',
+      }],
+      detectionProfile: {
+        headingSignals: { extractedHeadingCount: 0, treeHeadingCount: 0, headingTreeDepth: 0, extractedHeadingsMissingFromTree: false },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 2,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 2,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 20,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 2,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 2,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        pdfUaSignals: { orphanMcidCount: 31, suspectedPathPaintOutsideMc: 200, taggedAnnotationRiskCount: 2 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      },
+    };
+    const analysis = withRoutingContext(
+      withCategoryScores(score(snap, { ...META, filename: 'stable-reading-heading.pdf' }), {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 0,
+        alt_text: 80,
+        table_markup: 100,
+        pdf_ua_compliance: 43,
+        link_quality: 79,
+        reading_order: 79,
+      }),
+      {
+        filename: 'stable-reading-heading.pdf',
         pdfClass: 'native_tagged',
         detectionProfile: snap.detectionProfile,
       },
