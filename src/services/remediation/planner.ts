@@ -168,6 +168,7 @@ const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
     'canonicalize_figure_alt_ownership',
     'repair_degenerate_native_reading_order_shell',
     'repair_native_reading_order',
+    'tag_native_text_blocks',
     'repair_structure_conformance',
   ],
   untagged_structure_recovery: [
@@ -1327,7 +1328,23 @@ function toolApplicableToPdfClass(
     if (pdfClass === 'scanned') return false;
     const creator = (snapshot.metadata.creator ?? '').toLowerCase();
     if (creator.includes('ocrmypdf')) return false;
-    return pdfClass === 'native_untagged' || pdfClass === 'mixed';
+    if (pdfClass === 'native_untagged' || pdfClass === 'mixed') return true;
+    if (pdfClass !== 'native_tagged') return false;
+    const depth = snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth
+      ?? (snapshot.structureTree ? 1 : 0);
+    const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount
+      ?? snapshot.headings.length;
+    const rootChildCount = Array.isArray(snapshot.structureTree?.children)
+      ? snapshot.structureTree.children.length
+      : 0;
+    const degenerateShell =
+      snapshot.detectionProfile?.readingOrderSignals?.degenerateStructureTree === true ||
+      depth <= 1 ||
+      rootChildCount === 0;
+    return snapshot.textCharCount > 0 &&
+      snapshot.structureTree !== null &&
+      degenerateShell &&
+      treeHeadingCount === 0;
   }
   if (toolName === 'replace_bookmarks_from_headings') {
     if (pdfClass === 'scanned') return false;

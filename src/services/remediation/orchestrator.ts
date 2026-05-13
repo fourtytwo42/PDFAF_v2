@@ -1955,6 +1955,7 @@ export function shouldSoftStopForRemediationDeadline(input: {
 const VERIFIED_CHECKPOINT_RISKY_WORK_REMAINING_MS = REMEDIATION_SOFT_DEADLINE_BUFFER_MS + REMEDIATION_ANALYSIS_TIMEOUT_MS;
 const LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS =
   REMEDIATION_SOFT_DEADLINE_BUFFER_MS + (REMEDIATION_ANALYSIS_TIMEOUT_MS * 2);
+const NATIVE_TEXT_TAGGING_AFTER_OCR_TIMEOUT_REMAINING_MS = 30_000;
 
 export function shouldReturnVerifiedCheckpointBeforeRiskyWork(input: {
   startedAtMs: number;
@@ -2013,6 +2014,43 @@ export function shouldKeepCurrentStateForRuntimeSoftStop(input: {
   targetScore?: number;
 }): boolean {
   return input.analysis.score >= (input.targetScore ?? REMEDIATION_TARGET_SCORE);
+}
+
+export function shouldContinueAfterOcrTimeoutForNativeTextTagging(input: {
+  analysis: Pick<AnalysisResult, 'score' | 'pdfClass'>;
+  snapshot: Pick<DocumentSnapshot, 'textCharCount' | 'structureTree'>;
+  appliedTools: readonly AppliedRemediationTool[];
+  startedAtMs: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+}): boolean {
+  if (input.analysis.pdfClass === 'scanned') return false;
+  if (input.appliedTools.some(row => row.toolName === 'tag_native_text_blocks')) return false;
+  const ocrFailed = input.appliedTools.some(row =>
+    row.toolName === 'ocr_scanned_pdf' &&
+    row.outcome === 'failed'
+  );
+  if (!ocrFailed) return false;
+  if (input.analysis.score < 40 || input.analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  return !shouldSoftStopForRemediationDeadline({
+    startedAtMs: input.startedAtMs,
+    nowMs: input.nowMs,
+    wallTimeoutMs: input.wallTimeoutMs,
+    requiredRemainingMs: NATIVE_TEXT_TAGGING_AFTER_OCR_TIMEOUT_REMAINING_MS,
+  });
+}
+
+export function shouldAllowNativeTextTaggingNearRiskyDeadline(input: {
+  stage: RemediationStagePlan;
+  analysis: Pick<AnalysisResult, 'score' | 'pdfClass'>;
+  snapshot: Pick<DocumentSnapshot, 'textCharCount' | 'structureTree'>;
+  appliedTools: readonly AppliedRemediationTool[];
+  startedAtMs: number;
+  nowMs?: number;
+  wallTimeoutMs?: number;
+}): boolean {
+  if (!input.stage.tools.some(tool => tool.toolName === 'tag_native_text_blocks')) return false;
+  return shouldContinueAfterOcrTimeoutForNativeTextTagging(input);
 }
 
 function priorNoMovementToolAttempt(toolName: string, appliedTools: readonly AppliedRemediationTool[]): boolean {
@@ -7909,11 +7947,23 @@ export async function remediatePdf(
     for (let stageIndex = 0; stageIndex < plan.stages.length; stageIndex++) {
       options?.signal?.throwIfAborted();
       if (ocrRuntimeBudgetExhausted) break;
-      if (await returnVerifiedTimeoutCheckpoint('before_stage', { beforeRiskyWork: true })) break;
+      const stage = plan.stages[stageIndex]!;
+      const allowNativeTextTaggingNearDeadline = shouldAllowNativeTextTaggingNearRiskyDeadline({
+        stage,
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        appliedTools,
+        startedAtMs: started,
+      });
+      if (
+        !allowNativeTextTaggingNearDeadline &&
+        await returnVerifiedTimeoutCheckpoint('before_stage', { beforeRiskyWork: true })
+      ) break;
       if (
         appliedTools.length > 0 &&
         currentAnalysis.score >= before.score &&
-        shouldReturnVerifiedCheckpointBeforeRiskyWork({ startedAtMs: started })
+        shouldReturnVerifiedCheckpointBeforeRiskyWork({ startedAtMs: started }) &&
+        !allowNativeTextTaggingNearDeadline
       ) {
         noteEarlyExit(runtimeSummary, 'low_score_verified_state_soft_deadline_before_stage');
         break;
@@ -7932,7 +7982,6 @@ export async function remediatePdf(
         noteEarlyExit(runtimeSummary, 'reanalysis_tail_soft_cap_before_stage');
         break;
       }
-      const stage = plan.stages[stageIndex]!;
       const stagePercent = roundBase + (((stageIndex + 0.35) / Math.max(1, plan.stages.length)) * roundSpan);
       await reportProgress(
         stagePercent,
@@ -8691,8 +8740,27 @@ export async function remediatePdf(
           typeof effectiveDetails === 'string' &&
           effectiveDetails.includes('timeout ')
         ) {
-          ocrRuntimeBudgetExhausted = true;
-          noteEarlyExit(runtimeSummary, 'ocr_runtime_budget_exhausted_after_tool');
+          const upcomingNativeTextTaggingStage = plan.stages
+            .slice(stageIndex + 1)
+            .find(candidate => candidate.tools.some(tool => tool.toolName === 'tag_native_text_blocks'));
+          const allowNativeTextTaggingAfterOcrTimeout = upcomingNativeTextTaggingStage
+            ? shouldAllowNativeTextTaggingNearRiskyDeadline({
+              stage: upcomingNativeTextTaggingStage,
+              analysis: workingAnalysis,
+              snapshot: workingSnapshot,
+              appliedTools: [...appliedTools, ...stageApplied],
+              startedAtMs: started,
+            })
+            : shouldContinueAfterOcrTimeoutForNativeTextTagging({
+              analysis: workingAnalysis,
+              snapshot: workingSnapshot,
+              appliedTools: [...appliedTools, ...stageApplied],
+              startedAtMs: started,
+            });
+          if (!allowNativeTextTaggingAfterOcrTimeout) {
+            ocrRuntimeBudgetExhausted = true;
+            noteEarlyExit(runtimeSummary, 'ocr_runtime_budget_exhausted_after_tool');
+          }
           break;
         }
         if (effectiveOutcome === 'applied') {
@@ -8914,6 +8982,22 @@ export async function remediatePdf(
         roundHeadingAttempted &&
         hasRemainingHeadingBootstrapAttempts(currentAnalysis, currentSnapshot, appliedTools)
       ) {
+        continue;
+      }
+      if (shouldContinueAfterOcrTimeoutForNativeTextTagging({
+        analysis: currentAnalysis,
+        snapshot: currentSnapshot,
+        appliedTools,
+        startedAtMs: started,
+      }) && filterPlan(planForRemediation(
+        currentAnalysis,
+        currentSnapshot,
+        appliedTools,
+        toolOutcomeStore,
+        options?.includeOptionalRemediation ?? false,
+      )).stages.some(candidate =>
+        candidate.tools.some(tool => tool.toolName === 'tag_native_text_blocks')
+      )) {
         continue;
       }
       noteEarlyExit(runtimeSummary, 'round_no_improvement');

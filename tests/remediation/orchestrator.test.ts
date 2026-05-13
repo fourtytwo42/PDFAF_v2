@@ -33,6 +33,8 @@ import {
   shouldRejectStageResult,
   shouldCaptureProtectedDebugState,
   shouldKeepCurrentStateForRuntimeSoftStop,
+  shouldAllowNativeTextTaggingNearRiskyDeadline,
+  shouldContinueAfterOcrTimeoutForNativeTextTagging,
   shouldReturnVerifiedCheckpointBeforeRiskyWork,
   shouldReturnLowScoreCheckpointBeforeFinalReanalysis,
   shouldSkipLateArtifactReanalysisGuard,
@@ -2214,6 +2216,87 @@ describe('remediation runtime soft stops', () => {
       nowMs: 250_000,
       wallTimeoutMs: 300_000,
       requiredRemainingMs: 50_000,
+    })).toBe(false);
+  });
+
+  it('allows native text tagging after OCR failure inside the risky-work return window', () => {
+    expect(shouldReturnVerifiedCheckpointBeforeRiskyWork({
+      startedAtMs: 0,
+      nowMs: 230_000,
+      wallTimeoutMs: 300_000,
+    })).toBe(true);
+    expect(shouldSoftStopForRemediationDeadline({
+      startedAtMs: 0,
+      nowMs: 230_000,
+      wallTimeoutMs: 300_000,
+    })).toBe(false);
+
+    expect(shouldAllowNativeTextTaggingNearRiskyDeadline({
+      stage: makeStage('tag_native_text_blocks'),
+      analysis: { score: 51, pdfClass: 'native_untagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+      appliedTools: [runtimeToolRow({ toolName: 'ocr_scanned_pdf', outcome: 'failed' })],
+      startedAtMs: 0,
+      nowMs: 230_000,
+      wallTimeoutMs: 300_000,
+    })).toBe(true);
+  });
+
+  it('does not allow native text tagging when the narrowed post-OCR budget is exhausted', () => {
+    expect(shouldAllowNativeTextTaggingNearRiskyDeadline({
+      stage: makeStage('tag_native_text_blocks'),
+      analysis: { score: 51, pdfClass: 'native_untagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+      appliedTools: [runtimeToolRow({ toolName: 'ocr_scanned_pdf', outcome: 'failed' })],
+      startedAtMs: 0,
+      nowMs: 271_000,
+      wallTimeoutMs: 300_000,
+    })).toBe(false);
+  });
+
+  it('requires a failed OCR attempt and no prior native text tagging attempt', () => {
+    const base = {
+      stage: makeStage('tag_native_text_blocks'),
+      analysis: { score: 51, pdfClass: 'native_untagged' as const },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+      startedAtMs: 0,
+      nowMs: 230_000,
+      wallTimeoutMs: 300_000,
+    };
+
+    expect(shouldAllowNativeTextTaggingNearRiskyDeadline({
+      ...base,
+      appliedTools: [runtimeToolRow({ toolName: 'ocr_scanned_pdf', outcome: 'no_effect' })],
+    })).toBe(false);
+    expect(shouldAllowNativeTextTaggingNearRiskyDeadline({
+      ...base,
+      appliedTools: [
+        runtimeToolRow({ toolName: 'ocr_scanned_pdf', outcome: 'failed' }),
+        runtimeToolRow({ toolName: 'tag_native_text_blocks', outcome: 'applied' }),
+      ],
+    })).toBe(false);
+  });
+
+  it('keeps a failed OCR timeout eligible for next-round native text tagging', () => {
+    expect(shouldContinueAfterOcrTimeoutForNativeTextTagging({
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+      appliedTools: [runtimeToolRow({ toolName: 'ocr_scanned_pdf', outcome: 'failed' })],
+      startedAtMs: 0,
+      nowMs: 230_000,
+      wallTimeoutMs: 300_000,
+    })).toBe(true);
+
+    expect(shouldContinueAfterOcrTimeoutForNativeTextTagging({
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+      appliedTools: [
+        runtimeToolRow({ toolName: 'ocr_scanned_pdf', outcome: 'failed' }),
+        runtimeToolRow({ toolName: 'tag_native_text_blocks', outcome: 'applied' }),
+      ],
+      startedAtMs: 0,
+      nowMs: 230_000,
+      wallTimeoutMs: 300_000,
     })).toBe(false);
   });
 
