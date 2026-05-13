@@ -40,7 +40,7 @@ import {
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard,
-  shouldConfirmAllInput0346MetadataVolatility,
+  shouldConfirmLowScoreMetadataOnlyHeadingVolatility,
   shouldConfirmMetadataOnlyStructuralVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
   shouldTryAllInputDegenerateNativeSequence,
@@ -939,15 +939,14 @@ describe('metadata-only structural volatility confirmation', () => {
   });
 });
 
-describe('all-input 0346 metadata volatility confirmation', () => {
+describe('low-score metadata-only heading volatility confirmation', () => {
   const metadataTools = [
     makePostPassTool({ toolName: 'set_document_language', outcome: 'applied', scoreBefore: 42, scoreAfter: 42, source: 'planner', stage: 1 }),
     makePostPassTool({ toolName: 'set_document_title', outcome: 'applied', scoreBefore: 42, scoreAfter: 42, source: 'planner', stage: 1 }),
   ];
 
-  it('requests confirmation for the proven same-state metadata route below the useful threshold', () => {
-    expect(shouldConfirmAllInput0346MetadataVolatility({
-      filename: '0346-03919ce2e4ea-4673-understanding-police-officer-stress-a-review-of-the-literature.pdf',
+  it('requests confirmation for a metadata route below the useful threshold with heading still absent', () => {
+    expect(shouldConfirmLowScoreMetadataOnlyHeadingVolatility({
       before: makeAnalysis({
         score: 42,
         categories: { title_language: 0, heading_structure: 0 },
@@ -960,25 +959,17 @@ describe('all-input 0346 metadata volatility confirmation', () => {
     })).toBe(true);
   });
 
-  it('does not apply to unrelated rows, mixed stages, or already useful metadata analyses', () => {
+  it('does not apply to mixed stages or already useful metadata analyses', () => {
     const before = makeAnalysis({
       score: 42,
       categories: { title_language: 0, heading_structure: 0 },
     });
-    expect(shouldConfirmAllInput0346MetadataVolatility({
-      filename: '0345-report.pdf',
-      before,
-      after: makeAnalysis({ score: 51, categories: { title_language: 100, heading_structure: 0 } }),
-      stageApplied: metadataTools,
-    })).toBe(false);
-    expect(shouldConfirmAllInput0346MetadataVolatility({
-      filename: '0346-report.pdf',
+    expect(shouldConfirmLowScoreMetadataOnlyHeadingVolatility({
       before,
       after: makeAnalysis({ score: 59, categories: { title_language: 100, heading_structure: 0 } }),
       stageApplied: metadataTools,
     })).toBe(false);
-    expect(shouldConfirmAllInput0346MetadataVolatility({
-      filename: '0346-report.pdf',
+    expect(shouldConfirmLowScoreMetadataOnlyHeadingVolatility({
       before,
       after: makeAnalysis({ score: 51, categories: { title_language: 100, heading_structure: 0 } }),
       stageApplied: [

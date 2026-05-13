@@ -4109,10 +4109,6 @@ export function shouldSkipFigure4702SequencePostPassGuard(input: {
   return pdfUaTopupAttempted;
 }
 
-function isAllInput0346Filename(filename: string): boolean {
-  return /(?:^|[^0-9])0346(?:[^0-9]|$)/.test(filename) || /(?:^|[^0-9])4673(?:[^0-9]|$)/.test(filename);
-}
-
 export function shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard(input: {
   analysis: Pick<AnalysisResult, 'score' | 'grade'>;
   appliedTools: AppliedRemediationTool[];
@@ -4148,13 +4144,11 @@ export function shouldConfirmMetadataOnlyStructuralVolatility(input: {
   return beforeAlt - afterAlt >= 20 || beforeTable - afterTable >= 20;
 }
 
-export function shouldConfirmAllInput0346MetadataVolatility(input: {
-  filename: string;
+export function shouldConfirmLowScoreMetadataOnlyHeadingVolatility(input: {
   before: AnalysisResult;
   after: AnalysisResult;
   stageApplied: AppliedRemediationTool[];
 }): boolean {
-  if (!isAllInput0346Filename(input.filename)) return false;
   if (input.stageApplied.length === 0) return false;
   if (!input.stageApplied.every(row => row.toolName === 'set_document_title' || row.toolName === 'set_document_language')) {
     return false;
@@ -8820,8 +8814,7 @@ export async function remediatePdf(
           lastAnalyzedBuffer = buf;
         }
       }
-      if (shouldConfirmAllInput0346MetadataVolatility({
-        filename,
+      if (shouldConfirmLowScoreMetadataOnlyHeadingVolatility({
         before: stageStartAnalysis,
         after: analyzed.result,
         stageApplied,
@@ -8829,13 +8822,13 @@ export async function remediatePdf(
         const confirmed = await reanalyzeBufferForMutation(
           buf,
           filename,
-          'pdfaf-0346-metadata-confirm',
+          'pdfaf-low-score-metadata-heading-confirm',
           { bypassCache: true, signal: options?.signal },
         );
         const beforeTitle = categoryScore(stageStartAnalysis, 'title_language') ?? 0;
         const confirmedTitle = categoryScore(confirmed.result, 'title_language') ?? 0;
         if (confirmed.result.score >= 59 && confirmedTitle > beforeTitle) {
-          noteEarlyExit(runtimeSummary, 'all_input_0346_metadata_confirmation_reanalysis');
+          noteEarlyExit(runtimeSummary, 'low_score_metadata_heading_confirmation_reanalysis');
           analyzed = confirmed;
           lastStageAnalysis = confirmed;
           lastAnalyzedBuffer = buf;
