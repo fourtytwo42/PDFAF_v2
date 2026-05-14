@@ -1987,6 +1987,8 @@ const VERIFIED_CHECKPOINT_RISKY_WORK_REMAINING_MS = REMEDIATION_SOFT_DEADLINE_BU
 const LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS =
   REMEDIATION_SOFT_DEADLINE_BUFFER_MS + (REMEDIATION_ANALYSIS_TIMEOUT_MS * 2);
 const NATIVE_TEXT_TAGGING_AFTER_OCR_TIMEOUT_REMAINING_MS = 30_000;
+const NATIVE_TEXT_TAGGING_POST_OCR_CLEANUP_RESERVE_MS =
+  REMEDIATION_SOFT_DEADLINE_BUFFER_MS + (REMEDIATION_ANALYSIS_TIMEOUT_MS * 2) + 60_000;
 
 export function shouldReturnVerifiedCheckpointBeforeRiskyWork(input: {
   startedAtMs: number;
@@ -2069,6 +2071,17 @@ export function shouldContinueAfterOcrTimeoutForNativeTextTagging(input: {
     wallTimeoutMs: input.wallTimeoutMs,
     requiredRemainingMs: NATIVE_TEXT_TAGGING_AFTER_OCR_TIMEOUT_REMAINING_MS,
   });
+}
+
+export function shouldReservePostOcrCleanupBudgetForNativeTextTagging(input: {
+  stage: RemediationStagePlan | null | undefined;
+  analysis: Pick<AnalysisResult, 'score' | 'pdfClass'>;
+  snapshot: Pick<DocumentSnapshot, 'textCharCount' | 'structureTree'>;
+}): boolean {
+  if (input.stage && !input.stage.tools.some(tool => tool.toolName === 'tag_native_text_blocks')) return false;
+  if (input.analysis.pdfClass === 'scanned') return false;
+  if (input.analysis.score < 40 || input.analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  return true;
 }
 
 export function shouldAllowNativeTextTaggingNearRiskyDeadline(input: {
@@ -8700,7 +8713,18 @@ export async function remediatePdf(
         let liveToolTimeoutMs: number | undefined;
         let toolToRun = liveTool;
         if (liveTool.toolName === 'ocr_scanned_pdf') {
-          const ocrTimeoutMs = ocrMutationTimeoutForRemainingWall({ startedAtMs: started });
+          const upcomingNativeTextTaggingStage = plan.stages
+            .slice(stageIndex + 1)
+            .find(candidate => candidate.tools.some(tool => tool.toolName === 'tag_native_text_blocks'));
+          const reservePostOcrCleanup = shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+            stage: upcomingNativeTextTaggingStage,
+            analysis: workingAnalysis,
+            snapshot: workingSnapshot,
+          });
+          const ocrTimeoutMs = ocrMutationTimeoutForRemainingWall({
+            startedAtMs: started,
+            ...(reservePostOcrCleanup ? { reserveMs: NATIVE_TEXT_TAGGING_POST_OCR_CLEANUP_RESERVE_MS } : {}),
+          });
           if (ocrTimeoutMs == null) {
             ocrRuntimeBudgetExhausted = true;
             noteEarlyExit(runtimeSummary, 'ocr_runtime_budget_exhausted_before_tool');

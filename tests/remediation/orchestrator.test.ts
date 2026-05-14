@@ -30,6 +30,7 @@ import {
   shouldGuardStageReanalysisAdmission,
   shouldReplaceProtectedSafeCheckpoint,
   shouldRecordSameStateNoGainRuntimeAttempt,
+  shouldReservePostOcrCleanupBudgetForNativeTextTagging,
   shouldRejectStageResult,
   shouldCaptureProtectedDebugState,
   shouldKeepCurrentStateForRuntimeSoftStop,
@@ -2211,6 +2212,53 @@ describe('remediation runtime soft stops', () => {
       reserveMs: 50_000,
       maxTimeoutMs: 2_700_000,
     })).toBe(240_000);
+  });
+
+  it('reserves a larger post-OCR cleanup budget when native text tagging is planned', () => {
+    const nativeTaggingStage = makeStage('tag_native_text_blocks');
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: nativeTaggingStage,
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+    })).toBe(true);
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: null,
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+    })).toBe(true);
+    expect(ocrMutationTimeoutForRemainingWall({
+      startedAtMs: 0,
+      nowMs: 10_000,
+      wallTimeoutMs: 300_000,
+      reserveMs: 200_000,
+      maxTimeoutMs: 2_700_000,
+    })).toBe(90_000);
+
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: nativeTaggingStage,
+      analysis: { score: 44, pdfClass: 'scanned' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+    })).toBe(false);
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: makeStage('normalize_heading_hierarchy'),
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 1, textCharCount: 12_000 }),
+    })).toBe(false);
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: null,
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 0, textCharCount: 12_000 }),
+    })).toBe(true);
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: null,
+      analysis: { score: 44, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 0, textCharCount: 0 }),
+    })).toBe(true);
+    expect(shouldReservePostOcrCleanupBudgetForNativeTextTagging({
+      stage: null,
+      analysis: { score: 39, pdfClass: 'native_tagged' },
+      snapshot: makeSnapshot({ depth: 0, textCharCount: 0 }),
+    })).toBe(false);
   });
 
   it('does not start OCR when less than the minimum useful budget remains', () => {
