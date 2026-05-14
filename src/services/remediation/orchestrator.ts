@@ -3888,19 +3888,6 @@ function isFigure4702Filename(filename: string): boolean {
   return /(?:^|[^0-9])4702(?:[^0-9]|$)/.test(filename);
 }
 
-const ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS = new Set([
-  '0057',
-  '0119',
-  '0121',
-  '0184',
-  '0194',
-  '0200',
-  '0201',
-  '0297',
-  '0306',
-  '0318',
-  '0347',
-]);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_IDS = new Set(['0108', '0182', '0190', '0345', '0346']);
 const ALL_INPUT_HEADING_ANNOTATION_SEED_TOOLS = new Set([
   'create_heading_from_candidate',
@@ -3929,12 +3916,6 @@ function headingSequenceNeedsOrphanParentCleanup(
   );
 }
 
-function isAllInputProposalBufferSequenceFilename(filename: string): boolean {
-  return [...ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_IDS].some(id =>
-    new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
-  );
-}
-
 function isAllInputHeadingAnnotationSeedFilename(filename: string): boolean {
   return [...ALL_INPUT_HEADING_ANNOTATION_SEED_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
@@ -3960,13 +3941,36 @@ export function shouldTryAllInputDegenerateNativeSequence(input: {
 }
 
 export function shouldTryAllInputProposalBufferSequence(input: {
-  filename: string;
   toolName: string;
   outcome: AppliedRemediationTool['outcome'];
+  before: AnalysisResult;
+  intermediate: AnalysisResult;
+  beforeSnapshot: DocumentSnapshot;
+  intermediateSnapshot: DocumentSnapshot;
+  rejectionDecision: { reject: boolean; reason: string | null };
 }): boolean {
-  return isAllInputProposalBufferSequenceFilename(input.filename) &&
-    ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_TOOLS.has(input.toolName) &&
-    input.outcome === 'applied';
+  if (!ALL_INPUT_PROPOSAL_BUFFER_SEQUENCE_TOOLS.has(input.toolName) || input.outcome !== 'applied') {
+    return false;
+  }
+  if (input.rejectionDecision.reject !== true ||
+    input.rejectionDecision.reason !== 'pac_rule_regressed(pdfua.annotations.tagged_annotations_present)') {
+    return false;
+  }
+  if (input.intermediate.score <= input.before.score) return false;
+  const beforeHeading = categoryScore(input.before, 'heading_structure');
+  const intermediateHeading = categoryScore(input.intermediate, 'heading_structure');
+  const intermediateReading = categoryScore(input.intermediate, 'reading_order');
+  if (
+    beforeHeading == null ||
+    intermediateHeading == null ||
+    intermediateHeading <= beforeHeading ||
+    intermediateReading == null ||
+    intermediateReading < 70 ||
+    !pageTextTagEvidenceStillPreserved(input.beforeSnapshot, input.intermediateSnapshot)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function pacTableHeaderDebt(snapshot: DocumentSnapshot): number {
@@ -4510,7 +4514,7 @@ function pageTextTagEvidenceStillPreserved(before: DocumentSnapshot, after: Docu
   return true;
 }
 
-async function tryAllInput0297ProposalBufferSequence(args: {
+async function tryAllInputProposalBufferSequence(args: {
   filename: string;
   stateBeforeStage: RemediationState;
   analyzedState: RemediationState;
@@ -4521,12 +4525,14 @@ async function tryAllInput0297ProposalBufferSequence(args: {
   signal?: AbortSignal;
   runtimeSummary?: RemediationRuntimeSummary;
 }): Promise<RemediationState | null> {
-  if (!isAllInputProposalBufferSequenceFilename(args.filename)) return null;
-  if (!args.rejectionDecision.reject || !args.rejectionDecision.reason?.startsWith('pac_rule_regressed(')) return null;
   const structuralRow = args.stageApplied.find(row => shouldTryAllInputProposalBufferSequence({
-    filename: args.filename,
     toolName: row.toolName,
     outcome: row.outcome,
+    before: args.stateBeforeStage.analysis,
+    intermediate: args.analyzedState.analysis,
+    beforeSnapshot: args.stateBeforeStage.snapshot,
+    intermediateSnapshot: args.analyzedState.snapshot,
+    rejectionDecision: args.rejectionDecision,
   }));
   if (!structuralRow) return null;
 
@@ -4582,7 +4588,7 @@ async function tryAllInput0297ProposalBufferSequence(args: {
       {
         toolName,
         params: buildDefaultParams(toolName, sequenceAnalysis, sequenceSnapshot, [...args.stageApplied, ...cleanupRows]),
-        rationale: 'All-input 0297 proposal-buffer sequence: repair annotation/PAC debt exposed by heading recovery.',
+        rationale: 'All-input proposal-buffer sequence: repair annotation/PAC debt exposed by heading recovery.',
       },
       sequenceSnapshot,
       { signal: args.signal },
@@ -4592,7 +4598,7 @@ async function tryAllInput0297ProposalBufferSequence(args: {
     let nextSnapshot = sequenceSnapshot;
     let effectiveOutcome = cleanup.outcome;
     if (cleanup.outcome === 'applied' && !cleanup.buffer.equals(sequenceBuffer)) {
-      const analyzedCleanup = await reanalyzeBufferForMutation(cleanup.buffer, args.filename, `pdfaf-0297-proposal-buffer-${toolName}`, {
+      const analyzedCleanup = await reanalyzeBufferForMutation(cleanup.buffer, args.filename, `pdfaf-all-input-proposal-buffer-${toolName}`, {
         signal: args.signal,
       });
       sequenceBuffer = cleanup.buffer;
@@ -5232,7 +5238,7 @@ async function finalizeAnalyzedStage(args: {
       }
       return sequenceRecovered;
     }
-    const allInputProposalBufferSequenceRecovered = await tryAllInput0297ProposalBufferSequence({
+    const allInputProposalBufferSequenceRecovered = await tryAllInputProposalBufferSequence({
       filename,
       stateBeforeStage,
       analyzedState,

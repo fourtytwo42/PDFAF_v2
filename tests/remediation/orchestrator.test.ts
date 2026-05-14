@@ -680,56 +680,88 @@ describe('all-input heading annotation seed acceptance', () => {
 });
 
 describe('all-input proposal-buffer sequence trigger', () => {
-  it('fires only for diagnosed rejected heading/structure replay-buffer tools', () => {
+  function proposalInput(input: {
+    toolName?: string;
+    outcome?: AppliedRemediationTool['outcome'];
+    beforeScore?: number;
+    intermediateScore?: number;
+    beforeHeading?: number;
+    intermediateHeading?: number;
+    intermediateReading?: number;
+    addAnnotationDebt?: boolean;
+    addOrphanDebt?: boolean;
+    textCharCountAfter?: number;
+    rejectionReason?: string;
+  } = {}): Parameters<typeof shouldTryAllInputProposalBufferSequence>[0] {
+    const beforeSnapshot = makeSnapshot({ depth: 2, textCharCount: 1200 });
+    const intermediateSnapshot = makeSnapshot({ depth: 3, textCharCount: input.textCharCountAfter ?? 1200 });
+    if (input.addAnnotationDebt ?? true) {
+      intermediateSnapshot.visibleAnnotationsMissingStructure = [{ page: 0, objectRef: '22 0 R', subtype: 'Link' }];
+      intermediateSnapshot.detectionProfile!.annotationSignals.linkAnnotationsMissingStructure = 1;
+    }
+    if (input.addOrphanDebt) {
+      intermediateSnapshot.orphanMcids = [{ page: 0, mcid: 7 }];
+      intermediateSnapshot.detectionProfile!.pdfUaSignals.orphanMcidCount = 1;
+    }
+    return {
+      toolName: input.toolName ?? 'create_heading_from_tagged_visible_anchor',
+      outcome: input.outcome ?? 'applied',
+      before: makeAnalysis({
+        score: input.beforeScore ?? 59,
+        categories: { heading_structure: input.beforeHeading ?? 0, reading_order: 80, pdf_ua_compliance: 79 },
+      }),
+      intermediate: makeAnalysis({
+        score: input.intermediateScore ?? 79,
+        categories: {
+          heading_structure: input.intermediateHeading ?? 94,
+          reading_order: input.intermediateReading ?? 80,
+          pdf_ua_compliance: 71,
+        },
+      }),
+      beforeSnapshot,
+      intermediateSnapshot,
+      rejectionDecision: {
+        reject: true,
+        reason: input.rejectionReason ?? 'pac_rule_regressed(pdfua.annotations.tagged_annotations_present)',
+      },
+    };
+  }
+
+  it('fires for rejected score-moving heading/structure replay-buffer evidence independent of filename', () => {
     for (const toolName of [
       'create_heading_from_candidate',
       'create_heading_from_tagged_visible_anchor',
       'repair_structure_conformance',
       'synthesize_basic_structure_from_layout',
     ]) {
-      for (const filename of [
-        '0057-0a57112fbecb-4057-chri-audit.pdf',
-        '0119-dcdceee8fe93-focus-groups.pdf',
-        '0121-b22fc444e9cf-school-personnel-readiness.pdf',
-        '0184-cf903e931d5d-addressing-opioid-use-disorders.pdf',
-        '0194-9ea32badb1b4-juvenile-recidivism.pdf',
-        '0200-d865fcb9718f-4687-adult-redeploy.pdf',
-        '0201-d57d1ae9986e-statewide-violence-prevention.pdf',
-        '0297-90516e88cb48-victim-offender-overlap.pdf',
-        '0306-20f8aa13aa59-4657-the-2021-safe-t-act.pdf',
-        '0318-a6f71880008b-school-violence.pdf',
-        '0347-5db466b61427-police-officer-stress.pdf',
-      ]) {
-        expect(shouldTryAllInputProposalBufferSequence({
-          filename,
-          toolName,
-          outcome: 'applied',
-        })).toBe(true);
-      }
+      expect(shouldTryAllInputProposalBufferSequence(proposalInput({ toolName }))).toBe(true);
     }
   });
 
-  it('does not fire for unrelated rows, cleanup tools, or non-applied outcomes', () => {
-    expect(shouldTryAllInputProposalBufferSequence({
-      filename: '0297-90516e88cb48-victim-offender-overlap.pdf',
+  it('does not fire for cleanup tools, non-applied outcomes, weak movement, unsafe PAC debt, or low reading order', () => {
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
       toolName: 'tag_unowned_annotations',
-      outcome: 'applied',
-    })).toBe(false);
-    expect(shouldTryAllInputProposalBufferSequence({
-      filename: '4646-youth-development-an-overview.pdf',
-      toolName: 'create_heading_from_candidate',
-      outcome: 'applied',
-    })).toBe(false);
-    expect(shouldTryAllInputProposalBufferSequence({
-      filename: '0208-d966f95ddc9f-4446-grace-house.pdf',
-      toolName: 'create_heading_from_candidate',
-      outcome: 'applied',
-    })).toBe(false);
-    expect(shouldTryAllInputProposalBufferSequence({
-      filename: '0297-90516e88cb48-victim-offender-overlap.pdf',
-      toolName: 'create_heading_from_candidate',
+    }))).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
       outcome: 'rejected',
-    })).toBe(false);
+    }))).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
+      intermediateScore: 59,
+    }))).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
+      intermediateHeading: 0,
+    }))).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
+      intermediateReading: 69,
+    }))).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
+      addAnnotationDebt: false,
+      addOrphanDebt: true,
+      rejectionReason: 'pac_rule_regressed(pdfua.content.orphan_mcids_absent)',
+    }))).toBe(false);
+    expect(shouldTryAllInputProposalBufferSequence(proposalInput({
+      textCharCountAfter: 1100,
+    }))).toBe(false);
   });
 });
 
