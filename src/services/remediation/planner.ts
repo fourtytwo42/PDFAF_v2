@@ -545,6 +545,8 @@ export function shouldAllowStage146FigureAltContinuation(
   if (analysis.score >= 90) return false;
   if ((analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
   if ((categoryScore(analysis, 'heading_structure') ?? 100) < 60) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
   if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
   if (successfulApplyCount(alreadyApplied, 'set_figure_alt_text') < DEFAULT_FIGURE_ALT_TARGETS_PER_RUN) return false;
   const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'set_figure_alt_text');
