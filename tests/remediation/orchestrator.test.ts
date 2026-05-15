@@ -2857,51 +2857,6 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
-  it('rejects low-score no-gain orphan remap even when a sibling tool reports structural benefit', () => {
-    const result = shouldRejectStageResult({
-      before: makeAnalysis({ score: 59, confidence: 'medium', categories: { heading_structure: 0, reading_order: 96, pdf_ua_compliance: 57 } }),
-      after: makeAnalysis({ score: 59, confidence: 'medium', categories: { heading_structure: 0, reading_order: 96, pdf_ua_compliance: 57 } }),
-      beforeSnapshot: makeSnapshot({ depth: 7 }),
-      afterSnapshot: makeSnapshot({ depth: 2 }),
-      stage: makeStage('create_heading_from_tagged_visible_anchor'),
-      stageApplied: [
-        runtimeToolRow({
-          toolName: 'create_heading_from_tagged_visible_anchor',
-          outcome: 'applied',
-          scoreBefore: 59,
-          scoreAfter: 59,
-          details: JSON.stringify({
-            outcome: 'applied',
-            structuralBenefits: {
-              headingReachabilityImproved: true,
-              readingOrderDepthImproved: true,
-              headingHierarchyImproved: true,
-            },
-            invariants: {
-              ownershipPreserved: true,
-              rootReachableHeadingCountBefore: 0,
-              rootReachableHeadingCountAfter: 1,
-              rootReachableDepthBefore: 7,
-              rootReachableDepthAfter: 2,
-            },
-          }),
-        }),
-        runtimeToolRow({
-          toolName: 'remap_orphan_mcids_as_artifacts',
-          outcome: 'applied',
-          scoreBefore: 59,
-          scoreAfter: 59,
-          details: JSON.stringify({ outcome: 'applied' }),
-        }),
-      ],
-    });
-
-    expect(result).toEqual({
-      reject: true,
-      reason: 'low_score_no_gain_orphan_remap_mutation',
-    });
-  });
-
   it('keeps existing score-regression rollback behavior', () => {
     const result = shouldRejectStageResult({
       before: makeAnalysis({ score: 80, confidence: 'medium' }),

@@ -689,24 +689,6 @@ function noGainOrphanArtifactMutation(input: {
   return !stageHasCheckerFacingStructuralBenefit(input);
 }
 
-function lowScoreNoGainOrphanRemapMutation(input: {
-  before: AnalysisResult;
-  after: AnalysisResult;
-  stageApplied: AppliedRemediationTool[];
-}): boolean {
-  if (input.after.score !== input.before.score) return false;
-  if (input.after.score > 59) return false;
-  const remapRows = input.stageApplied.filter(row =>
-    row.toolName === 'remap_orphan_mcids_as_artifacts' &&
-    row.outcome === 'applied'
-  );
-  if (remapRows.length === 0) return false;
-  return remapRows.some(row => {
-    const details = parseMutationDetails(row.details);
-    return !details?.structuralBenefits || !mutationInvariantsPassForStructuralBenefit(details);
-  });
-}
-
 function headingAnchorNoEffectCollapsedStructure(input: {
   before: AnalysisResult;
   after: AnalysisResult;
@@ -1765,12 +1747,6 @@ export function shouldRejectStageResult(input: {
     return {
       reject: true,
       reason: 'stage_no_gain_orphan_artifact_mutation',
-    };
-  }
-  if (lowScoreNoGainOrphanRemapMutation(input)) {
-    return {
-      reject: true,
-      reason: 'low_score_no_gain_orphan_remap_mutation',
     };
   }
   if (headingAnchorNoEffectCollapsedStructure(input)) {
