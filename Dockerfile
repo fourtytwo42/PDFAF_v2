@@ -5,6 +5,9 @@ FROM node:22-trixie-slim
 ARG HF_REPO=unsloth/gemma-4-E2B-it-GGUF
 ARG GGUF_FILE=gemma-4-E2B-it-Q4_K_M.gguf
 ARG MMPROJ_FILE=mmproj-F16.gguf
+ARG PIKEPDF_VERSION=10.5.1
+ARG FONTTOOLS_VERSION=4.62.1
+ARG OCRMYPDF_VERSION=17.4.2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -23,9 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
   && rm -rf /var/lib/apt/lists/*
 
-# pikepdf + fonttools for the helper; ocrmypdf from pip so its pikepdf API matches (avoid apt/py mismatch).
-RUN pip3 install --break-system-packages --no-cache-dir pikepdf fonttools 'ocrmypdf>=17.4,<18'
-
 WORKDIR /app
 
 COPY --from=llama_runtime /app /opt/llama
@@ -36,6 +36,13 @@ RUN mkdir -p /app/data/llama-work \
   && curl -fL "https://huggingface.co/${HF_REPO}/resolve/main/${MMPROJ_FILE}" -o "/app/data/llama-work/${MMPROJ_FILE}" \
   && test -s "/app/data/llama-work/${GGUF_FILE}" \
   && test -s "/app/data/llama-work/${MMPROJ_FILE}"
+
+# Keep analyzer dependencies pinned to the accepted local benchmark environment.
+# OCRmyPDF is installed from pip in Docker so its pikepdf API is internally consistent.
+RUN pip3 install --break-system-packages --no-cache-dir \
+    "pikepdf==${PIKEPDF_VERSION}" \
+    "fonttools==${FONTTOOLS_VERSION}" \
+    "ocrmypdf==${OCRMYPDF_VERSION}"
 
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && corepack prepare pnpm@10 --activate \
