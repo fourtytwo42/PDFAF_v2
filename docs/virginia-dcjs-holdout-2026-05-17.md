@@ -99,3 +99,35 @@ Use this holdout as a new generalization corpus. The first focused lane should b
 
 The diagnostic should compare table object identity, row/column regularity, header inference, and chart/table confusion before adding any fixer behavior. A useful accepted fix should raise at least one of these rows out of the 69/D plateau while preserving `false_positive_applied=0` and proving a nearby high-scoring DCJS control stays stable.
 
+## 2026-05-18 Candidate Follow-Up
+
+A general candidate was tested locally after the table-template diagnostic. It combined root-only figure evidence and a guarded table structure/header sequence. This was not a PDF- or source-specific fix.
+
+Virginia candidate artifact:
+
+`Output/virginia-dcjs-holdout-2026-05-18-r2/baseline_report.json`
+
+Candidate result:
+
+- PDFs processed: 20/20
+- Mean: 49.30 -> 93.20
+- Median: 95
+- `false_positive_applied`: 0
+- Total deterministic runtime: 1,129,458 ms
+- Slowest row: `07-va-dcjs-traffic-stop-fy2021.pdf` at 222,880 ms
+
+This cleared the Virginia holdout mean/median target locally, but the behavior was not accepted because the original 50-corpus gate was not clean.
+
+Original-50 validation artifacts:
+
+- Full fixed-50 candidate run: `/mnt/pdf-review/pdfaf-validation/run-public-holdout-va-fixed50-2026-05-18-r2`
+- Focused repeat after narrowing: `/mnt/pdf-review/pdfaf-validation/run-public-holdout-va-fixed50-regression-repeat-2026-05-18-r2`
+- Figure-alt PAC recovery probe: `/mnt/pdf-review/pdfaf-validation/run-public-holdout-va-fixed50-figurealt-sequence-2026-05-18-r1`
+
+Fixed-50 blockers:
+
+- Full fixed-50 candidate run had reanalyzed mean 92.8958 and median 94, but p95 wall time rose to 206,166 ms and hard timeouts remained on `structure-4438` and `long-4516`.
+- Focused repeat still regressed `font-4699` from 95 to 91 and `long-4680` from 95 to 92, with `long-4680` much slower than the fixed-50 baseline.
+- A later figure-alt PAC recovery probe recovered `figure-4754` back to 78, but did not recover `font-4699` and produced a bad `long-4680` repeat, so that probe is diagnostic only.
+
+Decision: reject this candidate for now. The Virginia source set proves useful outside-corpus pressure and shows a plausible 93+ path, but no behavior change should be committed or pushed until the original 50-corpus quality and speed regressions are resolved.
