@@ -163,6 +163,53 @@ describe('Stage 180 mixed table/PDF-UA helpers', () => {
     });
   });
 
+  it('allows bounded table-only cleanup when non-table scores are moderate but stable', () => {
+    const noAnnotationDebt = snapshot({
+      tableHeaderAudit: {
+        tablesChecked: 2,
+        headerAssociationMissingCount: 2,
+        orphanHeaderCellCount: 12,
+        dataCellsWithoutHeaderCount: 140,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 64, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 2,
+          stronglyIrregularTableCount: 2,
+        },
+      },
+    });
+
+    expect(classifyStage180MixedTablePdfUa({
+      analysis: analysis(69, {
+        heading_structure: 75,
+        reading_order: 79,
+        link_quality: 79,
+        alt_text: 100,
+        table_markup: 16,
+      }),
+      snapshot: noAnnotationDebt,
+    })).toMatchObject({
+      shouldAttempt: true,
+      classification: 'stable_table_first_candidate',
+    });
+  });
+
   it('allows link repair after table is stable even when alt remains low', () => {
     expect(shouldTryStage180LinkRepairAfterTable({
       analysis: analysis(79, { table_markup: 100, pdf_ua_compliance: 57 }),

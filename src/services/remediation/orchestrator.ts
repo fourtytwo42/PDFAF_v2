@@ -6784,6 +6784,22 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   const decision = classifyStage180MixedTablePdfUa({ analysis, snapshot, appliedTools });
   if (!decision.shouldAttempt) return args.state;
 
+  const headerRegularity = await applyStage180HeaderRegularitySequence({
+    filename,
+    signal,
+    round,
+    state: { buffer, analysis, snapshot },
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  });
+  buffer = headerRegularity.buffer;
+  analysis = headerRegularity.analysis;
+  snapshot = headerRegularity.snapshot;
+  if (headerRegularity.accepted && (categoryScore(analysis, 'table_markup') ?? 100) >= 79) {
+    return { buffer, analysis, snapshot };
+  }
+
   for (const target of decision.tableTargets) {
     if ((categoryScore(analysis, 'table_markup') ?? 100) >= 90) break;
     const params = {
@@ -6879,6 +6895,147 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   }
 
   return { buffer, analysis, snapshot };
+}
+
+function stage180HeaderAssociationRefs(snapshot: DocumentSnapshot): string[] {
+  return snapshot.tables
+    .filter(table =>
+      table.structRef &&
+      table.hasHeaders &&
+      (table.headerCount ?? 0) > 0 &&
+      (table.totalCells ?? 0) > (table.headerCount ?? 0) &&
+      (table.cellsMisplacedCount ?? 0) === 0 &&
+      (table.rowCount ?? 0) > 1
+    )
+    .sort((a, b) =>
+      ((b.totalCells ?? 0) - (b.headerCount ?? 0)) - ((a.totalCells ?? 0) - (a.headerCount ?? 0)) ||
+      (b.irregularRows ?? 0) - (a.irregularRows ?? 0) ||
+      a.page - b.page ||
+      (a.structRef ?? '').localeCompare(b.structRef ?? '')
+    )
+    .map(table => table.structRef!)
+    .slice(0, 32);
+}
+
+function shouldTryStage180HeaderRegularitySequence(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}): boolean {
+  const { analysis, snapshot } = input;
+  if (analysis.pdfClass === 'scanned' || snapshot.pdfClass === 'scanned') return false;
+  if (!snapshot.isTagged && snapshot.structureTree === null) return false;
+  if ((snapshot.textCharCount ?? 0) <= 0) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) >= 80) return false;
+  if ((categoryScore(analysis, 'alt_text') ?? 0) < 90) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 0) < 70) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 0) < 75) return false;
+  if ((categoryScore(analysis, 'link_quality') ?? 100) < 75) return false;
+
+  const audit = snapshot.tableHeaderAudit;
+  if (!audit || audit.tablesChecked <= 0) return false;
+  if (audit.tablesChecked > 40 || (audit.dataCellsWithoutHeaderCount ?? 0) > 3000) return false;
+  if (pacTableHeaderDebt(snapshot) < 100) return false;
+
+  const signals = snapshot.detectionProfile?.tableSignals;
+  if ((signals?.directCellUnderTableCount ?? 0) > 0 || (signals?.misplacedCellCount ?? 0) > 0) return false;
+  const regularityDebt = tableRegularityDebt(snapshot);
+  if (regularityDebt <= 0 || regularityDebt > 180) return false;
+
+  return stage180HeaderAssociationRefs(snapshot).length > 0;
+}
+
+async function applyStage180HeaderRegularitySequence(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState & { accepted: boolean }> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { buffer, analysis, snapshot } = args.state;
+  if (!shouldTryStage180HeaderRegularitySequence({ analysis, snapshot })) {
+    return { ...args.state, accepted: false };
+  }
+
+  const refs = stage180HeaderAssociationRefs(snapshot);
+  const associationParams = {
+    structRefs: refs,
+    tableHeaderAssociation: true,
+    stage: 'stage180_header_regularization',
+  };
+  const mutations: PythonMutation[] = [];
+  for (let pass = 0; pass < 3; pass++) {
+    mutations.push({ op: 'set_table_header_cells', params: associationParams });
+    mutations.push({
+      op: 'normalize_table_structure',
+      params: {
+        tableFailureClass: 'strongly_irregular_rows',
+        dominantColumnCount: 0,
+        maxTablesPerRun: 4,
+        maxSyntheticCells: 220,
+        stage: 'stage180_header_regularization',
+      },
+    });
+  }
+  mutations.push({ op: 'set_table_header_cells', params: associationParams });
+
+  const { buffer: nextBuffer, result } = await runPythonMutationBatch(
+    buffer,
+    mutations,
+    { signal, abortOnFailedOp: false, reopenBetweenOps: false },
+  );
+  if (!result.success || result.applied.length === 0) {
+    return { ...args.state, accepted: false };
+  }
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'stage180_header_regularization_sequence',
+    tableHeaderAssociationTargetCount: refs.length,
+    mutationResults: (result.opResults ?? []).map(row => {
+      const invariants = row.invariants as Record<string, unknown> | undefined;
+      return {
+        op: row.op,
+        outcome: row.outcome,
+        note: row.note,
+        invariants: invariants
+          ? {
+            headerAssociationMissingCountBefore: invariants['headerAssociationMissingCountBefore'],
+            headerAssociationMissingCountAfter: invariants['headerAssociationMissingCountAfter'],
+            dataCellsWithoutHeaderCountBefore: invariants['dataCellsWithoutHeaderCountBefore'],
+            dataCellsWithoutHeaderCountAfter: invariants['dataCellsWithoutHeaderCountAfter'],
+            irregularRowsBefore: invariants['irregularRowsBefore'],
+            irregularRowsAfter: invariants['irregularRowsAfter'],
+            stronglyIrregularTableCountBefore: invariants['stronglyIrregularTableCountBefore'],
+            stronglyIrregularTableCountAfter: invariants['stronglyIrregularTableCountAfter'],
+          }
+          : undefined,
+      };
+    }),
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName: 'normalize_table_structure',
+    stage: 10,
+    round,
+    details,
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-stage180-header-regularity',
+    protectedBaseline,
+  });
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+    accepted: accepted.accepted,
+  };
 }
 
 async function applyStage181HiddenAltPostPass(args: {

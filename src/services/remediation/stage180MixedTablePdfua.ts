@@ -204,7 +204,37 @@ export function classifyStage180MixedTablePdfUa(input: {
   const table = categoryScore(input.analysis, 'table_markup') ?? 100;
   const alt = categoryScore(input.analysis, 'alt_text') ?? 100;
   const pdfua = categoryScore(input.analysis, 'pdf_ua_compliance') ?? 100;
+  const tableSignals = input.snapshot.detectionProfile?.tableSignals;
+  const directOrMisplacedTableShape = Boolean(tableSignals && (
+    (tableSignals.directCellUnderTableCount ?? 0) > 0 ||
+    (tableSignals.misplacedCellCount ?? 0) > 0
+  ));
+  const headerAssociationDebt = input.snapshot.tableHeaderAudit
+    ? (input.snapshot.tableHeaderAudit.headerAssociationMissingCount ?? 0) +
+      (input.snapshot.tableHeaderAudit.dataCellsWithoutHeaderCount ?? 0) +
+      (input.snapshot.tableHeaderAudit.orphanHeaderCellCount ?? 0)
+    : 0;
+  const moderateTableOnlyCore =
+    table < 80 &&
+    alt >= 90 &&
+    heading >= 70 &&
+    reading >= 75 &&
+    link >= 75 &&
+    annDebt === 0 &&
+    headerAssociationDebt > 0 &&
+    !directOrMisplacedTableShape &&
+    tableTargets.length > 0;
   if (heading < 80 || reading < 80 || link < 80) {
+    if (moderateTableOnlyCore) {
+      return {
+        classification: 'stable_table_first_candidate',
+        shouldAttempt: true,
+        reason: 'bounded table-only cleanup can run despite moderate non-table scores',
+        tableTargets,
+        annotationDebt: annDebt,
+        orphanMcidCount,
+      };
+    }
     return {
       classification: 'no_safe_target',
       shouldAttempt: false,
