@@ -12,6 +12,7 @@ This file is durable context for agents working in this repository. Read it when
 ## Current Durable State
 
 - Formal protected baseline remains `Output/experiment-corpus-baseline/run-stage42-full-2026-04-21-r7`.
+- OpenDataLoader PDF research snapshot is local under ignored path `Research/opendataloader-pdf` at commit `d6b010c` (2026-05-18). Source note `docs/opendataloader-pdf-research-2026-05-18.md` records recommended incorporation lanes. Treat it as reference/diagnostic evidence first: sidecar JSON comparison, XY-Cut++ reading-order evidence, table row-band/cluster evidence, CID replacement-character ratio, hidden/off-page content diagnostics, and parent-tree/XObject tagging patterns. Do not use its tagged-PDF output as a PDFAF final artifact without PAC/scorer validation; the open path is tagged-PDF generation, while README describes full PDF/UA export as enterprise.
 - Use Node 22 and `--no-semantic` for deterministic benchmark validation unless semantic behavior is explicitly under test.
 - Runtime policy: check/analyze-only work should default to a fast 15s budget (`PDFAF_CHECK_ANALYSIS_TIMEOUT_MS` / `REQUEST_TIMEOUT_ANALYZE_MS`), while remediation is capped by a 5-minute per-PDF wall guard (`PDFAF_REMEDIATION_PDF_TIMEOUT_MS` / `REQUEST_TIMEOUT_REMEDIATE_MS`) unless a deliberate special run raises it.
 - Before any benchmark path that might spawn an LLM, check for an existing local `llama-server` or API listener and reuse it.
