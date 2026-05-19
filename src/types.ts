@@ -408,6 +408,12 @@ export interface DocumentSnapshot {
     wModeMismatchCount: number;
     externalCMapReferenceCount: number;
     type0DescendantFontRiskCount?: number;
+    /** Diagnostic-only pdf.js text extraction signal for CID/font mapping gaps. */
+    replacementCharacterCount?: number;
+    /** replacementCharacterCount divided by extracted text character count. */
+    replacementCharacterRatio?: number;
+    /** Pages whose extracted text is dominated by U+FFFD replacement characters. */
+    highReplacementCharacterPageCount?: number;
   };
   /** Natural-language syntax coverage for element-level text alternatives and labels. */
   languageAudit?: {

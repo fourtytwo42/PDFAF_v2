@@ -85,6 +85,9 @@ except ImportError:
             "wModeMismatchCount": 0,
             "externalCMapReferenceCount": 0,
             "type0DescendantFontRiskCount": 0,
+            "replacementCharacterCount": 0,
+            "replacementCharacterRatio": 0,
+            "highReplacementCharacterPageCount": 0,
         },
         "languageAudit": {
             "altTextLanguageInvalidCount": 0,
@@ -6636,6 +6639,9 @@ def main():
             "wModeMismatchCount": 0,
             "externalCMapReferenceCount": 0,
             "type0DescendantFontRiskCount": 0,
+            "replacementCharacterCount": 0,
+            "replacementCharacterRatio": 0,
+            "highReplacementCharacterPageCount": 0,
         },
         "languageAudit": {
             "altTextLanguageInvalidCount": 0,

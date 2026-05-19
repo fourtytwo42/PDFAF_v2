@@ -218,6 +218,8 @@ export async function analyzePdf(
 // ─── Snapshot merge ────────────────────────────────────────────────────────────
 
 const _linkKey = (page: number, url: string) => `${page}\t${(url ?? '').trim().toLowerCase()}`;
+const REPLACEMENT_CHARACTER = '\uFFFD';
+const HIGH_REPLACEMENT_CHARACTER_PAGE_RATIO = 0.3;
 
 /**
  * Merge pdfjs link samples with pikepdf’s full-document /Link scan so link_quality
@@ -256,6 +258,41 @@ export function buildSnapshotLinks(
   return out;
 }
 
+export interface ReplacementCharacterAudit {
+  replacementCharacterCount: number;
+  replacementCharacterRatio: number;
+  highReplacementCharacterPageCount: number;
+}
+
+export function replacementCharacterAuditFromTextByPage(textByPage: string[]): ReplacementCharacterAudit {
+  let replacementCharacterCount = 0;
+  let totalCharacterCount = 0;
+  let highReplacementCharacterPageCount = 0;
+
+  for (const pageText of textByPage) {
+    const text = pageText ?? '';
+    const pageCharacterCount = text.length;
+    let pageReplacementCount = 0;
+    for (const char of text) {
+      if (char === REPLACEMENT_CHARACTER) pageReplacementCount += 1;
+    }
+    replacementCharacterCount += pageReplacementCount;
+    totalCharacterCount += pageCharacterCount;
+    if (
+      pageCharacterCount > 0 &&
+      pageReplacementCount / pageCharacterCount >= HIGH_REPLACEMENT_CHARACTER_PAGE_RATIO
+    ) {
+      highReplacementCharacterPageCount += 1;
+    }
+  }
+
+  return {
+    replacementCharacterCount,
+    replacementCharacterRatio: totalCharacterCount > 0 ? replacementCharacterCount / totalCharacterCount : 0,
+    highReplacementCharacterPageCount,
+  };
+}
+
 function normalizeAnnotationAccessibility(
   a: PythonAnalysisResult['annotationAccessibility'],
 ): NonNullable<DocumentSnapshot['annotationAccessibility']> {
@@ -270,10 +307,23 @@ function normalizeAnnotationAccessibility(
   };
 }
 
-function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): DocumentSnapshot {
+export function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): DocumentSnapshot {
   const imageToTextRatio = pdfjs.pageCount > 0
     ? pdfjs.imageOnlyPageCount / pdfjs.pageCount
     : 0;
+  const replacementCharacterAudit = replacementCharacterAuditFromTextByPage(pdfjs.textByPage);
+  const fontSyntaxAudit: NonNullable<DocumentSnapshot['fontSyntaxAudit']> = {
+    fontsChecked: struct.fontSyntaxAudit?.fontsChecked ?? struct.fonts.length,
+    missingToUnicodeCMapCount: struct.fontSyntaxAudit?.missingToUnicodeCMapCount ?? 0,
+    invalidToUnicodeCMapCount: struct.fontSyntaxAudit?.invalidToUnicodeCMapCount ?? 0,
+    emptyToUnicodeCMapCount: struct.fontSyntaxAudit?.emptyToUnicodeCMapCount ?? 0,
+    cidToGidMapRiskCount: struct.fontSyntaxAudit?.cidToGidMapRiskCount ?? 0,
+    trueTypeEncodingMismatchCount: struct.fontSyntaxAudit?.trueTypeEncodingMismatchCount ?? 0,
+    wModeMismatchCount: struct.fontSyntaxAudit?.wModeMismatchCount ?? 0,
+    externalCMapReferenceCount: struct.fontSyntaxAudit?.externalCMapReferenceCount ?? 0,
+    type0DescendantFontRiskCount: struct.fontSyntaxAudit?.type0DescendantFontRiskCount ?? 0,
+    ...replacementCharacterAudit,
+  };
 
   // Merge metadata: pikepdf Info dict takes precedence over pdfjs for title/author
   const metadata: DocumentSnapshot['metadata'] = {
@@ -321,7 +371,7 @@ function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult): Docume
     parentTreeAudit: struct.parentTreeAudit,
     contentTaggingAudit: struct.contentTaggingAudit,
     tableHeaderAudit: struct.tableHeaderAudit,
-    fontSyntaxAudit: struct.fontSyntaxAudit,
+    fontSyntaxAudit,
     languageAudit: struct.languageAudit,
     renderedContrastAudit: struct.renderedContrastAudit,
     structureSyntaxAudit: struct.structureSyntaxAudit,
