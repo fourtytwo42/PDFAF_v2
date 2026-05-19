@@ -71,6 +71,8 @@ export interface ReadingOrderSignals {
   headerFooterPollutionRisk: boolean;
   sampledStructurePageOrderDriftCount: number;
   multiColumnOrderRiskPages: number;
+  /** Native pdf.js geometry audit pages where extracted order appears to interleave layout columns. Diagnostic-only. */
+  geometryOrderRiskPages?: number;
   suspiciousPageCount: number;
 }
 
@@ -78,6 +80,8 @@ export interface HeadingSignals {
   extractedHeadingCount: number;
   treeHeadingCount: number;
   headingTreeDepth: number;
+  /** Candidate heading-like layout runs from native pdf.js geometry. Diagnostic-only. */
+  layoutHeadingCandidateCount?: number;
   rootReachableHeadingCount?: number;
   rootReachableDepth?: number;
   extractedHeadingsMissingFromTree: boolean;
@@ -87,6 +91,10 @@ export interface FigureSignals {
   extractedFigureCount: number;
   treeFigureCount: number;
   nonFigureRoleCount: number;
+  /** Caption-like layout runs detected from native pdf.js geometry. Diagnostic-only. */
+  captionCandidateCount?: number;
+  /** Figure bbox/caption proximity pairs from native layout evidence. Diagnostic-only. */
+  figureCaptionPairCount?: number;
   treeFigureMissingForExtractedFigures: boolean;
 }
 
@@ -117,6 +125,10 @@ export interface TableSignals {
   irregularTableCount: number;
   stronglyIrregularTableCount: number;
   directCellUnderTableCount: number;
+  /** Table-like row-band candidates from native pdf.js geometry. Diagnostic-only. */
+  layoutTableCandidateCount?: number;
+  /** Dense repeated row-band candidates from native pdf.js geometry. Diagnostic-only. */
+  denseRowBandTableCandidateCount?: number;
 }
 
 export interface DetectionProfile {
@@ -172,6 +184,31 @@ export interface StructNode {
   children: StructNode[];
 }
 
+export interface NativeLayoutAudit {
+  sampledPageCount: number;
+  textRunCount: number;
+  repeatedHeaderFooterBandCount: number;
+  repeatedHeaderFooterPageCount: number;
+  headerFooterBandTexts: Array<{ page: number; kind: 'header' | 'footer'; text: string }>;
+  multiColumnPageCount: number;
+  geometryOrderRiskPages: number;
+  layoutHeadingCandidateCount: number;
+  layoutHeadingCandidates: Array<{ text: string; page: number; bbox: [number, number, number, number] }>;
+  captionCandidateCount: number;
+  captionCandidates: Array<{ text: string; page: number; bbox: [number, number, number, number] }>;
+  layoutTableCandidateCount: number;
+  denseRowBandTableCandidateCount: number;
+  undersegmentedTableCandidateCount: number;
+  tableCandidates: Array<{
+    page: number;
+    bbox: [number, number, number, number];
+    rowCount: number;
+    columnCount: number;
+    dense: boolean;
+    undersegmented: boolean;
+  }>;
+}
+
 // ─── DocumentSnapshot: merged output of pdfjs + pikepdf analysis ─────────────
 
 export interface DocumentSnapshot {
@@ -201,6 +238,8 @@ export interface DocumentSnapshot {
     /** Present when pdf.js exposes a field label / description */
     tooltip?: string | null;
   }>;
+  /** Native pdf.js layout geometry evidence. Diagnostic-only; does not change scores by itself. */
+  layoutAudit?: NativeLayoutAudit;
 
   // --- from pikepdf (pdf_analysis_helper.py) ---
   isTagged: boolean;
@@ -635,6 +674,7 @@ export interface PdfjsResult {
   metadata: DocumentSnapshot['metadata'];
   links: DocumentSnapshot['links'];
   formFields: DocumentSnapshot['formFieldsFromPdfjs'];
+  layoutAudit?: DocumentSnapshot['layoutAudit'];
 }
 
 export interface PythonAnalysisResult {

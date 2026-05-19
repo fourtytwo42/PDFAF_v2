@@ -344,6 +344,7 @@ export function mergeSnapshot(pdfjs: PdfjsResult, struct: PythonAnalysisResult):
     metadata,
     links:                buildSnapshotLinks(pdfjs.links, struct.linkScoringRows),
     formFieldsFromPdfjs:  pdfjs.formFields,
+    layoutAudit:          pdfjs.layoutAudit,
     // pikepdf
     isTagged:      struct.isTagged,
     markInfo:      struct.markInfo,
@@ -434,6 +435,7 @@ function emptyPdfjsResult(): PdfjsResult {
     metadata: {},
     links: [],
     formFields: [],
+    layoutAudit: undefined,
   };
 }
 

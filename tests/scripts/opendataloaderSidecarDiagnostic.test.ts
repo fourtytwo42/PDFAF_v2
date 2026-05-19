@@ -100,6 +100,7 @@ describe('OpenDataLoader sidecar diagnostic helpers', () => {
       imageCount: 0,
       captionCount: 0,
       textSamples: ['example'],
+      layoutAudit: null,
       fontSyntaxAudit: {
         fontsChecked: 1,
         missingToUnicodeCMapCount: 0,
@@ -126,6 +127,7 @@ describe('OpenDataLoader sidecar diagnostic helpers', () => {
       headingDelta: 0,
       tableDelta: 0,
       imageDelta: 0,
+      captionDelta: 0,
       textOrderSimilarity: 1,
       supportedLane: 'no_safe_lane',
       reason: 'none',
@@ -133,5 +135,103 @@ describe('OpenDataLoader sidecar diagnostic helpers', () => {
 
     expect(calibration.suggestedScoringAction).toBe('text_extractability_penalty');
     expect(calibration.nativePdfafSignalAvailable.replacementCharacterTextRiskCap).toBe(70);
+  });
+
+  it('recommends reading-order calibration only when native layout evidence exists', () => {
+    const calibration = scoringCalibrationForRow({
+      pageCount: 4,
+      textCharCount: 5_000,
+      score: 65,
+      grade: 'D',
+      categoryScores: { reading_order: 45, heading_structure: 0, table_markup: 100 },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          geometryOrderRiskPages: 1,
+          suspiciousPageCount: 1,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          layoutHeadingCandidateCount: 3,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          captionCandidateCount: 0,
+          figureCaptionPairCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+          layoutTableCandidateCount: 0,
+          denseRowBandTableCandidateCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'medium',
+      },
+      headingCount: 0,
+      headingLevels: [],
+      tableCount: 0,
+      tableShapes: [],
+      imageCount: 0,
+      captionCount: 0,
+      textSamples: ['right column first'],
+      fontSyntaxAudit: null,
+      layoutAudit: {
+        sampledPageCount: 1,
+        textRunCount: 8,
+        repeatedHeaderFooterBandCount: 0,
+        repeatedHeaderFooterPageCount: 0,
+        headerFooterBandTexts: [],
+        multiColumnPageCount: 1,
+        geometryOrderRiskPages: 1,
+        layoutHeadingCandidateCount: 3,
+        layoutHeadingCandidates: [],
+        captionCandidateCount: 0,
+        captionCandidates: [],
+        layoutTableCandidateCount: 0,
+        denseRowBandTableCandidateCount: 0,
+        undersegmentedTableCandidateCount: 0,
+        tableCandidates: [],
+      },
+      replacementCharacterRisk: null,
+    }, {
+      headingDelta: 4,
+      tableDelta: 0,
+      imageDelta: 0,
+      captionDelta: 0,
+      textOrderSimilarity: 0.1,
+      supportedLane: 'reading_order',
+      reason: 'native geometry evidence',
+    });
+
+    expect(calibration.suggestedScoringAction).toBe('reading_order_calibration_candidate');
+    expect(calibration.nativePdfafSignalAvailable.geometryOrderRiskPages).toBe(1);
+    expect(calibration.nativePdfafSignalAvailable.layoutHeadingCandidateCount).toBe(3);
   });
 });

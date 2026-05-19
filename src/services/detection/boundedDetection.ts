@@ -43,6 +43,35 @@ function headingSignals(snapshot: DocumentSnapshot) {
   };
 }
 
+function rectsOverlap(a: [number, number, number, number], b: [number, number, number, number]): boolean {
+  return a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+}
+
+function expandBbox(bbox: [number, number, number, number], pad = 64): [number, number, number, number] {
+  return [bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad];
+}
+
+function figureCaptionPairCount(snapshot: DocumentSnapshot): number {
+  const captions = snapshot.layoutAudit?.captionCandidates ?? [];
+  if (captions.length === 0 || snapshot.figures.length === 0) return 0;
+  const usedCaptions = new Set<number>();
+  let pairs = 0;
+  for (const figure of snapshot.figures) {
+    if (!figure.bbox) continue;
+    const expanded = expandBbox(figure.bbox);
+    const matchIndex = captions.findIndex((caption, index) =>
+      !usedCaptions.has(index) &&
+      caption.page === figure.page &&
+      rectsOverlap(expanded, caption.bbox),
+    );
+    if (matchIndex >= 0) {
+      usedCaptions.add(matchIndex);
+      pairs += 1;
+    }
+  }
+  return pairs;
+}
+
 function figureSignals(snapshot: DocumentSnapshot) {
   const nodes = walkTree(snapshot.structureTree);
   const figureNodes = nodes.filter(node => node.type === 'Figure');
@@ -53,6 +82,8 @@ function figureSignals(snapshot: DocumentSnapshot) {
     extractedFigureCount: snapshot.figures.length,
     treeFigureCount: figureNodes.length,
     nonFigureRoleCount,
+    captionCandidateCount: snapshot.layoutAudit?.captionCandidateCount ?? 0,
+    figureCaptionPairCount: figureCaptionPairCount(snapshot),
     treeFigureMissingForExtractedFigures:
       snapshot.figures.length > 0 && figureNodes.length === 0,
   };
@@ -228,9 +259,13 @@ export function deriveDetectionProfile(snapshot: DocumentSnapshot): DetectionPro
       headerFooterPollutionRisk: repeatedBoundaryRisk(snapshot),
       sampledStructurePageOrderDriftCount: sampledStructurePageOrderDriftCount(snapshot, samplePages),
       multiColumnOrderRiskPages: multiColumnOrderRiskPages(snapshot, samplePages),
+      geometryOrderRiskPages: snapshot.layoutAudit?.geometryOrderRiskPages ?? 0,
       suspiciousPageCount: samplePages.length,
     },
-    headingSignals: heading,
+    headingSignals: {
+      ...heading,
+      layoutHeadingCandidateCount: snapshot.layoutAudit?.layoutHeadingCandidateCount ?? 0,
+    },
     figureSignals: figure,
     pdfUaSignals: {
       orphanMcidCount: snapshot.taggedContentAudit?.orphanMcidCount ?? snapshot.orphanMcids?.length ?? 0,
@@ -251,6 +286,8 @@ export function deriveDetectionProfile(snapshot: DocumentSnapshot): DetectionPro
       irregularTableCount,
       stronglyIrregularTableCount,
       directCellUnderTableCount: misplacedCellCount,
+      layoutTableCandidateCount: snapshot.layoutAudit?.layoutTableCandidateCount ?? 0,
+      denseRowBandTableCandidateCount: snapshot.layoutAudit?.denseRowBandTableCandidateCount ?? 0,
     },
     sampledPages: samplePages,
     confidence: snapshot.structureTree || snapshot.paragraphStructElems?.length ? 'medium' : 'low',

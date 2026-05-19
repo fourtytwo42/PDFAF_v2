@@ -3,6 +3,7 @@ import { workerData, parentPort } from 'node:worker_threads';
 import { readFile } from 'node:fs/promises';
 import { MAX_SAMPLE_PAGES } from '../config.js';
 import type { PdfjsResult } from '../types.js';
+import { buildNativeLayoutAudit, type NativeLayoutTextRun } from './layout/nativeLayoutAudit.js';
 
 async function run(pdfPath: string): Promise<PdfjsResult> {
   // Use the legacy build — required for Node.js environments.
@@ -34,9 +35,11 @@ async function run(pdfPath: string): Promise<PdfjsResult> {
   let imageOnlyPageCount = 0;
   const links: PdfjsResult['links'] = [];
   const formFields: PdfjsResult['formFields'] = [];
+  const layoutRuns: NativeLayoutTextRun[] = [];
 
   for (const pageIdx of sampleIndices) {
     const page = await pdf.getPage(pageIdx + 1); // pdfjs is 1-indexed
+    const viewport = page.getViewport({ scale: 1 });
 
     const textContent = await page.getTextContent();
     const pageText = textContent.items
@@ -45,6 +48,25 @@ async function run(pdfPath: string): Promise<PdfjsResult> {
       .trim();
     textByPage[pageIdx] = pageText;
     textCharCount += pageText.length;
+    for (const item of textContent.items as any[]) {
+      const text = ('str' in item ? String(item.str) : '').trim();
+      const transform = Array.isArray(item.transform) ? item.transform : [];
+      if (!text || transform.length < 6) continue;
+      const x = Number(transform[4] ?? 0);
+      const y = Number(transform[5] ?? 0);
+      const width = Number(item.width ?? 0);
+      const height = Number(item.height ?? 12);
+      layoutRuns.push({
+        pageNumber: pageIdx,
+        pageWidth: viewport.width,
+        pageHeight: viewport.height,
+        text,
+        x: Number.isFinite(x) ? x : 0,
+        y: Number.isFinite(y) ? y : 0,
+        width: Number.isFinite(width) ? width : 0,
+        height: Number.isFinite(height) ? height : 12,
+      });
+    }
 
     const opList = await page.getOperatorList();
     if (detectImageOnlyPage(opList, pageText)) imageOnlyPageCount++;
@@ -76,7 +98,16 @@ async function run(pdfPath: string): Promise<PdfjsResult> {
 
   await pdf.destroy();
 
-  return { pageCount, textByPage, textCharCount, imageOnlyPageCount, metadata, links, formFields };
+  return {
+    pageCount,
+    textByPage,
+    textCharCount,
+    imageOnlyPageCount,
+    metadata,
+    links,
+    formFields,
+    layoutAudit: buildNativeLayoutAudit(layoutRuns),
+  };
 }
 
 // ─── Image-only detection ────────────────────────────────────────────────────

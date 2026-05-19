@@ -70,6 +70,7 @@ interface PdfafSummary {
   captionCount: number;
   textSamples: string[];
   fontSyntaxAudit: DocumentSnapshot['fontSyntaxAudit'] | null;
+  layoutAudit: DocumentSnapshot['layoutAudit'] | null;
   replacementCharacterRisk: {
     level: 'minor' | 'moderate' | 'critical';
     scoreCap: number;
@@ -82,8 +83,10 @@ interface PdfafSummary {
 
 type SuggestedScoringAction =
   | 'text_extractability_penalty'
-  | 'reading_order_diagnostic_only'
-  | 'table_diagnostic_only'
+  | 'reading_order_calibration_candidate'
+  | 'table_undersegmentation_candidate'
+  | 'figure_caption_candidate'
+  | 'header_footer_noise_candidate'
   | 'no_action';
 
 interface ScoringCalibrationSummary {
@@ -96,6 +99,15 @@ interface ScoringCalibrationSummary {
     replacementCharacterTextRiskCap: number | null;
     readingOrderDetectionProfile: boolean;
     tableDetectionProfile: boolean;
+    layoutAuditAvailable: boolean;
+    geometryOrderRiskPages: number;
+    multiColumnPageCount: number;
+    repeatedHeaderFooterPageCount: number;
+    layoutHeadingCandidateCount: number;
+    layoutTableCandidateCount: number;
+    denseRowBandTableCandidateCount: number;
+    captionCandidateCount: number;
+    figureCaptionPairCount: number;
   };
   suggestedScoringAction: SuggestedScoringAction;
   reason: string;
@@ -124,8 +136,16 @@ interface DiagnosticRow {
     headingDelta: number | null;
     tableDelta: number | null;
     imageDelta: number | null;
+    captionDelta: number | null;
     textOrderSimilarity: number | null;
-    supportedLane: 'cid_text_extraction' | 'reading_order' | 'table_structure' | 'no_safe_lane' | 'odl_unavailable';
+    supportedLane:
+      | 'cid_text_extraction'
+      | 'reading_order'
+      | 'table_structure'
+      | 'figure_caption'
+      | 'header_footer_noise'
+      | 'no_safe_lane'
+      | 'odl_unavailable';
     reason: string;
   };
   scoringCalibration: ScoringCalibrationSummary;
@@ -450,12 +470,13 @@ function pdfafSummary(result: AnalysisResult, snapshot: DocumentSnapshot): Pdfaf
       totalCells: table.totalCells ?? null,
     })),
     imageCount: snapshot.figures.length,
-    captionCount: 0,
+    captionCount: snapshot.layoutAudit?.captionCandidateCount ?? 0,
     textSamples: snapshot.textByPage
       .map(normalizeText)
       .filter((text): text is string => Boolean(text))
       .slice(0, TEXT_SAMPLE_LIMIT),
     fontSyntaxAudit: snapshot.fontSyntaxAudit ?? null,
+    layoutAudit: snapshot.layoutAudit ?? null,
     replacementCharacterRisk: replacementRisk
       ? {
           level: replacementRisk.level,
@@ -482,6 +503,7 @@ function selectLane(pdfaf: PdfafSummary | undefined, odl: OdlSummary | undefined
       headingDelta: null,
       tableDelta: null,
       imageDelta: null,
+      captionDelta: null,
       textOrderSimilarity: null,
       supportedLane: 'odl_unavailable',
       reason: 'OpenDataLoader output was unavailable, timed out, or could not be parsed.',
@@ -491,40 +513,82 @@ function selectLane(pdfaf: PdfafSummary | undefined, odl: OdlSummary | undefined
   const headingDelta = odl.headingCount - pdfaf.headingCount;
   const tableDelta = odl.tableCount - pdfaf.tableCount;
   const imageDelta = odl.imageCount - pdfaf.imageCount;
+  const captionDelta = odl.captionCount - pdfaf.captionCount;
   const similarity = textOrderSimilarity(pdfaf.textSamples, odl.textSamples);
   const replacementRatio = pdfaf.fontSyntaxAudit?.replacementCharacterRatio ?? 0;
+  const layout = pdfaf.layoutAudit;
   const textScore = pdfaf.categoryScores.text_extractability ?? 100;
   const readingScore = pdfaf.categoryScores.reading_order ?? 100;
+  const headingScore = pdfaf.categoryScores.heading_structure ?? 100;
   const tableScore = pdfaf.categoryScores.table_markup ?? 100;
+  const altScore = pdfaf.categoryScores.alt_text ?? 100;
 
   if (replacementRatio >= 0.1 && textScore < 93) {
     return {
       headingDelta,
       tableDelta,
       imageDelta,
+      captionDelta,
       textOrderSimilarity: similarity,
       supportedLane: 'cid_text_extraction',
       reason: `pdf.js replacement-character ratio ${replacementRatio.toFixed(4)} aligns with text extractability ${textScore}.`,
     };
   }
-  if (tableScore < 93 && (tableDelta > 0 || odl.denseTableHintCount > 0 || odl.undersegmentedTableHintCount > 0)) {
+  if (
+    pdfaf.score < 93 &&
+    tableScore < 93 &&
+    (layout?.layoutTableCandidateCount ?? 0) > 0 &&
+    (tableDelta > 0 || odl.denseTableHintCount > 0 || odl.undersegmentedTableHintCount > 0)
+  ) {
     return {
       headingDelta,
       tableDelta,
       imageDelta,
+      captionDelta,
       textOrderSimilarity: similarity,
       supportedLane: 'table_structure',
-      reason: `OpenDataLoader reports ${odl.tableCount} table(s) versus PDFAF ${pdfaf.tableCount}, with dense hints ${odl.denseTableHintCount}.`,
+      reason: `OpenDataLoader reports ${odl.tableCount} table(s) versus PDFAF ${pdfaf.tableCount}, and native layout has ${layout?.layoutTableCandidateCount ?? 0} table-like row-band candidate(s).`,
     };
   }
-  if (readingScore < 93 && (headingDelta > 0 || (similarity !== null && similarity < 0.5))) {
+  if (
+    (readingScore < 93 || headingScore < 93) &&
+    ((layout?.geometryOrderRiskPages ?? 0) > 0 || (layout?.layoutHeadingCandidateCount ?? 0) > 0) &&
+    (headingDelta > 0 || (similarity !== null && similarity < 0.5))
+  ) {
     return {
       headingDelta,
       tableDelta,
       imageDelta,
+      captionDelta,
       textOrderSimilarity: similarity,
       supportedLane: 'reading_order',
-      reason: `Reading order score ${readingScore} plus heading/text-order mismatch suggests a native geometry lane to investigate.`,
+      reason: `Reading/heading scores ${readingScore}/${headingScore} plus ODL mismatch and native geometry evidence suggest a calibration lane.`,
+    };
+  }
+  if (
+    altScore < 93 &&
+    odl.captionCount > 0 &&
+    ((layout?.captionCandidateCount ?? 0) > 0 || (pdfaf.detectionProfile?.figureSignals.figureCaptionPairCount ?? 0) > 0)
+  ) {
+    return {
+      headingDelta,
+      tableDelta,
+      imageDelta,
+      captionDelta,
+      textOrderSimilarity: similarity,
+      supportedLane: 'figure_caption',
+      reason: `Alt score ${altScore} plus ODL/native caption evidence suggests a figure-caption pairing diagnostic lane.`,
+    };
+  }
+  if ((layout?.repeatedHeaderFooterPageCount ?? 0) > 0 && (readingScore < 93 || headingScore < 93)) {
+    return {
+      headingDelta,
+      tableDelta,
+      imageDelta,
+      captionDelta,
+      textOrderSimilarity: similarity,
+      supportedLane: 'header_footer_noise',
+      reason: `Native layout found repeated header/footer text on ${layout?.repeatedHeaderFooterPageCount ?? 0} sampled page(s); treat as safety evidence only.`,
     };
   }
 
@@ -532,6 +596,7 @@ function selectLane(pdfaf: PdfafSummary | undefined, odl: OdlSummary | undefined
     headingDelta,
     tableDelta,
     imageDelta,
+    captionDelta,
     textOrderSimilarity: similarity,
     supportedLane: 'no_safe_lane',
     reason: 'No sidecar-supported lane met the conservative diagnostic thresholds.',
@@ -544,14 +609,25 @@ export function scoringCalibrationForRow(
 ): ScoringCalibrationSummary {
   const categoryScores = pdfaf?.categoryScores ?? {};
   const replacementRisk = pdfaf?.replacementCharacterRisk ?? null;
+  const layout = pdfaf?.layoutAudit ?? null;
+  const detection = pdfaf?.detectionProfile ?? null;
   const nativePdfafSignalAvailable = {
     replacementCharacterRatio: pdfaf?.fontSyntaxAudit?.replacementCharacterRatio ?? 0,
     replacementCharacterCount: pdfaf?.fontSyntaxAudit?.replacementCharacterCount ?? 0,
     highReplacementCharacterPageCount: pdfaf?.fontSyntaxAudit?.highReplacementCharacterPageCount ?? 0,
     replacementCharacterTextRiskLevel: replacementRisk?.level ?? null,
     replacementCharacterTextRiskCap: replacementRisk?.scoreCap ?? null,
-    readingOrderDetectionProfile: Boolean(pdfaf?.detectionProfile?.readingOrderSignals),
-    tableDetectionProfile: Boolean(pdfaf?.detectionProfile?.tableSignals),
+    readingOrderDetectionProfile: Boolean(detection?.readingOrderSignals),
+    tableDetectionProfile: Boolean(detection?.tableSignals),
+    layoutAuditAvailable: Boolean(layout),
+    geometryOrderRiskPages: layout?.geometryOrderRiskPages ?? 0,
+    multiColumnPageCount: layout?.multiColumnPageCount ?? 0,
+    repeatedHeaderFooterPageCount: layout?.repeatedHeaderFooterPageCount ?? 0,
+    layoutHeadingCandidateCount: layout?.layoutHeadingCandidateCount ?? 0,
+    layoutTableCandidateCount: layout?.layoutTableCandidateCount ?? 0,
+    denseRowBandTableCandidateCount: layout?.denseRowBandTableCandidateCount ?? 0,
+    captionCandidateCount: layout?.captionCandidateCount ?? 0,
+    figureCaptionPairCount: detection?.figureSignals.figureCaptionPairCount ?? 0,
   };
 
   if (replacementRisk) {
@@ -566,16 +642,32 @@ export function scoringCalibrationForRow(
     return {
       currentCategoryScores: categoryScores,
       nativePdfafSignalAvailable,
-      suggestedScoringAction: 'reading_order_diagnostic_only',
-      reason: 'OpenDataLoader suggests a reading-order gap, but this pass has no accepted native scoring predicate.',
+      suggestedScoringAction: 'reading_order_calibration_candidate',
+      reason: `ODL suggests a reading-order gap and native layout reports ${nativePdfafSignalAvailable.geometryOrderRiskPages} order-risk page(s) plus ${nativePdfafSignalAvailable.layoutHeadingCandidateCount} layout heading candidate(s). Diagnostic-only.`,
     };
   }
   if (comparison.supportedLane === 'table_structure') {
     return {
       currentCategoryScores: categoryScores,
       nativePdfafSignalAvailable,
-      suggestedScoringAction: 'table_diagnostic_only',
-      reason: 'OpenDataLoader suggests a table-structure gap, but table scoring remains unchanged in this pass.',
+      suggestedScoringAction: 'table_undersegmentation_candidate',
+      reason: `ODL suggests table debt and native layout reports ${nativePdfafSignalAvailable.layoutTableCandidateCount} table-like row-band candidate(s). Diagnostic-only.`,
+    };
+  }
+  if (comparison.supportedLane === 'figure_caption') {
+    return {
+      currentCategoryScores: categoryScores,
+      nativePdfafSignalAvailable,
+      suggestedScoringAction: 'figure_caption_candidate',
+      reason: `ODL/native evidence reports caption candidates (${nativePdfafSignalAvailable.captionCandidateCount}) and figure-caption pairs (${nativePdfafSignalAvailable.figureCaptionPairCount}). Diagnostic-only.`,
+    };
+  }
+  if (comparison.supportedLane === 'header_footer_noise') {
+    return {
+      currentCategoryScores: categoryScores,
+      nativePdfafSignalAvailable,
+      suggestedScoringAction: 'header_footer_noise_candidate',
+      reason: `Native layout reports repeated header/footer text on ${nativePdfafSignalAvailable.repeatedHeaderFooterPageCount} sampled page(s). Safety evidence only.`,
     };
   }
   return {
@@ -714,20 +806,29 @@ function markdownReport(rows: DiagnosticRow[], args: SidecarArgs): string {
     '',
     'This report is diagnostic-only. It does not write remediated PDFs, request `tagged-pdf`, change scores, or route remediation.',
     '',
-    '| Row | PDFAF | ODL | Lane | Score Action | Replacement Ratio | Headings | Tables | Text Sim | Reason |',
-    '| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |',
+    '| Row | PDFAF | ODL | Lane | Suggested Action | Native Layout Signals | Deltas H/T/C | Text Sim | Reason |',
+    '| --- | ---: | --- | --- | --- | --- | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     const pdfafScore = row.pdfaf.summary ? `${fmt(row.pdfaf.summary.score)}/${row.pdfaf.summary.grade}` : row.pdfaf.status;
+    const native = row.scoringCalibration.nativePdfafSignalAvailable;
+    const nativeBits = [
+      `geomRisk=${native.geometryOrderRiskPages}`,
+      `layoutHeads=${native.layoutHeadingCandidateCount}`,
+      `layoutTables=${native.layoutTableCandidateCount}`,
+      `denseTables=${native.denseRowBandTableCandidateCount}`,
+      `captions=${native.captionCandidateCount}`,
+      `figCaptionPairs=${native.figureCaptionPairCount}`,
+      `hfPages=${native.repeatedHeaderFooterPageCount}`,
+    ].join(', ');
     const cells = [
       row.id,
       pdfafScore,
       row.odl.status,
       row.comparison.supportedLane,
       row.scoringCalibration.suggestedScoringAction,
-      fmt(row.scoringCalibration.nativePdfafSignalAvailable.replacementCharacterRatio, 4),
-      fmt(row.comparison.headingDelta, 0),
-      fmt(row.comparison.tableDelta, 0),
+      nativeBits,
+      `${fmt(row.comparison.headingDelta, 0)}/${fmt(row.comparison.tableDelta, 0)}/${fmt(row.comparison.captionDelta, 0)}`,
       fmt(row.comparison.textOrderSimilarity, 2),
       row.scoringCalibration.reason.replace(/\|/g, '/'),
     ];

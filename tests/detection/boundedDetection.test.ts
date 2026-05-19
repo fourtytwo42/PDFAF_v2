@@ -18,6 +18,29 @@ function makeSnapshot(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapsh
     metadata: {},
     links: [{ text: 'Example', url: 'https://example.com', page: 2 }],
     formFieldsFromPdfjs: [],
+    layoutAudit: {
+      sampledPageCount: 2,
+      textRunCount: 10,
+      repeatedHeaderFooterBandCount: 1,
+      repeatedHeaderFooterPageCount: 2,
+      headerFooterBandTexts: [{ page: 0, kind: 'header', text: 'Report Header' }],
+      multiColumnPageCount: 1,
+      geometryOrderRiskPages: 1,
+      layoutHeadingCandidateCount: 2,
+      layoutHeadingCandidates: [
+        { text: 'Layout Heading', page: 0, bbox: [50, 700, 250, 720] },
+      ],
+      captionCandidateCount: 1,
+      captionCandidates: [
+        { text: 'Figure 1. Example', page: 3, bbox: [60, 520, 220, 536] },
+      ],
+      layoutTableCandidateCount: 1,
+      denseRowBandTableCandidateCount: 1,
+      undersegmentedTableCandidateCount: 0,
+      tableCandidates: [
+        { page: 2, bbox: [50, 500, 520, 620], rowCount: 3, columnCount: 3, dense: true, undersegmented: false },
+      ],
+    },
     isTagged: true,
     markInfo: { Marked: true },
     lang: 'en-US',
@@ -28,7 +51,7 @@ function makeSnapshot(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapsh
       { level: 1, text: 'Results', page: 4 },
       { level: 1, text: 'Appendix', page: 2 },
     ],
-    figures: [{ hasAlt: false, isArtifact: false, page: 3 }],
+    figures: [{ hasAlt: false, isArtifact: false, page: 3, bbox: [50, 500, 230, 560] }],
     tables: [
       {
         hasHeaders: false,
@@ -96,17 +119,23 @@ describe('deriveDetectionProfile', () => {
     expect(profile.readingOrderSignals.headerFooterPollutionRisk).toBe(true);
     expect(profile.readingOrderSignals.sampledStructurePageOrderDriftCount).toBeGreaterThan(0);
     expect(profile.readingOrderSignals.multiColumnOrderRiskPages).toBeGreaterThan(0);
+    expect(profile.readingOrderSignals.geometryOrderRiskPages).toBe(1);
     expect(profile.readingOrderSignals.structureTreeDepth).toBe(0);
     expect(profile.readingOrderSignals.degenerateStructureTree).toBe(true);
     expect(profile.headingSignals.extractedHeadingCount).toBe(3);
+    expect(profile.headingSignals.layoutHeadingCandidateCount).toBe(2);
     expect(profile.headingSignals.treeHeadingCount).toBe(0);
     expect(profile.headingSignals.extractedHeadingsMissingFromTree).toBe(true);
     expect(profile.figureSignals.extractedFigureCount).toBe(1);
+    expect(profile.figureSignals.captionCandidateCount).toBe(1);
+    expect(profile.figureSignals.figureCaptionPairCount).toBe(1);
     expect(profile.figureSignals.treeFigureMissingForExtractedFigures).toBe(true);
     expect(profile.pdfUaSignals.orphanMcidCount).toBe(1);
     expect(profile.annotationSignals.linkAnnotationsMissingStructParent).toBe(1);
     expect(profile.listSignals.listsWithoutItems).toBe(1);
     expect(profile.tableSignals.stronglyIrregularTableCount).toBe(1);
+    expect(profile.tableSignals.layoutTableCandidateCount).toBe(1);
+    expect(profile.tableSignals.denseRowBandTableCandidateCount).toBe(1);
   });
 
   it('uses deterministic capped sampling for suspicious pages', () => {
