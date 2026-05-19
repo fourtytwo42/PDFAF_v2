@@ -561,6 +561,30 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.language.outline_lang_valid').status).toBe('fail');
   });
 
+  it('treats high replacement-character ratio as native text-mapping debt', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      textCharCount: 10_000,
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 500,
+        replacementCharacterRatio: 0.05,
+        highReplacementCharacterPageCount: 0,
+      },
+    }));
+
+    const row = byId(rows, 'pdfua.content.characters_unicode_mappable');
+    expect(row).toMatchObject({ status: 'fail', count: 500, confidence: 'heuristic' });
+    expect(row.message).toContain('U+FFFD');
+  });
+
   it('fails structure syntax and RoleMap catalog evidence', () => {
     const rows = buildPacRuleEvidence(makeSnap({
       structureSyntaxAudit: {

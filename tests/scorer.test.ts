@@ -503,6 +503,126 @@ describe('textExtractability', () => {
     expect(cat.score).toBeLessThanOrEqual(90);
     expect(cat.severity).toBe('moderate');
   });
+
+  it('does not penalize replacement characters below threshold', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 10_000,
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 99,
+        replacementCharacterRatio: 0.0099,
+        highReplacementCharacterPageCount: 0,
+      },
+    });
+    const cat = score(snap, META).categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(100);
+    expect(cat.findings.some(f => f.message.includes('U+FFFD'))).toBe(false);
+  });
+
+  it('caps minor replacement-character extraction risk at 90', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 10_000,
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 100,
+        replacementCharacterRatio: 0.01,
+        highReplacementCharacterPageCount: 0,
+      },
+    });
+    const cat = score(snap, META).categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(90);
+    expect(cat.findings.some(f => f.message.includes('U+FFFD'))).toBe(true);
+  });
+
+  it('caps moderate replacement-character extraction risk at 70', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 10_000,
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 500,
+        replacementCharacterRatio: 0.05,
+        highReplacementCharacterPageCount: 0,
+      },
+    });
+    const cat = score(snap, META).categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(70);
+    expect(cat.severity).toBe('moderate');
+  });
+
+  it('caps severe replacement-character extraction risk at 40', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      pageCount: 20,
+      textCharCount: 10_000,
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 2_000,
+        replacementCharacterRatio: 0.2,
+        highReplacementCharacterPageCount: 5,
+      },
+    });
+    const cat = score(snap, META).categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(40);
+    expect(cat.severity).toBe('critical');
+  });
+
+  it('does not trigger replacement-character penalties for tiny text samples', () => {
+    const snap = makeSnap({
+      pdfClass: 'native_tagged',
+      textCharCount: 99,
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 50,
+        replacementCharacterRatio: 0.51,
+        highReplacementCharacterPageCount: 20,
+      },
+    });
+    const cat = score(snap, META).categories.find(c => c.key === 'text_extractability')!;
+    expect(cat.score).toBe(100);
+  });
 });
 
 describe('titleLanguage', () => {

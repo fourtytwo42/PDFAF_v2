@@ -6,6 +6,7 @@ import {
   loadPdfInputs,
   parseArgs,
   runCommandWithTimeout,
+  scoringCalibrationForRow,
   summarizeOpenDataLoaderJson,
 } from '../../scripts/opendataloader-sidecar-diagnostic.js';
 
@@ -82,5 +83,55 @@ describe('OpenDataLoader sidecar diagnostic helpers', () => {
     expect(summary.imageCount).toBe(1);
     expect(summary.captionCount).toBe(1);
     expect(summary.textSamples).toEqual(['Overview', 'Figure 1. Example']);
+  });
+
+  it('recommends native text-extractability scoring when replacement risk is present', () => {
+    const calibration = scoringCalibrationForRow({
+      pageCount: 10,
+      textCharCount: 10_000,
+      score: 92,
+      grade: 'A',
+      categoryScores: { text_extractability: 100, reading_order: 100, table_markup: 100 },
+      detectionProfile: null,
+      headingCount: 1,
+      headingLevels: [1],
+      tableCount: 0,
+      tableShapes: [],
+      imageCount: 0,
+      captionCount: 0,
+      textSamples: ['example'],
+      fontSyntaxAudit: {
+        fontsChecked: 1,
+        missingToUnicodeCMapCount: 0,
+        invalidToUnicodeCMapCount: 0,
+        emptyToUnicodeCMapCount: 0,
+        cidToGidMapRiskCount: 0,
+        trueTypeEncodingMismatchCount: 0,
+        wModeMismatchCount: 0,
+        externalCMapReferenceCount: 0,
+        type0DescendantFontRiskCount: 0,
+        replacementCharacterCount: 500,
+        replacementCharacterRatio: 0.05,
+        highReplacementCharacterPageCount: 0,
+      },
+      replacementCharacterRisk: {
+        level: 'moderate',
+        scoreCap: 70,
+        replacementCharacterRatio: 0.05,
+        replacementCharacterCount: 500,
+        highReplacementCharacterPageCount: 0,
+        highReplacementCharacterPageRatio: 0,
+      },
+    }, {
+      headingDelta: 0,
+      tableDelta: 0,
+      imageDelta: 0,
+      textOrderSimilarity: 1,
+      supportedLane: 'no_safe_lane',
+      reason: 'none',
+    });
+
+    expect(calibration.suggestedScoringAction).toBe('text_extractability_penalty');
+    expect(calibration.nativePdfafSignalAvailable.replacementCharacterTextRiskCap).toBe(70);
   });
 });

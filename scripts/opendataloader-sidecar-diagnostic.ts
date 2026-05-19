@@ -7,6 +7,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { analyzePdf } from '../src/services/pdfAnalyzer.js';
+import { replacementCharacterTextRisk } from '../src/services/scorer/replacementCharacterTextRisk.js';
 import type { AnalysisResult, DocumentSnapshot } from '../src/types.js';
 
 const DEFAULT_ODL_CMD = 'opendataloader-pdf';
@@ -55,6 +56,8 @@ export interface OdlSummary {
 }
 
 interface PdfafSummary {
+  pageCount: number;
+  textCharCount: number;
   score: number;
   grade: string;
   categoryScores: Record<string, number | null>;
@@ -67,6 +70,35 @@ interface PdfafSummary {
   captionCount: number;
   textSamples: string[];
   fontSyntaxAudit: DocumentSnapshot['fontSyntaxAudit'] | null;
+  replacementCharacterRisk: {
+    level: 'minor' | 'moderate' | 'critical';
+    scoreCap: number;
+    replacementCharacterRatio: number;
+    replacementCharacterCount: number;
+    highReplacementCharacterPageCount: number;
+    highReplacementCharacterPageRatio: number;
+  } | null;
+}
+
+type SuggestedScoringAction =
+  | 'text_extractability_penalty'
+  | 'reading_order_diagnostic_only'
+  | 'table_diagnostic_only'
+  | 'no_action';
+
+interface ScoringCalibrationSummary {
+  currentCategoryScores: Record<string, number | null>;
+  nativePdfafSignalAvailable: {
+    replacementCharacterRatio: number;
+    replacementCharacterCount: number;
+    highReplacementCharacterPageCount: number;
+    replacementCharacterTextRiskLevel: 'minor' | 'moderate' | 'critical' | null;
+    replacementCharacterTextRiskCap: number | null;
+    readingOrderDetectionProfile: boolean;
+    tableDetectionProfile: boolean;
+  };
+  suggestedScoringAction: SuggestedScoringAction;
+  reason: string;
 }
 
 interface DiagnosticRow {
@@ -96,6 +128,7 @@ interface DiagnosticRow {
     supportedLane: 'cid_text_extraction' | 'reading_order' | 'table_structure' | 'no_safe_lane' | 'odl_unavailable';
     reason: string;
   };
+  scoringCalibration: ScoringCalibrationSummary;
 }
 
 function timestampSlug(date = new Date()): string {
@@ -393,7 +426,10 @@ function categoryScore(result: AnalysisResult, key: string): number | null {
 }
 
 function pdfafSummary(result: AnalysisResult, snapshot: DocumentSnapshot): PdfafSummary {
+  const replacementRisk = replacementCharacterTextRisk(snapshot);
   return {
+    pageCount: snapshot.pageCount,
+    textCharCount: snapshot.textCharCount,
     score: result.score,
     grade: result.grade,
     categoryScores: {
@@ -420,6 +456,16 @@ function pdfafSummary(result: AnalysisResult, snapshot: DocumentSnapshot): Pdfaf
       .filter((text): text is string => Boolean(text))
       .slice(0, TEXT_SAMPLE_LIMIT),
     fontSyntaxAudit: snapshot.fontSyntaxAudit ?? null,
+    replacementCharacterRisk: replacementRisk
+      ? {
+          level: replacementRisk.level,
+          scoreCap: replacementRisk.scoreCap,
+          replacementCharacterRatio: replacementRisk.replacementCharacterRatio,
+          replacementCharacterCount: replacementRisk.replacementCharacterCount,
+          highReplacementCharacterPageCount: replacementRisk.highReplacementCharacterPageCount,
+          highReplacementCharacterPageRatio: replacementRisk.highReplacementCharacterPageRatio,
+        }
+      : null,
   };
 }
 
@@ -489,6 +535,56 @@ function selectLane(pdfaf: PdfafSummary | undefined, odl: OdlSummary | undefined
     textOrderSimilarity: similarity,
     supportedLane: 'no_safe_lane',
     reason: 'No sidecar-supported lane met the conservative diagnostic thresholds.',
+  };
+}
+
+export function scoringCalibrationForRow(
+  pdfaf: PdfafSummary | undefined,
+  comparison: DiagnosticRow['comparison'],
+): ScoringCalibrationSummary {
+  const categoryScores = pdfaf?.categoryScores ?? {};
+  const replacementRisk = pdfaf?.replacementCharacterRisk ?? null;
+  const nativePdfafSignalAvailable = {
+    replacementCharacterRatio: pdfaf?.fontSyntaxAudit?.replacementCharacterRatio ?? 0,
+    replacementCharacterCount: pdfaf?.fontSyntaxAudit?.replacementCharacterCount ?? 0,
+    highReplacementCharacterPageCount: pdfaf?.fontSyntaxAudit?.highReplacementCharacterPageCount ?? 0,
+    replacementCharacterTextRiskLevel: replacementRisk?.level ?? null,
+    replacementCharacterTextRiskCap: replacementRisk?.scoreCap ?? null,
+    readingOrderDetectionProfile: Boolean(pdfaf?.detectionProfile?.readingOrderSignals),
+    tableDetectionProfile: Boolean(pdfaf?.detectionProfile?.tableSignals),
+  };
+
+  if (replacementRisk) {
+    return {
+      currentCategoryScores: categoryScores,
+      nativePdfafSignalAvailable,
+      suggestedScoringAction: 'text_extractability_penalty',
+      reason: `Native replacement-character risk is ${replacementRisk.level}; text_extractability should be capped at ${replacementRisk.scoreCap}.`,
+    };
+  }
+  if (comparison.supportedLane === 'reading_order') {
+    return {
+      currentCategoryScores: categoryScores,
+      nativePdfafSignalAvailable,
+      suggestedScoringAction: 'reading_order_diagnostic_only',
+      reason: 'OpenDataLoader suggests a reading-order gap, but this pass has no accepted native scoring predicate.',
+    };
+  }
+  if (comparison.supportedLane === 'table_structure') {
+    return {
+      currentCategoryScores: categoryScores,
+      nativePdfafSignalAvailable,
+      suggestedScoringAction: 'table_diagnostic_only',
+      reason: 'OpenDataLoader suggests a table-structure gap, but table scoring remains unchanged in this pass.',
+    };
+  }
+  return {
+    currentCategoryScores: categoryScores,
+    nativePdfafSignalAvailable,
+    suggestedScoringAction: 'no_action',
+    reason: comparison.supportedLane === 'odl_unavailable'
+      ? 'No sidecar scoring action because OpenDataLoader evidence was unavailable.'
+      : 'No native scoring-calibration signal met the threshold.',
   };
 }
 
@@ -574,6 +670,7 @@ async function runRow(input: PdfInput, outDir: string, args: SidecarArgs): Promi
     runOpenDataLoader(input, outDir, args),
   ]);
   const comparison = selectLane(pdfaf.summary, odl.summary, odl.status);
+  const scoringCalibration = scoringCalibrationForRow(pdfaf.summary, comparison);
   return {
     id: input.id,
     pdfPath: input.pdfPath,
@@ -581,6 +678,7 @@ async function runRow(input: PdfInput, outDir: string, args: SidecarArgs): Promi
     pdfaf,
     odl,
     comparison,
+    scoringCalibration,
   };
 }
 
@@ -597,6 +695,11 @@ function markdownReport(rows: DiagnosticRow[], args: SidecarArgs): string {
     acc[row.odl.status] = (acc[row.odl.status] ?? 0) + 1;
     return acc;
   }, {});
+  const scoringActionCounts = rows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.scoringCalibration.suggestedScoringAction] =
+      (acc[row.scoringCalibration.suggestedScoringAction] ?? 0) + 1;
+    return acc;
+  }, {});
   const lines = [
     '# OpenDataLoader Sidecar Diagnostic',
     '',
@@ -607,11 +710,12 @@ function markdownReport(rows: DiagnosticRow[], args: SidecarArgs): string {
     `- Run mode: \`--format json --image-output off --quiet --threads 1\``,
     `- ODL status counts: ${JSON.stringify(statusCounts)}`,
     `- Supported lane counts: ${JSON.stringify(laneCounts)}`,
+    `- Suggested scoring-action counts: ${JSON.stringify(scoringActionCounts)}`,
     '',
     'This report is diagnostic-only. It does not write remediated PDFs, request `tagged-pdf`, change scores, or route remediation.',
     '',
-    '| Row | PDFAF | ODL | Lane | Headings | Tables | Text Sim | Reason |',
-    '| --- | ---: | --- | --- | ---: | ---: | ---: | --- |',
+    '| Row | PDFAF | ODL | Lane | Score Action | Replacement Ratio | Headings | Tables | Text Sim | Reason |',
+    '| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     const pdfafScore = row.pdfaf.summary ? `${fmt(row.pdfaf.summary.score)}/${row.pdfaf.summary.grade}` : row.pdfaf.status;
@@ -620,10 +724,12 @@ function markdownReport(rows: DiagnosticRow[], args: SidecarArgs): string {
       pdfafScore,
       row.odl.status,
       row.comparison.supportedLane,
+      row.scoringCalibration.suggestedScoringAction,
+      fmt(row.scoringCalibration.nativePdfafSignalAvailable.replacementCharacterRatio, 4),
       fmt(row.comparison.headingDelta, 0),
       fmt(row.comparison.tableDelta, 0),
       fmt(row.comparison.textOrderSimilarity, 2),
-      row.comparison.reason.replace(/\|/g, '/'),
+      row.scoringCalibration.reason.replace(/\|/g, '/'),
     ];
     lines.push(`| ${cells.join(' | ')} |`);
   }

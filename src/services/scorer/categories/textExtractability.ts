@@ -13,6 +13,10 @@ import {
   TEXT_EXTRACTABILITY_ENCODING_SCORE_FLOOR,
 } from '../../../config.js';
 import { qualifiesForEngineOwnedOcrExtractabilityCredit } from '../remediationProvenance.js';
+import {
+  replacementCharacterTextRisk,
+  replacementCharacterTextRiskFinding,
+} from '../replacementCharacterTextRisk.js';
 
 function encodingRiskFontCount(snap: DocumentSnapshot): number {
   return snap.fonts.filter(f => Boolean(f.encodingRisk)).length;
@@ -177,12 +181,23 @@ export function scoreTextExtractability(snap: DocumentSnapshot): ScoredCategory 
     }
   }
 
+  const replacementRisk = replacementCharacterTextRisk(snap);
+  if (replacementRisk) {
+    score = Math.min(score, replacementRisk.scoreCap);
+    findings.push(replacementCharacterTextRiskFinding(replacementRisk));
+  }
+
   return {
     key: 'text_extractability',
     score,
     weight: CATEGORY_BASE_WEIGHTS.text_extractability,
     applicable: true,
-    severity: findings.length > 0 ? findings[0]!.severity : 'pass',
+    severity: scoreSeverity(score, findings),
     findings,
   };
+}
+
+function scoreSeverity(score: number, findings: Finding[]): ScoredCategory['severity'] {
+  if (findings.some(finding => finding.severity === 'critical')) return 'critical';
+  return findings.length > 0 ? findings[0]!.severity : 'pass';
 }

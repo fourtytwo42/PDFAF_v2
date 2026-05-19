@@ -1,4 +1,5 @@
 import type { CategoryKey, DocumentSnapshot } from '../../types.js';
+import { replacementCharacterTextRisk } from '../scorer/replacementCharacterTextRisk.js';
 import { isFilenameLikeTitle } from './icjiaParity.js';
 import { isWeakFigureAlt } from '../scorer/altTextHeuristics.js';
 import { normalizedTableSignals } from '../scorer/tableRegularityHeuristics.js';
@@ -895,16 +896,34 @@ function tableHeaderAuditRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
 
 function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const audit = snapshot.fontSyntaxAudit;
+  const replacementRisk = replacementCharacterTextRisk(snapshot);
+  const replacementDebtCount = replacementRisk?.replacementCharacterCount ?? 0;
+  const replacementDebtMessage = replacementRisk
+    ? ` pdf.js extracted ${replacementRisk.replacementCharacterCount} U+FFFD replacement character(s), indicating native Unicode mapping debt.`
+    : '';
   if ((audit?.fontsChecked ?? snapshot.fonts.length) === 0) {
     return [
       noStructureRule('pdfua.font.to_unicode_cmap_present', 'text_extractability', 'No font evidence is present.'),
       noStructureRule('pdfua.font.to_unicode_cmap_valid', 'text_extractability', 'No font evidence is present.'),
-      noStructureRule('pdfua.content.characters_unicode_mappable', 'text_extractability', 'No font/text mapping evidence is present.'),
+      replacementRisk
+        ? rule({
+            ruleId: 'pdfua.content.characters_unicode_mappable',
+            status: 'fail',
+            category: 'text_extractability',
+            message: `Extracted text contains replacement-character evidence without font syntax coverage.${replacementDebtMessage}`,
+            confidence: 'heuristic',
+            count: replacementDebtCount,
+          })
+        : noStructureRule('pdfua.content.characters_unicode_mappable', 'text_extractability', 'No font/text mapping evidence is present.'),
       noStructureRule('pdfua.font.cid_to_gidmap_valid', 'text_extractability', 'No font evidence is present.'),
       noStructureRule('pdfua.font.truetype_encoding_consistent', 'text_extractability', 'No font evidence is present.'),
       noStructureRule('pdfua.font.wmode_consistent', 'text_extractability', 'No font evidence is present.'),
     ];
   }
+  const unicodeMappingDebt =
+    (audit?.missingToUnicodeCMapCount ?? 0) +
+    (audit?.invalidToUnicodeCMapCount ?? 0) +
+    (audit?.emptyToUnicodeCMapCount ?? 0);
   return [
     rule({
       ruleId: 'pdfua.font.to_unicode_cmap_present',
@@ -928,13 +947,13 @@ function fontSyntaxRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     }),
     rule({
       ruleId: 'pdfua.content.characters_unicode_mappable',
-      status: ((audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)) > 0 ? 'fail' : 'pass',
+      status: (unicodeMappingDebt + replacementDebtCount) > 0 ? 'fail' : 'pass',
       category: 'text_extractability',
-      message: ((audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)) > 0
-        ? `${(audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0)} font CMap issue(s) may prevent mapping text characters to Unicode.`
+      message: (unicodeMappingDebt + replacementDebtCount) > 0
+        ? `${unicodeMappingDebt} font CMap issue(s) and ${replacementDebtCount} replacement-character issue(s) may prevent mapping text characters to Unicode.${replacementDebtMessage}`
         : 'Font CMap evidence does not show Unicode mapping debt.',
       confidence: audit ? 'heuristic' : 'manual_review_required',
-      count: (audit?.missingToUnicodeCMapCount ?? 0) + (audit?.invalidToUnicodeCMapCount ?? 0) + (audit?.emptyToUnicodeCMapCount ?? 0),
+      count: unicodeMappingDebt + replacementDebtCount,
     }),
     rule({
       ruleId: 'pdfua.font.cid_to_gidmap_valid',
