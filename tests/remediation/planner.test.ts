@@ -4741,9 +4741,27 @@ describe('planForRemediation', () => {
       level: 1,
       text: 'Executive Summary',
       admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+      strictTargetRef: true,
     });
     expect(headingTool?.rationale).toContain('Report-scale layout heading recovery');
     expect(plan.planningSummary?.triggeringSignals).toContain(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
+  });
+
+  it('does not add strict target mode to generic heading candidate params', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      layoutAudit: undefined,
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 100,
+      text_extractability: 100,
+    });
+
+    const params = buildDefaultParams('create_heading_from_candidate', analysis, snap, []);
+
+    expect(params).toMatchObject({ targetRef: '10_0' });
+    expect(params).not.toHaveProperty('strictTargetRef');
+    expect(params).not.toHaveProperty('admission');
   });
 
   it('does not schedule report-layout paragraph heading creation for no-target rows', () => {

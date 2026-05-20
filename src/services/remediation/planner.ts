@@ -2041,6 +2041,7 @@ export function planForRemediation(
         level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
         text: reportLayoutCandidate.text.slice(0, 200),
         admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+        strictTargetRef: true,
       }
       : {};
     if (

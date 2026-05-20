@@ -8786,6 +8786,7 @@ def _op_create_heading_from_candidate(pdf: pikepdf.Pdf, params: dict) -> bool:
         "structRef": target_ref,
         "level": level,
         "text": params.get("text"),
+        "strictTargetRef": params.get("strictTargetRef") or params.get("strict_target_ref"),
     })
 
 
@@ -10259,6 +10260,7 @@ def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     """
     ref = params.get("structRef")
     target_text = str(params.get("text") or "").strip()
+    strict_target_ref = params.get("strictTargetRef") is True or str(params.get("strictTargetRef") or params.get("strict_target_ref") or "").lower() in ("1", "true", "yes")
     level = params.get("level")
     try:
         level = int(level)
@@ -10268,7 +10270,24 @@ def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     if level < 1 or level > 6:
         _set_last_mutation_note("heading_level_out_of_range")
         return False
-    elem = _resolve_ref(pdf, ref) if ref else None
+    if strict_target_ref and not ref:
+        _set_last_mutation_debug(_heading_promotion_debug(pdf, None, "before"))
+        _set_last_mutation_note("strict_target_not_resolved")
+        return False
+    if ref:
+        if strict_target_ref:
+            try:
+                elem = _resolve_ref(pdf, ref)
+            except Exception:
+                elem = None
+        else:
+            elem = _resolve_ref(pdf, ref)
+    else:
+        elem = None
+    if strict_target_ref and elem is None:
+        _set_last_mutation_debug(_heading_promotion_debug(pdf, None, "before"))
+        _set_last_mutation_note("strict_target_not_resolved")
+        return False
     if elem is None and target_text:
         elem = _find_heading_candidate_by_text(pdf, target_text)
     if elem is None:
@@ -10283,6 +10302,10 @@ def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
         tnorm = str(s).lstrip("/").upper() if s is not None else ""
     except Exception:
         tnorm = ""
+    if strict_target_ref and tnorm not in ("P", "SPAN", "DIV"):
+        _set_last_mutation_debug(before_debug)
+        _set_last_mutation_note("strict_target_not_paragraph_like")
+        return False
     if tnorm not in ("P", "SPAN", "DIV") and target_text:
         fallback_elem = _find_heading_candidate_by_text(pdf, target_text)
         if fallback_elem is not None:
@@ -10331,7 +10354,7 @@ def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     page_obj = _page_obj_for_struct_elem(elem)
     if not isinstance(page_obj, pikepdf.Dictionary):
         _set_last_mutation_debug(before_debug)
-        _set_last_mutation_note("candidate_missing_page_owner")
+        _set_last_mutation_note("strict_target_not_root_safe" if strict_target_ref else "candidate_missing_page_owner")
         return False
 
     changed = False
