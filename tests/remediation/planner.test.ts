@@ -17,8 +17,9 @@ import {
 } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { classifyZeroHeadingRecovery } from '../../src/services/remediation/headingRecovery.js';
+import { REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL } from '../../src/services/remediation/reportLayoutHeadingRecovery.js';
 import { score } from '../../src/services/scorer/scorer.js';
-import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, RemediationRoute } from '../../src/types.js';
+import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, NativeLayoutAudit, RemediationRoute } from '../../src/types.js';
 
 const META = { id: 'p', filename: 'bare.pdf', timestamp: new Date().toISOString(), analysisDurationMs: 1 };
 const ALL_REMEDIATION_ROUTES: RemediationRoute[] = [
@@ -90,6 +91,52 @@ function withRoutingContext(
     ...analysis,
     ...over,
     categories: over.categories ?? analysis.categories,
+  };
+}
+
+function reportLayoutAudit(overrides: Partial<NativeLayoutAudit> = {}): NativeLayoutAudit {
+  return {
+    sampledPageCount: 25,
+    textRunCount: 240,
+    repeatedHeaderFooterBandCount: 25,
+    repeatedHeaderFooterPageCount: 25,
+    headerFooterBandTexts: [],
+    multiColumnPageCount: 16,
+    geometryOrderRiskPages: 15,
+    layoutHeadingCandidateCount: 70,
+    layoutHeadingCandidates: [
+      { text: 'Executive Summary', page: 0, bbox: [50, 700, 260, 725] },
+      { text: 'Key Findings', page: 1, bbox: [50, 690, 220, 712] },
+    ],
+    captionCandidateCount: 0,
+    captionCandidates: [],
+    layoutTableCandidateCount: 0,
+    denseRowBandTableCandidateCount: 0,
+    undersegmentedTableCandidateCount: 0,
+    tableCandidates: [],
+    ...overrides,
+  };
+}
+
+function reportLayoutPlanningSnapshot(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
+  return {
+    ...bareSnapshot(),
+    pageCount: 25,
+    textByPage: Array.from({ length: 25 }, () => 'Executive Summary Key Findings body text'),
+    textCharCount: 5000,
+    isTagged: true,
+    markInfo: { Marked: true },
+    lang: 'en',
+    pdfUaVersion: '1',
+    pdfClass: 'native_tagged',
+    structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+    metadata: { title: 'Report', language: 'en', author: '', subject: '' },
+    layoutAudit: reportLayoutAudit(),
+    paragraphStructElems: [
+      { tag: 'P', text: 'Executive Summary', page: 0, structRef: '10_0', bbox: [50, 700, 260, 725] },
+      { tag: 'P', text: 'Key Findings', page: 1, structRef: '11_0', bbox: [50, 690, 220, 712] },
+    ],
+    ...overrides,
   };
 }
 
@@ -4674,6 +4721,133 @@ describe('planForRemediation', () => {
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).toContain('create_heading_from_candidate');
     expect(names).not.toContain('synthesize_basic_structure_from_layout');
+  });
+
+  it('schedules paragraph-backed heading creation under the report-layout predicate', () => {
+    const snap = reportLayoutPlanningSnapshot();
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const tools = plan.stages.flatMap(stage => stage.tools);
+    const headingTool = tools.find(tool => tool.toolName === 'create_heading_from_candidate');
+
+    expect(headingTool).toBeDefined();
+    expect(headingTool?.params).toEqual({
+      targetRef: '10_0',
+      level: 1,
+      text: 'Executive Summary',
+      admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+    });
+    expect(headingTool?.rationale).toContain('Report-scale layout heading recovery');
+    expect(plan.planningSummary?.triggeringSignals).toContain(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
+  });
+
+  it('does not schedule report-layout paragraph heading creation for no-target rows', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      paragraphStructElems: [],
+      mcidTextSpans: [],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 59,
+      reading_order: 0,
+      text_extractability: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('create_heading_from_candidate');
+  });
+
+  it('does not schedule report-layout paragraph heading creation for MCID-only rows', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      paragraphStructElems: [],
+      mcidTextSpans: [
+        { page: 0, mcid: 10, snippet: '/P << /MCID 10 >>', resolvedText: 'Executive Summary' },
+        { page: 1, mcid: 11, snippet: '/P << /MCID 11 >>', resolvedText: 'Key Findings' },
+      ],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 30,
+      text_extractability: 100,
+      table_markup: 100,
+      link_quality: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('create_heading_from_candidate');
+    expect(names).not.toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('does not schedule report-layout paragraph heading creation for short-guide controls', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      pageCount: 5,
+      textByPage: Array.from({ length: 5 }, () => 'Quick start body text'),
+      layoutAudit: reportLayoutAudit({
+        sampledPageCount: 5,
+        repeatedHeaderFooterPageCount: 5,
+        layoutHeadingCandidateCount: 24,
+      }),
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('create_heading_from_candidate');
+  });
+
+  it('does not retry the same report-layout paragraph target after prior no-effect evidence', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      layoutAudit: reportLayoutAudit({
+        layoutHeadingCandidates: [
+          { text: 'Executive Summary', page: 0, bbox: [50, 700, 260, 725] },
+          { text: 'Key Findings', page: 1, bbox: [50, 690, 220, 712] },
+        ],
+      }),
+      paragraphStructElems: [
+        { tag: 'P', text: 'Executive Summary', page: 0, structRef: '10_0', bbox: [50, 700, 260, 725] },
+      ],
+      mcidTextSpans: [
+        { page: 1, mcid: 11, snippet: '/P << /MCID 11 >>', resolvedText: 'Key Findings' },
+      ],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+    const applied: AppliedRemediationTool[] = [{
+      toolName: 'create_heading_from_candidate',
+      stage: 4,
+      round: 1,
+      scoreBefore: 56,
+      scoreAfter: 56,
+      delta: 0,
+      outcome: 'no_effect',
+      details: JSON.stringify({
+        outcome: 'no_effect',
+        note: 'role_invalid_after_mutation',
+        invariants: { targetRef: '10_0', targetResolved: true, targetReachable: false },
+      }),
+    }];
+
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain('create_heading_from_candidate');
+    expect(plan.planningSummary?.triggeringSignals).toContain(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
   });
 
   it('does not schedule create_heading_from_candidate again when exported headings already exist', () => {

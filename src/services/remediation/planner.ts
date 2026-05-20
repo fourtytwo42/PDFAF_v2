@@ -67,6 +67,10 @@ import {
   selectStage187TaggedHeadingTopupCandidate,
   shouldTryStage187TaggedHeadingTopupRecovery,
 } from './stage187HeadingReadingTail.js';
+import {
+  classifyReportLayoutHeadingRecovery,
+  REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+} from './reportLayoutHeadingRecovery.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -826,6 +830,14 @@ function hasPriorNoEffectSignature(
   });
 }
 
+function hasPriorHeadingCandidateNoEffectTarget(applied: AppliedRemediationTool[], targetRef: string): boolean {
+  return applied.some(row => {
+    if (row.toolName !== 'create_heading_from_candidate' || row.outcome !== 'no_effect') return false;
+    const details = parseMutationDetails(row.details);
+    return mutationTargetRef(details) === targetRef;
+  });
+}
+
 function currentAnnotationOwnershipDebt(snapshot: DocumentSnapshot): number {
   const signals = snapshot.detectionProfile?.annotationSignals ?? snapshot.annotationAccessibility;
   return (
@@ -1509,6 +1521,7 @@ export function planForRemediation(
   const eligibleHeadingCandidates = stage24ZeroHeadingBootstrapEnabled()
     ? buildEligibleHeadingBootstrapCandidates(snapshot)
     : [];
+  const reportLayoutHeadingRecovery = classifyReportLayoutHeadingRecovery(analysis, snapshot);
   const zeroHeadingRecovery = classifyZeroHeadingRecovery(analysis, snapshot);
   const visibleHeadingAnchorRecoveryActive = shouldTryVisibleHeadingAnchorRecovery(analysis, snapshot);
   const ocrPageShellHeadingRecoveryActive = shouldTryOcrPageShellHeadingRecovery(analysis, snapshot);
@@ -2008,6 +2021,51 @@ export function planForRemediation(
     }
   }
 
+  if (
+    reportLayoutHeadingRecovery.kind === REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL &&
+    !toolSet.has('create_heading_from_candidate') &&
+    !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied, analysis, snapshot) &&
+    noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < Math.max(
+      REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
+      reportLayoutHeadingRecovery.paragraphCandidates.length,
+    )
+  ) {
+    const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
+    const zeroExportedHeadings = snapshot.headings.length === 0;
+    const reportLayoutCandidate = reportLayoutHeadingRecovery.paragraphCandidates.find(candidate =>
+      !hasPriorHeadingCandidateNoEffectTarget(alreadyApplied, candidate.structRef),
+    );
+    const reportLayoutParams = reportLayoutCandidate
+      ? {
+        targetRef: reportLayoutCandidate.structRef,
+        level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+        text: reportLayoutCandidate.text.slice(0, 200),
+        admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+      }
+      : {};
+    if (
+      typeof reportLayoutParams['targetRef'] === 'string' &&
+      reportLayoutParams['targetRef'].length > 0 &&
+      !hasPriorNoEffectSignature(alreadyApplied, 'create_heading_from_candidate', reportLayoutParams) &&
+      toolApplicableToPdfClass('create_heading_from_candidate', analysis.pdfClass, snapshot)
+    ) {
+      toolSet.set('create_heading_from_candidate', {
+        toolName: 'create_heading_from_candidate',
+        params: reportLayoutParams,
+        rationale: [
+          'Report-scale layout heading recovery from an existing paragraph structure target.',
+          `layoutHeadingCandidates=${reportLayoutHeadingRecovery.layoutHeadingCandidateCount}`,
+          `repeatedHeaderFooterPages=${reportLayoutHeadingRecovery.repeatedHeaderFooterPageCount}`,
+          `existingTargetMatches=${reportLayoutHeadingRecovery.existingTargetMatchCount}`,
+          `paragraphTargetMatches=${reportLayoutHeadingRecovery.paragraphTargetMatchCount}`,
+        ].join(' '),
+        route: 'post_bootstrap_heading_convergence',
+      });
+    } else {
+      addSkipped('create_heading_from_candidate', 'missing_precondition');
+    }
+  }
+
   {
     const toolName = 'create_structure_from_degenerate_native_anchor';
     if (
@@ -2408,12 +2466,18 @@ export function planForRemediation(
       addSkipped(tool.toolName, 'reliability_filtered');
     }
   }
+  const planningRouting = reportLayoutHeadingRecovery.kind === REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL
+    ? {
+      ...routing,
+      triggeringSignals: [...new Set([...routing.triggeringSignals, REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL])],
+    }
+    : routing;
 
   if (planned.length === 0) {
     return {
       stages: [],
       planningSummary: buildPlanningSummary({
-        routing,
+        routing: planningRouting,
         includeOptionalRemediation,
         scheduledTools: [],
         stoppedRoutes,
@@ -2433,7 +2497,7 @@ export function planForRemediation(
   return {
     stages,
     planningSummary: buildPlanningSummary({
-      routing,
+      routing: planningRouting,
       includeOptionalRemediation,
       scheduledTools: planned,
       stoppedRoutes,

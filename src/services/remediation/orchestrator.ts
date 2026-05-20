@@ -96,10 +96,16 @@ import {
   pacRuleUsefulRepairRecovery,
 } from './pacRuleAcceptanceGate.js';
 import { stage5PacCatalogSettingsImproved } from './stage5PacCatalogSettings.js';
+import { REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL } from './reportLayoutHeadingRecovery.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
 const implemented = new Set<string>(REMEDIATION_IMPLEMENTED_TOOLS);
+
+function isReportLayoutHeadingRecoveryTool(tool: PlannedRemediationTool): boolean {
+  return tool.toolName === 'create_heading_from_candidate' &&
+    tool.params['admission'] === REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL;
+}
 
 export function mergePlanningSummaries(
   prior: PlanningSummary | undefined,
@@ -8284,7 +8290,9 @@ export async function remediatePdf(
           }
         }
         if (tool.toolName === 'create_heading_from_candidate') {
+          const reportLayoutHeadingTool = isReportLayoutHeadingRecoveryTool(tool);
           if (
+            !reportLayoutHeadingTool &&
             workingSnapshot.headings.length > 0 &&
             workingSnapshot.detectionProfile?.headingSignals.extractedHeadingsMissingFromTree !== true
           ) {
@@ -8473,12 +8481,14 @@ export async function remediatePdf(
               });
             }
           } else {
-            const initialParams = buildDefaultParams(
-              tool.toolName,
-              workingAnalysis,
-              workingSnapshot,
-              [...appliedTools, ...stageApplied],
-            );
+            const initialParams = reportLayoutHeadingTool
+              ? tool.params
+              : buildDefaultParams(
+                tool.toolName,
+                workingAnalysis,
+                workingSnapshot,
+                [...appliedTools, ...stageApplied],
+              );
             let activeTool: PlannedRemediationTool | null = {
               ...tool,
               params: Object.keys(initialParams).length > 0 ? initialParams : tool.params,
@@ -8550,6 +8560,7 @@ export async function remediatePdf(
                 }
               }
               if (activeOutcome !== 'no_effect') break;
+              if (reportLayoutHeadingTool) break;
               if (shouldStopProtectedHeadingCandidateAfterHardNoEffect({
                 protectedBaselineActive: Boolean(options?.protectedBaseline),
                 toolName: activeTool.toolName,
