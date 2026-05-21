@@ -477,6 +477,66 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.content.within_page_bounds')).toMatchObject({ status: 'pass', count: 0, confidence: 'verified' });
   });
 
+  it('treats fully measured Form XObject content tagging debt as verified', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 2,
+        totalFormXObjects: 2,
+        formXObjectParseErrorCount: 0,
+        formXObjectSampleLimitHitCount: 0,
+        textOutsideMarkedContentOrArtifact: 0,
+        imageOutsideMarkedContentOrArtifact: 2,
+        pathOutsideMarkedContentOrArtifact: 1,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    }));
+
+    expect(byId(rows, 'pdfua.content.image_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 2, confidence: 'verified' });
+    expect(byId(rows, 'pdfua.content.path_paint_tagged_or_artifacted')).toMatchObject({ status: 'fail', count: 1, confidence: 'verified' });
+  });
+
+  it('keeps partial or legacy Form XObject content tagging debt heuristic', () => {
+    const partial = buildPacRuleEvidence(makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 1,
+        totalFormXObjects: 2,
+        formXObjectParseErrorCount: 0,
+        formXObjectSampleLimitHitCount: 0,
+        textOutsideMarkedContentOrArtifact: 1,
+        imageOutsideMarkedContentOrArtifact: 0,
+        pathOutsideMarkedContentOrArtifact: 0,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    }));
+    const legacyUnknown = buildPacRuleEvidence(makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 1,
+        textOutsideMarkedContentOrArtifact: 1,
+        imageOutsideMarkedContentOrArtifact: 0,
+        pathOutsideMarkedContentOrArtifact: 0,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    }));
+
+    expect(byId(partial, 'pdfua.content.text_tagged_or_artifacted')).toMatchObject({ status: 'fail', confidence: 'heuristic' });
+    expect(byId(legacyUnknown, 'pdfua.content.text_tagged_or_artifacted')).toMatchObject({ status: 'fail', confidence: 'heuristic' });
+  });
+
   it('fails outside-page-boundary content and list structure debt', () => {
     const rows = buildPacRuleEvidence(makeSnap({
       contentTaggingAudit: {

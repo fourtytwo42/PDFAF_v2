@@ -129,6 +129,25 @@ function taggedContentSignals(snapshot: DocumentSnapshot): {
   };
 }
 
+function contentTaggingCoverageVerified(tagging: NonNullable<DocumentSnapshot['contentTaggingAudit']>): boolean {
+  if (
+    tagging.pageStreamsChecked === undefined ||
+    tagging.totalPageStreams === undefined ||
+    tagging.pageStreamsChecked < tagging.totalPageStreams
+  ) {
+    return false;
+  }
+  const checkedForms = tagging.formXObjectsChecked ?? 0;
+  if (checkedForms === 0) return true;
+  if (tagging.totalFormXObjects === undefined) return false;
+  return (
+    tagging.totalFormXObjects > 0 &&
+    checkedForms >= tagging.totalFormXObjects &&
+    (tagging.formXObjectParseErrorCount ?? 0) === 0 &&
+    (tagging.formXObjectSampleLimitHitCount ?? 0) === 0
+  );
+}
+
 function metadataRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const title = snapshot.metadata.title?.trim() || snapshot.structTitle?.trim() || '';
   const suspects = snapshot.markInfo?.Suspects;
@@ -605,12 +624,7 @@ function contentRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   const malformedStack = tagging?.malformedMarkedContentStack ?? 0;
   const outsidePageBounds = tagging?.contentOutsidePageBounds ?? 0;
   const contentConfidence: PacRuleConfidence = tagging
-    ? (tagging.pageStreamsChecked !== undefined &&
-        tagging.totalPageStreams !== undefined &&
-        tagging.pageStreamsChecked >= tagging.totalPageStreams &&
-        (tagging.formXObjectsChecked ?? 0) === 0
-      ? 'verified'
-      : 'heuristic')
+    ? (contentTaggingCoverageVerified(tagging) ? 'verified' : 'heuristic')
     : 'manual_review_required';
   return [
     rule({

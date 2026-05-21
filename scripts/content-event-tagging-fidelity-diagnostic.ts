@@ -269,7 +269,16 @@ export function extractContentEventFeatures(analysis: AnalysisResult, snapshot: 
   const formXObjectParseErrorCount = audit?.formXObjectParseErrorCount ?? 0;
   const formXObjectSampleLimitHitCount = audit?.formXObjectSampleLimitHitCount ?? 0;
   const auditConfidence = audit
-    ? pageStreamsChecked >= totalPageStreams && formXObjectsChecked === 0
+    ? pageStreamsChecked >= totalPageStreams &&
+        (
+          formXObjectsChecked === 0 ||
+          (
+            totalFormXObjects > 0 &&
+            formXObjectsChecked >= totalFormXObjects &&
+            formXObjectParseErrorCount === 0 &&
+            formXObjectSampleLimitHitCount === 0
+          )
+        )
       ? 'verified'
       : 'heuristic'
     : 'manual_review_required';

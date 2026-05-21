@@ -1930,6 +1930,70 @@ describe('phase 3 PAC scoring influence', () => {
     ]);
   });
 
+  it('applies stricter caps for fully measured Form XObject content-tagging failures', () => {
+    const snap = makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 1,
+        totalFormXObjects: 1,
+        formXObjectParseErrorCount: 0,
+        formXObjectSampleLimitHitCount: 0,
+        textOutsideMarkedContentOrArtifact: 0,
+        imageOutsideMarkedContentOrArtifact: 1,
+        pathOutsideMarkedContentOrArtifact: 0,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('pdf_ua_compliance', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(79);
+    expect(cat.scoreCapsApplied).toEqual([
+      {
+        category: 'pdf_ua_compliance',
+        cap: 79,
+        rawScore: 100,
+        finalScore: 79,
+        reason: 'PAC rule failure: pdfua.content.image_tagged_or_artifacted',
+      },
+    ]);
+  });
+
+  it('keeps partial Form XObject content-tagging failures heuristic', () => {
+    const snap = makeSnap({
+      contentTaggingAudit: {
+        pageStreamsChecked: 2,
+        totalPageStreams: 2,
+        formXObjectsChecked: 1,
+        totalFormXObjects: 2,
+        formXObjectParseErrorCount: 0,
+        formXObjectSampleLimitHitCount: 0,
+        textOutsideMarkedContentOrArtifact: 0,
+        imageOutsideMarkedContentOrArtifact: 1,
+        pathOutsideMarkedContentOrArtifact: 0,
+        artifactInsideTaggedContent: 0,
+        taggedContentInsideArtifact: 0,
+        malformedMarkedContentStack: 0,
+        contentOutsidePageBounds: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('pdf_ua_compliance', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(100);
+    expect(cat.scoreCapsApplied).toBeUndefined();
+  });
+
   it('applies stricter caps for verified PAC structure-syntax leaf failures', () => {
     const snap = makeSnap({
       structureSyntaxAudit: {
