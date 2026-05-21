@@ -56,6 +56,34 @@ A one-row bounded repeat of `4683` completed:
 
 This means the broad-run `4683` timeout is runtime/analyzer volatility, not a deterministic per-PDF timeout under current source. It remains too close to the wall and too low-scoring to use as acceptance evidence.
 
+## Benchmark Runtime Telemetry
+
+`scripts/baseline-corpus-batch.ts` now writes compact `runtimeSummary` telemetry into benchmark rows. This is reporting-only: it does not change scoring, remediation planning, mutation behavior, PAC gates, timeout defaults, API behavior, or Docker behavior.
+
+Telemetry repeat:
+
+- report: `/mnt/pdf-review/pdfaf-validation/runtime-tail-4683-telemetry-2026-05-21-r1/baseline_report.json`
+- score: `48/F -> 59/F`
+- duration: `231712ms`
+- `false_positive_applied=0`
+- `runtimeSummary` present: `true`
+
+Telemetry breakdown for `4683`:
+
+- initial analysis: `22360ms`
+- final analysis: `22614ms`
+- deterministic remediation total: `209340ms`
+- stage reanalysis time: `65221ms`
+- stage timing total: `71581ms`
+- runtime tool timing total: `17722ms`
+- top stage reanalysis blocks:
+  - stage 2: `25329ms` total, `21182ms` reanalysis
+  - stage 4: `23765ms` total, `22614ms` reanalysis
+  - stage 1: `21797ms` total, `21425ms` reanalysis
+- early exits: `verified_low_score_checkpoint_timeout_return` x `2`
+
+This narrows the next runtime design: the cost is dominated by repeated native analysis/reanalysis of a large structured PDF plus low-score checkpoint pressure, not by one slow mutator. Any behavior change should therefore target general reanalysis reuse/admission or verified checkpoint policy, not figure/alt scoring or PAC exceptions.
+
 ## Decision
 
 Keep the figure/alt tree-cap scoring calibration provisional.

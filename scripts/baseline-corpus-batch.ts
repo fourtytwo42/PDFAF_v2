@@ -97,6 +97,43 @@ function runtimeEventCounts(events: RemediationRuntimeTraceEvent[]): Array<{ key
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
+function mergeCountRows(rows: Array<{ key: string; count: number }>): Array<{ key: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.key, (counts.get(row.key) ?? 0) + row.count);
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+export function mergeBenchmarkRuntimeSummaries(input: {
+  summaries: Array<RemediationRuntimeSummary | undefined>;
+  analysisBefore?: AnalysisResult['runtimeSummary'];
+  analysisAfter?: AnalysisResult['runtimeSummary'];
+}): RemediationRuntimeSummary | undefined {
+  const summaries = input.summaries.filter((summary): summary is RemediationRuntimeSummary => Boolean(summary));
+  if (summaries.length === 0 && !input.analysisBefore && !input.analysisAfter) return undefined;
+  return {
+    analysisBefore: input.analysisBefore ?? summaries[0]?.analysisBefore ?? null,
+    analysisAfter: input.analysisAfter ?? summaries.at(-1)?.analysisAfter ?? null,
+    deterministicTotalMs: summaries.reduce((sum, summary) => sum + (summary.deterministicTotalMs ?? 0), 0),
+    stageTimings: summaries.flatMap(summary => summary.stageTimings ?? []),
+    toolTimings: summaries.flatMap(summary => summary.toolTimings ?? []),
+    semanticLaneTimings: summaries.flatMap(summary => summary.semanticLaneTimings ?? []),
+    boundedWork: {
+      semanticCandidateCapsHit: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.semanticCandidateCapsHit ?? 0), 0),
+      deterministicEarlyExitCount: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.deterministicEarlyExitCount ?? 0), 0),
+      deterministicEarlyExitReasons: mergeCountRows(summaries.flatMap(summary => summary.boundedWork?.deterministicEarlyExitReasons ?? [])),
+      semanticSkipReasons: mergeCountRows(summaries.flatMap(summary => summary.boundedWork?.semanticSkipReasons ?? [])),
+      zeroHeadingLaneActivations: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.zeroHeadingLaneActivations ?? 0), 0),
+      headingConvergenceAttemptCount: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceAttemptCount ?? 0), 0),
+      headingConvergenceSuccessCount: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceSuccessCount ?? 0), 0),
+      headingConvergenceFailureCount: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceFailureCount ?? 0), 0),
+      headingConvergenceTimeoutCount: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceTimeoutCount ?? 0), 0),
+      structureConformanceTimeoutCount: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.structureConformanceTimeoutCount ?? 0), 0),
+    },
+  };
+}
+
 function parseTraceReason(details: string | undefined): string | null {
   if (!details) return null;
   if (!details.startsWith('{')) return details;
@@ -262,6 +299,7 @@ async function main(): Promise<void> {
     semanticRan: boolean;
     categoryGap?: { before: ReturnType<typeof categoryRows>; after: ReturnType<typeof categoryRows> };
     appliedTools?: AppliedRemediationTool[];
+    runtimeSummary?: RemediationRuntimeSummary;
     falsePositiveApplied?: number;
     error?: string;
   }> = [];
@@ -288,6 +326,9 @@ async function main(): Promise<void> {
     let semanticRan = false;
     let categoryGap: { before: ReturnType<typeof categoryRows>; after: ReturnType<typeof categoryRows> } | undefined;
     const appliedTools: AppliedRemediationTool[] = [];
+    const runtimeSummaries: RemediationRuntimeSummary[] = [];
+    let initialAnalysisRuntime: AnalysisResult['runtimeSummary'] | undefined;
+    let finalAnalysisRuntime: AnalysisResult['runtimeSummary'] | undefined;
     const runtimeTraceEvents: RemediationRuntimeTraceEvent[] = [];
     let verifiedCheckpointReturned = false;
 
@@ -308,6 +349,7 @@ async function main(): Promise<void> {
       beforeGrade = result.grade;
       pdfClassBefore = result.pdfClass;
       categoriesBefore = categoryRows(result);
+      initialAnalysisRuntime = result.runtimeSummary;
 
       const memDb = new Database(':memory:');
       initSchema(memDb);
@@ -324,6 +366,7 @@ async function main(): Promise<void> {
         },
       });
       appliedTools.push(...remediation.appliedTools);
+      if (remediation.runtimeSummary) runtimeSummaries.push(remediation.runtimeSummary);
       verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(remediation);
       let outBuf = buffer;
       let outAfter = remediation.after;
@@ -363,6 +406,7 @@ async function main(): Promise<void> {
           outAfter = r2.remediation.after;
           outSnap = r2.snapshot;
           appliedTools.push(...r2.remediation.appliedTools);
+          if (r2.remediation.runtimeSummary) runtimeSummaries.push(r2.remediation.runtimeSummary);
           verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(r2.remediation);
         }
         if (!verifiedCheckpointReturned && outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
@@ -465,6 +509,7 @@ async function main(): Promise<void> {
       afterScore = outAfter.score;
       afterGrade = outAfter.grade;
       pdfClassAfter = outAfter.pdfClass;
+      finalAnalysisRuntime = outAfter.runtimeSummary;
 
       if (afterScore < REMEDIATION_TARGET_SCORE) {
         categoryGap = {
@@ -507,6 +552,11 @@ async function main(): Promise<void> {
       semanticRan,
       categoryGap,
       appliedTools,
+      runtimeSummary: mergeBenchmarkRuntimeSummaries({
+        summaries: runtimeSummaries,
+        analysisBefore: initialAnalysisRuntime,
+        analysisAfter: finalAnalysisRuntime,
+      }),
       falsePositiveApplied: countFalsePositiveApplied(appliedTools),
       error,
     });

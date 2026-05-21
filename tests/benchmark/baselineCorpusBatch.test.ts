@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  mergeBenchmarkRuntimeSummaries,
   remediationBenchmarkInitialAnalysisOptions,
   shouldRunSecondDeterministicPass,
 } from '../../scripts/baseline-corpus-batch.js';
@@ -64,5 +65,106 @@ describe('baseline corpus deterministic pass admission', () => {
       signal: controller.signal,
       bypassCache: true,
     });
+  });
+
+  it('merges deterministic runtime summaries into one benchmark row summary', () => {
+    const summary = mergeBenchmarkRuntimeSummaries({
+      analysisBefore: {
+        totalMs: 100,
+        cacheHit: false,
+        pdfjsMs: 20,
+        structureMs: 70,
+        mergeMs: 2,
+        structuralAuditMs: 2,
+        scoringMs: 4,
+        classificationMs: 2,
+        finalizeEvidenceMs: 0,
+        scorerCategoryMs: {},
+      },
+      analysisAfter: {
+        totalMs: 200,
+        cacheHit: true,
+        pdfjsMs: 0,
+        structureMs: 0,
+        mergeMs: 0,
+        structuralAuditMs: 0,
+        scoringMs: 0,
+        classificationMs: 0,
+        finalizeEvidenceMs: 0,
+        scorerCategoryMs: {},
+      },
+      summaries: [
+        {
+          analysisBefore: null,
+          analysisAfter: null,
+          deterministicTotalMs: 1000,
+          stageTimings: [{
+            key: 'planner:stage1',
+            stageNumber: 1,
+            round: 1,
+            source: 'planner',
+            toolCount: 1,
+            totalMs: 700,
+            reanalyzeMs: 500,
+          }],
+          toolTimings: [{
+            toolName: 'set_document_title',
+            stage: 1,
+            round: 1,
+            source: 'planner',
+            durationMs: 10,
+            outcome: 'applied',
+          }],
+          semanticLaneTimings: [],
+          boundedWork: {
+            semanticCandidateCapsHit: 0,
+            deterministicEarlyExitCount: 1,
+            deterministicEarlyExitReasons: [{ key: 'soft_deadline_before_stage', count: 1 }],
+            semanticSkipReasons: [],
+            zeroHeadingLaneActivations: 0,
+            headingConvergenceAttemptCount: 0,
+            headingConvergenceSuccessCount: 0,
+            headingConvergenceFailureCount: 0,
+            headingConvergenceTimeoutCount: 0,
+            structureConformanceTimeoutCount: 0,
+          },
+        },
+        {
+          analysisBefore: null,
+          analysisAfter: null,
+          deterministicTotalMs: 2000,
+          stageTimings: [],
+          toolTimings: [],
+          semanticLaneTimings: [],
+          boundedWork: {
+            semanticCandidateCapsHit: 0,
+            deterministicEarlyExitCount: 2,
+            deterministicEarlyExitReasons: [{ key: 'soft_deadline_before_stage', count: 2 }],
+            semanticSkipReasons: [{ key: 'figure:no_llm_config', count: 1 }],
+            zeroHeadingLaneActivations: 1,
+            headingConvergenceAttemptCount: 2,
+            headingConvergenceSuccessCount: 1,
+            headingConvergenceFailureCount: 1,
+            headingConvergenceTimeoutCount: 0,
+            structureConformanceTimeoutCount: 0,
+          },
+        },
+      ],
+    });
+
+    expect(summary?.deterministicTotalMs).toBe(3000);
+    expect(summary?.analysisBefore?.totalMs).toBe(100);
+    expect(summary?.analysisAfter?.totalMs).toBe(200);
+    expect(summary?.stageTimings).toHaveLength(1);
+    expect(summary?.toolTimings).toHaveLength(1);
+    expect(summary?.boundedWork.deterministicEarlyExitCount).toBe(3);
+    expect(summary?.boundedWork.deterministicEarlyExitReasons).toEqual([
+      { key: 'soft_deadline_before_stage', count: 3 },
+    ]);
+    expect(summary?.boundedWork.semanticSkipReasons).toEqual([
+      { key: 'figure:no_llm_config', count: 1 },
+    ]);
+    expect(summary?.boundedWork.zeroHeadingLaneActivations).toBe(1);
+    expect(summary?.boundedWork.headingConvergenceAttemptCount).toBe(2);
   });
 });
