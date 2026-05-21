@@ -17,6 +17,9 @@ function features(overrides: Partial<ContentStreamCoverageFeatures> = {}): Conte
     totalPageStreams: 8,
     uncheckedPageStreams: 0,
     formXObjectsChecked: 0,
+    totalFormXObjects: 0,
+    formXObjectParseErrorCount: 0,
+    formXObjectSampleLimitHitCount: 0,
     directEventDebt: 0,
     orphanMcidCount: 0,
     contentScoreCapRules: [],
@@ -54,6 +57,7 @@ describe('content-stream coverage diagnostic', () => {
       pageStreamsChecked: 8,
       totalPageStreams: 8,
       formXObjectsChecked: 2,
+      totalFormXObjects: 0,
       auditConfidence: 'heuristic',
       directEventDebt: 6,
     }));
@@ -61,6 +65,36 @@ describe('content-stream coverage diagnostic', () => {
     expect(result.classification).toBe('form_xobject_coverage_unknown');
     expect(result.suggestedAction).toBe('form_xobject_metric_candidate');
     expect(result.reasons).toContain('form_xobject_total_not_recorded');
+  });
+
+  it('identifies measured Form XObject coverage without changing scoring', () => {
+    const result = classifyContentStreamCoverage(features({
+      pageStreamsChecked: 8,
+      totalPageStreams: 8,
+      formXObjectsChecked: 2,
+      totalFormXObjects: 2,
+      auditConfidence: 'heuristic',
+      directEventDebt: 6,
+    }));
+
+    expect(result.classification).toBe('form_xobject_coverage_measured');
+    expect(result.suggestedAction).toBe('form_xobject_metric_candidate');
+    expect(result.reasons).toContain('form_xobject_total_coverage_measured');
+  });
+
+  it('parks partial Form XObject coverage', () => {
+    const result = classifyContentStreamCoverage(features({
+      pageStreamsChecked: 8,
+      totalPageStreams: 8,
+      formXObjectsChecked: 2,
+      totalFormXObjects: 4,
+      formXObjectParseErrorCount: 1,
+      auditConfidence: 'heuristic',
+      directEventDebt: 6,
+    }));
+
+    expect(result.classification).toBe('form_xobject_coverage_partial');
+    expect(result.suggestedAction).toBe('keep_diagnostic');
   });
 
   it('keeps parse failures diagnostic-only', () => {
@@ -108,6 +142,31 @@ describe('content-stream coverage diagnostic', () => {
     ]);
 
     expect(report.decision.status).toBe('plan_form_xobject_coverage_metric');
+  });
+
+  it('prefers scoring validation once Form XObject coverage is measured on focus rows only', () => {
+    const baseRow = {
+      id: 'focus',
+      pdfPath: '/tmp/focus.pdf',
+      title: 'focus',
+      role: 'focus' as const,
+      classification: 'form_xobject_coverage_measured' as const,
+      suggestedAction: 'form_xobject_metric_candidate' as const,
+      reasons: [],
+      features: features(),
+    };
+    const report = buildContentStreamCoverageReport('/tmp/out', [
+      baseRow,
+      {
+        ...baseRow,
+        id: 'control',
+        role: 'control',
+        classification: 'verified_full_stream_coverage',
+        suggestedAction: 'already_verified',
+      },
+    ]);
+
+    expect(report.decision.status).toBe('plan_form_xobject_scoring_validation');
   });
 
   it('keeps coverage diagnostic-only when a Form XObject control also triggers', () => {

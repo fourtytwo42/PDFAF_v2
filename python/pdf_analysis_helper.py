@@ -58,6 +58,9 @@ except ImportError:
             "pageStreamsChecked": 0,
             "totalPageStreams": 0,
             "formXObjectsChecked": 0,
+            "totalFormXObjects": 0,
+            "formXObjectParseErrorCount": 0,
+            "formXObjectSampleLimitHitCount": 0,
             "textOutsideMarkedContentOrArtifact": 0,
             "imageOutsideMarkedContentOrArtifact": 0,
             "pathOutsideMarkedContentOrArtifact": 0,
@@ -1370,6 +1373,9 @@ def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
         "pageStreamsChecked": 0,
         "totalPageStreams": len(pdf.pages),
         "formXObjectsChecked": 0,
+        "totalFormXObjects": 0,
+        "formXObjectParseErrorCount": 0,
+        "formXObjectSampleLimitHitCount": 0,
         "textOutsideMarkedContentOrArtifact": 0,
         "imageOutsideMarkedContentOrArtifact": 0,
         "pathOutsideMarkedContentOrArtifact": 0,
@@ -1440,15 +1446,27 @@ def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
                 resources = page.obj.get("/Resources")
                 xobjects = resources.get("/XObject") if isinstance(resources, pikepdf.Dictionary) else None
                 if isinstance(xobjects, pikepdf.Dictionary):
-                    for name in list(xobjects.keys())[:25]:
+                    form_xobjects = []
+                    for name in list(xobjects.keys()):
                         try:
                             xobj = xobjects[name]
-                            if not isinstance(xobj, pikepdf.Stream) or xobj.get("/Subtype") != pikepdf.Name("/Form"):
-                                continue
+                            if isinstance(xobj, pikepdf.Stream) and xobj.get("/Subtype") == pikepdf.Name("/Form"):
+                                form_xobjects.append(name)
+                        except Exception:
+                            out["formXObjectParseErrorCount"] = min(200, int(out.get("formXObjectParseErrorCount", 0)) + 1)
+                    out["totalFormXObjects"] = min(200, int(out.get("totalFormXObjects", 0)) + len(form_xobjects))
+                    if len(form_xobjects) > 25:
+                        out["formXObjectSampleLimitHitCount"] = min(
+                            200,
+                            int(out.get("formXObjectSampleLimitHitCount", 0)) + 1,
+                        )
+                    for name in form_xobjects[:25]:
+                        try:
+                            xobj = xobjects[name]
                             walk_instructions(pikepdf.parse_content_stream(xobj))
                             out["formXObjectsChecked"] += 1
                         except Exception:
-                            pass
+                            out["formXObjectParseErrorCount"] = min(200, int(out.get("formXObjectParseErrorCount", 0)) + 1)
             except Exception:
                 pass
     except Exception:
@@ -6612,6 +6630,9 @@ def main():
             "pageStreamsChecked": 0,
             "totalPageStreams": 0,
             "formXObjectsChecked": 0,
+            "totalFormXObjects": 0,
+            "formXObjectParseErrorCount": 0,
+            "formXObjectSampleLimitHitCount": 0,
             "textOutsideMarkedContentOrArtifact": 0,
             "imageOutsideMarkedContentOrArtifact": 0,
             "pathOutsideMarkedContentOrArtifact": 0,

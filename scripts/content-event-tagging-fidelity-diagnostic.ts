@@ -64,6 +64,9 @@ export interface ContentEventFeatures {
   pageStreamsChecked: number;
   totalPageStreams: number;
   formXObjectsChecked: number;
+  totalFormXObjects: number;
+  formXObjectParseErrorCount: number;
+  formXObjectSampleLimitHitCount: number;
   auditConfidence: 'verified' | 'heuristic' | 'manual_review_required';
   textOutside: number;
   imageOutside: number;
@@ -262,6 +265,9 @@ export function extractContentEventFeatures(analysis: AnalysisResult, snapshot: 
   const pageStreamsChecked = audit?.pageStreamsChecked ?? 0;
   const totalPageStreams = audit?.totalPageStreams ?? snapshot.pageCount;
   const formXObjectsChecked = audit?.formXObjectsChecked ?? 0;
+  const totalFormXObjects = audit?.totalFormXObjects ?? 0;
+  const formXObjectParseErrorCount = audit?.formXObjectParseErrorCount ?? 0;
+  const formXObjectSampleLimitHitCount = audit?.formXObjectSampleLimitHitCount ?? 0;
   const auditConfidence = audit
     ? pageStreamsChecked >= totalPageStreams && formXObjectsChecked === 0
       ? 'verified'
@@ -317,6 +323,9 @@ export function extractContentEventFeatures(analysis: AnalysisResult, snapshot: 
     pageStreamsChecked,
     totalPageStreams,
     formXObjectsChecked,
+    totalFormXObjects,
+    formXObjectParseErrorCount,
+    formXObjectSampleLimitHitCount,
     auditConfidence,
     textOutside,
     imageOutside,

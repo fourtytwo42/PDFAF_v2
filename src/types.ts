@@ -418,6 +418,9 @@ export interface DocumentSnapshot {
     pageStreamsChecked?: number;
     totalPageStreams?: number;
     formXObjectsChecked?: number;
+    totalFormXObjects?: number;
+    formXObjectParseErrorCount?: number;
+    formXObjectSampleLimitHitCount?: number;
     textOutsideMarkedContentOrArtifact: number;
     imageOutsideMarkedContentOrArtifact: number;
     pathOutsideMarkedContentOrArtifact: number;

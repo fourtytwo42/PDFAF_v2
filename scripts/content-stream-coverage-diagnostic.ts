@@ -18,6 +18,8 @@ const DEFAULT_OUT = join(DEFAULT_OUT_ROOT, `content-stream-coverage-${timestampS
 export type ContentStreamCoverageClassification =
   | 'verified_full_stream_coverage'
   | 'page_sample_limit_coverage_gap'
+  | 'form_xobject_coverage_measured'
+  | 'form_xobject_coverage_partial'
   | 'form_xobject_coverage_unknown'
   | 'parse_failure_or_unchecked_pages'
   | 'missing_structure_manual_review'
@@ -42,6 +44,9 @@ export interface ContentStreamCoverageFeatures {
   totalPageStreams: number;
   uncheckedPageStreams: number;
   formXObjectsChecked: number;
+  totalFormXObjects: number;
+  formXObjectParseErrorCount: number;
+  formXObjectSampleLimitHitCount: number;
   directEventDebt: number;
   orphanMcidCount: number;
   contentScoreCapRules: string[];
@@ -65,6 +70,7 @@ export interface ContentStreamCoverageReport {
   decision: {
     status:
       | 'plan_form_xobject_coverage_metric'
+      | 'plan_form_xobject_scoring_validation'
       | 'plan_page_sample_coverage_validation'
       | 'keep_content_coverage_diagnostic_only'
       | 'diagnostic_errors_present';
@@ -157,6 +163,9 @@ function coverageFeatures(features: ContentEventFeatures): ContentStreamCoverage
     totalPageStreams: features.totalPageStreams,
     uncheckedPageStreams: Math.max(0, features.totalPageStreams - features.pageStreamsChecked),
     formXObjectsChecked: features.formXObjectsChecked,
+    totalFormXObjects: features.totalFormXObjects,
+    formXObjectParseErrorCount: features.formXObjectParseErrorCount,
+    formXObjectSampleLimitHitCount: features.formXObjectSampleLimitHitCount,
     directEventDebt: features.directEventDebt,
     orphanMcidCount: features.orphanMcidCount,
     contentScoreCapRules: features.contentScoreCapRules,
@@ -171,7 +180,9 @@ export function classifyContentStreamCoverage(features: ContentStreamCoverageFea
   const reasons = [
     `audit_confidence:${features.auditConfidence}`,
     `pages_checked:${features.pageStreamsChecked}/${features.totalPageStreams}`,
-    `form_xobjects_checked:${features.formXObjectsChecked}`,
+    `form_xobjects_checked:${features.formXObjectsChecked}/${features.totalFormXObjects}`,
+    `form_xobject_parse_errors:${features.formXObjectParseErrorCount}`,
+    `form_xobject_sample_limit_hits:${features.formXObjectSampleLimitHitCount}`,
     `direct_event_debt:${features.directEventDebt}`,
   ];
 
@@ -196,6 +207,27 @@ export function classifyContentStreamCoverage(features: ContentStreamCoverageFea
       classification: 'parse_failure_or_unchecked_pages',
       suggestedAction: 'keep_diagnostic',
       reasons,
+    };
+  }
+
+  if (
+    features.totalFormXObjects > 0 &&
+    features.formXObjectsChecked >= features.totalFormXObjects &&
+    features.formXObjectParseErrorCount === 0 &&
+    features.formXObjectSampleLimitHitCount === 0
+  ) {
+    return {
+      classification: 'form_xobject_coverage_measured',
+      suggestedAction: features.directEventDebt > 0 ? 'form_xobject_metric_candidate' : 'keep_diagnostic',
+      reasons: [...reasons, 'form_xobject_total_coverage_measured'],
+    };
+  }
+
+  if (features.totalFormXObjects > 0) {
+    return {
+      classification: 'form_xobject_coverage_partial',
+      suggestedAction: 'keep_diagnostic',
+      reasons: [...reasons, 'form_xobject_coverage_not_complete'],
     };
   }
 
@@ -254,13 +286,18 @@ export function buildContentStreamCoverageReport(outDir: string, rows: ContentSt
   const errors = classificationDistribution.analysis_error ?? 0;
   const formFocus = rows.filter(row => row.role === 'focus' && row.classification === 'form_xobject_coverage_unknown').length;
   const formControls = rows.filter(row => row.role === 'control' && row.classification === 'form_xobject_coverage_unknown').length;
+  const measuredFormFocus = rows.filter(row => row.role === 'focus' && row.classification === 'form_xobject_coverage_measured').length;
+  const measuredFormControls = rows.filter(row => row.role === 'control' && row.classification === 'form_xobject_coverage_measured').length;
+  const partialForms = classificationDistribution.form_xobject_coverage_partial ?? 0;
   const sampleFocus = rows.filter(row => row.role === 'focus' && row.classification === 'page_sample_limit_coverage_gap').length;
   const sampleControls = rows.filter(row => row.role === 'control' && row.classification === 'page_sample_limit_coverage_gap').length;
   const parseFailures = classificationDistribution.parse_failure_or_unchecked_pages ?? 0;
   const verified = classificationDistribution.verified_full_stream_coverage ?? 0;
   const status = errors > 0
     ? 'diagnostic_errors_present'
-    : formFocus > 0 && formControls === 0
+    : measuredFormFocus > 0 && measuredFormControls === 0
+      ? 'plan_form_xobject_scoring_validation'
+      : formFocus > 0 && formControls === 0
       ? 'plan_form_xobject_coverage_metric'
       : sampleFocus > 0 && sampleControls === 0
         ? 'plan_page_sample_coverage_validation'
@@ -277,6 +314,9 @@ export function buildContentStreamCoverageReport(outDir: string, rows: ContentSt
       reasons: [
         `form_focus=${formFocus}`,
         `form_controls=${formControls}`,
+        `measured_form_focus=${measuredFormFocus}`,
+        `measured_form_controls=${measuredFormControls}`,
+        `partial_forms=${partialForms}`,
         `sample_focus=${sampleFocus}`,
         `sample_controls=${sampleControls}`,
         `parse_failures=${parseFailures}`,
@@ -311,7 +351,7 @@ function renderMarkdown(report: ContentStreamCoverageReport): string {
       row.role,
       f ? `${f.score}/${f.grade}` : 'ERR',
       f ? `${f.pageStreamsChecked}/${f.totalPageStreams}` : 'ERR',
-      f?.formXObjectsChecked ?? 'ERR',
+      f ? `${f.formXObjectsChecked}/${f.totalFormXObjects}` : 'ERR',
       f?.directEventDebt ?? 'ERR',
       `\`${row.classification}\``,
       `\`${row.suggestedAction}\``,
@@ -320,6 +360,8 @@ function renderMarkdown(report: ContentStreamCoverageReport): string {
   lines.push('', '## Interpretation', '');
   if (report.decision.status === 'plan_form_xobject_coverage_metric') {
     lines.push('At least one focus row has content-event debt behind Form XObject coverage uncertainty while controls do not. A later source change should add native total/checked Form XObject coverage metrics before any scoring or remediation promotion.');
+  } else if (report.decision.status === 'plan_form_xobject_scoring_validation') {
+    lines.push('At least one focus row now has measured Form XObject coverage while controls do not. A later stage may validate whether this evidence can safely change scoring confidence.');
   } else if (report.decision.status === 'plan_page_sample_coverage_validation') {
     lines.push('At least one focus row has content-event debt behind the bounded first-12-page sample while controls do not. A later validation should test whether raising or stratifying the page sample is worth the runtime cost.');
   } else if (report.decision.status === 'keep_content_coverage_diagnostic_only') {
