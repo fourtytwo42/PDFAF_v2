@@ -6,7 +6,8 @@
  * - `--semantic`: after deterministic + alt, if score < 80 and OPENAI_COMPAT_BASE_URL is set,
  *   runs the same semantic sequence as run-remediate-one.ts, then applyPostRemediationAltRepair again.
  *
- * Flags: `--semantic`, `--no-pdfs` (skip writing *_remediated.pdf; report JSON still written).
+ * Flags: `--semantic`, `--no-pdfs` (skip writing *_remediated.pdf; report JSON still written),
+ * `--write-runtime-traces` (write compact remediation runtime traces for completed rows too).
  * Args: [inputDir] [outputDir] (optional; must not start with `-`).
  *
  * For reproducible corpus numbers, each file uses ephemeral :memory: playbook + tool-outcome stores.
@@ -146,21 +147,20 @@ function parseTraceReason(details: string | undefined): string | null {
   }
 }
 
-async function writeRuntimeTimeoutTrace(input: {
+export function buildRuntimeTraceArtifact(input: {
   outRoot: string;
   base: string;
   file: string;
   error: string | undefined;
   durationMs: number;
   events: RemediationRuntimeTraceEvent[];
-}): Promise<void> {
-  if (!isTimeoutLikeError(input.error)) return;
+}) {
   const lastEvent = input.events.at(-1) ?? null;
   const toolFinishes = input.events.filter(event => event.kind === 'tool_finish');
   const lastToolFinish = toolFinishes.at(-1) ?? null;
   const checkpoints = input.events.filter(event => event.kind === 'verified_checkpoint');
   const lastCheckpoint = checkpoints.at(-1) ?? null;
-  const artifact = {
+  return {
     file: input.file,
     rowId: input.base,
     generatedAt: new Date().toISOString(),
@@ -195,7 +195,35 @@ async function writeRuntimeTimeoutTrace(input: {
     })),
     recentEvents: input.events.slice(-100),
   };
+}
+
+async function writeRuntimeTimeoutTrace(input: {
+  outRoot: string;
+  base: string;
+  file: string;
+  error: string | undefined;
+  durationMs: number;
+  events: RemediationRuntimeTraceEvent[];
+}): Promise<void> {
+  if (!isTimeoutLikeError(input.error)) return;
+  const artifact = buildRuntimeTraceArtifact(input);
   const dir = join(input.outRoot, 'runtime-timeouts');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${input.base}.json`), JSON.stringify(artifact, null, 2), 'utf8');
+}
+
+async function writeCompletedRuntimeTrace(input: {
+  outRoot: string;
+  base: string;
+  file: string;
+  error: string | undefined;
+  durationMs: number;
+  events: RemediationRuntimeTraceEvent[];
+  enabled: boolean;
+}): Promise<void> {
+  if (!input.enabled || input.error || input.events.length === 0) return;
+  const artifact = buildRuntimeTraceArtifact(input);
+  const dir = join(input.outRoot, 'runtime-traces');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, `${input.base}.json`), JSON.stringify(artifact, null, 2), 'utf8');
 }
@@ -223,6 +251,7 @@ async function probeOpenAiCompatServer(): Promise<boolean> {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const writePdfs = !argv.includes('--no-pdfs');
+  const writeRuntimeTraces = argv.includes('--write-runtime-traces');
   const pos = argv.filter(a => !a.startsWith('-'));
   const inputDir = pos[0] ?? join(process.cwd(), 'Input', 'corpus_from_pdfaf_v1');
   const outRoot = pos[1] ?? join(process.cwd(), 'Output', 'baseline_corpus_run');
@@ -535,6 +564,15 @@ async function main(): Promise<void> {
       error,
       durationMs,
       events: runtimeTraceEvents,
+    });
+    await writeCompletedRuntimeTrace({
+      outRoot,
+      base,
+      file: name,
+      error,
+      durationMs,
+      events: runtimeTraceEvents,
+      enabled: writeRuntimeTraces,
     });
     rows.push({
       file: name,

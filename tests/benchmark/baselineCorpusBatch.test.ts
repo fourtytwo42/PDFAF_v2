@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildRuntimeTraceArtifact,
   mergeBenchmarkRuntimeSummaries,
   remediationBenchmarkInitialAnalysisOptions,
   shouldRunSecondDeterministicPass,
@@ -166,5 +167,53 @@ describe('baseline corpus deterministic pass admission', () => {
     ]);
     expect(summary?.boundedWork.zeroHeadingLaneActivations).toBe(1);
     expect(summary?.boundedWork.headingConvergenceAttemptCount).toBe(2);
+  });
+
+  it('builds compact runtime trace artifacts for completed checkpoint-return rows', () => {
+    const artifact = buildRuntimeTraceArtifact({
+      outRoot: '/out',
+      base: '4683-report',
+      file: '4683-report.pdf',
+      error: undefined,
+      durationMs: 231_000,
+      events: [
+        {
+          kind: 'tool_finish',
+          round: 1,
+          stageNumber: 4,
+          toolName: 'normalize_table_structure',
+          outcome: 'applied',
+          durationMs: 200,
+          stateSignatureBefore: 'abc',
+          elapsedMs: 100_000,
+        },
+        {
+          kind: 'verified_checkpoint',
+          reason: 'stage_4',
+          score: 59,
+          grade: 'F',
+          appliedToolCount: 8,
+          eligible: false,
+          eligibilityReason: 'checkpoint_below_floor(59<85)',
+          elapsedMs: 120_000,
+        },
+        {
+          kind: 'verified_checkpoint',
+          reason: 'return:before_final_reanalysis_low_score',
+          score: 59,
+          grade: 'F',
+          appliedToolCount: 8,
+          eligible: true,
+          eligibilityReason: 'low_score_timeout_checkpoint_eligible',
+          returned: true,
+          elapsedMs: 205_000,
+        },
+      ],
+    });
+
+    expect(artifact.lastVerifiedCheckpointReturned).toBe(true);
+    expect(artifact.lastVerifiedCheckpointEligibilityReason).toBe('low_score_timeout_checkpoint_eligible');
+    expect(artifact.verifiedCheckpointHistory).toHaveLength(2);
+    expect(artifact.recentEvents).toHaveLength(3);
   });
 });
