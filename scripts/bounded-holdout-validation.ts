@@ -136,10 +136,10 @@ export function safeBase(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'pdf';
 }
 
-async function listPdfs(inputDir: string, limit: number): Promise<string[]> {
+export async function listPdfs(inputDir: string, limit: number): Promise<string[]> {
   const entries = await readdir(inputDir, { withFileTypes: true });
   return entries
-    .filter(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.pdf'))
+    .filter(entry => (entry.isFile() || entry.isSymbolicLink()) && entry.name.toLowerCase().endsWith('.pdf'))
     .map(entry => join(inputDir, entry.name))
     .sort((a, b) => basename(a).localeCompare(basename(b)))
     .slice(0, limit);

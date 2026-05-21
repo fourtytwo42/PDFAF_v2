@@ -1,6 +1,10 @@
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildAggregateReport,
+  listPdfs,
   safeBase,
   type BoundedHoldoutRow,
 } from '../../scripts/bounded-holdout-validation.js';
@@ -32,6 +36,23 @@ describe('bounded holdout validation helpers', () => {
   it('sanitizes per-row artifact names', () => {
     expect(safeBase('A report: fiscal year 2024.pdf')).toBe('A_report_fiscal_year_2024.pdf');
     expect(safeBase('***')).toBe('_');
+  });
+
+  it('lists real and symlinked PDF inputs', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-bounded-holdout-'));
+    try {
+      const sourcePdf = join(dir, 'source.pdf');
+      await writeFile(sourcePdf, '%PDF-1.7\n');
+      await writeFile(join(dir, 'notes.txt'), 'ignore me');
+      await symlink(sourcePdf, join(dir, 'linked.pdf'));
+      await symlink(join(dir, 'notes.txt'), join(dir, 'linked.txt'));
+
+      const pdfs = await listPdfs(dir, 10);
+
+      expect(pdfs.map(file => basename(file))).toEqual(['linked.pdf', 'source.pdf']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('computes completed-row and all-row means separately', () => {
