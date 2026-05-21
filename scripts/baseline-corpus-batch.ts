@@ -98,6 +98,49 @@ function runtimeEventCounts(events: RemediationRuntimeTraceEvent[]): Array<{ key
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
+function liveAnalysisTraceSummary(events: RemediationRuntimeTraceEvent[]): {
+  count: number;
+  totalMs: number;
+  byContext: Array<{ key: string; count: number; totalMs: number }>;
+  top: Array<{
+    context: string;
+    toolName: string | null;
+    targetRef: string | null;
+    durationMs: number;
+    scoreBefore: number | null;
+    scoreAfter: number | null;
+    elapsedMs: number;
+  }>;
+} {
+  const finishes = events.filter(event => event.kind === 'live_analysis_finish');
+  const byContext = new Map<string, { count: number; totalMs: number }>();
+  for (const event of finishes) {
+    const current = byContext.get(event.context) ?? { count: 0, totalMs: 0 };
+    current.count += 1;
+    current.totalMs += Math.round(event.durationMs);
+    byContext.set(event.context, current);
+  }
+  return {
+    count: finishes.length,
+    totalMs: finishes.reduce((sum, event) => sum + Math.round(event.durationMs), 0),
+    byContext: [...byContext.entries()]
+      .map(([key, value]) => ({ key, count: value.count, totalMs: value.totalMs }))
+      .sort((a, b) => b.totalMs - a.totalMs || b.count - a.count || a.key.localeCompare(b.key)),
+    top: finishes
+      .map(event => ({
+        context: event.context,
+        toolName: event.toolName ?? null,
+        targetRef: event.targetRef ?? null,
+        durationMs: Math.round(event.durationMs),
+        scoreBefore: event.scoreBefore ?? null,
+        scoreAfter: event.scoreAfter ?? null,
+        elapsedMs: Math.round(event.elapsedMs),
+      }))
+      .sort((a, b) => b.durationMs - a.durationMs || a.elapsedMs - b.elapsedMs)
+      .slice(0, 10),
+  };
+}
+
 function mergeCountRows(rows: Array<{ key: string; count: number }>): Array<{ key: string; count: number }> {
   const counts = new Map<string, number>();
   for (const row of rows) counts.set(row.key, (counts.get(row.key) ?? 0) + row.count);
@@ -119,6 +162,7 @@ export function mergeBenchmarkRuntimeSummaries(input: {
     deterministicTotalMs: summaries.reduce((sum, summary) => sum + (summary.deterministicTotalMs ?? 0), 0),
     stageTimings: summaries.flatMap(summary => summary.stageTimings ?? []),
     toolTimings: summaries.flatMap(summary => summary.toolTimings ?? []),
+    liveAnalysisTimings: summaries.flatMap(summary => summary.liveAnalysisTimings ?? []),
     semanticLaneTimings: summaries.flatMap(summary => summary.semanticLaneTimings ?? []),
     boundedWork: {
       semanticCandidateCapsHit: summaries.reduce((sum, summary) => sum + (summary.boundedWork?.semanticCandidateCapsHit ?? 0), 0),
@@ -160,6 +204,7 @@ export function buildRuntimeTraceArtifact(input: {
   const lastToolFinish = toolFinishes.at(-1) ?? null;
   const checkpoints = input.events.filter(event => event.kind === 'verified_checkpoint');
   const lastCheckpoint = checkpoints.at(-1) ?? null;
+  const liveAnalysisSummary = liveAnalysisTraceSummary(input.events);
   return {
     file: input.file,
     rowId: input.base,
@@ -183,6 +228,7 @@ export function buildRuntimeTraceArtifact(input: {
     lastVerifiedCheckpointEligible: lastCheckpoint?.eligible ?? null,
     lastVerifiedCheckpointEligibilityReason: lastCheckpoint?.eligibilityReason ?? null,
     lastVerifiedCheckpointReturned: lastCheckpoint?.returned === true,
+    liveAnalysisSummary,
     verifiedCheckpointHistory: checkpoints.map(event => ({
       reason: event.reason,
       score: event.score,

@@ -36,6 +36,7 @@ import type {
   PlannedRemediationTool,
   Playbook,
   RemediationBoundedWorkSummary,
+  RemediationLiveAnalysisRuntimeSummary,
   RemediationPlan,
   RemediationResult,
   RemediationRoundSummary,
@@ -1940,6 +1941,7 @@ function emptyRuntimeSummary(before: AnalysisResult): RemediationRuntimeSummary 
     deterministicTotalMs: 0,
     stageTimings: [],
     toolTimings: [],
+    liveAnalysisTimings: [],
     semanticLaneTimings: [],
     boundedWork: {
       semanticCandidateCapsHit: 0,
@@ -2510,6 +2512,11 @@ function hasRequiredBatchParams(tool: PlannedRemediationTool): boolean {
     return typeof ref === 'string' && ref.length > 0;
   }
   return true;
+}
+
+function plannedToolTargetRef(tool: PlannedRemediationTool): string | null {
+  const ref = tool.params['structRef'] ?? tool.params['targetRef'];
+  return typeof ref === 'string' && ref.length > 0 ? ref : null;
 }
 
 function invalidatingBatchInvariant(details: PythonMutationDetailPayload | null): boolean {
@@ -7829,6 +7836,29 @@ export type RemediationRuntimeTraceEvent =
       elapsedMs: number;
     }
   | {
+      kind: 'live_analysis_start';
+      round: number;
+      stageNumber: number;
+      context: string;
+      toolName?: string | null;
+      targetRef?: string | null;
+      scoreBefore?: number | null;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'live_analysis_finish';
+      round: number;
+      stageNumber: number;
+      context: string;
+      toolName?: string | null;
+      targetRef?: string | null;
+      durationMs: number;
+      scoreBefore?: number | null;
+      scoreAfter?: number | null;
+      gradeAfter?: string | null;
+      elapsedMs: number;
+    }
+  | {
       kind: 'stage_reanalysis_start';
       round: number;
       stageNumber: number;
@@ -7886,11 +7916,61 @@ export async function remediatePdf(
   const reportProgress = async (percent: number, stage: string, detail?: string) => {
     await options?.onProgress?.({ percent, stage, detail });
   };
+  const started = Date.now();
   const reportRuntimeTrace = async (event: RemediationRuntimeTraceEvent) => {
     await options?.onRuntimeTrace?.(event);
   };
+  const runPlannerLiveAnalysis = async (input: {
+    round: number;
+    stageNumber: number;
+    context: string;
+    toolName?: string | null;
+    targetRef?: string | null;
+    scoreBefore?: number | null;
+    run: () => Promise<Awaited<ReturnType<typeof analyzePdf>>>;
+  }): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
+    const analysisStarted = performance.now();
+    await reportRuntimeTrace({
+      kind: 'live_analysis_start',
+      round: input.round,
+      stageNumber: input.stageNumber,
+      context: input.context,
+      ...(input.toolName !== undefined ? { toolName: input.toolName } : {}),
+      ...(input.targetRef !== undefined ? { targetRef: input.targetRef } : {}),
+      ...(input.scoreBefore !== undefined ? { scoreBefore: input.scoreBefore } : {}),
+      elapsedMs: Date.now() - started,
+    });
+    const analyzed = await input.run();
+    const durationMs = Math.round(performance.now() - analysisStarted);
+    const row: RemediationLiveAnalysisRuntimeSummary = {
+      key: `planner:stage${input.stageNumber}:${input.context}${input.toolName ? `:${input.toolName}` : ''}`,
+      context: input.context,
+      stage: input.stageNumber,
+      round: input.round,
+      source: 'planner',
+      ...(input.toolName !== undefined ? { toolName: input.toolName } : {}),
+      ...(input.targetRef !== undefined ? { targetRef: input.targetRef } : {}),
+      durationMs,
+      ...(input.scoreBefore !== undefined ? { scoreBefore: input.scoreBefore } : {}),
+      scoreAfter: analyzed.result.score,
+    };
+    (runtimeSummary.liveAnalysisTimings ??= []).push(row);
+    await reportRuntimeTrace({
+      kind: 'live_analysis_finish',
+      round: input.round,
+      stageNumber: input.stageNumber,
+      context: input.context,
+      ...(input.toolName !== undefined ? { toolName: input.toolName } : {}),
+      ...(input.targetRef !== undefined ? { targetRef: input.targetRef } : {}),
+      durationMs,
+      ...(input.scoreBefore !== undefined ? { scoreBefore: input.scoreBefore } : {}),
+      scoreAfter: analyzed.result.score,
+      gradeAfter: analyzed.result.grade,
+      elapsedMs: Date.now() - started,
+    });
+    return analyzed;
+  };
 
-  const started = Date.now();
   const targetScore = options?.targetScore ?? REMEDIATION_TARGET_SCORE;
   const maxRounds = options?.maxRounds ?? REMEDIATION_MAX_ROUNDS;
 
@@ -8593,9 +8673,17 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            const liveAnalysis = await analyzePdf(tmp, filename, {
-              signal: options?.signal,
-              timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+            const liveAnalysis = await runPlannerLiveAnalysis({
+              round,
+              stageNumber: stage.stageNumber,
+              context: 'pre_tool_target_refresh',
+              toolName: tool.toolName,
+              targetRef: plannedToolTargetRef(tool),
+              scoreBefore: workingAnalysis.score,
+              run: () => analyzePdf(tmp, filename, {
+                signal: options?.signal,
+                timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+              }),
             });
             if (tool.toolName === 'retag_as_figure') {
               const liveParams = buildDefaultParams(
@@ -8809,8 +8897,16 @@ export async function remediatePdf(
               break;
             }
 
-            lastStageAnalysis = await reanalyzeBufferForMutation(buf, filename, 'pdfaf-figure-alt', {
-              signal: options?.signal,
+            lastStageAnalysis = await runPlannerLiveAnalysis({
+              round,
+              stageNumber: stage.stageNumber,
+              context: 'figure_alt_target_reanalysis',
+              toolName: activeFigureTool.toolName,
+              targetRef: activeRef,
+              scoreBefore: beforeFigureAnalysis.score,
+              run: () => reanalyzeBufferForMutation(buf, filename, 'pdfaf-figure-alt', {
+                signal: options?.signal,
+              }),
             });
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;
@@ -8819,12 +8915,20 @@ export async function remediatePdf(
               options?.protectedBaseline &&
               priorFigureAltAttemptCount >= STAGE178_PROTECTED_EXTRA_FIGURE_ALT_MIN_PRIOR_ATTEMPTS
             ) {
-              const confirmed = await reanalyzeBufferForMutation(
-                buf,
-                filename,
-                'pdfaf-stage178-protected-figure-alt',
-                { bypassCache: true, signal: options?.signal },
-              );
+              const confirmed = await runPlannerLiveAnalysis({
+                round,
+                stageNumber: stage.stageNumber,
+                context: 'protected_figure_alt_confirmation',
+                toolName: activeFigureTool.toolName,
+                targetRef: activeRef,
+                scoreBefore: beforeFigureAnalysis.score,
+                run: () => reanalyzeBufferForMutation(
+                  buf,
+                  filename,
+                  'pdfaf-stage178-protected-figure-alt',
+                  { bypassCache: true, signal: options?.signal },
+                ),
+              });
               const beforeAlt = categoryScore(beforeFigureAnalysis, 'alt_text') ?? 0;
               const confirmedAlt = categoryScore(confirmed.result, 'alt_text') ?? beforeAlt;
               const confirmedScoreGain = confirmed.result.score >= beforeFigureAnalysis.score;
@@ -9024,9 +9128,17 @@ export async function remediatePdf(
           const tmp = join(tmpdir(), `pdfaf-rem-live-${randomUUID()}.pdf`);
           await writeFile(tmp, buf);
           try {
-            lastStageAnalysis = await analyzePdf(tmp, filename, {
-              signal: options?.signal,
-              timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+            lastStageAnalysis = await runPlannerLiveAnalysis({
+              round,
+              stageNumber: stage.stageNumber,
+              context: 'figure_ownership_refresh',
+              toolName: liveTool.toolName,
+              targetRef: plannedToolTargetRef(liveTool),
+              scoreBefore: workingAnalysis.score,
+              run: () => analyzePdf(tmp, filename, {
+                signal: options?.signal,
+                timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+              }),
             });
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;

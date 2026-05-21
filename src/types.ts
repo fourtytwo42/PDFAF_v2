@@ -769,6 +769,19 @@ export interface RemediationToolRuntimeSummary {
   outcome: RemediationToolOutcome;
 }
 
+export interface RemediationLiveAnalysisRuntimeSummary {
+  key: string;
+  context: string;
+  stage: number;
+  round: number;
+  source: 'planner' | 'playbook' | 'post_pass';
+  toolName?: string | null;
+  targetRef?: string | null;
+  durationMs: number;
+  scoreBefore?: number | null;
+  scoreAfter?: number | null;
+}
+
 export interface PlannedRemediationTool {
   toolName: string;
   params: Record<string, unknown>;
@@ -1100,6 +1113,7 @@ export interface RemediationRuntimeSummary {
   deterministicTotalMs: number;
   stageTimings: RemediationStageRuntimeSummary[];
   toolTimings: RemediationToolRuntimeSummary[];
+  liveAnalysisTimings?: RemediationLiveAnalysisRuntimeSummary[];
   semanticLaneTimings: SemanticLaneRuntimeSummary[];
   boundedWork: RemediationBoundedWorkSummary;
 }

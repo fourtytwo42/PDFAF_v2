@@ -76,6 +76,18 @@ interface BaselineReportRow {
       durationMs?: number;
       outcome?: string;
     }>;
+    liveAnalysisTimings?: Array<{
+      key?: string;
+      context?: string;
+      stage?: number;
+      round?: number;
+      source?: string;
+      toolName?: string | null;
+      targetRef?: string | null;
+      durationMs?: number;
+      scoreBefore?: number | null;
+      scoreAfter?: number | null;
+    }>;
   };
 }
 
@@ -107,6 +119,7 @@ export interface RuntimeCheckpointTraceRow {
   topUnaccountedStageTotalMs: number;
   topUnaccountedStageReanalysisMs: number;
   topUnaccountedStageToolMs: number;
+  topUnaccountedStageLiveAnalysisMs: number;
   reason: string;
 }
 
@@ -177,9 +190,11 @@ function topUnaccountedStage(row: BaselineReportRow | null): {
   totalMs: number;
   reanalysisMs: number;
   toolMs: number;
+  liveAnalysisMs: number;
 } {
   const stages = row?.runtimeSummary?.stageTimings ?? [];
   const tools = row?.runtimeSummary?.toolTimings ?? [];
+  const liveAnalyses = row?.runtimeSummary?.liveAnalysisTimings ?? [];
   const candidates = stages.map(stage => {
     const stageNumber = numberOrNull(stage.stageNumber);
     const round = numberOrNull(stage.round);
@@ -191,6 +206,13 @@ function topUnaccountedStage(row: BaselineReportRow | null): {
         (tool.source ?? 'unknown') === source
       )
       .reduce((sum, tool) => sum + (numberOrNull(tool.durationMs) ?? 0), 0));
+    const liveAnalysisMs = Math.round(liveAnalyses
+      .filter(item =>
+        numberOrNull(item.stage) === stageNumber &&
+        numberOrNull(item.round) === round &&
+        (item.source ?? 'unknown') === source
+      )
+      .reduce((sum, item) => sum + (numberOrNull(item.durationMs) ?? 0), 0));
     const totalMs = Math.round(numberOrNull(stage.totalMs) ?? 0);
     const reanalysisMs = Math.round(numberOrNull(stage.reanalyzeMs) ?? 0);
     return {
@@ -198,16 +220,21 @@ function topUnaccountedStage(row: BaselineReportRow | null): {
       totalMs,
       reanalysisMs,
       toolMs,
-      unaccountedMs: Math.max(0, totalMs - reanalysisMs - toolMs),
+      liveAnalysisMs,
+      unaccountedMs: Math.max(0, totalMs - reanalysisMs - toolMs - liveAnalysisMs),
     };
   });
-  candidates.sort((a, b) => b.unaccountedMs - a.unaccountedMs || b.totalMs - a.totalMs);
+  candidates.sort((a, b) =>
+    Math.max(b.liveAnalysisMs, b.unaccountedMs) - Math.max(a.liveAnalysisMs, a.unaccountedMs) ||
+    b.totalMs - a.totalMs
+  );
   return candidates[0] ?? {
     label: null,
     unaccountedMs: 0,
     totalMs: 0,
     reanalysisMs: 0,
     toolMs: 0,
+    liveAnalysisMs: 0,
   };
 }
 
@@ -250,6 +277,7 @@ function classify(input: {
       topUnaccountedStageTotalMs: unaccounted.totalMs,
       topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
       topUnaccountedStageToolMs: unaccounted.toolMs,
+      topUnaccountedStageLiveAnalysisMs: unaccounted.liveAnalysisMs,
       reason: 'No returned verified checkpoint is present in the trace.',
     };
   }
@@ -284,6 +312,7 @@ function classify(input: {
       topUnaccountedStageTotalMs: unaccounted.totalMs,
       topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
       topUnaccountedStageToolMs: unaccounted.toolMs,
+      topUnaccountedStageLiveAnalysisMs: unaccounted.liveAnalysisMs,
       reason: 'Returned checkpoint origin could not be matched by score and applied-tool count.',
     };
   }
@@ -330,6 +359,7 @@ function classify(input: {
       topUnaccountedStageTotalMs: unaccounted.totalMs,
       topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
       topUnaccountedStageToolMs: unaccounted.toolMs,
+      topUnaccountedStageLiveAnalysisMs: unaccounted.liveAnalysisMs,
       reason: 'A later checkpoint scored higher than the returned checkpoint, so early return would be unsafe.',
     };
   }
@@ -363,6 +393,7 @@ function classify(input: {
       topUnaccountedStageTotalMs: unaccounted.totalMs,
       topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
       topUnaccountedStageToolMs: unaccounted.toolMs,
+      topUnaccountedStageLiveAnalysisMs: unaccounted.liveAnalysisMs,
       reason: 'Run returned an early low-score checkpoint after substantial later work with no higher checkpoint score; earlier return could preserve the same final score/state while reducing runtime.',
     };
   }
@@ -390,6 +421,7 @@ function classify(input: {
     topUnaccountedStageTotalMs: unaccounted.totalMs,
     topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
     topUnaccountedStageToolMs: unaccounted.toolMs,
+    topUnaccountedStageLiveAnalysisMs: unaccounted.liveAnalysisMs,
     reason: 'A checkpoint was returned, but current trace does not prove a same-output runtime-waste candidate.',
   };
 }
@@ -409,10 +441,18 @@ export function buildRuntimeCheckpointTraceDiagnostic(input: {
   const reasons: string[] = [];
   let status: RuntimeCheckpointTraceDecision;
   let recommendation: string;
-  if (row.classification === 'same_output_runtime_waste_candidate' && row.topUnaccountedStageMs >= 60_000) {
+  if (
+    row.classification === 'same_output_runtime_waste_candidate' &&
+    (row.topUnaccountedStageLiveAnalysisMs >= 60_000 || row.topUnaccountedStageMs >= 60_000)
+  ) {
     status = 'plan_live_reanalysis_runtime_probe';
     reasons.push(`${row.key} returned the same low-score checkpoint after ${row.wastedAfterSelectedMs}ms of later work.`);
-    reasons.push(`${row.topUnaccountedStage ?? 'unknown stage'} has ${row.topUnaccountedStageMs}ms not explained by recorded tool time or terminal stage reanalysis.`);
+    if (row.topUnaccountedStageLiveAnalysisMs >= 60_000) {
+      reasons.push(`${row.topUnaccountedStage ?? 'unknown stage'} spent ${row.topUnaccountedStageLiveAnalysisMs}ms in live per-target analysis.`);
+    }
+    if (row.topUnaccountedStageMs >= 60_000) {
+      reasons.push(`${row.topUnaccountedStage ?? 'unknown stage'} has ${row.topUnaccountedStageMs}ms not explained by recorded tool time, live analysis, or terminal stage reanalysis.`);
+    }
     if ((row.discardedAppliedToolCount ?? 0) > 0) {
       reasons.push(`${row.discardedAppliedToolCount} later applied tool(s) were discarded by the returned checkpoint; behavior proof must preserve current output truth and not claim those discarded repairs.`);
     }
@@ -444,8 +484,8 @@ export function buildRuntimeCheckpointTraceDiagnostic(input: {
 
 function renderRowTable(rows: RuntimeCheckpointTraceRow[]): string[] {
   const lines = [
-    '| Key | Classification | Final | Returned | Created | Returned At | Later Work | Later Reanalysis | Top Unaccounted Stage | Unaccounted | Discarded Tools | Reason |',
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |',
+    '| Key | Classification | Final | Returned | Created | Returned At | Later Work | Later Reanalysis | Top Stage | Live Analysis | Unaccounted | Discarded Tools | Reason |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     lines.push([
@@ -458,6 +498,7 @@ function renderRowTable(rows: RuntimeCheckpointTraceRow[]): string[] {
       row.wastedAfterSelectedMs ?? 'n/a',
       row.reanalysisAfterSelectedMs,
       row.topUnaccountedStage ?? 'n/a',
+      row.topUnaccountedStageLiveAnalysisMs,
       row.topUnaccountedStageMs,
       row.discardedAppliedToolCount ?? 'n/a',
       `${row.reason} |`,

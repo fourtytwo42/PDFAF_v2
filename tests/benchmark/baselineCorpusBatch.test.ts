@@ -116,6 +116,18 @@ describe('baseline corpus deterministic pass admission', () => {
             durationMs: 10,
             outcome: 'applied',
           }],
+          liveAnalysisTimings: [{
+            key: 'planner:stage1:figure_alt_target_reanalysis:set_figure_alt_text',
+            context: 'figure_alt_target_reanalysis',
+            stage: 1,
+            round: 1,
+            source: 'planner',
+            toolName: 'set_figure_alt_text',
+            targetRef: '10_0',
+            durationMs: 300,
+            scoreBefore: 80,
+            scoreAfter: 82,
+          }],
           semanticLaneTimings: [],
           boundedWork: {
             semanticCandidateCapsHit: 0,
@@ -136,6 +148,7 @@ describe('baseline corpus deterministic pass admission', () => {
           deterministicTotalMs: 2000,
           stageTimings: [],
           toolTimings: [],
+          liveAnalysisTimings: [],
           semanticLaneTimings: [],
           boundedWork: {
             semanticCandidateCapsHit: 0,
@@ -158,6 +171,8 @@ describe('baseline corpus deterministic pass admission', () => {
     expect(summary?.analysisAfter?.totalMs).toBe(200);
     expect(summary?.stageTimings).toHaveLength(1);
     expect(summary?.toolTimings).toHaveLength(1);
+    expect(summary?.liveAnalysisTimings).toHaveLength(1);
+    expect(summary?.liveAnalysisTimings?.[0]?.durationMs).toBe(300);
     expect(summary?.boundedWork.deterministicEarlyExitCount).toBe(3);
     expect(summary?.boundedWork.deterministicEarlyExitReasons).toEqual([
       { key: 'soft_deadline_before_stage', count: 3 },
@@ -188,6 +203,19 @@ describe('baseline corpus deterministic pass admission', () => {
           elapsedMs: 100_000,
         },
         {
+          kind: 'live_analysis_finish',
+          round: 1,
+          stageNumber: 4,
+          context: 'figure_alt_target_reanalysis',
+          toolName: 'set_figure_alt_text',
+          targetRef: '12_0',
+          durationMs: 1250,
+          scoreBefore: 59,
+          scoreAfter: 59,
+          gradeAfter: 'F',
+          elapsedMs: 122_000,
+        },
+        {
           kind: 'verified_checkpoint',
           reason: 'stage_4',
           score: 59,
@@ -214,6 +242,11 @@ describe('baseline corpus deterministic pass admission', () => {
     expect(artifact.lastVerifiedCheckpointReturned).toBe(true);
     expect(artifact.lastVerifiedCheckpointEligibilityReason).toBe('low_score_timeout_checkpoint_eligible');
     expect(artifact.verifiedCheckpointHistory).toHaveLength(2);
-    expect(artifact.recentEvents).toHaveLength(3);
+    expect(artifact.liveAnalysisSummary).toMatchObject({
+      count: 1,
+      totalMs: 1250,
+      byContext: [{ key: 'figure_alt_target_reanalysis', count: 1, totalMs: 1250 }],
+    });
+    expect(artifact.recentEvents).toHaveLength(4);
   });
 });

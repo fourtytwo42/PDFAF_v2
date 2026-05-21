@@ -97,6 +97,47 @@ function reportWithHiddenLiveReanalysis() {
   };
 }
 
+function reportWithMeasuredLiveReanalysis() {
+  return {
+    rows: [{
+      file: '4683-report.pdf',
+      afterScore: 59,
+      afterGrade: 'F',
+      durationMs: 231_000,
+      falsePositiveApplied: 0,
+      runtimeSummary: {
+        stageTimings: [{
+          stageNumber: 6,
+          round: 1,
+          source: 'planner',
+          totalMs: 137_000,
+          reanalyzeMs: 21_000,
+        }],
+        toolTimings: [{
+          toolName: 'set_figure_alt_text',
+          stage: 6,
+          round: 1,
+          source: 'planner',
+          durationMs: 10_000,
+          outcome: 'applied',
+        }],
+        liveAnalysisTimings: [{
+          key: 'planner:stage6:figure_alt_target_reanalysis:set_figure_alt_text',
+          context: 'figure_alt_target_reanalysis',
+          stage: 6,
+          round: 1,
+          source: 'planner',
+          toolName: 'set_figure_alt_text',
+          targetRef: '42_0',
+          durationMs: 90_000,
+          scoreBefore: 59,
+          scoreAfter: 59,
+        }],
+      },
+    }],
+  };
+}
+
 describe('runtime checkpoint trace diagnostic', () => {
   it('classifies same-output runtime waste after an early low-score checkpoint return', () => {
     const diagnostic = buildRuntimeCheckpointTraceDiagnostic({
@@ -152,6 +193,22 @@ describe('runtime checkpoint trace diagnostic', () => {
       classification: 'same_output_runtime_waste_candidate',
       topUnaccountedStage: 'planner:stage6',
       topUnaccountedStageMs: 106_000,
+    });
+  });
+
+  it('prioritizes live reanalysis diagnostics when measured live analysis dominates', () => {
+    const diagnostic = buildRuntimeCheckpointTraceDiagnostic({
+      tracePath: '/trace.json',
+      trace: trace(),
+      report: reportWithMeasuredLiveReanalysis(),
+    });
+
+    expect(diagnostic.decision.status).toBe('plan_live_reanalysis_runtime_probe');
+    expect(diagnostic.rows[0]).toMatchObject({
+      classification: 'same_output_runtime_waste_candidate',
+      topUnaccountedStage: 'planner:stage6',
+      topUnaccountedStageLiveAnalysisMs: 90_000,
+      topUnaccountedStageMs: 16_000,
     });
   });
 
