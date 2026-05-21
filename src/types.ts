@@ -417,6 +417,8 @@ export interface DocumentSnapshot {
   contentTaggingAudit?: {
     pageStreamsChecked?: number;
     totalPageStreams?: number;
+    contentSampleStrategy?: string;
+    sampledPageIndices?: number[];
     formXObjectsChecked?: number;
     totalFormXObjects?: number;
     formXObjectParseErrorCount?: number;

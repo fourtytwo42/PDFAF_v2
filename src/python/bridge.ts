@@ -101,6 +101,8 @@ const EMPTY_RESULT: PythonAnalysisResult = {
   contentTaggingAudit: {
     pageStreamsChecked: 0,
     totalPageStreams: 0,
+    contentSampleStrategy: 'first',
+    sampledPageIndices: [],
     formXObjectsChecked: 0,
     totalFormXObjects: 0,
     formXObjectParseErrorCount: 0,

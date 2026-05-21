@@ -57,6 +57,8 @@ except ImportError:
         "contentTaggingAudit": {
             "pageStreamsChecked": 0,
             "totalPageStreams": 0,
+            "contentSampleStrategy": "first",
+            "sampledPageIndices": [],
             "formXObjectsChecked": 0,
             "totalFormXObjects": 0,
             "formXObjectParseErrorCount": 0,
@@ -1368,10 +1370,38 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
     return out
 
 
-def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
+def content_tagging_sample_indices(pdf: pikepdf.Pdf, strategy: str = "first", max_pages: int = 12) -> list[int]:
+    page_count = len(pdf.pages)
+    limit = max(1, min(max_pages, page_count))
+    if page_count <= limit or strategy == "first":
+        return list(range(limit))
+    if strategy == "stratified":
+        if limit == 1:
+            return [0]
+        seen = set()
+        out = []
+        for idx in range(limit):
+            page_index = int(round(idx * (page_count - 1) / (limit - 1)))
+            if page_index not in seen:
+                seen.add(page_index)
+                out.append(page_index)
+        cursor = 0
+        while len(out) < limit and cursor < page_count:
+            if cursor not in seen:
+                seen.add(cursor)
+                out.append(cursor)
+            cursor += 1
+        return sorted(out)
+    return list(range(limit))
+
+
+def collect_content_tagging_audit(pdf: pikepdf.Pdf, page_indices: list[int] | None = None, strategy: str = "first") -> dict:
+    sampled_pages = page_indices if page_indices is not None else content_tagging_sample_indices(pdf, "first", 12)
     out = {
         "pageStreamsChecked": 0,
         "totalPageStreams": len(pdf.pages),
+        "contentSampleStrategy": strategy,
+        "sampledPageIndices": sampled_pages,
         "formXObjectsChecked": 0,
         "totalFormXObjects": 0,
         "formXObjectParseErrorCount": 0,
@@ -1430,7 +1460,7 @@ def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
             inc("malformedMarkedContentStack", len(stack))
 
     try:
-        for page in pdf.pages[:12]:
+        for page_index in sampled_pages:
             if all(out[key] >= 200 for key in (
                 "textOutsideMarkedContentOrArtifact",
                 "imageOutsideMarkedContentOrArtifact",
@@ -1441,6 +1471,7 @@ def collect_content_tagging_audit(pdf: pikepdf.Pdf) -> dict:
             )):
                 break
             try:
+                page = pdf.pages[page_index]
                 walk_instructions(pikepdf.parse_content_stream(page.obj))
                 out["pageStreamsChecked"] += 1
                 resources = page.obj.get("/Resources")
@@ -6629,6 +6660,8 @@ def main():
         "contentTaggingAudit": {
             "pageStreamsChecked": 0,
             "totalPageStreams": 0,
+            "contentSampleStrategy": "first",
+            "sampledPageIndices": [],
             "formXObjectsChecked": 0,
             "totalFormXObjects": 0,
             "formXObjectParseErrorCount": 0,
@@ -12845,6 +12878,18 @@ if __name__ == "__main__":
         try:
             with pikepdf.open(path, suppress_warnings=True) as pdf:
                 rep = dump_structure_syntax_issues(pdf, limit=limit)
+            print(json.dumps(rep, ensure_ascii=False, default=str))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(0)
+    if len(argv) >= 2 and argv[0] == "--dump-content-tagging-audit":
+        path = argv[1]
+        strategy = argv[2] if len(argv) >= 3 else "first"
+        max_pages = int(argv[3]) if len(argv) >= 4 else 12
+        try:
+            with pikepdf.open(path, suppress_warnings=True) as pdf:
+                indices = content_tagging_sample_indices(pdf, strategy=strategy, max_pages=max_pages)
+                rep = collect_content_tagging_audit(pdf, page_indices=indices, strategy=strategy)
             print(json.dumps(rep, ensure_ascii=False, default=str))
         except Exception as e:
             print(json.dumps({"error": str(e)}, ensure_ascii=False))
