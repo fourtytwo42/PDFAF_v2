@@ -38,6 +38,7 @@ import {
   shouldContinueAfterOcrTimeoutForNativeTextTagging,
   shouldReturnVerifiedCheckpointBeforeRiskyWork,
   shouldReturnLowScoreCheckpointBeforeFinalReanalysis,
+  shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis,
   shouldSkipLateArtifactReanalysisGuard,
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
@@ -2020,6 +2021,48 @@ describe('late reanalysis runtime guards', () => {
       floor: 85,
       reason: 'checkpoint_below_floor(50<85)',
     });
+  });
+
+  it('returns low-score checkpoints only after repeated slow no-gain figure-alt live analysis', () => {
+    expect(shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis({
+      lowScoreCheckpointEligible: true,
+      checkpointScore: 59,
+      currentScore: 59,
+      noGainRefreshCount: 2,
+      noGainRefreshTotalMs: 43_000,
+    })).toBe(true);
+
+    expect(shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis({
+      lowScoreCheckpointEligible: false,
+      checkpointScore: 59,
+      currentScore: 59,
+      noGainRefreshCount: 2,
+      noGainRefreshTotalMs: 43_000,
+    })).toBe(false);
+
+    expect(shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis({
+      lowScoreCheckpointEligible: true,
+      checkpointScore: 59,
+      currentScore: 60,
+      noGainRefreshCount: 2,
+      noGainRefreshTotalMs: 43_000,
+    })).toBe(false);
+
+    expect(shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis({
+      lowScoreCheckpointEligible: true,
+      checkpointScore: 59,
+      currentScore: 59,
+      noGainRefreshCount: 3,
+      noGainRefreshTotalMs: 1_900,
+    })).toBe(false);
+
+    expect(shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis({
+      lowScoreCheckpointEligible: true,
+      checkpointScore: 94,
+      currentScore: 94,
+      noGainRefreshCount: 2,
+      noGainRefreshTotalMs: 43_000,
+    })).toBe(false);
   });
 
   it('requires low-score timeout checkpoints to meet the general floor and material gain', () => {

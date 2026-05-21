@@ -1997,6 +1997,10 @@ const LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS =
 const NATIVE_TEXT_TAGGING_AFTER_OCR_TIMEOUT_REMAINING_MS = 30_000;
 const NATIVE_TEXT_TAGGING_POST_OCR_CLEANUP_RESERVE_MS =
   REMEDIATION_SOFT_DEADLINE_BUFFER_MS + (REMEDIATION_ANALYSIS_TIMEOUT_MS * 2) + 60_000;
+const SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MIN_COUNT = 2;
+const SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MIN_TOTAL_MS = 40_000;
+const SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MIN_SINGLE_MS = 10_000;
+const SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MAX_SCORE = 69;
 
 export function shouldReturnVerifiedCheckpointBeforeRiskyWork(input: {
   startedAtMs: number;
@@ -2020,6 +2024,24 @@ export function shouldReturnLowScoreCheckpointBeforeFinalReanalysis(input: {
     ...input,
     requiredRemainingMs: input.requiredRemainingMs ?? LOW_SCORE_CHECKPOINT_FINAL_REANALYSIS_REMAINING_MS,
   });
+}
+
+export function shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis(input: {
+  lowScoreCheckpointEligible: boolean;
+  checkpointScore: number | null;
+  currentScore: number;
+  noGainRefreshCount: number;
+  noGainRefreshTotalMs: number;
+  minRefreshCount?: number;
+  minRefreshTotalMs?: number;
+  maxCurrentScore?: number;
+}): boolean {
+  if (!input.lowScoreCheckpointEligible) return false;
+  if (input.checkpointScore === null || !Number.isFinite(input.checkpointScore)) return false;
+  if (input.currentScore > input.checkpointScore) return false;
+  if (input.currentScore > (input.maxCurrentScore ?? SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MAX_SCORE)) return false;
+  if (input.noGainRefreshCount < (input.minRefreshCount ?? SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MIN_COUNT)) return false;
+  return input.noGainRefreshTotalMs >= (input.minRefreshTotalMs ?? SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MIN_TOTAL_MS);
 }
 
 export function ocrMutationTimeoutForRemainingWall(input: {
@@ -2816,6 +2838,16 @@ function fontEvidenceImproved(input: {
 
 function figureAltMutationAttemptCount(rows: AppliedRemediationTool[]): number {
   return rows.filter(row => row.toolName === 'set_figure_alt_text').length;
+}
+
+function figureAltLiveAnalysisHasScoreOrPacVisibleGain(before: AnalysisResult, after: AnalysisResult): boolean {
+  if (after.score > before.score) return true;
+  for (const key of ['alt_text', 'pdf_ua_compliance'] as const) {
+    const beforeScore = categoryScore(before, key);
+    const afterScore = categoryScore(after, key);
+    if (beforeScore !== null && afterScore !== null && afterScore > beforeScore) return true;
+  }
+  return false;
 }
 
 function altRepairBenefitOverridesConfidenceGuard(
@@ -8128,9 +8160,17 @@ export async function remediatePdf(
   let verifiedCheckpointReturned = false;
   const returnVerifiedTimeoutCheckpoint = async (
     reason: string,
-    options?: { beforeRiskyWork?: boolean; lowScoreOnly?: boolean; requiredRemainingMs?: number },
+    options?: {
+      beforeRiskyWork?: boolean;
+      lowScoreOnly?: boolean;
+      requiredRemainingMs?: number;
+      runtimeGuardTriggered?: boolean;
+      lowScoreReturnReason?: string;
+    },
   ): Promise<boolean> => {
-    const nearWallBudget = options?.beforeRiskyWork === true
+    const nearWallBudget = options?.runtimeGuardTriggered === true
+      ? true
+      : options?.beforeRiskyWork === true
       ? shouldReturnVerifiedCheckpointBeforeRiskyWork({
         startedAtMs: started,
         requiredRemainingMs: options.requiredRemainingMs,
@@ -8161,7 +8201,7 @@ export async function remediatePdf(
       });
       if (!verifiedTimeoutCheckpoint.lowScoreCurrent || !lowScoreEligibility.eligible) return false;
       checkpoint = verifiedTimeoutCheckpoint.lowScoreCurrent;
-      returnReason = 'verified_low_score_checkpoint_timeout_return';
+      returnReason = options?.lowScoreReturnReason ?? 'verified_low_score_checkpoint_timeout_return';
       traceEligibilityReason = lowScoreEligibility.reason;
     }
     currentBuffer = Buffer.from(checkpoint.buffer);
@@ -8813,6 +8853,9 @@ export async function remediatePdf(
         if (liveTool.toolName === 'set_figure_alt_text') {
           let activeFigureTool: PlannedRemediationTool | null = liveTool;
           const attemptedRefs = new Set<string>();
+          let slowNoGainFigureAltLiveAnalysisCount = 0;
+          let slowNoGainFigureAltLiveAnalysisTotalMs = 0;
+          let figureAltStageHadPacVisibleGain = false;
           while (
             activeFigureTool &&
             figureAltMutationAttemptCount([...appliedTools, ...stageApplied]) < maxFigureAltTargetsForRun(
@@ -8911,6 +8954,54 @@ export async function remediatePdf(
             lastAnalyzedBuffer = buf;
             workingAnalysis = lastStageAnalysis.result;
             workingSnapshot = lastStageAnalysis.snapshot;
+            const liveAnalysisTiming = runtimeSummary.liveAnalysisTimings?.at(-1) ?? null;
+            const liveAnalysisDurationMs =
+              liveAnalysisTiming?.context === 'figure_alt_target_reanalysis' &&
+              liveAnalysisTiming.toolName === activeFigureTool.toolName &&
+              liveAnalysisTiming.targetRef === activeRef
+                ? liveAnalysisTiming.durationMs
+                : 0;
+            const liveAnalysisHadGain = figureAltLiveAnalysisHasScoreOrPacVisibleGain(
+              beforeFigureAnalysis,
+              workingAnalysis,
+            );
+            const lowScoreCheckpointScoreForGuard = verifiedTimeoutCheckpoint.lowScoreCurrent?.analysis.score ?? null;
+            const refreshStartedFromLowScoreState =
+              lowScoreCheckpointScoreForGuard !== null &&
+              beforeFigureAnalysis.score <= lowScoreCheckpointScoreForGuard &&
+              beforeFigureAnalysis.score <= SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MAX_SCORE;
+            if (liveAnalysisHadGain) {
+              figureAltStageHadPacVisibleGain = true;
+              slowNoGainFigureAltLiveAnalysisCount = 0;
+              slowNoGainFigureAltLiveAnalysisTotalMs = 0;
+            } else if (
+              refreshStartedFromLowScoreState &&
+              liveAnalysisDurationMs >= SLOW_NO_GAIN_FIGURE_ALT_LIVE_ANALYSIS_MIN_SINGLE_MS
+            ) {
+              slowNoGainFigureAltLiveAnalysisCount += 1;
+              slowNoGainFigureAltLiveAnalysisTotalMs += liveAnalysisDurationMs;
+            }
+            const lowScoreEligibilityForSlowNoGain = verifiedLowScoreTimeoutCheckpointEligibility({
+              filename,
+              beforeAnalysis: before,
+              beforeSnapshot: initialSnapshot,
+              checkpoint: verifiedTimeoutCheckpoint.lowScoreCurrent,
+              appliedTools,
+              nearWallBudget: true,
+            });
+            if (shouldReturnLowScoreCheckpointForSlowNoGainFigureAltLiveAnalysis({
+              lowScoreCheckpointEligible: lowScoreEligibilityForSlowNoGain.eligible && !figureAltStageHadPacVisibleGain,
+              checkpointScore: lowScoreCheckpointScoreForGuard,
+              currentScore: workingAnalysis.score,
+              noGainRefreshCount: slowNoGainFigureAltLiveAnalysisCount,
+              noGainRefreshTotalMs: slowNoGainFigureAltLiveAnalysisTotalMs,
+            })) {
+              if (await returnVerifiedTimeoutCheckpoint('slow_no_gain_figure_alt_live_reanalysis', {
+                lowScoreOnly: true,
+                runtimeGuardTriggered: true,
+                lowScoreReturnReason: 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return',
+              })) break;
+            }
             if (
               options?.protectedBaseline &&
               priorFigureAltAttemptCount >= STAGE178_PROTECTED_EXTRA_FIGURE_ALT_MIN_PRIOR_ATTEMPTS
@@ -8972,6 +9063,7 @@ export async function remediatePdf(
               ? { ...activeFigureTool, params: nextParams }
               : null;
           }
+          if (verifiedCheckpointReturned) break;
           continue;
         }
         await reportRuntimeTrace({

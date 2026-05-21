@@ -51,7 +51,8 @@ function hasVerifiedCheckpointTimeoutReturn(result: { runtimeSummary?: Remediati
   const reasons = result.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons;
   return reasons?.some(row =>
     (row.key === 'verified_checkpoint_timeout_return' ||
-      row.key === 'verified_low_score_checkpoint_timeout_return') &&
+      row.key === 'verified_low_score_checkpoint_timeout_return' ||
+      row.key === 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return') &&
     row.count > 0
   ) ?? false;
 }

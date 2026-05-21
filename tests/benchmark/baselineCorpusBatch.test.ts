@@ -56,6 +56,16 @@ describe('baseline corpus deterministic pass admission', () => {
     })).toBe(false);
   });
 
+  it('treats slow no-gain figure-alt checkpoint returns as terminal deterministic exits', () => {
+    expect(shouldRunSecondDeterministicPass({
+      verifiedCheckpointReturned: true,
+      score: 59,
+      remediationTargetScore: 95,
+      secondPassMinScore: 93,
+      hasBudget: true,
+    })).toBe(false);
+  });
+
   it('uses the remediation analysis budget for benchmark remediation input analysis', () => {
     const controller = new AbortController();
     expect(remediationBenchmarkInitialAnalysisOptions({
