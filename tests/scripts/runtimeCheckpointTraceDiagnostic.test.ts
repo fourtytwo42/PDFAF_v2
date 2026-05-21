@@ -68,6 +68,35 @@ function report() {
   };
 }
 
+function reportWithHiddenLiveReanalysis() {
+  return {
+    rows: [{
+      file: '4683-report.pdf',
+      afterScore: 59,
+      afterGrade: 'F',
+      durationMs: 231_000,
+      falsePositiveApplied: 0,
+      runtimeSummary: {
+        stageTimings: [{
+          stageNumber: 6,
+          round: 1,
+          source: 'planner',
+          totalMs: 137_000,
+          reanalyzeMs: 21_000,
+        }],
+        toolTimings: [{
+          toolName: 'set_figure_alt_text',
+          stage: 6,
+          round: 1,
+          source: 'planner',
+          durationMs: 10_000,
+          outcome: 'applied',
+        }],
+      },
+    }],
+  };
+}
+
 describe('runtime checkpoint trace diagnostic', () => {
   it('classifies same-output runtime waste after an early low-score checkpoint return', () => {
     const diagnostic = buildRuntimeCheckpointTraceDiagnostic({
@@ -109,6 +138,21 @@ describe('runtime checkpoint trace diagnostic', () => {
 
     expect(diagnostic.decision.status).toBe('keep_runtime_checkpoint_behavior_parked');
     expect(diagnostic.rows[0]?.classification).toBe('higher_later_checkpoint_available');
+  });
+
+  it('prioritizes live reanalysis diagnostics when unaccounted stage time dominates', () => {
+    const diagnostic = buildRuntimeCheckpointTraceDiagnostic({
+      tracePath: '/trace.json',
+      trace: trace(),
+      report: reportWithHiddenLiveReanalysis(),
+    });
+
+    expect(diagnostic.decision.status).toBe('plan_live_reanalysis_runtime_probe');
+    expect(diagnostic.rows[0]).toMatchObject({
+      classification: 'same_output_runtime_waste_candidate',
+      topUnaccountedStage: 'planner:stage6',
+      topUnaccountedStageMs: 106_000,
+    });
   });
 
   it('handles traces without a returned checkpoint', () => {

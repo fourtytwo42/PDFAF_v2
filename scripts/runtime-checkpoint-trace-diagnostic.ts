@@ -6,10 +6,10 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_TRACE =
-  '/mnt/pdf-review/pdfaf-validation/runtime-checkpoint-trace-4683-2026-05-21-r1/runtime-traces/4683-Illinois_Higher_Education_in_Prison_Task_Force_2022_Report.json';
+  '/mnt/pdf-review/pdfaf-validation/runtime-checkpoint-stagnation-4683-2026-05-21-r2/runtime-traces/4683-Illinois_Higher_Education_in_Prison_Task_Force_2022_Report.json';
 const DEFAULT_REPORT =
-  '/mnt/pdf-review/pdfaf-validation/runtime-checkpoint-trace-4683-2026-05-21-r1/baseline_report.json';
-const DEFAULT_OUT = '/mnt/pdf-review/pdfaf-validation/runtime-checkpoint-trace-diagnostic-2026-05-21-r1';
+  '/mnt/pdf-review/pdfaf-validation/runtime-checkpoint-stagnation-4683-2026-05-21-r2/baseline_report.json';
+const DEFAULT_OUT = '/mnt/pdf-review/pdfaf-validation/runtime-checkpoint-trace-diagnostic-2026-05-21-r2';
 
 export type RuntimeCheckpointTraceClassification =
   | 'same_output_runtime_waste_candidate'
@@ -20,6 +20,7 @@ export type RuntimeCheckpointTraceClassification =
 
 export type RuntimeCheckpointTraceDecision =
   | 'plan_guarded_checkpoint_stagnation_probe'
+  | 'plan_live_reanalysis_runtime_probe'
   | 'collect_more_checkpoint_trace_evidence'
   | 'keep_runtime_checkpoint_behavior_parked';
 
@@ -58,6 +59,24 @@ interface BaselineReportRow {
   afterGrade?: string | null;
   durationMs?: number | null;
   falsePositiveApplied?: number | null;
+  runtimeSummary?: {
+    stageTimings?: Array<{
+      stageNumber?: number;
+      round?: number;
+      source?: string;
+      totalMs?: number;
+      reanalyzeMs?: number;
+      key?: string;
+    }>;
+    toolTimings?: Array<{
+      toolName?: string;
+      stage?: number;
+      round?: number;
+      source?: string;
+      durationMs?: number;
+      outcome?: string;
+    }>;
+  };
 }
 
 interface BaselineReport {
@@ -83,6 +102,11 @@ export interface RuntimeCheckpointTraceRow {
   maxLaterCheckpointScore: number | null;
   maxAppliedToolCountBeforeReturn: number | null;
   discardedAppliedToolCount: number | null;
+  topUnaccountedStage: string | null;
+  topUnaccountedStageMs: number;
+  topUnaccountedStageTotalMs: number;
+  topUnaccountedStageReanalysisMs: number;
+  topUnaccountedStageToolMs: number;
   reason: string;
 }
 
@@ -147,6 +171,46 @@ function stageReanalysisAfter(events: RuntimeTraceEvent[], elapsedMs: number | n
     .reduce((sum, event) => sum + (numberOrNull(event.reanalyzeMs) ?? 0), 0));
 }
 
+function topUnaccountedStage(row: BaselineReportRow | null): {
+  label: string | null;
+  unaccountedMs: number;
+  totalMs: number;
+  reanalysisMs: number;
+  toolMs: number;
+} {
+  const stages = row?.runtimeSummary?.stageTimings ?? [];
+  const tools = row?.runtimeSummary?.toolTimings ?? [];
+  const candidates = stages.map(stage => {
+    const stageNumber = numberOrNull(stage.stageNumber);
+    const round = numberOrNull(stage.round);
+    const source = stage.source ?? 'unknown';
+    const toolMs = Math.round(tools
+      .filter(tool =>
+        numberOrNull(tool.stage) === stageNumber &&
+        numberOrNull(tool.round) === round &&
+        (tool.source ?? 'unknown') === source
+      )
+      .reduce((sum, tool) => sum + (numberOrNull(tool.durationMs) ?? 0), 0));
+    const totalMs = Math.round(numberOrNull(stage.totalMs) ?? 0);
+    const reanalysisMs = Math.round(numberOrNull(stage.reanalyzeMs) ?? 0);
+    return {
+      label: `${source}:stage${stageNumber ?? '?'}`,
+      totalMs,
+      reanalysisMs,
+      toolMs,
+      unaccountedMs: Math.max(0, totalMs - reanalysisMs - toolMs),
+    };
+  });
+  candidates.sort((a, b) => b.unaccountedMs - a.unaccountedMs || b.totalMs - a.totalMs);
+  return candidates[0] ?? {
+    label: null,
+    unaccountedMs: 0,
+    totalMs: 0,
+    reanalysisMs: 0,
+    toolMs: 0,
+  };
+}
+
 function classify(input: {
   tracePath: string;
   trace: RuntimeTraceArtifact;
@@ -160,6 +224,7 @@ function classify(input: {
   const afterGrade = reportRow?.afterGrade ?? null;
   const durationMs = numberOrNull(reportRow?.durationMs ?? input.trace.elapsedMs);
   const falsePositiveApplied = numberOrNull(reportRow?.falsePositiveApplied);
+  const unaccounted = topUnaccountedStage(reportRow);
   if (!returned) {
     return {
       key,
@@ -180,6 +245,11 @@ function classify(input: {
       maxLaterCheckpointScore: null,
       maxAppliedToolCountBeforeReturn: null,
       discardedAppliedToolCount: null,
+      topUnaccountedStage: unaccounted.label,
+      topUnaccountedStageMs: unaccounted.unaccountedMs,
+      topUnaccountedStageTotalMs: unaccounted.totalMs,
+      topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
+      topUnaccountedStageToolMs: unaccounted.toolMs,
       reason: 'No returned verified checkpoint is present in the trace.',
     };
   }
@@ -209,6 +279,11 @@ function classify(input: {
       maxLaterCheckpointScore: null,
       maxAppliedToolCountBeforeReturn: null,
       discardedAppliedToolCount: null,
+      topUnaccountedStage: unaccounted.label,
+      topUnaccountedStageMs: unaccounted.unaccountedMs,
+      topUnaccountedStageTotalMs: unaccounted.totalMs,
+      topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
+      topUnaccountedStageToolMs: unaccounted.toolMs,
       reason: 'Returned checkpoint origin could not be matched by score and applied-tool count.',
     };
   }
@@ -250,6 +325,11 @@ function classify(input: {
       maxLaterCheckpointScore,
       maxAppliedToolCountBeforeReturn,
       discardedAppliedToolCount,
+      topUnaccountedStage: unaccounted.label,
+      topUnaccountedStageMs: unaccounted.unaccountedMs,
+      topUnaccountedStageTotalMs: unaccounted.totalMs,
+      topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
+      topUnaccountedStageToolMs: unaccounted.toolMs,
       reason: 'A later checkpoint scored higher than the returned checkpoint, so early return would be unsafe.',
     };
   }
@@ -278,6 +358,11 @@ function classify(input: {
       maxLaterCheckpointScore,
       maxAppliedToolCountBeforeReturn,
       discardedAppliedToolCount,
+      topUnaccountedStage: unaccounted.label,
+      topUnaccountedStageMs: unaccounted.unaccountedMs,
+      topUnaccountedStageTotalMs: unaccounted.totalMs,
+      topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
+      topUnaccountedStageToolMs: unaccounted.toolMs,
       reason: 'Run returned an early low-score checkpoint after substantial later work with no higher checkpoint score; earlier return could preserve the same final score/state while reducing runtime.',
     };
   }
@@ -300,6 +385,11 @@ function classify(input: {
     maxLaterCheckpointScore,
     maxAppliedToolCountBeforeReturn,
     discardedAppliedToolCount,
+    topUnaccountedStage: unaccounted.label,
+    topUnaccountedStageMs: unaccounted.unaccountedMs,
+    topUnaccountedStageTotalMs: unaccounted.totalMs,
+    topUnaccountedStageReanalysisMs: unaccounted.reanalysisMs,
+    topUnaccountedStageToolMs: unaccounted.toolMs,
     reason: 'A checkpoint was returned, but current trace does not prove a same-output runtime-waste candidate.',
   };
 }
@@ -319,7 +409,15 @@ export function buildRuntimeCheckpointTraceDiagnostic(input: {
   const reasons: string[] = [];
   let status: RuntimeCheckpointTraceDecision;
   let recommendation: string;
-  if (row.classification === 'same_output_runtime_waste_candidate') {
+  if (row.classification === 'same_output_runtime_waste_candidate' && row.topUnaccountedStageMs >= 60_000) {
+    status = 'plan_live_reanalysis_runtime_probe';
+    reasons.push(`${row.key} returned the same low-score checkpoint after ${row.wastedAfterSelectedMs}ms of later work.`);
+    reasons.push(`${row.topUnaccountedStage ?? 'unknown stage'} has ${row.topUnaccountedStageMs}ms not explained by recorded tool time or terminal stage reanalysis.`);
+    if ((row.discardedAppliedToolCount ?? 0) > 0) {
+      reasons.push(`${row.discardedAppliedToolCount} later applied tool(s) were discarded by the returned checkpoint; behavior proof must preserve current output truth and not claim those discarded repairs.`);
+    }
+    recommendation = 'Plan live-reanalysis instrumentation or a guarded per-target reanalysis policy before checkpoint-stagnation behavior; do not lower checkpoint floors or score/PAC gates.';
+  } else if (row.classification === 'same_output_runtime_waste_candidate') {
     status = 'plan_guarded_checkpoint_stagnation_probe';
     reasons.push(`${row.key} returned the same low-score checkpoint after ${row.wastedAfterSelectedMs}ms of later work.`);
     if ((row.discardedAppliedToolCount ?? 0) > 0) {
@@ -346,8 +444,8 @@ export function buildRuntimeCheckpointTraceDiagnostic(input: {
 
 function renderRowTable(rows: RuntimeCheckpointTraceRow[]): string[] {
   const lines = [
-    '| Key | Classification | Final | Returned | Created | Returned At | Later Work | Later Reanalysis | Discarded Tools | Reason |',
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
+    '| Key | Classification | Final | Returned | Created | Returned At | Later Work | Later Reanalysis | Top Unaccounted Stage | Unaccounted | Discarded Tools | Reason |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     lines.push([
@@ -359,6 +457,8 @@ function renderRowTable(rows: RuntimeCheckpointTraceRow[]): string[] {
       row.returnElapsedMs ?? 'n/a',
       row.wastedAfterSelectedMs ?? 'n/a',
       row.reanalysisAfterSelectedMs,
+      row.topUnaccountedStage ?? 'n/a',
+      row.topUnaccountedStageMs,
       row.discardedAppliedToolCount ?? 'n/a',
       `${row.reason} |`,
     ].join(' | '));
