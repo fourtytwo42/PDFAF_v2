@@ -26,6 +26,10 @@ import { scoreLinkQuality }        from './categories/linkQuality.js';
 import { scoreReadingOrder }       from './categories/readingOrder.js';
 import { scoreFormAccessibility }  from './categories/formAccessibility.js';
 import { finalizeScoringEvidence } from './finalizeEvidence.js';
+import {
+  hasCheckerVisibleFigureAltDebt,
+  treeFigureMissingRequiresAltCap,
+} from './figureAltCoverage.js';
 
 const GRADED_CATEGORY_SET = new Set<CategoryKey>(LEGAL_PDF_STRICT_GRADED_CATEGORIES);
 const NON_GRADED_CATEGORY_SET = new Set<CategoryKey>(LEGAL_PDF_STRICT_NON_GRADED_CATEGORIES);
@@ -167,15 +171,9 @@ function buildLegalPdfStrictProfile(
 
   const informativeFigureCount = snap.figures.filter(figure => !figure.isArtifact).length;
   const altText = byKey.get('alt_text');
-  const checkerFigures = (snap.checkerFigureTargets ?? []).filter(figure =>
-    figure.reachable &&
-    !figure.isArtifact &&
-    ((figure.resolvedRole ?? figure.role ?? '').replace(/^\//, '').toLowerCase() === 'figure')
-  );
-  const checkerFigureAltOwned = checkerFigures.some(figure => figure.hasAlt && (figure.altText?.trim() ?? '').length > 0);
   const hasCheckerFigureOwnershipDebt =
-    (snap.checkerFigureTargets && checkerFigures.length > 0 && !checkerFigureAltOwned) ||
-    snap.detectionProfile?.figureSignals?.treeFigureMissingForExtractedFigures === true;
+    hasCheckerVisibleFigureAltDebt(snap) ||
+    treeFigureMissingRequiresAltCap(snap);
   if (
     informativeFigureCount > 0 &&
     (altText?.applicable ?? false) &&

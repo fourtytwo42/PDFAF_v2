@@ -6,6 +6,7 @@ import {
   CATEGORY_BASE_WEIGHTS,
 } from '../../../config.js';
 import { isWeakFigureAlt } from '../altTextHeuristics.js';
+import { treeFigureMissingRequiresAltCap } from '../figureAltCoverage.js';
 
 export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
   const allFigures = snap.figures;
@@ -53,7 +54,7 @@ export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
       const nonFigureRoleCount = figureSignals?.nonFigureRoleCount ?? 0;
       figureScore = Math.min(figureScore, Math.max(0, 72 - nonFigureRoleCount * 10));
     }
-    if (figureSignals?.treeFigureMissingForExtractedFigures) {
+    if (treeFigureMissingRequiresAltCap(snap)) {
       figureScore = Math.min(figureScore, 20);
     }
   }

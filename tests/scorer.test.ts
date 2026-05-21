@@ -177,6 +177,172 @@ describe('Stage 40 legal_pdf_strict_v2 policy', () => {
     expect(result.scoreProfile.criticalBlockers).toContain('no_checker_visible_alt_on_informative_figures');
   });
 
+  it('does not apply the tree-figure alt cap when checker-visible figures are fully alt-owned', () => {
+    const result = score(makeSnap({
+      figures: [
+        { hasAlt: true, altText: 'Chart showing quarterly trends', isArtifact: false, page: 1, role: 'Figure' },
+        { hasAlt: true, altText: 'Map showing reporting regions', isArtifact: false, page: 2, role: 'Figure' },
+      ],
+      checkerFigureTargets: [
+        {
+          hasAlt: true,
+          altText: 'Chart showing quarterly trends',
+          isArtifact: false,
+          page: 1,
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          structRef: '10_0',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+        {
+          hasAlt: true,
+          altText: 'Map showing reporting regions',
+          isArtifact: false,
+          page: 2,
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          structRef: '20_0',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 6,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 2,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: true,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [1, 2],
+        confidence: 'high',
+      },
+    }), META);
+    const alt = result.categories.find(c => c.key === 'alt_text')!;
+    expect(alt.score).toBe(89);
+    expect(alt.manualReviewRequired).toBe(true);
+    expect(alt.findings.some(f => f.message.includes('none are reachable as /Figure nodes'))).toBe(true);
+    expect(result.scoreProfile.criticalBlockers).not.toContain('no_checker_visible_alt_on_informative_figures');
+  });
+
+  it('keeps the tree-figure alt cap when checker-visible figure alt coverage is partial', () => {
+    const result = score(makeSnap({
+      figures: [
+        { hasAlt: true, altText: 'Chart showing quarterly trends', isArtifact: false, page: 1, role: 'Figure' },
+        { hasAlt: true, altText: 'Map showing reporting regions', isArtifact: false, page: 2, role: 'Figure' },
+      ],
+      checkerFigureTargets: [
+        {
+          hasAlt: true,
+          altText: 'Chart showing quarterly trends',
+          isArtifact: false,
+          page: 1,
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          structRef: '10_0',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 2,
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          structRef: '20_0',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+      ],
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 6,
+          treeHeadingCount: 6,
+          headingTreeDepth: 2,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 2,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: true,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [1, 2],
+        confidence: 'high',
+      },
+    }), META);
+    const alt = result.categories.find(c => c.key === 'alt_text')!;
+    expect(alt.score).toBe(20);
+    expect(result.score).toBeLessThanOrEqual(59);
+    expect(result.scoreProfile.criticalBlockers).toContain('no_checker_visible_alt_on_informative_figures');
+  });
+
   it('caps dense rowless table structures at 69', () => {
     const result = score(makeSnap({
       tables: [{ hasHeaders: true, headerCount: 1, totalCells: 8, rowCount: 1, cellsMisplacedCount: 0, irregularRows: 0, page: 0 }],
