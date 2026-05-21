@@ -65,3 +65,15 @@ The useful next work is either:
 2. build a deliberately selected PAC-stress holdout for one unresolved family before spending another broad full-run cycle.
 
 Do not describe the r39 all-unique result as goal completion. It is the best floor and misses by one raw point.
+
+## Follow-Up Attempt
+
+After this report, a deterministic outside-holdout run was attempted against:
+
+- `Input/virginia_dcjs_research_holdout_2026_05_18`
+- output target `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-20pdf-validation-2026-05-21-r1`
+- command shape: `baseline-corpus-batch.ts ... --no-semantic --no-pdfs`
+
+The run was manually stopped after the first item exceeded the intended 5-minute per-PDF wall without producing row output. No validation artifact was completed.
+
+This means the outside-holdout endgate is still missing. The next attempt should use a runner with an external per-PDF process timeout and `TMPDIR` on `/mnt/pdf-review`, because `/` had only about `285 MB` available during this attempt.
