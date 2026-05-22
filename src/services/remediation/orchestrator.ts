@@ -81,6 +81,7 @@ import {
 import {
   classifyStage180MixedTablePdfUa,
   hasAppliedStage180MixedTablePdfUa,
+  shouldTryStage180ReportTableProof,
   shouldTryStage180LinkRepairAfterTable,
 } from './stage180MixedTablePdfua.js';
 import {
@@ -6970,11 +6971,15 @@ function shouldTryStage180HeaderRegularitySequence(input: {
   if (analysis.pdfClass === 'scanned' || snapshot.pdfClass === 'scanned') return false;
   if (!snapshot.isTagged && snapshot.structureTree === null) return false;
   if ((snapshot.textCharCount ?? 0) <= 0) return false;
+  const heading = categoryScore(analysis, 'heading_structure') ?? 0;
+  const reading = categoryScore(analysis, 'reading_order') ?? 0;
+  const link = categoryScore(analysis, 'link_quality') ?? 100;
+  const reportScaleObjectBackedTableProof = shouldTryStage180ReportTableProof({ analysis, snapshot });
   if ((categoryScore(analysis, 'table_markup') ?? 100) >= 80) return false;
   if ((categoryScore(analysis, 'alt_text') ?? 0) < 90) return false;
-  if ((categoryScore(analysis, 'heading_structure') ?? 0) < 70) return false;
-  if ((categoryScore(analysis, 'reading_order') ?? 0) < 75) return false;
-  if ((categoryScore(analysis, 'link_quality') ?? 100) < 75) return false;
+  if (heading < 70 && !reportScaleObjectBackedTableProof) return false;
+  if (reading < 75) return false;
+  if (link < 75) return false;
 
   const audit = snapshot.tableHeaderAudit;
   if (!audit || audit.tablesChecked <= 0) return false;

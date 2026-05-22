@@ -36,6 +36,9 @@ export interface Stage180Decision {
 
 const STAGE180_MAX_TABLE_TARGETS = 2;
 const STAGE180_MAX_LINK_OWNERSHIP_DEBT = 40;
+const STAGE180_REPORT_TABLE_MIN_HEADER_DEBT = 100;
+const STAGE180_REPORT_TABLE_MIN_PAGES = 20;
+const STAGE180_REPORT_TABLE_MIN_SUBTREE_MCIDS = 50;
 
 function categoryScore(analysis: AnalysisResult, key: CategoryKey): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
@@ -86,6 +89,70 @@ function annotationDebt(snapshot: DocumentSnapshot): number {
     (annotation?.linkAnnotationsMissingStructParent ?? detection?.linkAnnotationsMissingStructParent ?? 0) +
     (annotation?.nonLinkAnnotationsMissingStructure ?? detection?.nonLinkAnnotationsMissingStructure ?? 0) +
     (annotation?.nonLinkAnnotationsMissingStructParent ?? detection?.nonLinkAnnotationsMissingStructParent ?? 0)
+  );
+}
+
+function tableHeaderAssociationDebt(snapshot: DocumentSnapshot): number {
+  const audit = snapshot.tableHeaderAudit;
+  if (!audit || audit.tablesChecked <= 0) return 0;
+  return (
+    Math.max(0, audit.headerAssociationMissingCount ?? 0) +
+    Math.max(0, audit.dataCellsWithoutHeaderCount ?? 0) +
+    Math.max(0, audit.orphanHeaderCellCount ?? 0)
+  );
+}
+
+function hasDirectOrMisplacedTableShape(snapshot: DocumentSnapshot): boolean {
+  const tableSignals = snapshot.detectionProfile?.tableSignals;
+  return Boolean(tableSignals && (
+    (tableSignals.directCellUnderTableCount ?? 0) > 0 ||
+    (tableSignals.misplacedCellCount ?? 0) > 0
+  ));
+}
+
+function hasReportScaleObjectBackedTableTarget(
+  snapshot: DocumentSnapshot,
+  tableTargets: readonly Stage180TableTarget[],
+): boolean {
+  if ((snapshot.pageCount ?? 0) < STAGE180_REPORT_TABLE_MIN_PAGES) return false;
+  return tableTargets.some(target =>
+    target.rowCount >= 8 &&
+    target.totalCells >= 30 &&
+    target.irregularRows >= 5 &&
+    target.headerCount >= 1 &&
+    target.subtreeMcidCount >= STAGE180_REPORT_TABLE_MIN_SUBTREE_MCIDS
+  );
+}
+
+export function shouldTryStage180ReportTableProof(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  tableTargets?: readonly Stage180TableTarget[];
+  annotationDebt?: number;
+  headerAssociationDebt?: number;
+  directOrMisplacedTableShape?: boolean;
+}): boolean {
+  const tableTargets = input.tableTargets ?? stage180RemainingTableTargets(input.snapshot);
+  const heading = categoryScore(input.analysis, 'heading_structure') ?? 0;
+  const reading = categoryScore(input.analysis, 'reading_order') ?? 0;
+  const link = categoryScore(input.analysis, 'link_quality') ?? 100;
+  const table = categoryScore(input.analysis, 'table_markup') ?? 100;
+  const alt = categoryScore(input.analysis, 'alt_text') ?? 100;
+  const annDebt = input.annotationDebt ?? annotationDebt(input.snapshot);
+  const headerDebt = input.headerAssociationDebt ?? tableHeaderAssociationDebt(input.snapshot);
+  const directOrMisplaced = input.directOrMisplacedTableShape ?? hasDirectOrMisplacedTableShape(input.snapshot);
+
+  return (
+    input.analysis.score < 95 &&
+    table < 80 &&
+    alt >= 90 &&
+    heading >= 60 &&
+    reading >= 95 &&
+    link >= 95 &&
+    annDebt === 0 &&
+    headerDebt >= STAGE180_REPORT_TABLE_MIN_HEADER_DEBT &&
+    !directOrMisplaced &&
+    hasReportScaleObjectBackedTableTarget(input.snapshot, tableTargets)
   );
 }
 
@@ -204,16 +271,8 @@ export function classifyStage180MixedTablePdfUa(input: {
   const table = categoryScore(input.analysis, 'table_markup') ?? 100;
   const alt = categoryScore(input.analysis, 'alt_text') ?? 100;
   const pdfua = categoryScore(input.analysis, 'pdf_ua_compliance') ?? 100;
-  const tableSignals = input.snapshot.detectionProfile?.tableSignals;
-  const directOrMisplacedTableShape = Boolean(tableSignals && (
-    (tableSignals.directCellUnderTableCount ?? 0) > 0 ||
-    (tableSignals.misplacedCellCount ?? 0) > 0
-  ));
-  const headerAssociationDebt = input.snapshot.tableHeaderAudit
-    ? (input.snapshot.tableHeaderAudit.headerAssociationMissingCount ?? 0) +
-      (input.snapshot.tableHeaderAudit.dataCellsWithoutHeaderCount ?? 0) +
-      (input.snapshot.tableHeaderAudit.orphanHeaderCellCount ?? 0)
-    : 0;
+  const directOrMisplacedTableShape = hasDirectOrMisplacedTableShape(input.snapshot);
+  const headerAssociationDebt = tableHeaderAssociationDebt(input.snapshot);
   const moderateTableOnlyCore =
     table < 80 &&
     alt >= 90 &&
@@ -224,12 +283,22 @@ export function classifyStage180MixedTablePdfUa(input: {
     headerAssociationDebt > 0 &&
     !directOrMisplacedTableShape &&
     tableTargets.length > 0;
+  const reportScaleObjectBackedTableProof = shouldTryStage180ReportTableProof({
+    analysis: input.analysis,
+    snapshot: input.snapshot,
+    tableTargets,
+    annotationDebt: annDebt,
+    headerAssociationDebt,
+    directOrMisplacedTableShape,
+  });
   if (heading < 80 || reading < 80 || link < 80) {
-    if (moderateTableOnlyCore) {
+    if (moderateTableOnlyCore || reportScaleObjectBackedTableProof) {
       return {
         classification: 'stable_table_first_candidate',
         shouldAttempt: true,
-        reason: 'bounded table-only cleanup can run despite moderate non-table scores',
+        reason: reportScaleObjectBackedTableProof
+          ? 'report-scale object-backed table cleanup can run with bounded heading debt'
+          : 'bounded table-only cleanup can run despite moderate non-table scores',
         tableTargets,
         annotationDebt: annDebt,
         orphanMcidCount,

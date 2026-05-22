@@ -6,7 +6,7 @@ Date: 2026-05-22
 
 Decision: `evidence_map_only`.
 
-This refresh updates the source-tracked PAC/POC planning map after the table behavior proof, table target-resolution diagnostic, and direct language-syntax scoring hardening. It changes planning/reporting metadata only. It does not change scoring, remediation routing, mutation behavior, PAC gates, Docker/API behavior, benchmark execution, or any non-native runtime dependency.
+This refresh updates the source-tracked PAC/POC planning map after the table target-resolution diagnostic, the narrow Table/ParentTree behavior proof, and direct language-syntax scoring hardening. It changes planning/reporting metadata only. It does not call Research/POC-decompiled, PAC, ODL, Java, network tools, semantic AI, analysis, remediation, scoring, planner routing, or PDF mutation paths.
 
 Local generated artifact:
 
@@ -17,12 +17,14 @@ Generated artifacts remain local and are not source-tracked.
 
 ## What Changed
 
-`table_header_transaction` is no longer behavior-ready.
+`table_header_transaction` is no longer a broad behavior-ready lane, but a narrow object-backed table subtype has been accepted.
 
 - Prior map status: `behavior_ready_next`
-- Current map status: `parked_no_safe_predicate`
-- Reason: the dense-table behavior proof produced only one accepted positive repair (`va-11`). Other planned positives resolved as non-table roles before mutation.
-- Reopen condition: prove stable `/Table` target refs immediately before mutation and at least two accepted positive repairs with controls stable.
+- Current map status: `mostly_aligned_monitor`
+- Accepted subtype: report-scale object-backed Stage180 table cleanup for stable `/Table` targets with heavy table header-association debt and bounded heading debt.
+- Validation: `va-15` improved to `96/A`, controls stayed stable, original-50 all-row mean was `93.3000`, `false_positive_applied=0`, and p95 did not regress.
+- Remaining parked scope: dense row-band/layout-only table routing for `va-08`, `va-09`, and `va-10`, where prior planned targets resolved as non-table roles before mutation.
+- Reopen condition: prove a new stable `/Table` target subtype immediately before mutation with accepted positive repairs and controls stable.
 
 `language_parts_validation` now reflects direct language-syntax scoring hardening.
 
@@ -37,13 +39,13 @@ Generated artifacts remain local and are not source-tracked.
 - Behavior-ready lanes: `0`
 - Decision: `evidence_map_only`
 
-The map still identifies high-impact unresolved PAC/POC families, but none is ready for immediate production behavior under the active goal's evidence standard.
+The map still identifies high-impact unresolved PAC/POC families, but none is ready for immediate new production behavior under the active goal's evidence standard.
 
 ## Next Direction
 
 The next useful work should be one of:
 
 - a fresh validation checkpoint across original-50, all-unique, and an outside holdout; or
-- a deliberately designed PAC-stress sample around a specific unresolved family such as object-backed ParentTree/table targets, true rendered contrast positives, or direct language-of-parts syntax evidence.
+- a deliberately designed PAC-stress sample around a specific unresolved family such as a new object-backed ParentTree/table subtype, true rendered contrast positives, or direct language-of-parts syntax evidence.
 
 Do not re-open table behavior from dense row-band evidence alone, and do not add heuristic language-of-parts caps.

@@ -9,6 +9,7 @@ const DEFAULT_OUT = 'Output/pac-poc-lane-rollup-2026-05-22-r1';
 
 export type PacPocLaneOutcome =
   | 'accepted_native_evidence'
+  | 'accepted_native_behavior'
   | 'accepted_safety_guard'
   | 'existing_behavior_aligned'
   | 'parked_behavior_failed'
@@ -126,20 +127,23 @@ export const PAC_POC_LANE_ROLLUP_ITEMS: PacPocLaneRollupItem[] = [
     id: 'table_header_transaction',
     family: 'table_headers',
     priority: 84,
-    outcome: 'parked_behavior_failed',
+    outcome: 'accepted_native_behavior',
     highImpact: true,
     safeImplementationNow: false,
-    latestDecision: 'park_table_header_transaction_behavior',
+    latestDecision: 'accept_report_scale_object_backed_table_proof',
     evidence: [
       'docs/table-undersegmentation-transaction-diagnostic-2026-05-21.md',
       'docs/table-header-transaction-behavior-proof-2026-05-21.md',
       'docs/table-target-resolution-diagnostic-2026-05-21.md',
+      'docs/table-parenttree-stress-diagnostic-2026-05-22.md',
+      'docs/table-parenttree-behavior-proof-2026-05-22.md',
     ],
-    acceptedChange: 'No table transaction behavior was accepted from the dense row-band proof.',
+    acceptedChange:
+      'A narrow report-scale object-backed table proof now admits the existing Stage180 header regularization sequence when native /Table targets, heavy header-association debt, and clean non-table controls are present.',
     parkedReason:
-      'Only va-11 had accepted table/header debt reduction. va-08, va-09, and va-10 resolved planned table targets as non-table roles before mutation.',
+      'The broader dense row-band transaction remains parked. va-08, va-09, and va-10 still represent layout-only/non-table-target blockers, not safe planner predicates.',
     nextAction:
-      'Do not route dense row-band evidence directly to table tools. A future attempt must first prove stable /Table target refs immediately before mutation and at least two accepted positive repairs.',
+      'Use the report-scale object-backed predicate as the accepted baseline. Reopen table behavior only with new stable /Table target proofs; do not route dense row-band evidence directly to table tools.',
   },
   {
     id: 'font_cmap_scoring_hardening',
@@ -329,6 +333,7 @@ export function buildPacPocLaneRollup(items = PAC_POC_LANE_ROLLUP_ITEMS): PacPoc
   );
   const acceptedOrAlignedCount = countWhere(lanes, lane =>
     lane.outcome === 'accepted_native_evidence' ||
+    lane.outcome === 'accepted_native_behavior' ||
     lane.outcome === 'accepted_safety_guard' ||
     lane.outcome === 'existing_behavior_aligned',
   );
@@ -422,9 +427,9 @@ export function renderPacPocLaneRollupMarkdown(rollup: PacPocLaneRollup): string
   lines.push(
     '## Interpretation',
     '',
-    'The current source-tracked evidence has no high-impact PAC/POC lane that is ready for immediate production behavior. The strongest PAC-alignment work since the original map is accepted evidence confidence for fully measured Form XObject content events, direct language syntax score hardening, existing annotation/form behavior proof, and the report-layout strict-target safety guard.',
+    'The current source-tracked evidence has no high-impact PAC/POC lane that is ready for immediate new production behavior. The strongest PAC-alignment work since the original map is accepted evidence confidence for fully measured Form XObject content events, direct language syntax score hardening, existing annotation/form behavior proof, the report-layout strict-target safety guard, and the narrow report-scale object-backed table proof.',
     '',
-    'The next useful checkpoint is therefore not another broad fixer. Either run a fresh validation checkpoint to measure the current accepted state across original-50, all-unique, and an outside holdout, or open a new PAC-stress sample specifically designed around one unresolved family such as true rendered contrast positives, malformed explicit language-of-parts, or object-backed ParentTree/table targets.',
+    'The next useful checkpoint is therefore not another broad fixer. Either run a fresh validation checkpoint to measure the current accepted state across original-50, all-unique, and an outside holdout, or open a new PAC-stress sample specifically designed around one unresolved family such as true rendered contrast positives, malformed explicit language-of-parts, or a new object-backed ParentTree/table subtype.',
     '',
   );
 

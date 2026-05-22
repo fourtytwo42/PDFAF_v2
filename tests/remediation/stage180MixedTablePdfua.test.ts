@@ -3,6 +3,7 @@ import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnaps
 import {
   classifyStage180MixedTablePdfUa,
   hasAppliedStage180MixedTablePdfUa,
+  shouldTryStage180ReportTableProof,
   shouldTryStage180LinkRepairAfterTable,
   stage180RemainingTableTargets,
 } from '../../src/services/remediation/stage180MixedTablePdfua.js';
@@ -208,6 +209,182 @@ describe('Stage 180 mixed table/PDF-UA helpers', () => {
       shouldAttempt: true,
       classification: 'stable_table_first_candidate',
     });
+  });
+
+  it('allows report-scale object-backed table cleanup with bounded heading debt', () => {
+    const reportTableSnapshot = snapshot({
+      pageCount: 65,
+      tableHeaderAudit: {
+        tablesChecked: 22,
+        headerAssociationMissingCount: 22,
+        orphanHeaderCellCount: 17,
+        dataCellsWithoutHeaderCount: 486,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 1,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 64, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 11,
+          stronglyIrregularTableCount: 11,
+        },
+      },
+      tables: [
+        {
+          structRef: '2040_0',
+          page: 0,
+          hasHeaders: true,
+          headerCount: 5,
+          totalCells: 63,
+          rowCount: 17,
+          cellsMisplacedCount: 0,
+          irregularRows: 16,
+          dominantColumnCount: 4,
+          reachable: true,
+          directContent: false,
+          subtreeMcidCount: 103,
+        },
+      ],
+    });
+    const reportAnalysis = analysis(69, {
+      heading_structure: 60,
+      reading_order: 98,
+      link_quality: 100,
+      alt_text: 100,
+      table_markup: 0,
+    });
+
+    expect(shouldTryStage180ReportTableProof({
+      analysis: reportAnalysis,
+      snapshot: reportTableSnapshot,
+    })).toBe(true);
+    expect(classifyStage180MixedTablePdfUa({
+      analysis: reportAnalysis,
+      snapshot: reportTableSnapshot,
+    })).toMatchObject({
+      shouldAttempt: true,
+      classification: 'stable_table_first_candidate',
+      reason: 'report-scale object-backed table cleanup can run with bounded heading debt',
+    });
+  });
+
+  it('rejects high-score controls and layout-only blockers for the report table proof', () => {
+    const reportTableSnapshot = snapshot({
+      pageCount: 65,
+      tableHeaderAudit: {
+        tablesChecked: 22,
+        headerAssociationMissingCount: 22,
+        orphanHeaderCellCount: 17,
+        dataCellsWithoutHeaderCount: 486,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 11,
+          stronglyIrregularTableCount: 11,
+        },
+      },
+      tables: [
+        {
+          structRef: '2040_0',
+          page: 0,
+          hasHeaders: true,
+          headerCount: 5,
+          totalCells: 63,
+          rowCount: 17,
+          cellsMisplacedCount: 0,
+          irregularRows: 16,
+          dominantColumnCount: 4,
+          reachable: true,
+          directContent: false,
+          subtreeMcidCount: 103,
+        },
+      ],
+    });
+    const highScoreControl = analysis(96, {
+      heading_structure: 100,
+      reading_order: 100,
+      link_quality: 100,
+      alt_text: 100,
+      table_markup: 79,
+    });
+    expect(shouldTryStage180ReportTableProof({
+      analysis: highScoreControl,
+      snapshot: reportTableSnapshot,
+    })).toBe(false);
+
+    const layoutOnlyBlocker = snapshot({
+      pageCount: 65,
+      tables: [],
+      tableHeaderAudit: {
+        tablesChecked: 22,
+        headerAssociationMissingCount: 22,
+        orphanHeaderCellCount: 17,
+        dataCellsWithoutHeaderCount: 486,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 64, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 11,
+          stronglyIrregularTableCount: 11,
+          layoutTableCandidateCount: 35,
+          denseRowBandTableCandidateCount: 35,
+        },
+      },
+    });
+    expect(shouldTryStage180ReportTableProof({
+      analysis: analysis(69, {
+        heading_structure: 60,
+        reading_order: 98,
+        link_quality: 100,
+        alt_text: 100,
+        table_markup: 0,
+      }),
+      snapshot: layoutOnlyBlocker,
+    })).toBe(false);
   });
 
   it('allows link repair after table is stable even when alt remains low', () => {

@@ -39,7 +39,7 @@ describe('PAC/POC parity gap map', () => {
     const contrast = map.lanes.find(lane => lane.id === 'rendered_contrast_opt_in');
     const language = map.lanes.find(lane => lane.id === 'language_parts_validation');
 
-    expect(table?.status).toBe('parked_no_safe_predicate');
+    expect(table?.status).toBe('mostly_aligned_monitor');
     expect(table?.scoreActiveRuleIds).toEqual(expect.arrayContaining([
       'pdfua.table.header_association_present',
       'pdfua.table.header_cells_associated',
@@ -63,6 +63,7 @@ describe('PAC/POC parity gap map', () => {
     expect(markdown).toContain('`evidence_map_only`');
     expect(markdown).toContain('diagnostic/planning output only');
     expect(markdown).toContain('Research/POC-decompiled');
+    expect(markdown).toContain('report-scale object-backed table proof');
   });
 
   it('writes JSON and Markdown artifacts', async () => {
