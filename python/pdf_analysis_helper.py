@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unicodedata
 import secrets
 from collections import Counter, deque
@@ -153,6 +154,33 @@ except ImportError:
         },
     }))
     sys.exit(0)
+
+_ANALYSIS_PHASE_TRACE = os.environ.get("PDFAF_PYTHON_ANALYSIS_PHASE_TRACE") == "1"
+
+
+def _trace_analysis_phase(event: str, phase: str, started: float | None = None, **fields) -> float:
+    now = time.monotonic()
+    if _ANALYSIS_PHASE_TRACE:
+        payload = {
+            "event": event,
+            "phase": phase,
+            "elapsedMs": round((now - started) * 1000) if started is not None else None,
+            **fields,
+        }
+        print(f"[analysis-phase] {json.dumps(payload, ensure_ascii=False, default=str)}", file=sys.stderr, flush=True)
+    return now
+
+
+def _trace_phase_done(phase: str, started: float, **fields) -> None:
+    _trace_analysis_phase("finish", phase, started, **fields)
+
+
+def _trace_value_phase(phase: str, fn, *args, **kwargs):
+    started = _trace_analysis_phase("start", phase)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _trace_phase_done(phase, started)
 
 try:
     from fontTools.agl import AGL2UV
@@ -1284,6 +1312,17 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
         out["missingParentTree"] = not isinstance(pt, pikepdf.Dictionary)
         parent_entries = _flatten_parent_tree_nums(pt) if isinstance(pt, pikepdf.Dictionary) else {}
         page_key_by_ref = {}
+        content_refs = list(_iter_struct_content_refs(pdf))
+        objr_owner_by_ref: dict[object, object] = {}
+        for elem, ref in content_refs:
+            try:
+                if ref.get("type") != "objr":
+                    continue
+                obj_key = _obj_key(ref.get("obj"))
+                if obj_key and obj_key not in objr_owner_by_ref:
+                    objr_owner_by_ref[obj_key] = elem
+            except Exception:
+                continue
         for page in pdf.pages:
             try:
                 struct_parent = page.obj.get("/StructParents")
@@ -1315,7 +1354,7 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
                             out["invalidParentTreeEntries"] += 1
                     except Exception:
                         out["invalidParentTreeEntries"] += 1
-        for elem, ref in _iter_struct_content_refs(pdf):
+        for elem, ref in content_refs:
             try:
                 if ref["type"] == "mcid":
                     page_ref = ref.get("pageRef")
@@ -1352,14 +1391,10 @@ def collect_parent_tree_audit(pdf: pikepdf.Pdf) -> dict:
                         if not isinstance(entry, pikepdf.Dictionary):
                             out["annotationReferenceMismatchCount"] += 1
                             continue
-                        found = False
-                        for elem, ref in _iter_struct_content_refs(pdf):
-                            if ref.get("type") == "objr" and _obj_key(ref.get("obj")) == _obj_key(annot):
-                                found = True
-                                if _obj_key(elem) != _obj_key(entry):
-                                    out["annotationReferenceMismatchCount"] += 1
-                                break
-                        if not found:
+                        owner = objr_owner_by_ref.get(_obj_key(annot))
+                        if owner is None:
+                            out["annotationReferenceMismatchCount"] += 1
+                        elif _obj_key(owner) != _obj_key(entry):
                             out["annotationReferenceMismatchCount"] += 1
                     except Exception:
                         out["annotationReferenceMismatchCount"] += 1
@@ -1925,6 +1960,19 @@ def collect_structure_syntax_audit(pdf: pikepdf.Pdf) -> dict:
                 seen.add(cur)
                 cur = rolemap[cur]
 
+        child_keys_by_parent: dict[object, set] = {}
+
+        def direct_child_keys(parent) -> set:
+            parent_key = _struct_elem_visit_key(parent)
+            if parent_key not in child_keys_by_parent:
+                keys = set()
+                for child in _direct_role_children(parent):
+                    keys.add(_struct_elem_visit_key(child))
+                for child in _struct_elem_children(parent):
+                    keys.add(_struct_elem_visit_key(child))
+                child_keys_by_parent[parent_key] = keys
+            return child_keys_by_parent[parent_key]
+
         q = deque()
         root_k = sr.get("/K")
         _enqueue_children(q, root_k)
@@ -1951,13 +1999,14 @@ def collect_structure_syntax_audit(pdf: pikepdf.Pdf) -> dict:
                 out["missingParentCount"] += 1
             elif isinstance(parent, pikepdf.Dictionary):
                 try:
-                    if elem not in _direct_role_children(parent) and elem not in _struct_elem_children(parent):
+                    if key not in direct_child_keys(parent):
                         out["wrongParentCount"] += 1
                 except Exception:
                     pass
 
             resolved_parent = rolemap.get(role, role)
-            for child in _direct_role_children(elem):
+            direct_children = _direct_role_children(elem)
+            for child in direct_children:
                 child_role = safe_str(child.get("/S")).lstrip("/").upper()
                 resolved_child = rolemap.get(child_role, child_role)
                 allowed = VALID_CHILDREN_BY_PARENT.get(resolved_parent)
@@ -6750,31 +6799,38 @@ def main():
     }
 
     try:
+        phase_started = _trace_analysis_phase("start", "open_pdf", path=os.path.basename(pdf_path))
         pdf = pikepdf.open(pdf_path, suppress_warnings=True)
+        _trace_phase_done("open_pdf", phase_started)
 
         # CI producer markers (read before extract_metadata; order must not clobber docinfo via XMP side effects).
-        result["threeCcGoldenV1"] = pdf_has_3cc_golden_marker(pdf)
-        result["threeCcGoldenOrphanV1"] = pdf_has_3cc_orphan_marker(pdf)
-        result["orphanMcids"] = collect_orphan_mcids(pdf)
-        result["mcidTextSpans"] = collect_mcid_text_spans(pdf)
-        result["taggedContentAudit"] = collect_tagged_content_audit(pdf)
-        result["parentTreeAudit"] = collect_parent_tree_audit(pdf)
-        result["contentTaggingAudit"] = collect_content_tagging_audit(pdf)
-        result["languageAudit"] = collect_language_audit(pdf)
+        phase_started = _trace_analysis_phase("start", "core_marker_and_audit_collectors")
+        result["threeCcGoldenV1"] = _trace_value_phase("marker_3cc_golden", pdf_has_3cc_golden_marker, pdf)
+        result["threeCcGoldenOrphanV1"] = _trace_value_phase("marker_3cc_orphan", pdf_has_3cc_orphan_marker, pdf)
+        result["orphanMcids"] = _trace_value_phase("collect_orphan_mcids", collect_orphan_mcids, pdf)
+        result["mcidTextSpans"] = _trace_value_phase("collect_mcid_text_spans", collect_mcid_text_spans, pdf)
+        result["taggedContentAudit"] = _trace_value_phase("collect_tagged_content_audit", collect_tagged_content_audit, pdf)
+        result["parentTreeAudit"] = _trace_value_phase("collect_parent_tree_audit", collect_parent_tree_audit, pdf)
+        result["contentTaggingAudit"] = _trace_value_phase("collect_content_tagging_audit", collect_content_tagging_audit, pdf)
+        result["languageAudit"] = _trace_value_phase("collect_language_audit", collect_language_audit, pdf)
         result["renderedContrastAudit"] = default_rendered_contrast_audit()
-        result["structureSyntaxAudit"] = collect_structure_syntax_audit(pdf)
-        result["tocNoteAudit"] = collect_toc_note_audit(pdf)
-        result["optionalContentAudit"] = collect_optional_content_audit(pdf)
-        result["linkReachabilityAudit"] = collect_link_reachability_audit(pdf)
+        result["structureSyntaxAudit"] = _trace_value_phase("collect_structure_syntax_audit", collect_structure_syntax_audit, pdf)
+        result["tocNoteAudit"] = _trace_value_phase("collect_toc_note_audit", collect_toc_note_audit, pdf)
+        result["optionalContentAudit"] = _trace_value_phase("collect_optional_content_audit", collect_optional_content_audit, pdf)
+        result["linkReachabilityAudit"] = _trace_value_phase("collect_link_reachability_audit", collect_link_reachability_audit, pdf)
         result["aiVisualTagAudit"] = default_ai_visual_tag_audit()
-        result["remediationProvenance"] = extract_remediation_provenance(pdf)
+        result["remediationProvenance"] = _trace_value_phase("extract_remediation_provenance", extract_remediation_provenance, pdf)
+        _trace_phase_done("core_marker_and_audit_collectors", phase_started)
 
+        phase_started = _trace_analysis_phase("start", "list_structure_audit")
         try:
             result["listStructureAudit"] = collect_list_structure_audit(pdf)
         except Exception as e:
             print(f"[warn] list structure audit: {e}", file=sys.stderr)
+        _trace_phase_done("list_structure_audit", phase_started)
 
         # Metadata
+        phase_started = _trace_analysis_phase("start", "metadata_and_title_candidates")
         meta = extract_metadata(pdf)
         result.update(meta)
         try:
@@ -6785,11 +6841,15 @@ def main():
             result["nativeTitleBtCandidates"] = collect_native_title_bt_candidates(pdf)
         except Exception as e:
             print(f"[warn] native title bt candidates: {e}", file=sys.stderr)
+        _trace_phase_done("metadata_and_title_candidates", phase_started)
 
         # Build page→index map once (used by struct traversal)
+        phase_started = _trace_analysis_phase("start", "build_page_map")
         page_map = build_page_map(pdf)
+        _trace_phase_done("build_page_map", phase_started)
 
         # Structure tree
+        phase_started = _trace_analysis_phase("start", "traverse_struct_tree")
         struct = traverse_struct_tree(pdf, page_map)
         result["headings"]     = struct["headings"]
         result["figures"]      = struct["figures"]
@@ -6802,31 +6862,50 @@ def main():
             "rootReachableHeadingCount": 0,
             "rootReachableDepth": 0,
         }
+        _trace_phase_done(
+            "traverse_struct_tree",
+            phase_started,
+            headings=len(result["headings"]),
+            figures=len(result["figures"]),
+            tables=len(result["tables"]),
+            paragraphs=len(result["paragraphStructElems"]),
+        )
 
         # Fonts
+        phase_started = _trace_analysis_phase("start", "font_extract_and_syntax_audit")
         result["fonts"] = extract_fonts(pdf)
         result["fontSyntaxAudit"] = collect_font_syntax_audit(pdf, result["fonts"])
+        _trace_phase_done("font_extract_and_syntax_audit", phase_started, fonts=len(result["fonts"]))
 
         # Bookmarks
+        phase_started = _trace_analysis_phase("start", "bookmarks_and_table_header_audit")
         result["bookmarks"] = extract_bookmarks(pdf)
         result["tableHeaderAudit"] = collect_table_header_audit(pdf, result["tables"])
+        _trace_phase_done("bookmarks_and_table_header_audit", phase_started, bookmarks=len(result["bookmarks"]))
 
         # AcroForm fields (supplement tagged form fields)
+        phase_started = _trace_analysis_phase("start", "acroform_fields")
         acro = extract_acroform_fields(pdf)
         if acro and not result["formFields"]:
             result["formFields"] = acro
+        _trace_phase_done("acroform_fields", phase_started, formFields=len(result["formFields"]))
 
+        phase_started = _trace_analysis_phase("start", "annotation_accessibility")
         try:
             result["annotationAccessibility"] = collect_annotation_accessibility_stats(pdf)
         except Exception as e:
             print(f"[warn] annotation accessibility stats: {e}", file=sys.stderr)
+        _trace_phase_done("annotation_accessibility", phase_started)
 
+        phase_started = _trace_analysis_phase("start", "link_scoring_rows")
         try:
             result["linkScoringRows"] = collect_link_scoring_rows(pdf)
         except Exception as e:
             print(f"[warn] link scoring rows: {e}", file=sys.stderr)
             result["linkScoringRows"] = []
+        _trace_phase_done("link_scoring_rows", phase_started, linkRows=len(result["linkScoringRows"]))
 
+        phase_started = _trace_analysis_phase("start", "acrobat_style_alt_risks")
         try:
             result["acrobatStyleAltRisks"] = collect_acrobat_style_alt_risks(pdf)
         except Exception as e:
@@ -6837,15 +6916,20 @@ def main():
                 "orphanedAltEmptyElementCount": 0,
                 "sampleOwnershipModes": [],
             }
+        _trace_phase_done("acrobat_style_alt_risks", phase_started)
 
+        phase_started = _trace_analysis_phase("start", "close_pdf")
         pdf.close()
+        _trace_phase_done("close_pdf", phase_started)
 
     except pikepdf.PasswordError:
         print("[warn] PDF is password-protected; returning empty analysis", file=sys.stderr)
     except Exception as e:
         print(f"[warn] PDF open/parse failed: {e}", file=sys.stderr)
 
+    phase_started = _trace_analysis_phase("start", "emit_json")
     print(json.dumps(result, ensure_ascii=False))
+    _trace_phase_done("emit_json", phase_started)
 
 
 # ─── Mutation mode (Phase 2) ─────────────────────────────────────────────────
