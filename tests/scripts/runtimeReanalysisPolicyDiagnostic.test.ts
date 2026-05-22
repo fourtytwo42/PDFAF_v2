@@ -12,6 +12,9 @@ function runtimeSummary(input: {
   stageReanalysisMs?: number;
   stageTotalMs?: number;
   toolMs?: number;
+  liveMs?: number;
+  liveScoreBefore?: number;
+  liveScoreAfter?: number;
   earlyExitKey?: string;
 } = {}) {
   return {
@@ -30,6 +33,16 @@ function runtimeSummary(input: {
         toolName: 'set_figure_alt_text',
         durationMs: input.toolMs ?? 12_000,
         outcome: 'accepted',
+      },
+    ],
+    liveAnalysisTimings: [
+      {
+        context: 'figure_alt_target_reanalysis',
+        toolName: 'set_figure_alt_text',
+        targetRef: '248_0',
+        durationMs: input.liveMs ?? 65_000,
+        scoreBefore: input.liveScoreBefore ?? 59,
+        scoreAfter: input.liveScoreAfter ?? 59,
       },
     ],
     boundedWork: {
@@ -80,7 +93,56 @@ describe('runtime reanalysis policy diagnostic', () => {
     expect(diagnostic.decision.status).toBe('plan_reanalysis_admission_probe');
     expect(diagnostic.rows[0]?.classification).toBe('reanalysis_dominated_low_score_candidate');
     expect(diagnostic.rows[0]?.stageReanalysisMs).toBe(65_000);
+    expect(diagnostic.rows[0]?.liveNoGainAnalysisMs).toBe(65_000);
     expect(diagnostic.rows[0]?.toolTimingRatio).toBeLessThanOrEqual(0.15);
+  });
+
+  it('separates high-score live-analysis routes as controls', () => {
+    const diagnostic = buildReanalysisPolicyDiagnostic({
+      reports: [
+        {
+          path: '/telemetry.json',
+          report: report([
+            row('long-4683.pdf', 48, 98, 225_000, {
+              runtimeSummary: runtimeSummary({
+                liveMs: 105_000,
+                liveScoreBefore: 59,
+                liveScoreAfter: 59,
+              }),
+            }),
+          ]),
+        },
+      ],
+      focusKeys: ['4683'],
+    });
+
+    expect(diagnostic.decision.status).toBe('keep_runtime_policy_parked');
+    expect(diagnostic.rows[0]?.classification).toBe('live_reanalysis_positive_route_control');
+    expect(diagnostic.rows[0]?.liveAnalysisMs).toBe(105_000);
+  });
+
+  it('parks low-score rows when live analysis shows route volatility', () => {
+    const diagnostic = buildReanalysisPolicyDiagnostic({
+      reports: [
+        {
+          path: '/telemetry.json',
+          report: report([
+            row('long-4680.pdf', 59, 59, 233_000, {
+              runtimeSummary: runtimeSummary({
+                liveMs: 82_000,
+                liveScoreBefore: 59,
+                liveScoreAfter: 97,
+              }),
+            }),
+          ]),
+        },
+      ],
+      focusKeys: ['4680'],
+    });
+
+    expect(diagnostic.decision.status).toBe('keep_runtime_policy_parked');
+    expect(diagnostic.rows[0]?.classification).toBe('live_reanalysis_route_volatility_blocker');
+    expect(diagnostic.rows[0]?.liveGainAnalysisMs).toBe(82_000);
   });
 
   it('classifies repeated timeout rows from repeated observations or explicit known-timeout keys', () => {

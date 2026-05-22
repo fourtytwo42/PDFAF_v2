@@ -14,6 +14,9 @@ const DEFAULT_OUT = '/mnt/pdf-review/pdfaf-validation/runtime-reanalysis-policy-
 
 export type ReanalysisPolicyClassification =
   | 'reanalysis_dominated_low_score_candidate'
+  | 'live_reanalysis_positive_route_control'
+  | 'live_reanalysis_route_volatility_blocker'
+  | 'structural_reanalysis_tail_monitor'
   | 'p95_driver_needs_runtime_summary'
   | 'new_timeout_needs_repeat_or_trace'
   | 'repeated_timeout_known_debt'
@@ -51,12 +54,22 @@ interface RemediationToolRuntimeSummary {
   outcome?: string;
 }
 
+interface RemediationLiveAnalysisRuntimeSummary {
+  context?: string;
+  toolName?: string;
+  targetRef?: string;
+  durationMs?: number;
+  scoreBefore?: number | null;
+  scoreAfter?: number | null;
+}
+
 interface RemediationRuntimeSummary {
   analysisBefore?: AnalysisRuntimeSummary | null;
   analysisAfter?: AnalysisRuntimeSummary | null;
   deterministicTotalMs?: number;
   stageTimings?: RemediationStageRuntimeSummary[];
   toolTimings?: RemediationToolRuntimeSummary[];
+  liveAnalysisTimings?: RemediationLiveAnalysisRuntimeSummary[];
   boundedWork?: {
     deterministicEarlyExitReasons?: RuntimeCountRow[];
   };
@@ -97,12 +110,18 @@ export interface ReanalysisPolicyRow {
   stageReanalysisMs: number;
   stageTotalMs: number;
   toolTimingMs: number;
+  liveAnalysisMs: number;
+  liveNoGainAnalysisMs: number;
+  liveGainAnalysisMs: number;
+  liveAnalysisCount: number;
   appliedToolMs: number;
   stageReanalysisRatio: number | null;
   toolTimingRatio: number | null;
+  liveAnalysisRatio: number | null;
   earlyExitReasons: RuntimeCountRow[];
   topStages: string[];
   topTools: string[];
+  topLiveAnalyses: string[];
   reason: string;
 }
 
@@ -174,6 +193,16 @@ function topTools(runtime?: RemediationRuntimeSummary): string[] {
     .map(tool => `${tool.toolName ?? '?'}:${Math.round(tool.durationMs ?? 0)}ms:${tool.outcome ?? '?'}`);
 }
 
+function topLiveAnalyses(runtime?: RemediationRuntimeSummary): string[] {
+  return [...(runtime?.liveAnalysisTimings ?? [])]
+    .sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))
+    .slice(0, 5)
+    .map(live => {
+      const scoreText = `${live.scoreBefore ?? 'n/a'}->${live.scoreAfter ?? 'n/a'}`;
+      return `${live.context ?? '?'}:${live.toolName ?? '?'}:${live.targetRef ?? '?'}:${Math.round(live.durationMs ?? 0)}ms:${scoreText}`;
+    });
+}
+
 function earlyExitReasons(runtime?: RemediationRuntimeSummary): RuntimeCountRow[] {
   return runtime?.boundedWork?.deterministicEarlyExitReasons ?? [];
 }
@@ -221,17 +250,46 @@ function classifyTelemetryRow(
     };
   }
   if (
+    (row.afterScore ?? 0) >= 93 &&
+    row.liveAnalysisMs >= 40_000
+  ) {
+    return {
+      classification: 'live_reanalysis_positive_route_control',
+      reason: 'High-score row still depends on substantial live analysis; any future no-gain policy must preserve this route.',
+    };
+  }
+  if (
+    (row.afterScore ?? 0) < 85 &&
+    row.liveGainAnalysisMs > 0
+  ) {
+    return {
+      classification: 'live_reanalysis_route_volatility_blocker',
+      reason: 'Low final score occurred despite at least one live analysis showing score gain; route needs diagnosis before cutoff policy.',
+    };
+  }
+  if (
     (row.afterScore ?? 0) < 85 &&
     row.stageReanalysisMs >= 45_000 &&
-    row.toolTimingRatio !== null &&
-    row.toolTimingRatio <= 0.15 &&
+    row.liveNoGainAnalysisMs >= 40_000 &&
+    row.liveGainAnalysisMs === 0 &&
     (hasEarlyExit(row as ReanalysisPolicyRow, 'verified_low_score_checkpoint_timeout_return') ||
+      hasEarlyExit(row as ReanalysisPolicyRow, 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return') ||
       hasEarlyExit(row as ReanalysisPolicyRow, 'reanalysis_tail_soft_cap_') ||
       hasEarlyExit(row as ReanalysisPolicyRow, 'soft_deadline_'))
   ) {
     return {
       classification: 'reanalysis_dominated_low_score_candidate',
-      reason: 'Low-score row has substantial repeated reanalysis, low tool-time ratio, and bounded-work checkpoint/soft-stop evidence.',
+      reason: 'Low-score row has substantial repeated reanalysis plus score-neutral live analysis and bounded-work checkpoint/soft-stop evidence.',
+    };
+  }
+  if (
+    row.liveAnalysisMs === 0 &&
+    row.stageReanalysisMs >= 90_000 &&
+    (row.durationMs ?? 0) >= 180_000
+  ) {
+    return {
+      classification: 'structural_reanalysis_tail_monitor',
+      reason: 'Runtime tail is dominated by repeated structural reanalysis rather than live figure/alt analysis.',
     };
   }
   if ((row.durationMs ?? 0) >= 180_000) {
@@ -279,6 +337,18 @@ function buildRows(input: {
       const stageReanalysisMs = Math.round(sum((runtime?.stageTimings ?? []).map(stage => stage.reanalyzeMs)));
       const stageTotalMs = Math.round(sum((runtime?.stageTimings ?? []).map(stage => stage.totalMs)));
       const toolTimingMs = Math.round(sum((runtime?.toolTimings ?? []).map(tool => tool.durationMs)));
+      const liveAnalyses = runtime?.liveAnalysisTimings ?? [];
+      const liveAnalysisMs = Math.round(sum(liveAnalyses.map(live => live.durationMs)));
+      const liveNoGainAnalysisMs = Math.round(sum(liveAnalyses.map(live => {
+        const before = numberOrNull(live.scoreBefore);
+        const after = numberOrNull(live.scoreAfter);
+        return before !== null && after !== null && after <= before ? live.durationMs : 0;
+      })));
+      const liveGainAnalysisMs = Math.round(sum(liveAnalyses.map(live => {
+        const before = numberOrNull(live.scoreBefore);
+        const after = numberOrNull(live.scoreAfter);
+        return before !== null && after !== null && after > before ? live.durationMs : 0;
+      })));
       const appliedToolMs = Math.round(sum((source.row.appliedTools ?? []).map(tool => tool.durationMs)));
       const base = {
         key,
@@ -298,12 +368,18 @@ function buildRows(input: {
         stageReanalysisMs,
         stageTotalMs,
         toolTimingMs,
+        liveAnalysisMs,
+        liveNoGainAnalysisMs,
+        liveGainAnalysisMs,
+        liveAnalysisCount: liveAnalyses.length,
         appliedToolMs,
         stageReanalysisRatio: durationMs && durationMs > 0 ? round4(stageReanalysisMs / durationMs) : null,
         toolTimingRatio: durationMs && durationMs > 0 ? round4(toolTimingMs / durationMs) : null,
+        liveAnalysisRatio: durationMs && durationMs > 0 ? round4(liveAnalysisMs / durationMs) : null,
         earlyExitReasons: earlyExitReasons(runtime),
         topStages: topStages(runtime),
         topTools: topTools(runtime),
+        topLiveAnalyses: topLiveAnalyses(runtime),
       };
       return {
         ...base,
@@ -316,6 +392,9 @@ function buildRows(input: {
     .sort((a, b) => {
       const order: ReanalysisPolicyClassification[] = [
         'reanalysis_dominated_low_score_candidate',
+        'live_reanalysis_route_volatility_blocker',
+        'live_reanalysis_positive_route_control',
+        'structural_reanalysis_tail_monitor',
         'new_timeout_needs_repeat_or_trace',
         'repeated_timeout_known_debt',
         'p95_driver_needs_runtime_summary',
@@ -346,6 +425,9 @@ export function buildReanalysisPolicyDiagnostic(input: {
     scoreAdjudicationKeys: new Set(scoreAdjudicationKeys),
   });
   const candidateCount = rows.filter(row => row.classification === 'reanalysis_dominated_low_score_candidate').length;
+  const positiveControlCount = rows.filter(row => row.classification === 'live_reanalysis_positive_route_control').length;
+  const routeVolatilityCount = rows.filter(row => row.classification === 'live_reanalysis_route_volatility_blocker').length;
+  const structuralMonitorCount = rows.filter(row => row.classification === 'structural_reanalysis_tail_monitor').length;
   const missingTelemetryCount = rows.filter(row => row.classification === 'p95_driver_needs_runtime_summary').length;
   const traceNeededCount = rows.filter(row => row.classification === 'new_timeout_needs_repeat_or_trace').length;
   const reasons: string[] = [];
@@ -354,6 +436,9 @@ export function buildReanalysisPolicyDiagnostic(input: {
   if (candidateCount > 0) {
     status = 'plan_reanalysis_admission_probe';
     reasons.push(`${candidateCount} row(s) show reanalysis-dominated low-score runtime pressure.`);
+    if (positiveControlCount > 0) reasons.push(`${positiveControlCount} high-score live-analysis control row(s) must be preserved.`);
+    if (routeVolatilityCount > 0) reasons.push(`${routeVolatilityCount} live-analysis route-volatility row(s) block broad cutoff behavior.`);
+    if (structuralMonitorCount > 0) reasons.push(`${structuralMonitorCount} structural reanalysis tail row(s) need a separate policy lane.`);
     if (missingTelemetryCount > 0) reasons.push(`${missingTelemetryCount} row(s) still need runtime telemetry.`);
     if (traceNeededCount > 0) reasons.push(`${traceNeededCount} timeout row(s) need focused repeat or timeout trace.`);
     recommendation = 'Plan a separate guarded behavior probe around reanalysis admission or verified checkpoint policy; do not change score/PAC gates from this diagnostic.';
@@ -365,6 +450,9 @@ export function buildReanalysisPolicyDiagnostic(input: {
   } else {
     status = 'keep_runtime_policy_parked';
     reasons.push('No safe runtime policy candidate is supported by current telemetry.');
+    if (positiveControlCount > 0) reasons.push(`${positiveControlCount} high-score live-analysis control row(s) make broad cutoff unsafe.`);
+    if (routeVolatilityCount > 0) reasons.push(`${routeVolatilityCount} route-volatility row(s) need diagnosis before cutoff policy.`);
+    if (structuralMonitorCount > 0) reasons.push(`${structuralMonitorCount} structural reanalysis tail row(s) do not match the live-analysis policy lane.`);
     recommendation = 'Keep runtime behavior parked and continue PAC/POC lane work.';
   }
   return {
@@ -381,8 +469,8 @@ export function buildReanalysisPolicyDiagnostic(input: {
 function rowTable(rows: ReanalysisPolicyRow[]): string[] {
   if (rows.length === 0) return ['No focus rows found in the supplied reports.'];
   const lines = [
-    '| Key | Classification | Score | Runtime | Reanalysis | Tool Ratio | Reason |',
-    '| --- | --- | ---: | ---: | ---: | ---: | --- |',
+    '| Key | Classification | Score | Runtime | Reanalysis | Live Analysis | Live No-Gain | Reason |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     lines.push([
@@ -391,7 +479,8 @@ function rowTable(rows: ReanalysisPolicyRow[]): string[] {
       `${row.afterScore ?? 'n/a'}/${row.afterGrade ?? '?'}`,
       row.durationMs ?? 'n/a',
       row.stageReanalysisMs,
-      row.toolTimingRatio ?? 'n/a',
+      row.liveAnalysisMs,
+      row.liveNoGainAnalysisMs,
       `${row.reason} |`,
     ].join(' | '));
   }
@@ -425,9 +514,11 @@ export function renderReanalysisPolicyMarkdown(report: ReanalysisPolicyDiagnosti
     lines.push(`- Deterministic total: \`${formatMs(row.deterministicTotalMs)}\``);
     lines.push(`- Stage total/reanalysis: \`${row.stageTotalMs} / ${row.stageReanalysisMs}ms\``);
     lines.push(`- Runtime/applied tool time: \`${row.toolTimingMs} / ${row.appliedToolMs}ms\``);
+    lines.push(`- Live analysis total/no-gain/gain: \`${row.liveAnalysisMs} / ${row.liveNoGainAnalysisMs} / ${row.liveGainAnalysisMs}ms\``);
     lines.push(`- Early exits: \`${row.earlyExitReasons.map(reason => `${reason.key} x${reason.count}`).join(', ') || 'none'}\``);
     lines.push(`- Top stages: \`${row.topStages.join('; ') || 'none'}\``);
     lines.push(`- Top tools: \`${row.topTools.join('; ') || 'none'}\``, '');
+    lines.push(`- Top live analyses: \`${row.topLiveAnalyses.join('; ') || 'none'}\``, '');
   }
   return `${lines.join('\n')}\n`;
 }
