@@ -13,6 +13,7 @@ Local generated artifact:
 - `Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.md`
 - `Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.json`
 - Follow-up r3 after fresh all-unique validation: `/mnt/pdf-review/pdfaf-validation/pac-poc-validation-checkpoint-2026-05-22-r3/pac-poc-validation-checkpoint.md`
+- Follow-up all-unique r2 validation: `/mnt/pdf-review/pdfaf-validation/allunique-current-bounded-full-2026-05-22-r2/diagnostic/all-input-mean-diagnostic.md`
 
 Generated artifacts remain local and are not source-tracked.
 
@@ -64,11 +65,14 @@ The original-50 result should not be over-read as final completion evidence: it 
 
 Follow-up all-unique blocker evidence is now source-documented in `docs/all-unique-r39-hard-timeout-current-diagnostic-2026-05-22.md`. Current-source focused repeats recovered `0019/long-4516` from the r39 hard-timeout state to `59/F` and `85/B`, with `false_positive_applied=0`, while `0031`, `0120`, and `0135` remained hard timeouts. This makes a fresh all-unique validation the next useful acceptance check, but it is still not completion evidence.
 
-Fresh all-unique validation was then run and is source-documented in `docs/all-unique-current-bounded-full-2026-05-22.md`. The current authoritative all-unique checkpoint is `/mnt/pdf-review/pdfaf-validation/allunique-current-bounded-full-2026-05-22-r1/diagnostic/all-input-mean-diagnostic.md`: `351` rows, all-row mean `91.8832`, completed-row mean `93.4812`, median `94`, `false_positive_applied=0`, `6` hard timeouts, and runtime p95 `206139ms`, which is above the r39-bound `203539ms`. This supersedes the one-point-short r39 picture for next-work selection.
+Fresh all-unique validation was then run and is source-documented in `docs/all-unique-current-bounded-full-2026-05-22.md`. That r1 checkpoint had `351` rows, all-row mean `91.8832`, completed-row mean `93.4812`, median `94`, `false_positive_applied=0`, `6` hard timeouts, and runtime p95 `206139ms`, which was above the r39-bound `203539ms`.
+
+After the bounded-runner grace fix, a second fresh all-unique validation was run and is source-documented in `docs/all-unique-current-bounded-full-2026-05-22-r2.md`. The current-source r2 checkpoint is `/mnt/pdf-review/pdfaf-validation/allunique-current-bounded-full-2026-05-22-r2/diagnostic/all-input-mean-diagnostic.md`: `351` rows, all-row mean `92.2821`, completed-row mean `93.0776`, median `94`, `false_positive_applied=0`, `3` hard timeouts, and runtime p95 `188394ms`, which is below the r39-bound `203539ms`. This improves r1 by `+140` raw points and fixes p95, but it still misses the active all-unique target by `252` raw points and remains below r39's `92.9972` best accepted fresh floor.
 
 ## Next Direction
 
 Use the updated map/rollup and PAC-stress selector to choose the next lane. Because no high-impact implementation lane is ready now, prefer:
 
-- timeout/runtime recovery for the fresh all-unique timeout set, especially rows that can return verified states without PAC suppression; or
-- a narrow object-backed structural lane from the fresh completed-run deficit list only after the timeout lane is diagnosed.
+- timeout/analyzer recovery for `0031`, `0120`, and `0135`; or
+- route-stability diagnostics for repeatable zero-heading/structural lows such as `0325`, `0236`, `0306`, `0317`, `0033`, `0108`, `0149`, and `0181`; or
+- a narrow object-backed table/alt lane from the fresh completed-run deficit list only after the timeout and route-stability lanes are diagnosed.
