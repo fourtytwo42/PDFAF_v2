@@ -35,6 +35,27 @@ const SEMANTIC_TIMEOUT_MS = 600_000;
 const DEFAULT_REMEDIATION_TARGET_SCORE = parseInt(process.env['REMEDIATION_TARGET_SCORE'] ?? '95', 10);
 const SECOND_PASS_MIN_SCORE = parseInt(process.env['PDFAF_SECOND_PASS_MIN_SCORE'] ?? '93', 10);
 
+type BenchmarkRuntimeTraceEvent =
+  | RemediationRuntimeTraceEvent
+  | {
+      kind: 'benchmark_phase_start';
+      phase: string;
+      scoreBefore?: number | null;
+      gradeBefore?: string | null;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'benchmark_phase_finish';
+      phase: string;
+      durationMs: number;
+      scoreBefore?: number | null;
+      gradeBefore?: string | null;
+      scoreAfter?: number | null;
+      gradeAfter?: string | null;
+      kept?: boolean;
+      elapsedMs: number;
+    };
+
 function safeBase(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, '_');
 }
@@ -91,7 +112,7 @@ function isTimeoutLikeError(error: string | undefined): boolean {
   return /timeout|aborted|abort/i.test(error ?? '');
 }
 
-function runtimeEventCounts(events: RemediationRuntimeTraceEvent[]): Array<{ key: string; count: number }> {
+function runtimeEventCounts(events: BenchmarkRuntimeTraceEvent[]): Array<{ key: string; count: number }> {
   const counts = new Map<string, number>();
   for (const event of events) counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
   return [...counts.entries()]
@@ -99,7 +120,7 @@ function runtimeEventCounts(events: RemediationRuntimeTraceEvent[]): Array<{ key
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
-function liveAnalysisTraceSummary(events: RemediationRuntimeTraceEvent[]): {
+function liveAnalysisTraceSummary(events: BenchmarkRuntimeTraceEvent[]): {
   count: number;
   totalMs: number;
   byContext: Array<{ key: string; count: number; totalMs: number }>;
@@ -113,7 +134,9 @@ function liveAnalysisTraceSummary(events: RemediationRuntimeTraceEvent[]): {
     elapsedMs: number;
   }>;
 } {
-  const finishes = events.filter(event => event.kind === 'live_analysis_finish');
+  const finishes = events.filter((event): event is Extract<RemediationRuntimeTraceEvent, { kind: 'live_analysis_finish' }> =>
+    event.kind === 'live_analysis_finish'
+  );
   const byContext = new Map<string, { count: number; totalMs: number }>();
   for (const event of finishes) {
     const current = byContext.get(event.context) ?? { count: 0, totalMs: 0 };
@@ -198,7 +221,7 @@ export function buildRuntimeTraceArtifact(input: {
   file: string;
   error: string | undefined;
   durationMs: number;
-  events: RemediationRuntimeTraceEvent[];
+  events: BenchmarkRuntimeTraceEvent[];
 }) {
   const lastEvent = input.events.at(-1) ?? null;
   const toolFinishes = input.events.filter(event => event.kind === 'tool_finish');
@@ -250,7 +273,7 @@ async function writeRuntimeTimeoutTrace(input: {
   file: string;
   error: string | undefined;
   durationMs: number;
-  events: RemediationRuntimeTraceEvent[];
+  events: BenchmarkRuntimeTraceEvent[];
 }): Promise<void> {
   if (!isTimeoutLikeError(input.error)) return;
   const artifact = buildRuntimeTraceArtifact(input);
@@ -265,7 +288,7 @@ async function writeCompletedRuntimeTrace(input: {
   file: string;
   error: string | undefined;
   durationMs: number;
-  events: RemediationRuntimeTraceEvent[];
+  events: BenchmarkRuntimeTraceEvent[];
   enabled: boolean;
 }): Promise<void> {
   if (!input.enabled || input.error || input.events.length === 0) return;
@@ -405,7 +428,7 @@ async function main(): Promise<void> {
     const runtimeSummaries: RemediationRuntimeSummary[] = [];
     let initialAnalysisRuntime: AnalysisResult['runtimeSummary'] | undefined;
     let finalAnalysisRuntime: AnalysisResult['runtimeSummary'] | undefined;
-    const runtimeTraceEvents: RemediationRuntimeTraceEvent[] = [];
+    const runtimeTraceEvents: BenchmarkRuntimeTraceEvent[] = [];
     let verifiedCheckpointReturned = false;
 
     try {
@@ -447,13 +470,38 @@ async function main(): Promise<void> {
       let outBuf = buffer;
       let outAfter = remediation.after;
       let outSnap = snap2;
-      if (!verifiedCheckpointReturned && outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
+      const runPostRemediationAltPhase = async (phase: string): Promise<void> => {
+        const scoreBefore = outAfter.score;
+        const gradeBefore = outAfter.grade;
+        const phaseStarted = Date.now();
+        runtimeTraceEvents.push({
+          kind: 'benchmark_phase_start',
+          phase,
+          scoreBefore,
+          gradeBefore,
+          elapsedMs: phaseStarted - t0,
+        });
         const ar = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
-        if (shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
+        const kept = shouldKeepPostRemediationAltRepair(outAfter, ar.analysis);
+        if (kept) {
           outBuf = ar.buffer;
           outAfter = ar.analysis;
           outSnap = ar.snapshot;
         }
+        runtimeTraceEvents.push({
+          kind: 'benchmark_phase_finish',
+          phase,
+          durationMs: Date.now() - phaseStarted,
+          scoreBefore,
+          gradeBefore,
+          scoreAfter: outAfter.score,
+          gradeAfter: outAfter.grade,
+          kept,
+          elapsedMs: Date.now() - t0,
+        });
+      };
+      if (!verifiedCheckpointReturned && outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
+        await runPostRemediationAltPhase('post_remediation_alt_after_first_pass');
       }
       // Second deterministic pass: planner/tool caps often leave headroom after the first re-analyze.
       const hasSecondPassBudget = (): boolean => {
@@ -486,12 +534,7 @@ async function main(): Promise<void> {
           verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(r2.remediation);
         }
         if (!verifiedCheckpointReturned && outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
-          const ar2 = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
-          if (shouldKeepPostRemediationAltRepair(outAfter, ar2.analysis)) {
-            outBuf = ar2.buffer;
-            outAfter = ar2.analysis;
-            outSnap = ar2.snapshot;
-          }
+          await runPostRemediationAltPhase('post_remediation_alt_after_second_pass');
         }
       }
       afterDeterministicScore = outAfter.score;
@@ -564,12 +607,7 @@ async function main(): Promise<void> {
           outSnap = untag.snapshot;
 
           if (outSnap.isTagged && outAfter.score < REMEDIATION_TARGET_SCORE) {
-            const ar2 = await applyPostRemediationAltRepair(outBuf, name, outAfter, outSnap, { signal });
-            if (shouldKeepPostRemediationAltRepair(outAfter, ar2.analysis)) {
-              outBuf = ar2.buffer;
-              outAfter = ar2.analysis;
-              outSnap = ar2.snapshot;
-            }
+            await runPostRemediationAltPhase('post_remediation_alt_after_semantic');
           }
         };
 

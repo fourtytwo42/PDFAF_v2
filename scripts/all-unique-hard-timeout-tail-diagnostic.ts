@@ -17,6 +17,7 @@ export type HardTimeoutTailClassification =
   | 'eligible_checkpoint_terminal_bug'
   | 'stage_reanalysis_timeout_after_expensive_conformance'
   | 'post_pass_timeout_after_low_checkpoint'
+  | 'post_remediation_alt_timeout_after_low_checkpoint'
   | 'optional_post_alt_budget_overrun_candidate'
   | 'late_no_gain_live_reanalysis_churn'
   | 'low_checkpoint_not_returnable'
@@ -26,6 +27,7 @@ export type HardTimeoutTailClassification =
 export type HardTimeoutTailDecision =
   | 'fix_checkpoint_terminalization_first'
   | 'plan_post_pass_phase_timeout_probe'
+  | 'plan_post_remediation_alt_timeout_probe'
   | 'plan_optional_post_alt_budget_guard_probe'
   | 'plan_structure_reanalysis_timeout_probe'
   | 'no_safe_timeout_behavior_ready';
@@ -337,6 +339,14 @@ function classify(input: {
     return 'post_pass_timeout_after_low_checkpoint';
   }
   if (
+    lastEventKind === 'benchmark_phase_start' &&
+    /^post_remediation_alt_/i.test(stringOrNull(trace.lastEvent?.phase) ?? '') &&
+    best != null &&
+    /checkpoint_below_floor/i.test(best.eligibilityReason)
+  ) {
+    return 'post_remediation_alt_timeout_after_low_checkpoint';
+  }
+  if (
     lastEventKind === 'verified_checkpoint' &&
     untracedAfterLast != null &&
     untracedAfterLast >= 30_000 &&
@@ -361,6 +371,8 @@ function recommendation(row: HardTimeoutTailRow): string {
       return 'Do not skip the reanalysis or return the low checkpoint; isolate structure-conformance/reanalysis behavior in a focused replay.';
     case 'post_pass_timeout_after_low_checkpoint':
       return 'Use the named post-pass phase as the next timeout probe target; do not return the below-floor checkpoint.';
+    case 'post_remediation_alt_timeout_after_low_checkpoint':
+      return 'Instrument or budget-gate the benchmark final post-remediation alt phase; do not return the below-floor checkpoint.';
     case 'optional_post_alt_budget_overrun_candidate':
       return 'Plan a bounded optional-post-alt probe: skip or instrument the optional post-alt pass only when the remaining wall budget cannot cover mutation plus reanalysis, then validate quality.';
     case 'late_no_gain_live_reanalysis_churn':
@@ -409,6 +421,10 @@ function evidenceFor(input: {
   if (input.classification === 'post_pass_timeout_after_low_checkpoint') {
     const phase = stringOrNull(input.trace?.lastEvent?.phase);
     lines.push(`timeout occurred after entering post-pass phase ${phase ?? 'unknown'}`);
+  }
+  if (input.classification === 'post_remediation_alt_timeout_after_low_checkpoint') {
+    const phase = stringOrNull(input.trace?.lastEvent?.phase);
+    lines.push(`timeout occurred after entering benchmark phase ${phase ?? 'unknown'}`);
   }
   if (lines.length === 0 && input.row.error) lines.push(String(input.row.error));
   return lines;
@@ -498,6 +514,7 @@ function decisionFor(rows: HardTimeoutTailRow[]): HardTimeoutTailDiagnostic['sum
   const reasons: string[] = [];
   const terminalBugs = rows.filter(row => row.classification === 'eligible_checkpoint_terminal_bug').length;
   const postPassTimeouts = rows.filter(row => row.classification === 'post_pass_timeout_after_low_checkpoint').length;
+  const postAltTimeouts = rows.filter(row => row.classification === 'post_remediation_alt_timeout_after_low_checkpoint').length;
   const optionalBudget = rows.filter(row => row.classification === 'optional_post_alt_budget_overrun_candidate').length;
   const structureTimeouts = rows.filter(row => row.classification === 'stage_reanalysis_timeout_after_expensive_conformance').length;
 
@@ -519,6 +536,19 @@ function decisionFor(rows: HardTimeoutTailRow[]): HardTimeoutTailDiagnostic['sum
     return {
       status: 'plan_post_pass_phase_timeout_probe',
       recommendation: 'Use named post-pass phase evidence to design the next targeted timeout diagnostic or narrow behavior proof.',
+      reasons,
+    };
+  }
+  if (postAltTimeouts > 0) {
+    const phases = [...new Set(rows
+      .filter(row => row.classification === 'post_remediation_alt_timeout_after_low_checkpoint')
+      .map(row => row.lastPostPassPhase ?? 'unknown'))]
+      .sort();
+    reasons.push(`${postAltTimeouts} row(s) timed out after entering a benchmark post-remediation alt phase: ${phases.join(', ')}.`);
+    reasons.push('This supports a focused post-remediation alt timeout probe; it does not justify lowering checkpoint floors.');
+    return {
+      status: 'plan_post_remediation_alt_timeout_probe',
+      recommendation: 'Instrument or budget-gate post-remediation alt repair as benchmark/runtime behavior, with target rows and controls.',
       reasons,
     };
   }

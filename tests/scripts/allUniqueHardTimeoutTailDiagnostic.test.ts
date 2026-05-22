@@ -173,6 +173,32 @@ describe('all-unique hard-timeout tail diagnostic', () => {
     expect(diagnostic.summary.decision.status).toBe('plan_post_pass_phase_timeout_probe');
   });
 
+  it('classifies benchmark post-remediation alt timeouts separately', () => {
+    const file = '0135-report.pdf';
+    const diagnostic = buildHardTimeoutTailDiagnostic({
+      rows: [timeoutRow(file)],
+      traces: new Map([['0135', trace(file, {
+        lastEvent: {
+          kind: 'benchmark_phase_start',
+          phase: 'post_remediation_alt_after_first_pass',
+          scoreBefore: 59,
+          gradeBefore: 'F',
+          elapsedMs: 265_000,
+        },
+        verifiedCheckpointHistory: [
+          checkpoint({ reason: 'initial_state', score: 55, elapsedMs: 1 }),
+          checkpoint({ reason: 'document_finalization', score: 59, elapsedMs: 264_900 }),
+        ],
+      })]]),
+      runDir: '/run',
+      reportPath: '/run/merged/baseline_report.json',
+    });
+
+    expect(diagnostic.rows[0]?.classification).toBe('post_remediation_alt_timeout_after_low_checkpoint');
+    expect(diagnostic.rows[0]?.lastPostPassPhase).toBe('post_remediation_alt_after_first_pass');
+    expect(diagnostic.summary.decision.status).toBe('plan_post_remediation_alt_timeout_probe');
+  });
+
   it('detects eligible checkpoint terminalization bugs first', () => {
     const file = '0019-long-4516.pdf';
     const diagnostic = buildHardTimeoutTailDiagnostic({

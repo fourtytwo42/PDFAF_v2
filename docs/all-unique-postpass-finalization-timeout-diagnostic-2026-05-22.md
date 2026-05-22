@@ -75,6 +75,22 @@ Decision:
   - `4516`: `tagged_cleanup_post_pass` timeout after improving to an `83/B` but still below-floor state.
 - Do not lower checkpoint floors for either row.
 
+## Benchmark Phase Trace Follow-Up
+
+The batch runner now records benchmark-only phase start/finish events for post-`remediatePdf` alt repair phases. This is diagnostic-only and affects runtime JSON artifacts, not remediation/API/Docker behavior.
+
+Focused current-source repeat:
+
+- `/mnt/pdf-review/pdfaf-validation/post-remediation-alt-trace-0135-2026-05-22-r1/run-r1/baseline_report.json`
+- Diagnostic: `/mnt/pdf-review/pdfaf-validation/post-remediation-alt-trace-0135-2026-05-22-r1/hard-timeout-tail-diagnostic-r1/hard-timeout-tail-diagnostic.md`
+- Result: `0135` still timed out in `document_finalization:embed_local_font_substitutes` at about `264480ms`.
+- `false_positive_applied=0`.
+
+Decision:
+
+- The current accepted source still fails before the benchmark final-alt phase, so no final-alt behavior change is justified from this repeat.
+- The benchmark phase trace remains useful for future artifacts where deterministic remediation returns and the timeout occurs afterward.
+
 ## Source Change Scope
 
 The source change is trace-only:
@@ -82,6 +98,7 @@ The source change is trace-only:
 - `RemediationRuntimeTraceEvent` now supports `post_pass_start` and `post_pass_finish`.
 - Late post-pass blocks emit named phase start/finish events.
 - `applyIcjiaDocumentFinalization` can emit nested phase traces when called from the main remediation path.
+- `scripts/baseline-corpus-batch.ts` emits benchmark-only phase start/finish events for final post-remediation alt repair.
 - `scripts/all-unique-hard-timeout-tail-diagnostic.ts` classifies named post-pass timeouts separately and reports the last post-pass phase.
 
 Generated benchmark artifacts remain local under `/mnt/pdf-review`.
