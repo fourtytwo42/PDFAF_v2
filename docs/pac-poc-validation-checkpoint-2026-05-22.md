@@ -12,6 +12,7 @@ Local generated artifact:
 
 - `Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.md`
 - `Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.json`
+- Follow-up r3 after fresh all-unique validation: `/mnt/pdf-review/pdfaf-validation/pac-poc-validation-checkpoint-2026-05-22-r3/pac-poc-validation-checkpoint.md`
 
 Generated artifacts remain local and are not source-tracked.
 
@@ -63,9 +64,11 @@ The original-50 result should not be over-read as final completion evidence: it 
 
 Follow-up all-unique blocker evidence is now source-documented in `docs/all-unique-r39-hard-timeout-current-diagnostic-2026-05-22.md`. Current-source focused repeats recovered `0019/long-4516` from the r39 hard-timeout state to `59/F` and `85/B`, with `false_positive_applied=0`, while `0031`, `0120`, and `0135` remained hard timeouts. This makes a fresh all-unique validation the next useful acceptance check, but it is still not completion evidence.
 
+Fresh all-unique validation was then run and is source-documented in `docs/all-unique-current-bounded-full-2026-05-22.md`. The current authoritative all-unique checkpoint is `/mnt/pdf-review/pdfaf-validation/allunique-current-bounded-full-2026-05-22-r1/diagnostic/all-input-mean-diagnostic.md`: `351` rows, all-row mean `91.8832`, completed-row mean `93.4812`, median `94`, `false_positive_applied=0`, `6` hard timeouts, and runtime p95 `206139ms`, which is above the r39-bound `203539ms`. This supersedes the one-point-short r39 picture for next-work selection.
+
 ## Next Direction
 
 Use the updated map/rollup and PAC-stress selector to choose the next lane. Because no high-impact implementation lane is ready now, prefer:
 
-- a fresh all-unique validation when the next work window can support it; or
-- a new PAC-stress sample only if fresh evidence identifies a high-impact native gap not already covered by the accepted table proof.
+- timeout/runtime recovery for the fresh all-unique timeout set, especially rows that can return verified states without PAC suppression; or
+- a narrow object-backed structural lane from the fresh completed-run deficit list only after the timeout lane is diagnosed.
