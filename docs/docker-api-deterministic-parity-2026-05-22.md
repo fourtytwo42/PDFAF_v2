@@ -45,6 +45,10 @@ Focused tests:
 Docker rebuild:
 
 - local API image `pdfaf-v2:local`, image id `f53e0f6e81c7`
+- Docker Hub API tags pushed:
+  - `hendo420/pdfaf-v2:pac-poc-r3-api-parity-2026-05-22`
+  - `hendo420/pdfaf-v2:latest`
+  - digest `sha256:f53e0f6e81c7bc5da4c285e466e7ae52d47f7080b4623909a263342e0400de2e`
 - running container `pdfafv2-pdfaf-1` healthy on `http://127.0.0.1:6200/v1/health`
 
 Docker API probe summary:
@@ -59,4 +63,4 @@ Local artifact: `/mnt/pdf-review/pdfaf-validation/docker-api-current-source-pari
 
 ## Decision
 
-Accepted for Docker/API alignment. Future API quality comparisons should use deterministic requests with semantic lanes disabled unless the test is explicitly validating semantic/LLM behavior.
+Accepted and pushed for Docker/API alignment. Future API quality comparisons should use deterministic requests with semantic lanes disabled unless the test is explicitly validating semantic/LLM behavior.
