@@ -145,12 +145,33 @@ The existing low-checkpoint timeout diagnostic rejects a low-score checkpoint-re
 
 Do not lower checkpoint floors or count these partial states just to avoid zeroes. The timeout rows need real route/fixer recovery or remain parked as honest hard timeouts.
 
+## Current-Source Timeout Repeat After 4438 Analyzer Fix
+
+After the `structure-4438` Python analysis optimization, the three r2 hard-timeout rows were repeated with deterministic current source:
+
+- Run: `/mnt/pdf-review/pdfaf-validation/allunique-hard-timeouts-after-4438-opt-2026-05-22-r1/baseline_report.json`
+- Runtime traces: `/mnt/pdf-review/pdfaf-validation/allunique-hard-timeouts-after-4438-opt-2026-05-22-r1/runtime-traces/`
+- Mode: `--no-semantic --no-pdfs --write-runtime-traces`
+- `false_positive_applied=0`
+
+Results:
+
+| Row | r2 full-run result | Current focused repeat | Duration |
+| --- | ---: | ---: | ---: |
+| `0031/structure-4438` | `0/?` timeout | `83/B` | `208014ms` |
+| `0120/4690` | `0/?` timeout | `92/A` | `86203ms` |
+| `0135/4453` | `0/?` timeout | `69/D` | `73952ms` |
+
+This is useful timeout recovery evidence, not completion evidence. Counting these three focused repeats against the r2 all-row run would recover `+244` raw points and project the mean from `92.2821` to about `92.9773`. That remains about `8` raw points short of strict `93.0000` and about `7` raw points below the accepted r39 fresh floor (`92.9972`).
+
+The `0031` recovery is explained by the accepted native Python analyzer optimization. `0120` and `0135` no longer reproduce the optional-post-alt timeout in this focused run, but `0135` still only reaches `69/D`; do not add a timeout-return or checkpoint-floor relaxation from this evidence.
+
 ## Next Direction
 
 The next implementation-capable lane should not be another broad scorer/remediation expansion or a weaker timeout-return policy. The highest-value options are:
 
 1. route-stability diagnostics for repeatable zero-heading regressions (`0325`, `0236`, `0306`, `0317`, `0033`, `0108`, `0149`, `0181`);
 2. object-backed table/alt mixed tails such as `0223`, `0137`, `0138`, or `0287`;
-3. deeper timeout/analyzer recovery for `0031`, `0120`, and `0135` only if it can produce a real verified repair above the current low checkpoint floors.
+3. deeper timeout/analyzer recovery for `0120` and `0135` only if it can produce a real verified repair above the current low checkpoint floors.
 
 Do not mark the active goal complete from this run.
