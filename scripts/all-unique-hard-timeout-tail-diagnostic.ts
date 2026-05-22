@@ -16,6 +16,7 @@ const DEFAULT_OPTIONAL_POST_ALT_MIN_BUDGET_MS =
 export type HardTimeoutTailClassification =
   | 'eligible_checkpoint_terminal_bug'
   | 'stage_reanalysis_timeout_after_expensive_conformance'
+  | 'post_pass_timeout_after_low_checkpoint'
   | 'optional_post_alt_budget_overrun_candidate'
   | 'late_no_gain_live_reanalysis_churn'
   | 'low_checkpoint_not_returnable'
@@ -24,6 +25,7 @@ export type HardTimeoutTailClassification =
 
 export type HardTimeoutTailDecision =
   | 'fix_checkpoint_terminalization_first'
+  | 'plan_post_pass_phase_timeout_probe'
   | 'plan_optional_post_alt_budget_guard_probe'
   | 'plan_structure_reanalysis_timeout_probe'
   | 'no_safe_timeout_behavior_ready';
@@ -49,9 +51,14 @@ interface RuntimeTraceEvent {
   outcome?: string;
   durationMs?: number;
   context?: string;
+  phase?: string;
   targetRef?: string | null;
   scoreBefore?: number | null;
   scoreAfter?: number | null;
+  gradeBefore?: string | null;
+  gradeAfter?: string | null;
+  appliedToolCountBefore?: number | null;
+  appliedToolCountAfter?: number | null;
   details?: string;
   reanalyzeMs?: number;
 }
@@ -137,6 +144,7 @@ export interface HardTimeoutTailRow {
   falsePositiveApplied: number;
   lastEventKind: string | null;
   lastEventElapsedMs: number | null;
+  lastPostPassPhase: string | null;
   lastToolName: string | null;
   lastToolOutcome: string | null;
   lastToolDurationMs: number | null;
@@ -322,6 +330,13 @@ function classify(input: {
     return 'stage_reanalysis_timeout_after_expensive_conformance';
   }
   if (
+    lastEventKind === 'post_pass_start' &&
+    best != null &&
+    /checkpoint_below_floor/i.test(best.eligibilityReason)
+  ) {
+    return 'post_pass_timeout_after_low_checkpoint';
+  }
+  if (
     lastEventKind === 'verified_checkpoint' &&
     untracedAfterLast != null &&
     untracedAfterLast >= 30_000 &&
@@ -344,6 +359,8 @@ function recommendation(row: HardTimeoutTailRow): string {
       return 'Fix terminal checkpoint handling before changing remediation behavior.';
     case 'stage_reanalysis_timeout_after_expensive_conformance':
       return 'Do not skip the reanalysis or return the low checkpoint; isolate structure-conformance/reanalysis behavior in a focused replay.';
+    case 'post_pass_timeout_after_low_checkpoint':
+      return 'Use the named post-pass phase as the next timeout probe target; do not return the below-floor checkpoint.';
     case 'optional_post_alt_budget_overrun_candidate':
       return 'Plan a bounded optional-post-alt probe: skip or instrument the optional post-alt pass only when the remaining wall budget cannot cover mutation plus reanalysis, then validate quality.';
     case 'late_no_gain_live_reanalysis_churn':
@@ -389,6 +406,10 @@ function evidenceFor(input: {
   if (input.classification === 'stage_reanalysis_timeout_after_expensive_conformance') {
     lines.push('last traced remediation event was stage_reanalysis_start after expensive structure conformance');
   }
+  if (input.classification === 'post_pass_timeout_after_low_checkpoint') {
+    const phase = stringOrNull(input.trace?.lastEvent?.phase);
+    lines.push(`timeout occurred after entering post-pass phase ${phase ?? 'unknown'}`);
+  }
   if (lines.length === 0 && input.row.error) lines.push(String(input.row.error));
   return lines;
 }
@@ -426,6 +447,7 @@ function makeRow(input: {
     falsePositiveApplied: numberOrNull(input.row.falsePositiveApplied) ?? 0,
     lastEventKind: stringOrNull(input.trace?.lastEvent?.kind),
     lastEventElapsedMs,
+    lastPostPassPhase: stringOrNull(input.trace?.lastEvent?.phase),
     lastToolName: stringOrNull(input.trace?.lastToolName),
     lastToolOutcome: stringOrNull(input.trace?.lastToolOutcome),
     lastToolDurationMs: numberOrNull(input.trace?.lastToolDurationMs),
@@ -475,6 +497,7 @@ function classificationCounts(rows: HardTimeoutTailRow[]): Array<{ key: HardTime
 function decisionFor(rows: HardTimeoutTailRow[]): HardTimeoutTailDiagnostic['summary']['decision'] {
   const reasons: string[] = [];
   const terminalBugs = rows.filter(row => row.classification === 'eligible_checkpoint_terminal_bug').length;
+  const postPassTimeouts = rows.filter(row => row.classification === 'post_pass_timeout_after_low_checkpoint').length;
   const optionalBudget = rows.filter(row => row.classification === 'optional_post_alt_budget_overrun_candidate').length;
   const structureTimeouts = rows.filter(row => row.classification === 'stage_reanalysis_timeout_after_expensive_conformance').length;
 
@@ -483,6 +506,19 @@ function decisionFor(rows: HardTimeoutTailRow[]): HardTimeoutTailDiagnostic['sum
     return {
       status: 'fix_checkpoint_terminalization_first',
       recommendation: 'Fix checkpoint terminalization before adding timeout or repair behavior.',
+      reasons,
+    };
+  }
+  if (postPassTimeouts > 0) {
+    const phases = [...new Set(rows
+      .filter(row => row.classification === 'post_pass_timeout_after_low_checkpoint')
+      .map(row => row.lastPostPassPhase ?? 'unknown'))]
+      .sort();
+    reasons.push(`${postPassTimeouts} row(s) timed out after entering a named post-pass phase: ${phases.join(', ')}.`);
+    reasons.push('This supports a focused post-pass phase timeout probe; it does not justify lowering checkpoint floors.');
+    return {
+      status: 'plan_post_pass_phase_timeout_probe',
+      recommendation: 'Use named post-pass phase evidence to design the next targeted timeout diagnostic or narrow behavior proof.',
       reasons,
     };
   }
@@ -614,10 +650,10 @@ export function renderHardTimeoutTailMarkdown(report: HardTimeoutTailDiagnostic)
     lines.push(`- \`${count.key}\`: \`${count.count}\``);
   }
   lines.push('', '## Timeout Rows', '');
-  lines.push('| Row | Classification | Best checkpoint | Last event | Live no-gain | Post-checkpoint tail | Action |');
-  lines.push('| --- | --- | ---: | --- | ---: | ---: | --- |');
+  lines.push('| Row | Classification | Best checkpoint | Last event | Phase | Live no-gain | Post-checkpoint tail | Action |');
+  lines.push('| --- | --- | ---: | --- | --- | ---: | ---: | --- |');
   for (const row of report.rows) {
-    lines.push(`| \`${row.key}\` | \`${row.classification}\` | ${row.bestCheckpointScore ?? 'n/a'}/${row.bestCheckpointGrade ?? 'n/a'} | \`${row.lastEventKind ?? 'n/a'}\` @ ${row.lastEventElapsedMs ?? 'n/a'}ms | ${row.noGainLiveAnalysisCount}/${row.noGainLiveAnalysisMs}ms | ${row.postCheckpointUntracedMs ?? 'n/a'}ms | ${row.recommendedAction} |`);
+    lines.push(`| \`${row.key}\` | \`${row.classification}\` | ${row.bestCheckpointScore ?? 'n/a'}/${row.bestCheckpointGrade ?? 'n/a'} | \`${row.lastEventKind ?? 'n/a'}\` @ ${row.lastEventElapsedMs ?? 'n/a'}ms | \`${row.lastPostPassPhase ?? 'n/a'}\` | ${row.noGainLiveAnalysisCount}/${row.noGainLiveAnalysisMs}ms | ${row.postCheckpointUntracedMs ?? 'n/a'}ms | ${row.recommendedAction} |`);
   }
   lines.push('', '## Row Evidence', '');
   for (const row of report.rows) {
@@ -626,6 +662,7 @@ export function renderHardTimeoutTailMarkdown(report: HardTimeoutTailDiagnostic)
     lines.push(`- Error: \`${row.timeoutError ?? 'n/a'}\``);
     lines.push(`- Wall/trace ms: \`${row.wallMs ?? 'n/a'}\` / \`${row.traceElapsedMs ?? 'n/a'}\``);
     lines.push(`- Best checkpoint: \`${row.bestCheckpointScore ?? 'n/a'}/${row.bestCheckpointGrade ?? 'n/a'}\` (${row.bestCheckpointEligibilityReason ?? 'n/a'})`);
+    lines.push(`- Last post-pass phase: \`${row.lastPostPassPhase ?? 'n/a'}\``);
     lines.push(`- Last tool: \`${row.lastToolName ?? 'n/a'}\` / \`${row.lastToolOutcome ?? 'n/a'}\` / \`${row.lastToolDurationMs ?? 'n/a'}ms\``);
     for (const item of row.evidence) lines.push(`- ${item}`);
     lines.push('');

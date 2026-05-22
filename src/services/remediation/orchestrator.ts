@@ -6393,6 +6393,8 @@ async function applyOcrPageShellReadingOrderPostPass(args: {
   };
 }
 
+type PostPassTracePhaseRunner = <T>(phase: string, run: () => Promise<T>) => Promise<T>;
+
 /** Metadata, bookmarks, optional font embed — shared by main remediate and playbook replay. */
 async function applyIcjiaDocumentFinalization(args: {
   filename: string;
@@ -6404,98 +6406,29 @@ async function applyIcjiaDocumentFinalization(args: {
   appliedTools: AppliedRemediationTool[];
   runtimeSummary?: RemediationRuntimeSummary;
   protectedBaseline?: ProtectedBaselineFloor;
+  tracePhase?: PostPassTracePhaseRunner;
 }): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot }> {
   let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
   const { filename, signal, round, protectedBaseline } = args;
+  const tracePhase: PostPassTracePhaseRunner = args.tracePhase ?? (async (_phase, run) => run());
   const stageStarted = performance.now();
 
   const existingTitle = currentSnapshot.metadata.title?.trim();
   if (isFilenameLikeTitle(existingTitle)) {
-    const title = deriveFallbackDocumentTitle(currentSnapshot, filename);
-    const next = await metadataTools.setDocumentTitle(currentBuffer, title);
-    const accepted = await applyGuardedPostPass({
-      filename,
-      signal,
-      toolName: 'set_document_title',
-      stage: 11,
-      round,
-      details: 'post_pass_missing_metadata_title',
-      currentBuffer,
-      currentAnalysis,
-      currentSnapshot,
-      nextBuffer: next,
-      appliedTools,
-      runtimeSummary,
-      tempPrefix: 'pdfaf-fin',
-      protectedBaseline,
-    });
-    currentBuffer = accepted.buffer;
-    currentAnalysis = accepted.analysis;
-    currentSnapshot = accepted.snapshot;
-  }
-  const titleLanguageScore = categoryScore(currentAnalysis, 'title_language');
-  const existingLanguage = (currentSnapshot.lang || currentSnapshot.metadata.language || '').trim();
-  if ((titleLanguageScore ?? 100) < 90 && !existingLanguage) {
-    const next = await metadataTools.setDocumentLanguage(currentBuffer, 'en-US');
-    const accepted = await applyGuardedPostPass({
-      filename,
-      signal,
-      toolName: 'set_document_language',
-      stage: 11,
-      round,
-      details: 'post_pass_missing_metadata_language',
-      currentBuffer,
-      currentAnalysis,
-      currentSnapshot,
-      nextBuffer: next,
-      appliedTools,
-      runtimeSummary,
-      tempPrefix: 'pdfaf-fin',
-      protectedBaseline,
-    });
-    currentBuffer = accepted.buffer;
-    currentAnalysis = accepted.analysis;
-    currentSnapshot = accepted.snapshot;
-  }
-
-  if (
-    currentSnapshot.pdfClass !== 'scanned' &&
-    currentSnapshot.pageCount >= BOOKMARKS_PAGE_THRESHOLD &&
-    currentSnapshot.bookmarks.length === 0
-  ) {
-    const br1 = await runPythonMutationBatch(
-      currentBuffer,
-      [{ op: 'replace_bookmarks_from_headings', params: { force: true } }],
-      { signal },
-    );
-    let bmBuf = currentBuffer;
-    let bmApplied = false;
-    if (br1.result.success && br1.result.applied.includes('replace_bookmarks_from_headings')) {
-      bmBuf = br1.buffer;
-      bmApplied = true;
-    } else {
-      const br2 = await runPythonMutationBatch(
-        currentBuffer,
-        [{ op: 'add_page_outline_bookmarks', params: { maxPages: BOOKMARKS_PAGE_OUTLINE_MAX_PAGES } }],
-        { signal },
-      );
-      if (br2.result.success && br2.result.applied.includes('add_page_outline_bookmarks')) {
-        bmBuf = br2.buffer;
-        bmApplied = true;
-      }
-    }
-    if (bmApplied) {
+    await tracePhase('set_document_title', async () => {
+      const title = deriveFallbackDocumentTitle(currentSnapshot, filename);
+      const next = await metadataTools.setDocumentTitle(currentBuffer, title);
       const accepted = await applyGuardedPostPass({
         filename,
         signal,
-        toolName: 'post_pass_bookmarks',
+        toolName: 'set_document_title',
         stage: 11,
         round,
-        details: 'outline_or_headings_bookmarks',
+        details: 'post_pass_missing_metadata_title',
         currentBuffer,
         currentAnalysis,
         currentSnapshot,
-        nextBuffer: bmBuf,
+        nextBuffer: next,
         appliedTools,
         runtimeSummary,
         tempPrefix: 'pdfaf-fin',
@@ -6504,35 +6437,114 @@ async function applyIcjiaDocumentFinalization(args: {
       currentBuffer = accepted.buffer;
       currentAnalysis = accepted.analysis;
       currentSnapshot = accepted.snapshot;
-    }
+    });
   }
-
-  if (shouldTryUrwType1Embed(currentSnapshot)) {
-    const urw = await runPythonMutationBatch(
-      currentBuffer,
-      [{ op: 'embed_urw_type1_substitutes', params: {} }],
-      { signal },
-    );
-    if (urw.result.success && urw.result.applied.includes('embed_urw_type1_substitutes')) {
+  const titleLanguageScore = categoryScore(currentAnalysis, 'title_language');
+  const existingLanguage = (currentSnapshot.lang || currentSnapshot.metadata.language || '').trim();
+  if ((titleLanguageScore ?? 100) < 90 && !existingLanguage) {
+    await tracePhase('set_document_language', async () => {
+      const next = await metadataTools.setDocumentLanguage(currentBuffer, 'en-US');
       const accepted = await applyGuardedPostPass({
         filename,
         signal,
-        toolName: 'embed_urw_type1_substitutes',
+        toolName: 'set_document_language',
         stage: 11,
         round,
-        details: 'urw_base35_embed_legacy_type1',
+        details: 'post_pass_missing_metadata_language',
         currentBuffer,
         currentAnalysis,
         currentSnapshot,
-        nextBuffer: urw.buffer,
+        nextBuffer: next,
         appliedTools,
+        runtimeSummary,
         tempPrefix: 'pdfaf-fin',
         protectedBaseline,
       });
       currentBuffer = accepted.buffer;
       currentAnalysis = accepted.analysis;
       currentSnapshot = accepted.snapshot;
-    }
+    });
+  }
+
+  if (
+    currentSnapshot.pdfClass !== 'scanned' &&
+    currentSnapshot.pageCount >= BOOKMARKS_PAGE_THRESHOLD &&
+    currentSnapshot.bookmarks.length === 0
+  ) {
+    await tracePhase('post_pass_bookmarks', async () => {
+      const br1 = await runPythonMutationBatch(
+        currentBuffer,
+        [{ op: 'replace_bookmarks_from_headings', params: { force: true } }],
+        { signal },
+      );
+      let bmBuf = currentBuffer;
+      let bmApplied = false;
+      if (br1.result.success && br1.result.applied.includes('replace_bookmarks_from_headings')) {
+        bmBuf = br1.buffer;
+        bmApplied = true;
+      } else {
+        const br2 = await runPythonMutationBatch(
+          currentBuffer,
+          [{ op: 'add_page_outline_bookmarks', params: { maxPages: BOOKMARKS_PAGE_OUTLINE_MAX_PAGES } }],
+          { signal },
+        );
+        if (br2.result.success && br2.result.applied.includes('add_page_outline_bookmarks')) {
+          bmBuf = br2.buffer;
+          bmApplied = true;
+        }
+      }
+      if (bmApplied) {
+        const accepted = await applyGuardedPostPass({
+          filename,
+          signal,
+          toolName: 'post_pass_bookmarks',
+          stage: 11,
+          round,
+          details: 'outline_or_headings_bookmarks',
+          currentBuffer,
+          currentAnalysis,
+          currentSnapshot,
+          nextBuffer: bmBuf,
+          appliedTools,
+          runtimeSummary,
+          tempPrefix: 'pdfaf-fin',
+          protectedBaseline,
+        });
+        currentBuffer = accepted.buffer;
+        currentAnalysis = accepted.analysis;
+        currentSnapshot = accepted.snapshot;
+      }
+    });
+  }
+
+  if (shouldTryUrwType1Embed(currentSnapshot)) {
+    await tracePhase('embed_urw_type1_substitutes', async () => {
+      const urw = await runPythonMutationBatch(
+        currentBuffer,
+        [{ op: 'embed_urw_type1_substitutes', params: {} }],
+        { signal },
+      );
+      if (urw.result.success && urw.result.applied.includes('embed_urw_type1_substitutes')) {
+        const accepted = await applyGuardedPostPass({
+          filename,
+          signal,
+          toolName: 'embed_urw_type1_substitutes',
+          stage: 11,
+          round,
+          details: 'urw_base35_embed_legacy_type1',
+          currentBuffer,
+          currentAnalysis,
+          currentSnapshot,
+          nextBuffer: urw.buffer,
+          appliedTools,
+          tempPrefix: 'pdfaf-fin',
+          protectedBaseline,
+        });
+        currentBuffer = accepted.buffer;
+        currentAnalysis = accepted.analysis;
+        currentSnapshot = accepted.snapshot;
+      }
+    });
   }
 
   if (
@@ -6541,23 +6553,50 @@ async function applyIcjiaDocumentFinalization(args: {
     shouldTryLocalFontSubstitution(currentSnapshot, currentAnalysis) &&
     !shouldSkipFigure4702SequencePostPassGuard({ filename, analysis: currentAnalysis, appliedTools })
   ) {
-    const localFonts = await runPythonMutationBatch(
-      currentBuffer,
-      [{ op: 'embed_local_font_substitutes', params: { maxWidthDrift: 0.12, heuristicMaxWidthDrift: 0.35 } }],
-      { signal },
-    );
-    if (localFonts.result.success && localFonts.result.applied.includes('embed_local_font_substitutes')) {
+    await tracePhase('embed_local_font_substitutes', async () => {
+      const localFonts = await runPythonMutationBatch(
+        currentBuffer,
+        [{ op: 'embed_local_font_substitutes', params: { maxWidthDrift: 0.12, heuristicMaxWidthDrift: 0.35 } }],
+        { signal },
+      );
+      if (localFonts.result.success && localFonts.result.applied.includes('embed_local_font_substitutes')) {
+        const accepted = await applyGuardedPostPass({
+          filename,
+          signal,
+          toolName: 'embed_local_font_substitutes',
+          stage: 11,
+          round,
+          details: 'stage75_local_font_substitution',
+          currentBuffer,
+          currentAnalysis,
+          currentSnapshot,
+          nextBuffer: localFonts.buffer,
+          appliedTools,
+          runtimeSummary,
+          tempPrefix: 'pdfaf-fin',
+          protectedBaseline,
+        });
+        currentBuffer = accepted.buffer;
+        currentAnalysis = accepted.analysis;
+        currentSnapshot = accepted.snapshot;
+      }
+    });
+  }
+
+  await tracePhase('embed_fonts_ghostscript', async () => {
+    const gsBuf = await embedFontsWithGhostscript(currentBuffer, currentSnapshot);
+    if (gsBuf) {
       const accepted = await applyGuardedPostPass({
         filename,
         signal,
-        toolName: 'embed_local_font_substitutes',
-        stage: 11,
+        toolName: 'embed_fonts_ghostscript',
+        stage: 12,
         round,
-        details: 'stage75_local_font_substitution',
+        details: 'optional_gs_font_embed',
         currentBuffer,
         currentAnalysis,
         currentSnapshot,
-        nextBuffer: localFonts.buffer,
+        nextBuffer: gsBuf,
         appliedTools,
         runtimeSummary,
         tempPrefix: 'pdfaf-fin',
@@ -6567,30 +6606,7 @@ async function applyIcjiaDocumentFinalization(args: {
       currentAnalysis = accepted.analysis;
       currentSnapshot = accepted.snapshot;
     }
-  }
-
-  const gsBuf = await embedFontsWithGhostscript(currentBuffer, currentSnapshot);
-  if (gsBuf) {
-    const accepted = await applyGuardedPostPass({
-      filename,
-      signal,
-      toolName: 'embed_fonts_ghostscript',
-      stage: 12,
-      round,
-      details: 'optional_gs_font_embed',
-      currentBuffer,
-      currentAnalysis,
-        currentSnapshot,
-        nextBuffer: gsBuf,
-        appliedTools,
-        runtimeSummary,
-        tempPrefix: 'pdfaf-fin',
-        protectedBaseline,
-      });
-    currentBuffer = accepted.buffer;
-    currentAnalysis = accepted.analysis;
-    currentSnapshot = accepted.snapshot;
-  }
+  });
 
   if (runtimeSummary) {
     pushStageTiming(runtimeSummary, {
@@ -7910,6 +7926,28 @@ export type RemediationRuntimeTraceEvent =
       elapsedMs: number;
     }
   | {
+      kind: 'post_pass_start';
+      round: number;
+      phase: string;
+      scoreBefore: number;
+      gradeBefore: string;
+      appliedToolCountBefore: number;
+      elapsedMs: number;
+    }
+  | {
+      kind: 'post_pass_finish';
+      round: number;
+      phase: string;
+      durationMs: number;
+      scoreBefore: number;
+      gradeBefore: string;
+      scoreAfter: number;
+      gradeAfter: string;
+      appliedToolCountBefore: number;
+      appliedToolCountAfter: number;
+      elapsedMs: number;
+    }
+  | {
       kind: 'verified_checkpoint';
       reason: string;
       score: number;
@@ -7956,6 +7994,47 @@ export async function remediatePdf(
   const started = Date.now();
   const reportRuntimeTrace = async (event: RemediationRuntimeTraceEvent) => {
     await options?.onRuntimeTrace?.(event);
+  };
+  const startPostPassTrace = async (phase: string, round: number) => {
+    const trace = {
+      phase,
+      round,
+      startedAtMs: performance.now(),
+      scoreBefore: currentAnalysis.score,
+      gradeBefore: currentAnalysis.grade,
+      appliedToolCountBefore: appliedTools.length,
+    };
+    await reportRuntimeTrace({
+      kind: 'post_pass_start',
+      phase,
+      round,
+      scoreBefore: trace.scoreBefore,
+      gradeBefore: trace.gradeBefore,
+      appliedToolCountBefore: trace.appliedToolCountBefore,
+      elapsedMs: Date.now() - started,
+    });
+    return trace;
+  };
+  const finishPostPassTrace = async (trace: Awaited<ReturnType<typeof startPostPassTrace>>) => {
+    await reportRuntimeTrace({
+      kind: 'post_pass_finish',
+      phase: trace.phase,
+      round: trace.round,
+      durationMs: Math.round(performance.now() - trace.startedAtMs),
+      scoreBefore: trace.scoreBefore,
+      gradeBefore: trace.gradeBefore,
+      scoreAfter: currentAnalysis.score,
+      gradeAfter: currentAnalysis.grade,
+      appliedToolCountBefore: trace.appliedToolCountBefore,
+      appliedToolCountAfter: appliedTools.length,
+      elapsedMs: Date.now() - started,
+    });
+  };
+  const tracePostPassPhase = async <T>(phase: string, round: number, run: () => Promise<T>): Promise<T> => {
+    const trace = await startPostPassTrace(phase, round);
+    const result = await run();
+    await finishPostPassTrace(trace);
+    return result;
   };
   const runPlannerLiveAnalysis = async (input: {
     round: number;
@@ -9465,6 +9544,10 @@ export async function remediatePdf(
 
   if (postPassesAllowedByRuntime) {
   {
+    const postPassTrace = await startPostPassTrace(
+      'ensure_accessibility_tagging',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(70, 'Tidying document structure');
     const st = await applyAccessibilityStructureEnsure({
       filename,
@@ -9521,6 +9604,7 @@ export async function remediatePdf(
     currentBuffer = ocrReading.buffer;
     currentAnalysis = ocrReading.analysis;
     currentSnapshot = ocrReading.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('ensure_accessibility_tagging');
     await rememberVerifiedTimeoutCheckpoint('ensure_accessibility_tagging');
     await returnVerifiedTimeoutCheckpoint('before_alt_cleanup_post_pass', { beforeRiskyWork: true });
@@ -9529,6 +9613,10 @@ export async function remediatePdf(
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
   // doesn't capture all Adobe checks (FigAltText, NestedAltText, OtherAltText, AltTextNoContent).
   if (!verifiedCheckpointReturned && (currentSnapshot.isTagged || currentSnapshot.structureTree !== null) && hasAcrobatAltOwnershipRisk(currentSnapshot)) {
+    const postPassTrace = await startPostPassTrace(
+      'alt_cleanup_post_pass',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(78, 'Cleaning up alt text');
     const state = await applyAltCleanupPostPass({
       filename,
@@ -9542,6 +9630,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('alt_cleanup_post_pass');
     await rememberVerifiedTimeoutCheckpoint('alt_cleanup_post_pass');
     await returnVerifiedTimeoutCheckpoint('before_tagged_cleanup_post_pass', { beforeRiskyWork: true });
@@ -9550,6 +9639,10 @@ export async function remediatePdf(
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
   // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
   if (!verifiedCheckpointReturned && currentSnapshot.isTagged) {
+    const postPassTrace = await startPostPassTrace(
+      'tagged_cleanup_post_pass',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(84, 'Running final cleanup');
     const state = await applyTaggedCleanupPostPasses({
       filename,
@@ -9563,12 +9656,17 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('tagged_cleanup_post_pass');
     await rememberVerifiedTimeoutCheckpoint('tagged_cleanup_post_pass');
     await returnVerifiedTimeoutCheckpoint('before_stage180_post_pass', { beforeRiskyWork: true });
   }
 
   if (!verifiedCheckpointReturned) {
+    const postPassTrace = await startPostPassTrace(
+      'stage180_mixed_table_pdfua_post_pass',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(85, 'Running mixed table/PDF-UA cleanup');
     const state = await applyStage180MixedTablePdfUaPostPass({
       filename,
@@ -9582,12 +9680,17 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
     await rememberVerifiedTimeoutCheckpoint('stage180_mixed_table_pdfua_post_pass');
     await returnVerifiedTimeoutCheckpoint('before_stage181_post_pass', { beforeRiskyWork: true });
   }
 
   if (!verifiedCheckpointReturned) {
+    const postPassTrace = await startPostPassTrace(
+      'stage181_hidden_alt_post_pass',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(85, 'Repairing hidden alt ownership');
     const state = await applyStage181HiddenAltPostPass({
       filename,
@@ -9601,6 +9704,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('stage181_hidden_alt_post_pass');
     await rememberVerifiedTimeoutCheckpoint('stage181_hidden_alt_post_pass');
     await returnVerifiedTimeoutCheckpoint('before_link_parenttree_post_pass', { beforeRiskyWork: true });
@@ -9611,6 +9715,10 @@ export async function remediatePdf(
     snapshot: currentSnapshot,
     protectedFloorScore: options?.protectedBaseline ? protectedBaselineFloorScore(options.protectedBaseline) : null,
   })) {
+    const postPassTrace = await startPostPassTrace(
+      'link_parenttree_post_pass',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(86, 'Repairing link annotation ownership');
     const state = await applyLinkParentTreeRepairPostPass({
       filename,
@@ -9624,12 +9732,17 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('link_parenttree_post_pass');
     await rememberVerifiedTimeoutCheckpoint('link_parenttree_post_pass');
     await returnVerifiedTimeoutCheckpoint('before_document_finalization', { beforeRiskyWork: true });
   }
 
   if (!verifiedCheckpointReturned) {
+    const postPassTrace = await startPostPassTrace(
+      'document_finalization',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(90, 'Wrapping things up');
     const finRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
     const fin = await applyIcjiaDocumentFinalization({
@@ -9642,16 +9755,22 @@ export async function remediatePdf(
       appliedTools,
       runtimeSummary,
       protectedBaseline: options?.protectedBaseline,
+      tracePhase: (phase, run) => tracePostPassPhase(`document_finalization:${phase}`, finRound, run),
     });
     currentBuffer = fin.buffer;
     currentAnalysis = fin.analysis;
     currentSnapshot = fin.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('document_finalization');
     await rememberVerifiedTimeoutCheckpoint('document_finalization');
     await returnVerifiedTimeoutCheckpoint('before_protected_recovery_post_pass', { beforeRiskyWork: true });
   }
 
   if (!verifiedCheckpointReturned && protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {
+    const postPassTrace = await startPostPassTrace(
+      'protected_recovery_post_pass',
+      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+    );
     await reportProgress(92, 'Restoring protected state');
     const state = await applyProtectedRecoveryPostPasses({
       filename,
@@ -9665,6 +9784,7 @@ export async function remediatePdf(
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
     currentSnapshot = state.snapshot;
+    await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('protected_recovery_post_pass');
     await rememberVerifiedTimeoutCheckpoint('protected_recovery_post_pass');
   }
