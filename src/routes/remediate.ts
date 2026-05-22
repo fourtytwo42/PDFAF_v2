@@ -1,5 +1,6 @@
 import { Router, type IRouter } from 'express';
 import multer from 'multer';
+import Database from 'better-sqlite3';
 import { unlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -9,6 +10,8 @@ import {
   MAX_FILE_SIZE_MB,
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_MAX_BASE64_MB,
+  REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
+  REMEDIATION_TARGET_SCORE,
   REQUEST_TIMEOUT_REMEDIATE_MS,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
   SEMANTIC_REMEDIATE_PROMOTE_PASSES,
@@ -37,6 +40,9 @@ import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } 
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
 import { toApiRemediationResult } from '../services/api/serializeAnalysis.js';
+import { initSchema } from '../db/schema.js';
+import { createPlaybookStore } from '../services/learning/playbookStore.js';
+import { createToolOutcomeStore } from '../services/learning/toolOutcomes.js';
 import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
@@ -115,33 +121,110 @@ function runtimeCounts(values: string[]): RuntimeCountRow[] {
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
+function mergeCountRows(rows: RuntimeCountRow[]): RuntimeCountRow[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.key, (counts.get(row.key) ?? 0) + row.count);
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function mergeDeterministicRuntimeSummaries(
+  summaries: Array<RemediationRuntimeSummary | undefined>,
+): RemediationRuntimeSummary | undefined {
+  const present = summaries.filter((summary): summary is RemediationRuntimeSummary => Boolean(summary));
+  if (present.length === 0) return undefined;
+  return {
+    analysisBefore: present[0]?.analysisBefore ?? null,
+    analysisAfter: present.at(-1)?.analysisAfter ?? null,
+    deterministicTotalMs: present.reduce((sum, summary) => sum + (summary.deterministicTotalMs ?? 0), 0),
+    stageTimings: present.flatMap(summary => summary.stageTimings ?? []),
+    toolTimings: present.flatMap(summary => summary.toolTimings ?? []),
+    liveAnalysisTimings: present.flatMap(summary => summary.liveAnalysisTimings ?? []),
+    semanticLaneTimings: present.flatMap(summary => summary.semanticLaneTimings ?? []),
+    boundedWork: {
+      semanticCandidateCapsHit: present.reduce((sum, summary) => sum + (summary.boundedWork?.semanticCandidateCapsHit ?? 0), 0),
+      deterministicEarlyExitCount: present.reduce((sum, summary) => sum + (summary.boundedWork?.deterministicEarlyExitCount ?? 0), 0),
+      deterministicEarlyExitReasons: mergeCountRows(present.flatMap(summary => summary.boundedWork?.deterministicEarlyExitReasons ?? [])),
+      semanticSkipReasons: mergeCountRows(present.flatMap(summary => summary.boundedWork?.semanticSkipReasons ?? [])),
+      zeroHeadingLaneActivations: present.reduce((sum, summary) => sum + (summary.boundedWork?.zeroHeadingLaneActivations ?? 0), 0),
+      headingConvergenceAttemptCount: present.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceAttemptCount ?? 0), 0),
+      headingConvergenceSuccessCount: present.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceSuccessCount ?? 0), 0),
+      headingConvergenceFailureCount: present.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceFailureCount ?? 0), 0),
+      headingConvergenceTimeoutCount: present.reduce((sum, summary) => sum + (summary.boundedWork?.headingConvergenceTimeoutCount ?? 0), 0),
+      structureConformanceTimeoutCount: present.reduce((sum, summary) => sum + (summary.boundedWork?.structureConformanceTimeoutCount ?? 0), 0),
+    },
+  };
+}
+
+function hasVerifiedCheckpointTimeoutReturn(result: { runtimeSummary?: RemediationRuntimeSummary }): boolean {
+  const reasons = result.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons;
+  return reasons?.some(row =>
+    (row.key === 'verified_checkpoint_timeout_return' ||
+      row.key === 'verified_low_score_checkpoint_timeout_return' ||
+      row.key === 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return') &&
+    row.count > 0
+  ) ?? false;
+}
+
+const API_SECOND_PASS_MIN_SCORE = parseInt(process.env['PDFAF_SECOND_PASS_MIN_SCORE'] ?? '93', 10);
+
+export function shouldRunApiSecondDeterministicPass(input: {
+  verifiedCheckpointReturned: boolean;
+  score: number;
+  remediationTargetScore?: number;
+  secondPassMinScore?: number;
+  hasBudget: boolean;
+}): boolean {
+  if (input.verifiedCheckpointReturned) return false;
+  if (!input.hasBudget) return false;
+  const targetScore = input.remediationTargetScore ?? REMEDIATION_TARGET_SCORE;
+  if (input.score >= targetScore) return false;
+  const secondPassMinScore = input.secondPassMinScore ?? API_SECOND_PASS_MIN_SCORE;
+  return input.score < secondPassMinScore;
+}
+
+function createTransientLearningStores(dbHandles: Array<{ close: () => void }>) {
+  const db = new Database(':memory:');
+  initSchema(db);
+  dbHandles.push(db);
+  return {
+    playbookStore: createPlaybookStore(db),
+    toolOutcomeStore: createToolOutcomeStore(db),
+  };
+}
+
 function mergeRuntimeSummary(
-  deterministic: RemediationRuntimeSummary | undefined,
+  deterministic: RemediationRuntimeSummary | Array<RemediationRuntimeSummary | undefined> | undefined,
   afterRuntime: RemediationResult['after']['runtimeSummary'] | undefined,
   semanticSummaries: SemanticRemediationSummary[],
 ): RemediationRuntimeSummary | undefined {
-  if (!deterministic && semanticSummaries.length === 0 && !afterRuntime) return undefined;
+  const deterministicSummary = Array.isArray(deterministic)
+    ? mergeDeterministicRuntimeSummaries(deterministic)
+    : deterministic;
+  if (!deterministicSummary && semanticSummaries.length === 0 && !afterRuntime) return undefined;
   const semanticSkipReasons = runtimeCounts(
     semanticSummaries.map(summary => `${summary.lane}:${summary.skippedReason}`),
   );
   return {
-    analysisBefore: deterministic?.analysisBefore ?? null,
+    analysisBefore: deterministicSummary?.analysisBefore ?? null,
     analysisAfter: afterRuntime ?? null,
-    deterministicTotalMs: deterministic?.deterministicTotalMs ?? 0,
-    stageTimings: deterministic?.stageTimings ?? [],
-    toolTimings: deterministic?.toolTimings ?? [],
+    deterministicTotalMs: deterministicSummary?.deterministicTotalMs ?? 0,
+    stageTimings: deterministicSummary?.stageTimings ?? [],
+    toolTimings: deterministicSummary?.toolTimings ?? [],
+    liveAnalysisTimings: deterministicSummary?.liveAnalysisTimings ?? [],
     semanticLaneTimings: semanticSummaries.flatMap(summary => summary.runtime ? [summary.runtime] : []),
     boundedWork: {
       semanticCandidateCapsHit: semanticSummaries.filter(summary => summary.runtime?.candidateCapHit).length,
-      deterministicEarlyExitCount: deterministic?.boundedWork.deterministicEarlyExitCount ?? 0,
-      deterministicEarlyExitReasons: deterministic?.boundedWork.deterministicEarlyExitReasons ?? [],
+      deterministicEarlyExitCount: deterministicSummary?.boundedWork.deterministicEarlyExitCount ?? 0,
+      deterministicEarlyExitReasons: deterministicSummary?.boundedWork.deterministicEarlyExitReasons ?? [],
       semanticSkipReasons,
-      zeroHeadingLaneActivations: deterministic?.boundedWork.zeroHeadingLaneActivations ?? 0,
-      headingConvergenceAttemptCount: deterministic?.boundedWork.headingConvergenceAttemptCount ?? 0,
-      headingConvergenceSuccessCount: deterministic?.boundedWork.headingConvergenceSuccessCount ?? 0,
-      headingConvergenceFailureCount: deterministic?.boundedWork.headingConvergenceFailureCount ?? 0,
-      headingConvergenceTimeoutCount: deterministic?.boundedWork.headingConvergenceTimeoutCount ?? 0,
-      structureConformanceTimeoutCount: deterministic?.boundedWork.structureConformanceTimeoutCount ?? 0,
+      zeroHeadingLaneActivations: deterministicSummary?.boundedWork.zeroHeadingLaneActivations ?? 0,
+      headingConvergenceAttemptCount: deterministicSummary?.boundedWork.headingConvergenceAttemptCount ?? 0,
+      headingConvergenceSuccessCount: deterministicSummary?.boundedWork.headingConvergenceSuccessCount ?? 0,
+      headingConvergenceFailureCount: deterministicSummary?.boundedWork.headingConvergenceFailureCount ?? 0,
+      headingConvergenceTimeoutCount: deterministicSummary?.boundedWork.headingConvergenceTimeoutCount ?? 0,
+      structureConformanceTimeoutCount: deterministicSummary?.boundedWork.structureConformanceTimeoutCount ?? 0,
     },
   };
 }
@@ -261,6 +344,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
   req.on('close', onClientClose);
 
   const routeStarted = Date.now();
+  const transientLearningDbs: Array<{ close: () => void }> = [];
 
   try {
     logInfo({
@@ -285,6 +369,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     });
     const buffer = await readFile(tempPath);
     await reportProgress(18, 'Getting fixes ready');
+    const firstPassStores = createTransientLearningStores(transientLearningDbs);
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
       buffer,
       filename,
@@ -294,6 +379,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         targetScore: parsedOptions.targetScore,
         maxRounds: parsedOptions.maxRounds,
         includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? false,
+        playbookStore: firstPassStores.playbookStore,
+        toolOutcomeStore: firstPassStores.toolOutcomeStore,
         signal: remediationSignal,
         onProgress: update => reportProgress(update.percent, update.stage, update.detail),
       },
@@ -302,6 +389,96 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     let outBuffer = detBuffer;
     let outAfter = remediation.after;
     let outSnapshot = detSnapshot;
+    let appliedToolsOut = [...remediation.appliedTools];
+    let roundsOut = [...remediation.rounds];
+    const deterministicRuntimeSummaries: Array<RemediationRuntimeSummary | undefined> = [
+      remediation.runtimeSummary,
+    ];
+    let deterministicDurationMs = remediation.remediationDurationMs;
+    let verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(remediation);
+    const remediationTargetScore = parsedOptions.targetScore ?? REMEDIATION_TARGET_SCORE;
+    const runPostRemediationAltPhase = async (details: string): Promise<void> => {
+      if (verifiedCheckpointReturned) return;
+      if (!outSnapshot.isTagged) return;
+      if (outAfter.scoreProfile.overallScore >= remediationTargetScore) return;
+      const scoreBeforeAltFix = outAfter.scoreProfile.overallScore;
+      const phaseStarted = Date.now();
+      const ar = await applyPostRemediationAltRepair(outBuffer, filename, outAfter, outSnapshot, {
+        signal: remediationSignal,
+      });
+      deterministicDurationMs += Date.now() - phaseStarted;
+      if (!ar.buffer.equals(outBuffer) && shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
+        outBuffer = ar.buffer;
+        outAfter = ar.analysis;
+        outSnapshot = ar.snapshot;
+        appliedToolsOut = [
+          ...appliedToolsOut,
+          {
+            toolName: 'repair_alt_text_structure',
+            stage: 9,
+            round: roundsOut[roundsOut.length - 1]?.round ?? 1,
+            scoreBefore: scoreBeforeAltFix,
+            scoreAfter: outAfter.scoreProfile.overallScore,
+            delta: outAfter.scoreProfile.overallScore - scoreBeforeAltFix,
+            outcome: 'applied' as const,
+            details,
+            source: 'post_pass' as const,
+          },
+        ];
+      }
+    };
+    const hasSecondPassBudget = (): boolean => {
+      if (REQUEST_TIMEOUT_REMEDIATE_MS <= 0) return true;
+      const remainingMs = REQUEST_TIMEOUT_REMEDIATE_MS - (Date.now() - routeStarted);
+      return remainingMs >= (REMEDIATION_ANALYSIS_TIMEOUT_MS + REMEDIATION_SOFT_DEADLINE_BUFFER_MS);
+    };
+    await runPostRemediationAltPhase('nested_alt_cleanup_post_first_pass');
+    if (shouldRunApiSecondDeterministicPass({
+      verifiedCheckpointReturned,
+      score: outAfter.scoreProfile.overallScore,
+      remediationTargetScore,
+      hasBudget: hasSecondPassBudget(),
+    })) {
+      await reportProgress(90, 'Running a final deterministic check');
+      const secondPassStores = createTransientLearningStores(transientLearningDbs);
+      const r2 = await remediatePdf(
+        outBuffer,
+        filename,
+        outAfter,
+        outSnapshot,
+        {
+          targetScore: parsedOptions.targetScore,
+          maxRounds: parsedOptions.maxRounds,
+          includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? false,
+          playbookStore: secondPassStores.playbookStore,
+          toolOutcomeStore: secondPassStores.toolOutcomeStore,
+          signal: remediationSignal,
+          onProgress: update => reportProgress(
+            Math.min(91.5, 90 + (update.percent / 100) * 1.5),
+            update.stage,
+            update.detail,
+          ),
+        },
+      );
+      deterministicDurationMs += r2.remediation.remediationDurationMs;
+      if (r2.remediation.runtimeSummary) deterministicRuntimeSummaries.push(r2.remediation.runtimeSummary);
+      if (r2.remediation.after.scoreProfile.overallScore >= outAfter.scoreProfile.overallScore) {
+        const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+        outBuffer = r2.buffer;
+        outAfter = r2.remediation.after;
+        outSnapshot = r2.snapshot;
+        roundsOut = [
+          ...roundsOut,
+          ...r2.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+        ];
+        appliedToolsOut = [
+          ...appliedToolsOut,
+          ...r2.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+        ];
+        verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(r2.remediation);
+      }
+      await runPostRemediationAltPhase('nested_alt_cleanup_post_second_pass');
+    }
     let semanticSummary: SemanticRemediationSummary | undefined;
     let semanticHeadingsSummary: SemanticRemediationSummary | undefined;
     let semanticPromoteHeadingsSummary: SemanticRemediationSummary | undefined;
@@ -320,7 +497,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
     if (semanticRequested) {
       await reportProgress(92, 'Describing figures');
-      const scoreRef = remediation.after.scoreProfile.overallScore;
+      const scoreRef = outAfter.scoreProfile.overallScore;
       if (!getOpenAiCompatBaseUrl()) {
         semanticSummary = buildSemanticSummary({
           lane: 'figures',
@@ -488,30 +665,13 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       }
     }
 
-    let appliedToolsOut = remediation.appliedTools;
-    if (outSnapshot.isTagged) {
-      const scoreBeforeAltFix = outAfter.scoreProfile.overallScore;
-      const ar = await applyPostRemediationAltRepair(outBuffer, filename, outAfter, outSnapshot, {
-        signal: semanticAbort.signal,
-      });
-      if (!ar.buffer.equals(outBuffer) && shouldKeepPostRemediationAltRepair(outAfter, ar.analysis)) {
-        outBuffer = ar.buffer;
-        outAfter = ar.analysis;
-        outSnapshot = ar.snapshot;
-        appliedToolsOut = [
-          ...remediation.appliedTools,
-          {
-            toolName: 'repair_alt_text_structure',
-            stage: 9,
-            round: remediation.rounds[remediation.rounds.length - 1]?.round ?? 1,
-            scoreBefore: scoreBeforeAltFix,
-            scoreAfter: outAfter.scoreProfile.overallScore,
-            delta: outAfter.scoreProfile.overallScore - scoreBeforeAltFix,
-            outcome: 'applied' as const,
-            details: 'nested_alt_cleanup_post_semantic',
-          },
-        ];
-      }
+    if ([
+      semanticSummary,
+      semanticHeadingsSummary,
+      semanticPromoteHeadingsSummary,
+      semanticUntaggedHeadingsSummary,
+    ].some(summary => summary?.changeStatus === 'applied')) {
+      await runPostRemediationAltPhase('nested_alt_cleanup_post_semantic');
     }
 
     const trustAdjusted = enforceSemanticTrust({
@@ -535,7 +695,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     const enc = encodePdfBase64(outBuffer);
     await reportProgress(98, 'Saving your fixed PDF');
     const totalDuration =
-      remediation.remediationDurationMs +
+      deterministicDurationMs +
       (semanticSummary?.durationMs ?? 0) +
       (semanticHeadingsSummary?.durationMs ?? 0) +
       (semanticPromoteHeadingsSummary?.durationMs ?? 0) +
@@ -547,7 +707,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       semanticUntaggedHeadingsSummary,
     ].filter((summary): summary is SemanticRemediationSummary => summary != null);
     const runtimeSummary = mergeRuntimeSummary(
-      remediation.runtimeSummary,
+      deterministicRuntimeSummaries,
       outAfter.runtimeSummary,
       semanticSummaries,
     );
@@ -555,6 +715,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     const body: RemediationResult = {
       ...remediation,
       appliedTools: appliedToolsOut,
+      rounds: roundsOut,
       after: outAfter,
       remediatedPdfBase64: enc.remediatedPdfBase64,
       remediatedPdfTooLarge: enc.remediatedPdfTooLarge,
@@ -704,6 +865,13 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     sendApiError(res, 500, 'INTERNAL_ERROR', 'Remediation failed. Check server logs.');
   } finally {
     req.removeListener('close', onClientClose);
+    for (const db of transientLearningDbs.splice(0)) {
+      try {
+        db.close();
+      } catch {
+        // best-effort per-request in-memory store cleanup
+      }
+    }
     unlink(tempPath).catch(() => { /* temp file cleanup */ });
   }
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSequentialSemanticSummaries } from '../../src/routes/remediate.js';
+import {
+  mergeSequentialSemanticSummaries,
+  shouldRunApiSecondDeterministicPass,
+} from '../../src/routes/remediate.js';
 import type { SemanticRemediationSummary } from '../../src/types.js';
 
 function summary(
@@ -113,5 +116,44 @@ describe('mergeSequentialSemanticSummaries', () => {
     expect(merged.changeStatus).toBe('reverted');
     expect(merged.skippedReason).toBe('regression_reverted');
     expect(merged.errorMessage).toContain('structural_confidence');
+  });
+});
+
+describe('shouldRunApiSecondDeterministicPass', () => {
+  it('admits a second deterministic pass for below-A rows with budget', () => {
+    expect(shouldRunApiSecondDeterministicPass({
+      verifiedCheckpointReturned: false,
+      score: 85,
+      remediationTargetScore: 95,
+      secondPassMinScore: 93,
+      hasBudget: true,
+    })).toBe(true);
+  });
+
+  it('stops when the score is already at the second-pass floor', () => {
+    expect(shouldRunApiSecondDeterministicPass({
+      verifiedCheckpointReturned: false,
+      score: 93,
+      remediationTargetScore: 95,
+      secondPassMinScore: 93,
+      hasBudget: true,
+    })).toBe(false);
+  });
+
+  it('does not run after checkpoint returns or when budget is exhausted', () => {
+    expect(shouldRunApiSecondDeterministicPass({
+      verifiedCheckpointReturned: true,
+      score: 59,
+      remediationTargetScore: 95,
+      secondPassMinScore: 93,
+      hasBudget: true,
+    })).toBe(false);
+    expect(shouldRunApiSecondDeterministicPass({
+      verifiedCheckpointReturned: false,
+      score: 85,
+      remediationTargetScore: 95,
+      secondPassMinScore: 93,
+      hasBudget: false,
+    })).toBe(false);
   });
 });
