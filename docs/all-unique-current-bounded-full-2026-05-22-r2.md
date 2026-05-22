@@ -166,6 +166,38 @@ This is useful timeout recovery evidence, not completion evidence. Counting thes
 
 The `0031` recovery is explained by the accepted native Python analyzer optimization. `0120` and `0135` no longer reproduce the optional-post-alt timeout in this focused run, but `0135` still only reaches `69/D`; do not add a timeout-return or checkpoint-floor relaxation from this evidence.
 
+## Route-Volatility Repeat After 4438 Analyzer Fix
+
+Follow-up deterministic repeat for five high-impact r2 route-volatility rows:
+
+- Run: `/mnt/pdf-review/pdfaf-validation/allunique-route-volatility-repeat-after-4438-opt-2026-05-22-r1/baseline_report.json`
+- Runtime traces: `/mnt/pdf-review/pdfaf-validation/allunique-route-volatility-repeat-after-4438-opt-2026-05-22-r1/runtime-traces/`
+- Mode: `--no-semantic --no-pdfs --write-runtime-traces`
+- `false_positive_applied=0`
+
+Results:
+
+| Row | r2 full-run result | Current focused repeat | Duration |
+| --- | ---: | ---: | ---: |
+| `0033/4655` | `59/F` | `94/A` | `27723ms` |
+| `0108/4614` | `59/F` | `94/A` | `25871ms` |
+| `0236/4705` | `59/F` | `97/A` | `12111ms` |
+| `0306/4657` | `59/F` | `95/A` | `23453ms` |
+| `0317/4574` | `59/F` | `93/A` | `13531ms` |
+
+These rows were previously classified as upstream route volatility rather than safe behavior predicates. The repeat shows that the current source can still reach the stronger route state on these files, but it does not justify a route guard, row-specific fallback, or acceptance overlay.
+
+Combining this repeat with the three-row timeout repeat gives focused-repeat planning evidence of `+422` raw points over r2:
+
+- Timeout repeat gain: `+244`
+- Route-volatility repeat gain: `+178`
+- Projected all-row mean from r2: `92.2821 -> 93.4844`
+- Raw buffer above strict `93.0000`: `+170`
+- Raw buffer above accepted r39 fresh floor `92.9972`: `+170`
+- Combined repeat `false_positive_applied=0`
+
+This supports running a fresh all-unique validation from current source. It is still not completion evidence: only a fresh all-unique run can replace r2/r39 for the active goal.
+
 ## Next Direction
 
 The next implementation-capable lane should not be another broad scorer/remediation expansion or a weaker timeout-return policy. The highest-value options are:
