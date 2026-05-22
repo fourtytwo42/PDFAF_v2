@@ -61,9 +61,11 @@ The direct language-syntax scoring change and accepted Table/ParentTree proof pr
 
 The original-50 result should not be over-read as final completion evidence: it still has one known hard timeout and the all-unique artifact is not a fresh run from this exact commit. The original-50 and outside-holdout gates are currently clean enough for the accepted table proof, but the full goal still needs fresh all-unique validation before completion.
 
+Follow-up all-unique blocker evidence is now source-documented in `docs/all-unique-r39-hard-timeout-current-diagnostic-2026-05-22.md`. Current-source focused repeats recovered `0019/long-4516` from the r39 hard-timeout state to `59/F` and `85/B`, with `false_positive_applied=0`, while `0031`, `0120`, and `0135` remained hard timeouts. This makes a fresh all-unique validation the next useful acceptance check, but it is still not completion evidence.
+
 ## Next Direction
 
 Use the updated map/rollup and PAC-stress selector to choose the next lane. Because no high-impact implementation lane is ready now, prefer:
 
-- a fresh all-unique validation when the next question is goal/acceptance status; or
+- a fresh all-unique validation when the next work window can support it; or
 - a new PAC-stress sample only if fresh evidence identifies a high-impact native gap not already covered by the accepted table proof.
