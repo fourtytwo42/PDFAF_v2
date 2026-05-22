@@ -8,7 +8,7 @@ import type { CategoryKey } from '../src/types.js';
 import { pacRuleScoringCap } from '../src/services/scorer/finalizeEvidence.js';
 import { PAC_ACCEPTANCE_RULE_IDS } from '../src/services/remediation/pacRuleAcceptanceGate.js';
 
-const DEFAULT_OUT = 'Output/pac-poc-parity-gap-map-2026-05-21-r1';
+const DEFAULT_OUT = 'Output/pac-poc-parity-gap-map-2026-05-22-r1';
 const GATE_RULE_SET = new Set<string>(PAC_ACCEPTANCE_RULE_IDS);
 
 export type PacPocFamily =
@@ -81,7 +81,7 @@ export const PAC_POC_PARITY_LANES: PacPocParityLane[] = [
     family: 'table_headers',
     title: 'Table header/undersegmentation transaction',
     priority: 100,
-    status: 'behavior_ready_next',
+    status: 'parked_no_safe_predicate',
     gapKinds: ['remediation_gap'],
     mappedCategory: 'table_markup',
     pocReferenceChecks: ['CheckTableHeaderCellAssignments', 'CheckTablesAreRegular', 'CheckCompleteTables'],
@@ -95,13 +95,15 @@ export const PAC_POC_PARITY_LANES: PacPocParityLane[] = [
     ],
     evidence: [
       'docs/table-undersegmentation-transaction-diagnostic-2026-05-21.md',
+      'docs/table-header-transaction-behavior-proof-2026-05-21.md',
+      'docs/table-target-resolution-diagnostic-2026-05-21.md',
       'docs/washington-sac-publications-holdout-2026-05-18.md',
       'docs/louisiana-lcle-cvr-holdout-2026-05-18.md',
       'docs/public-table-stage180-low-heading-experiment-2026-05-18.md',
     ],
-    currentState: 'PAC-like table/header detection is strong and score-active, but current table tools often improve shape while final header-association debt stays flat or worsens.',
-    nextAction: 'Promote a narrow native dense-table transaction behavior stage using existing normalize_table_structure and set_table_header_cells only.',
-    acceptanceGate: 'Target/control validation, false_positive_applied=0, final table/PAC debt reduction, no new hard timeout, original-50 deterministic validation.',
+    currentState: 'PAC-like table/header detection is strong and score-active, but the dense-table behavior proof only produced one accepted positive repair and other planned targets resolved as non-table roles before mutation.',
+    nextAction: 'Keep table behavior parked until a pre-mutation target-resolution proof shows stable /Table refs and at least two accepted positive repairs with controls stable.',
+    acceptanceGate: 'No dense row-band routing without verified /Table target refs, final table/PAC debt reduction, false_positive_applied=0, controls stable, no new hard timeout, and original-50 deterministic validation.',
   },
   {
     id: 'font_cmap_scoring_hardening',
@@ -329,9 +331,9 @@ export const PAC_POC_PARITY_LANES: PacPocParityLane[] = [
   {
     id: 'language_parts_validation',
     family: 'language',
-    title: 'Natural language of parts',
+    title: 'Language syntax and natural language of parts',
     priority: 48,
-    status: 'evidence_hardening_needed',
+    status: 'mostly_aligned_monitor',
     gapKinds: ['native_detection_gap', 'scoring_gap'],
     mappedCategory: 'title_language',
     pocReferenceChecks: [
@@ -354,9 +356,14 @@ export const PAC_POC_PARITY_LANES: PacPocParityLane[] = [
       'pdfua.language.outline_lang_valid',
       'pdfua.language.structure_lang_valid',
     ],
-    evidence: ['docs/poc-decompiled-checker-map.md', 'src/services/compliance/pacRuleEvidence.ts'],
-    currentState: 'Document language is scored; language-of-parts exists mostly as heuristic/manual-review evidence.',
-    nextAction: 'Keep diagnostic until inherited language context is direct enough to avoid noisy score drops.',
+    evidence: [
+      'docs/poc-decompiled-checker-map.md',
+      'docs/language-parts-parity-diagnostic-2026-05-21.md',
+      'docs/language-syntax-scoring-calibration-2026-05-22.md',
+      'src/services/compliance/pacRuleEvidence.ts',
+    ],
+    currentState: 'Document language presence plus explicit document/structure /Lang syntax are score-active. Language-of-parts evidence remains diagnostic because inherited context is not complete enough for safe caps.',
+    nextAction: 'Keep heuristic language-of-parts diagnostic-only; reopen only with malformed explicit /Lang values or direct object-context language evidence.',
     acceptanceGate: 'Only malformed explicit /Lang values should ever become score-active without semantic language detection.',
   },
   {

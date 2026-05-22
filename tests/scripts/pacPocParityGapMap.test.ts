@@ -28,8 +28,8 @@ describe('PAC/POC parity gap map', () => {
     expect(families.has('language')).toBe(true);
     expect(families.has('catalog_syntax_optional')).toBe(true);
 
-    expect(map.currentTopLane).toBe('table_header_transaction');
-    expect(map.decision.status).toBe('continue_with_prioritized_lane');
+    expect(map.currentTopLane).toBeNull();
+    expect(map.decision.status).toBe('evidence_map_only');
   });
 
   it('separates score-active rules from diagnostic-only rules', () => {
@@ -37,7 +37,9 @@ describe('PAC/POC parity gap map', () => {
     const table = map.lanes.find(lane => lane.id === 'table_header_transaction');
     const font = map.lanes.find(lane => lane.id === 'font_cmap_scoring_hardening');
     const contrast = map.lanes.find(lane => lane.id === 'rendered_contrast_opt_in');
+    const language = map.lanes.find(lane => lane.id === 'language_parts_validation');
 
+    expect(table?.status).toBe('parked_no_safe_predicate');
     expect(table?.scoreActiveRuleIds).toEqual(expect.arrayContaining([
       'pdfua.table.header_association_present',
       'pdfua.table.header_cells_associated',
@@ -47,6 +49,10 @@ describe('PAC/POC parity gap map', () => {
       'pdfua.font.to_unicode_cmap_valid',
     ]));
     expect(contrast?.diagnosticRuleIds).toContain('wcag.contrast.text_contrast_measured');
+    expect(language?.scoreActiveRuleIds).toEqual(expect.arrayContaining([
+      'pdfua.language.document_lang_syntax_valid',
+      'pdfua.language.structure_lang_valid',
+    ]));
   });
 
   it('renders Markdown with the top lane and guardrail language', () => {
@@ -54,6 +60,7 @@ describe('PAC/POC parity gap map', () => {
 
     expect(markdown).toContain('# PAC/POC Parity Gap Map');
     expect(markdown).toContain('`table_header_transaction`');
+    expect(markdown).toContain('`evidence_map_only`');
     expect(markdown).toContain('diagnostic/planning output only');
     expect(markdown).toContain('Research/POC-decompiled');
   });
@@ -65,8 +72,8 @@ describe('PAC/POC parity gap map', () => {
       const json = await readFile(join(dir, 'pac-poc-parity-gap-map.json'), 'utf8');
       const md = await readFile(join(dir, 'pac-poc-parity-gap-map.md'), 'utf8');
 
-      expect(map.currentTopLane).toBe('table_header_transaction');
-      expect(JSON.parse(json)).toMatchObject({ currentTopLane: 'table_header_transaction' });
+      expect(map.currentTopLane).toBeNull();
+      expect(JSON.parse(json)).toMatchObject({ currentTopLane: null });
       expect(md).toContain('PAC/POC Parity Gap Map');
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -25,12 +25,15 @@ describe('PAC/POC lane rollup', () => {
     const table = rollup.lanes.find(lane => lane.id === 'table_header_transaction');
     const annotation = rollup.lanes.find(lane => lane.id === 'annotation_form_existing_behavior');
     const contrast = rollup.lanes.find(lane => lane.id === 'rendered_contrast_opt_in');
+    const language = rollup.lanes.find(lane => lane.id === 'language_parts_validation');
 
     expect(content?.outcome).toBe('accepted_native_evidence');
     expect(table?.outcome).toBe('parked_behavior_failed');
     expect(table?.safeImplementationNow).toBe(false);
     expect(annotation?.outcome).toBe('existing_behavior_aligned');
     expect(contrast?.latestDecision).toBe('keep_rendered_contrast_opt_in_diagnostic_only');
+    expect(language?.outcome).toBe('accepted_native_evidence');
+    expect(language?.latestDecision).toBe('provisional_direct_language_syntax_scoring_hardening');
   });
 
   it('renders Markdown with guardrails and next-step direction', () => {
@@ -41,6 +44,7 @@ describe('PAC/POC lane rollup', () => {
     expect(markdown).toContain('Research/POC-decompiled');
     expect(markdown).toContain('validation_checkpoint_or_new_pac_stress_sample');
     expect(markdown).toContain('table_header_transaction');
+    expect(markdown).toContain('direct language syntax score hardening');
   });
 
   it('writes JSON and Markdown artifacts', async () => {

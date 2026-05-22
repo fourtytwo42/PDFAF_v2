@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_OUT = 'Output/pac-poc-lane-rollup-2026-05-21-r1';
+const DEFAULT_OUT = 'Output/pac-poc-lane-rollup-2026-05-22-r1';
 
 export type PacPocLaneOutcome =
   | 'accepted_native_evidence'
@@ -239,16 +239,20 @@ export const PAC_POC_LANE_ROLLUP_ITEMS: PacPocLaneRollupItem[] = [
     id: 'language_parts_validation',
     family: 'language',
     priority: 52,
-    outcome: 'parked_diagnostic_only',
+    outcome: 'accepted_native_evidence',
     highImpact: false,
     safeImplementationNow: false,
-    latestDecision: 'keep_language_parts_diagnostic_only',
-    evidence: ['docs/language-parts-parity-diagnostic-2026-05-21.md'],
-    acceptedChange: 'Existing document-language scoring remains the only active language lane from this sample.',
+    latestDecision: 'provisional_direct_language_syntax_scoring_hardening',
+    evidence: [
+      'docs/language-parts-parity-diagnostic-2026-05-21.md',
+      'docs/language-syntax-scoring-calibration-2026-05-22.md',
+    ],
+    acceptedChange:
+      'Explicit document and structure /Lang syntax failures are now native score-active PAC evidence at the baseline cap; heuristic language-of-parts evidence remains diagnostic.',
     parkedReason:
-      'No explicit structure /Lang scoring candidates, no heuristic part-language candidates, and no document-language syntax gaps appeared.',
+      'Language-of-parts caps are still unsafe without direct malformed /Lang values or complete inherited object-context evidence.',
     nextAction:
-      'Do not add language-of-parts caps without malformed explicit /Lang values or a repeatable semantic-language evidence path.',
+      'Do not add heuristic language-of-parts caps. Track the direct syntax hardening in validation checkpoints and reopen only with direct object-context language evidence.',
   },
   {
     id: 'rendered_contrast_opt_in',
@@ -418,7 +422,7 @@ export function renderPacPocLaneRollupMarkdown(rollup: PacPocLaneRollup): string
   lines.push(
     '## Interpretation',
     '',
-    'The current source-tracked evidence has no high-impact PAC/POC lane that is ready for immediate production behavior. The strongest PAC-alignment work since the original map is accepted evidence confidence for fully measured Form XObject content events, plus existing annotation/form behavior proof and the report-layout strict-target safety guard.',
+    'The current source-tracked evidence has no high-impact PAC/POC lane that is ready for immediate production behavior. The strongest PAC-alignment work since the original map is accepted evidence confidence for fully measured Form XObject content events, direct language syntax score hardening, existing annotation/form behavior proof, and the report-layout strict-target safety guard.',
     '',
     'The next useful checkpoint is therefore not another broad fixer. Either run a fresh validation checkpoint to measure the current accepted state across original-50, all-unique, and an outside holdout, or open a new PAC-stress sample specifically designed around one unresolved family such as true rendered contrast positives, malformed explicit language-of-parts, or object-backed ParentTree/table targets.',
     '',
