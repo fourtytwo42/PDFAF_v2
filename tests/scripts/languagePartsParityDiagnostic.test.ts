@@ -117,6 +117,19 @@ describe('language parts parity diagnostic classifier', () => {
     expect(result.suggestedAction).toBe('document_language_syntax_validation_needed');
   });
 
+  it('treats malformed document language syntax as score-active once a scoring policy exists', () => {
+    const result = classifyLanguagePartsEvidence(features({
+      documentLanguageMalformed: true,
+      pacFailures: ['pdfua.language.document_lang_syntax_valid'],
+      verifiedFailures: ['pdfua.language.document_lang_syntax_valid'],
+      failRulesWithScoringPolicy: ['pdfua.language.document_lang_syntax_valid'],
+      scoreCapRules: ['pdfua.language.document_lang_syntax_valid'],
+    }));
+
+    expect(result.classification).toBe('document_language_score_active');
+    expect(result.suggestedAction).toBe('already_score_active');
+  });
+
   it('keeps malformed document language syntax diagnostic on high-grade controls', () => {
     const result = classifyLanguagePartsEvidence(features({
       score: 96,
@@ -143,6 +156,21 @@ describe('language parts parity diagnostic classifier', () => {
 
     expect(result.classification).toBe('explicit_structure_lang_scoring_candidate');
     expect(result.suggestedAction).toBe('structure_lang_score_cap_validation_needed');
+  });
+
+  it('treats explicit structure /Lang failures as score-active once a scoring policy exists', () => {
+    const result = classifyLanguagePartsEvidence(features({
+      structureLangInvalidCount: 2,
+      totalPartLanguageInvalidCount: 2,
+      verifiedPartLanguageInvalidCount: 2,
+      pacFailures: ['pdfua.language.structure_lang_valid'],
+      verifiedFailures: ['pdfua.language.structure_lang_valid'],
+      failRulesWithScoringPolicy: ['pdfua.language.structure_lang_valid'],
+      scoreCapRules: ['pdfua.language.structure_lang_valid'],
+    }));
+
+    expect(result.classification).toBe('language_parts_score_active');
+    expect(result.suggestedAction).toBe('already_score_active');
   });
 
   it('keeps alt/actual/form/outline language failures in evidence-hardening', () => {

@@ -2,6 +2,8 @@
 
 Date: 2026-05-21
 
+Update 2026-05-22: `docs/language-syntax-scoring-calibration-2026-05-22.md` supersedes the diagnostic-only decision for direct explicit language syntax only. Malformed document `/Lang` syntax and verified malformed structure-element `/Lang` overrides are now score-active at the baseline PAC cap. Heuristic language-of-parts evidence remains diagnostic-only.
+
 This is a diagnostic-only PAC/POC parity checkpoint for natural-language rules. It adds a native PDFAF report for document language and language-of-parts evidence, but it does not change scoring, remediation routing, PAC gates, mutators, Docker/API behavior, or benchmark behavior.
 
 ## Artifacts

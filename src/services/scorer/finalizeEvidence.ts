@@ -20,6 +20,8 @@ const PAC_RULE_SCORE_CAPS = new Map<string, number>([
   ['pdfua.metadata.pdfua_identifier_present', PAC_BASELINE_SCORE_CAP],
   ['pdfua.settings.marked_true', PAC_BASELINE_SCORE_CAP],
   ['pdfua.language.document_lang_present', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.language.document_lang_syntax_valid', PAC_BASELINE_SCORE_CAP],
+  ['pdfua.language.structure_lang_valid', PAC_BASELINE_SCORE_CAP],
   ['pdfua.structure.struct_tree_present', PAC_BASELINE_SCORE_CAP],
   ['pdfua.figure.alt_present', PAC_BASELINE_SCORE_CAP],
   ['pdfua.figure.checker_visible_alt_present', PAC_BASELINE_SCORE_CAP],

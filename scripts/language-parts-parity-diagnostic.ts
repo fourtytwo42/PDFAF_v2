@@ -35,6 +35,7 @@ const LANGUAGE_RULES = new Set([...DOCUMENT_LANGUAGE_RULES, ...PART_LANGUAGE_RUL
 
 export type LanguagePartsClassification =
   | 'document_language_score_active'
+  | 'language_parts_score_active'
   | 'document_language_syntax_scoring_gap'
   | 'explicit_structure_lang_scoring_candidate'
   | 'language_parts_heuristic_evidence'
@@ -282,8 +283,14 @@ export function classifyLanguagePartsEvidence(
   if (features.heuristicPartLanguageInvalidCount > 0) reasons.push(`heuristic_part_lang_invalid:${features.heuristicPartLanguageInvalidCount}`);
 
   if (
-    features.documentLanguageMissing &&
-    features.failRulesWithScoringPolicy.includes('pdfua.language.document_lang_present')
+    (
+      features.documentLanguageMissing &&
+      features.failRulesWithScoringPolicy.includes('pdfua.language.document_lang_present')
+    ) ||
+    (
+      features.documentLanguageMalformed &&
+      features.failRulesWithScoringPolicy.includes('pdfua.language.document_lang_syntax_valid')
+    )
   ) {
     return {
       classification: 'document_language_score_active',
@@ -308,6 +315,13 @@ export function classifyLanguagePartsEvidence(
   }
 
   if (features.structureLangInvalidCount > 0) {
+    if (features.failRulesWithScoringPolicy.includes('pdfua.language.structure_lang_valid')) {
+      return {
+        classification: 'language_parts_score_active',
+        suggestedAction: 'already_score_active',
+        reasons: reasons.length ? reasons : ['structure_language_failure_already_score_active'],
+      };
+    }
     if (role === 'control' || features.score >= 90) {
       return {
         classification: 'language_parts_control_noise',
@@ -376,6 +390,7 @@ function countBy<T extends string>(rows: Array<Record<string, unknown>>, key: st
 
 const CLASSIFICATIONS: readonly LanguagePartsClassification[] = [
   'document_language_score_active',
+  'language_parts_score_active',
   'document_language_syntax_scoring_gap',
   'explicit_structure_lang_scoring_candidate',
   'language_parts_heuristic_evidence',

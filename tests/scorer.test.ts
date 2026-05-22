@@ -2160,6 +2160,57 @@ describe('phase 3 PAC scoring influence', () => {
     expect(cat.scoreCapsApplied).toBeUndefined();
   });
 
+  it('caps malformed explicit document language syntax', () => {
+    const snap = makeSnap({ lang: 'not valid lang' });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('title_language', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.scoreCapsApplied).toEqual([
+      {
+        category: 'title_language',
+        cap: 89,
+        rawScore: 100,
+        finalScore: 89,
+        reason: 'PAC rule failure: pdfua.language.document_lang_syntax_valid',
+      },
+    ]);
+  });
+
+  it('caps verified malformed structure language overrides', () => {
+    const snap = makeSnap({
+      languageAudit: {
+        altTextLanguageInvalidCount: 0,
+        actualTextLanguageInvalidCount: 0,
+        annotationContentsLanguageInvalidCount: 0,
+        formTuLanguageInvalidCount: 0,
+        outlineLanguageInvalidCount: 0,
+        expansionTextLanguageInvalidCount: 0,
+        structureLangInvalidCount: 2,
+        textObjectLanguageInvalidCount: 0,
+      },
+    });
+
+    const finalized = finalizeScoringEvidence(snap, [
+      scoredCategory('title_language', 100),
+    ]);
+    const cat = finalized.categories[0]!;
+
+    expect(cat.score).toBe(89);
+    expect(cat.scoreCapsApplied).toEqual([
+      {
+        category: 'title_language',
+        cap: 89,
+        rawScore: 100,
+        finalScore: 89,
+        reason: 'PAC rule failure: pdfua.language.structure_lang_valid',
+      },
+    ]);
+  });
+
   it('applies stricter caps for verified PAC structure-syntax leaf failures', () => {
     const snap = makeSnap({
       structureSyntaxAudit: {

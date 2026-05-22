@@ -225,7 +225,7 @@ function languageRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
         : languageSyntaxValid(lang)
           ? 'Document language has a valid BCP-47-like syntax.'
           : `Document language appears malformed: ${lang}.`,
-      confidence: 'heuristic',
+      confidence: 'verified',
     }),
   ];
 }

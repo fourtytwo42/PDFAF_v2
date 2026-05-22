@@ -274,7 +274,10 @@ describe('buildPacRuleEvidence', () => {
 
     const malformed = buildPacRuleEvidence(makeSnap({ lang: 'not valid lang' }));
     expect(byId(malformed, 'pdfua.language.document_lang_present').status).toBe('pass');
-    expect(byId(malformed, 'pdfua.language.document_lang_syntax_valid').status).toBe('fail');
+    expect(byId(malformed, 'pdfua.language.document_lang_syntax_valid')).toMatchObject({
+      status: 'fail',
+      confidence: 'verified',
+    });
   });
 
   it('fails informative Figure without alt', () => {
