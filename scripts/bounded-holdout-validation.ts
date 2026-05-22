@@ -8,6 +8,7 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_TIMEOUT_MS = 300_000;
+const DEFAULT_EXTERNAL_TIMEOUT_GRACE_MS = 10_000;
 const DEFAULT_TMP_ROOT = '/mnt/pdf-review/pdfaf-tmp';
 const DEFAULT_LIMIT = 20;
 
@@ -16,6 +17,7 @@ interface ParsedArgs {
   outDir: string;
   limit: number;
   perPdfTimeoutMs: number;
+  externalTimeoutGraceMs: number;
   tmpRoot: string;
   keepRowArtifacts: boolean;
 }
@@ -43,6 +45,9 @@ export interface BoundedHoldoutRow {
     exitCode: number | null;
     signal: string | null;
     rowArtifactDir: string;
+    childRemediationTimeoutMs?: number;
+    externalTimeoutGraceMs?: number;
+    externalPerPdfTimeoutMs?: number;
   };
 }
 
@@ -53,6 +58,8 @@ export interface BoundedHoldoutReport {
   flags: {
     semantic: false;
     writePdfs: false;
+    childRemediationTimeoutMs: number;
+    externalTimeoutGraceMs: number;
     externalPerPdfTimeoutMs: number;
   };
   pipeline: string;
@@ -85,7 +92,9 @@ function usage(): string {
 
 Options:
   --limit <n>                 Maximum PDFs to process (default: ${DEFAULT_LIMIT})
-  --per-pdf-timeout-ms <ms>   External process timeout per PDF (default: ${DEFAULT_TIMEOUT_MS})
+  --per-pdf-timeout-ms <ms>   Child remediation timeout per PDF (default: ${DEFAULT_TIMEOUT_MS})
+  --external-timeout-grace-ms <ms>
+                              Extra external kill grace after child timeout (default: ${DEFAULT_EXTERNAL_TIMEOUT_GRACE_MS})
   --tmp-root <dir>            Temp root for per-PDF symlink dirs (default: ${DEFAULT_TMP_ROOT})
   --cleanup-row-artifacts     Remove per-row batch directories after aggregating
   --help                      Show this help`;
@@ -94,6 +103,12 @@ Options:
 function parsePositiveInt(value: string | undefined, name: string): number {
   const parsed = Number.parseInt(value ?? '', 10);
   if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`Invalid ${name}: ${value ?? ''}`);
+  return parsed;
+}
+
+function parseNonNegativeInt(value: string | undefined, name: string): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`Invalid ${name}: ${value ?? ''}`);
   return parsed;
 }
 
@@ -108,12 +123,14 @@ function parseArgs(argv: string[]): ParsedArgs {
   if (!inputDir || !outDir) throw new Error(`Missing inputDir/outDir.\n${usage()}`);
   let limit = DEFAULT_LIMIT;
   let perPdfTimeoutMs = DEFAULT_TIMEOUT_MS;
+  let externalTimeoutGraceMs = DEFAULT_EXTERNAL_TIMEOUT_GRACE_MS;
   let tmpRoot = DEFAULT_TMP_ROOT;
   let keepRowArtifacts = true;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--limit') limit = parsePositiveInt(argv[++i], '--limit');
     else if (arg === '--per-pdf-timeout-ms') perPdfTimeoutMs = parsePositiveInt(argv[++i], '--per-pdf-timeout-ms');
+    else if (arg === '--external-timeout-grace-ms') externalTimeoutGraceMs = parseNonNegativeInt(argv[++i], '--external-timeout-grace-ms');
     else if (arg === '--tmp-root') {
       const value = argv[++i];
       if (!value) throw new Error('Missing value for --tmp-root.');
@@ -127,9 +144,14 @@ function parseArgs(argv: string[]): ParsedArgs {
     outDir: resolve(outDir),
     limit,
     perPdfTimeoutMs,
+    externalTimeoutGraceMs,
     tmpRoot: resolve(tmpRoot),
     keepRowArtifacts,
   };
+}
+
+export function externalKillTimeoutMs(childRemediationTimeoutMs: number, externalTimeoutGraceMs = DEFAULT_EXTERNAL_TIMEOUT_GRACE_MS): number {
+  return childRemediationTimeoutMs + externalTimeoutGraceMs;
 }
 
 export function safeBase(name: string): string {
@@ -150,8 +172,15 @@ function trimLog(value: string): string {
   return value.length <= max ? value : value.slice(-max);
 }
 
-async function runChildBatch(inputDir: string, outDir: string, timeoutMs: number, tmpRoot: string): Promise<ChildRunResult> {
+async function runChildBatch(
+  inputDir: string,
+  outDir: string,
+  childRemediationTimeoutMs: number,
+  externalTimeoutGraceMs: number,
+  tmpRoot: string,
+): Promise<ChildRunResult> {
   const started = Date.now();
+  const externalTimeoutMs = externalKillTimeoutMs(childRemediationTimeoutMs, externalTimeoutGraceMs);
   const args = [
     ...process.execArgv,
     resolve('scripts/baseline-corpus-batch.ts'),
@@ -169,6 +198,7 @@ async function runChildBatch(inputDir: string, outDir: string, timeoutMs: number
       PDFAF_RUN_LOCAL_LLM: '0',
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC: '0',
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS: '0',
+      PDFAF_REMEDIATION_PDF_TIMEOUT_MS: String(childRemediationTimeoutMs),
       OPENAI_COMPAT_BASE_URL: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -203,7 +233,7 @@ async function runChildBatch(inputDir: string, outDir: string, timeoutMs: number
         }
       }, 5_000);
     }
-  }, timeoutMs);
+  }, externalTimeoutMs);
 
   return await new Promise(resolvePromise => {
     child.on('close', (exitCode, signal) => {
@@ -227,6 +257,9 @@ function rowFromTimeout(input: {
   error: string;
   child: ChildRunResult;
   rowArtifactDir: string;
+  childRemediationTimeoutMs: number;
+  externalTimeoutGraceMs: number;
+  externalPerPdfTimeoutMs: number;
 }): BoundedHoldoutRow {
   return {
     file: input.file,
@@ -250,6 +283,9 @@ function rowFromTimeout(input: {
       exitCode: input.child.exitCode,
       signal: input.child.signal,
       rowArtifactDir: input.rowArtifactDir,
+      childRemediationTimeoutMs: input.childRemediationTimeoutMs,
+      externalTimeoutGraceMs: input.externalTimeoutGraceMs,
+      externalPerPdfTimeoutMs: input.externalPerPdfTimeoutMs,
     },
   };
 }
@@ -277,9 +313,12 @@ export function buildAggregateReport(input: {
   outDir: string;
   targetScore?: number;
   perPdfTimeoutMs: number;
+  externalTimeoutGraceMs?: number;
   rows: BoundedHoldoutRow[];
 }): BoundedHoldoutReport {
   const targetScore = input.targetScore ?? Number.parseInt(process.env['REMEDIATION_TARGET_SCORE'] ?? '95', 10);
+  const externalTimeoutGraceMs = input.externalTimeoutGraceMs ?? DEFAULT_EXTERNAL_TIMEOUT_GRACE_MS;
+  const externalPerPdfTimeoutMs = externalKillTimeoutMs(input.perPdfTimeoutMs, externalTimeoutGraceMs);
   const completed = completedRows(input.rows);
   const belowTarget = completed.filter(row => typeof row.afterScore === 'number' && row.afterScore < targetScore);
   return {
@@ -289,10 +328,12 @@ export function buildAggregateReport(input: {
     flags: {
       semantic: false,
       writePdfs: false,
-      externalPerPdfTimeoutMs: input.perPdfTimeoutMs,
+      childRemediationTimeoutMs: input.perPdfTimeoutMs,
+      externalTimeoutGraceMs,
+      externalPerPdfTimeoutMs,
     },
     pipeline:
-      'per-PDF external process timeout -> baseline-corpus-batch one-PDF deterministic run -> aggregate baseline_report; no LLM; no PDFs',
+      'per-PDF child remediation timeout plus external kill grace -> baseline-corpus-batch one-PDF deterministic run -> aggregate baseline_report; no LLM; no PDFs',
     summary: {
       count: input.rows.length,
       completed: completed.length,
@@ -322,6 +363,8 @@ async function writeAggregateReport(report: BoundedHoldoutReport): Promise<void>
     `- Mean after all rows: ${report.summary.allRowMeanAfter.toFixed(4)}`,
     `- False positives applied: ${report.summary.falsePositiveApplied}`,
     `- Timeout/error rows: ${report.summary.timeoutOrErrorCount}`,
+    `- Child remediation timeout: ${report.flags.childRemediationTimeoutMs}ms`,
+    `- External kill timeout: ${report.flags.externalPerPdfTimeoutMs}ms`,
     '',
     '| File | Before | After | Delta | ms | Error |',
     '| --- | ---: | ---: | ---: | ---: | --- |',
@@ -348,7 +391,14 @@ async function validateOnePdf(pdfPath: string, args: ParsedArgs, index: number):
   await mkdir(rowOutDir, { recursive: true });
   await symlink(pdfPath, join(rowInputDir, file));
 
-  const child = await runChildBatch(rowInputDir, rowOutDir, args.perPdfTimeoutMs, args.tmpRoot);
+  const externalPerPdfTimeoutMs = externalKillTimeoutMs(args.perPdfTimeoutMs, args.externalTimeoutGraceMs);
+  const child = await runChildBatch(
+    rowInputDir,
+    rowOutDir,
+    args.perPdfTimeoutMs,
+    args.externalTimeoutGraceMs,
+    args.tmpRoot,
+  );
   await writeFile(join(rowOutDir, 'stdout.log'), child.stdout, 'utf8');
   await writeFile(join(rowOutDir, 'stderr.log'), child.stderr, 'utf8');
 
@@ -359,12 +409,15 @@ async function validateOnePdf(pdfPath: string, args: ParsedArgs, index: number):
       exitCode: child.exitCode,
       signal: child.signal,
       rowArtifactDir: rowOutDir,
+      childRemediationTimeoutMs: args.perPdfTimeoutMs,
+      externalTimeoutGraceMs: args.externalTimeoutGraceMs,
+      externalPerPdfTimeoutMs,
     };
     return artifactRow;
   }
 
   const error = child.timedOut
-    ? `external_per_pdf_timeout_${args.perPdfTimeoutMs}ms`
+    ? `external_per_pdf_timeout_${externalPerPdfTimeoutMs}ms`
     : `child_exit_${child.exitCode ?? 'null'}_${child.signal ?? 'null'}`;
   const row = rowFromTimeout({
     file,
@@ -372,6 +425,9 @@ async function validateOnePdf(pdfPath: string, args: ParsedArgs, index: number):
     error,
     child,
     rowArtifactDir: rowOutDir,
+    childRemediationTimeoutMs: args.perPdfTimeoutMs,
+    externalTimeoutGraceMs: args.externalTimeoutGraceMs,
+    externalPerPdfTimeoutMs,
   });
   if (!args.keepRowArtifacts) await rm(rowOutDir, { recursive: true, force: true });
   return row;
@@ -396,6 +452,7 @@ async function main(): Promise<void> {
       inputDir: args.inputDir,
       outDir: args.outDir,
       perPdfTimeoutMs: args.perPdfTimeoutMs,
+      externalTimeoutGraceMs: args.externalTimeoutGraceMs,
       rows,
     }));
   }
@@ -404,6 +461,7 @@ async function main(): Promise<void> {
     inputDir: args.inputDir,
     outDir: args.outDir,
     perPdfTimeoutMs: args.perPdfTimeoutMs,
+    externalTimeoutGraceMs: args.externalTimeoutGraceMs,
     rows,
   });
   await writeAggregateReport(report);

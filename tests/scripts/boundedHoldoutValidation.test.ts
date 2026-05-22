@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildAggregateReport,
+  externalKillTimeoutMs,
   listPdfs,
   safeBase,
   type BoundedHoldoutRow,
@@ -71,6 +72,9 @@ describe('bounded holdout validation helpers', () => {
 
     expect(report.summary.count).toBe(3);
     expect(report.summary.completed).toBe(2);
+    expect(report.flags.childRemediationTimeoutMs).toBe(300000);
+    expect(report.flags.externalTimeoutGraceMs).toBe(10000);
+    expect(report.flags.externalPerPdfTimeoutMs).toBe(310000);
     expect(report.summary.meanBefore).toBe(45);
     expect(report.summary.meanAfter).toBe(90);
     expect(report.summary.allRowMeanAfter).toBe(60);
@@ -90,5 +94,10 @@ describe('bounded holdout validation helpers', () => {
     });
 
     expect(report.summary.falsePositiveApplied).toBe(2);
+  });
+
+  it('adds external process grace after the child remediation timeout', () => {
+    expect(externalKillTimeoutMs(300_000)).toBe(310_000);
+    expect(externalKillTimeoutMs(300_000, 30_000)).toBe(330_000);
   });
 });
