@@ -128,12 +128,29 @@ This run proves the bounded-runner grace fix improved validation honesty and run
 - non-timeout route/analyzer volatility caused enough low rows to offset much of the recovered timeout value;
 - `false_positive_applied` remains clean at `0`.
 
+## Timeout Checkpoint Follow-Up
+
+Follow-up diagnostic:
+
+- `/mnt/pdf-review/pdfaf-validation/allunique-current-bounded-full-2026-05-22-r2/low-checkpoint-timeout-diagnostic-r1/low-checkpoint-timeout-diagnostic.md`
+
+The existing low-checkpoint timeout diagnostic rejects a low-score checkpoint-return policy change:
+
+- Hard-timeout rows: `3`
+- Classification counts: `low_checkpoint_too_poor: 3`
+- Projected recoverable points if safe: `0`
+- `0120`: best checkpoint `59/F`, rejected by `checkpoint_below_floor(59<85)`
+- `0135`: best checkpoint `59/F`, rejected by `checkpoint_below_floor(59<85)`
+- `0031`: best checkpoint `36/F`, rejected by `checkpoint_below_floor(36<90)`
+
+Do not lower checkpoint floors or count these partial states just to avoid zeroes. The timeout rows need real route/fixer recovery or remain parked as honest hard timeouts.
+
 ## Next Direction
 
-The next implementation-capable lane should not be another broad scorer/remediation expansion. The highest-value options are:
+The next implementation-capable lane should not be another broad scorer/remediation expansion or a weaker timeout-return policy. The highest-value options are:
 
-1. general timeout/analyzer recovery for `0031`, `0120`, and `0135`;
-2. route-stability diagnostics for repeatable zero-heading regressions (`0325`, `0236`, `0306`, `0317`, `0033`, `0108`, `0149`, `0181`);
-3. only after those, object-backed table/alt mixed tails such as `0223`, `0137`, `0138`, or `0287`.
+1. route-stability diagnostics for repeatable zero-heading regressions (`0325`, `0236`, `0306`, `0317`, `0033`, `0108`, `0149`, `0181`);
+2. object-backed table/alt mixed tails such as `0223`, `0137`, `0138`, or `0287`;
+3. deeper timeout/analyzer recovery for `0031`, `0120`, and `0135` only if it can produce a real verified repair above the current low checkpoint floors.
 
 Do not mark the active goal complete from this run.
