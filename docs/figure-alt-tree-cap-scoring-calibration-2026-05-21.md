@@ -60,9 +60,36 @@ The original-50 gate is not clean. The largest negative movements are known vola
 
 The current original-50 figure/alt no-gain diagnostic found `0` tree-cap scoring candidates. `4683` remains partial checker-visible alt coverage (`5/6`) and does not match the promoted full-coverage predicate. This supports the predicate as narrow, but the accepted-gate status remains blocked by original-50 volatility, mainly `4516`.
 
+## Follow-Up Runtime-Guard Repeats
+
+After the narrow slow no-gain figure/alt runtime guard was added, two fresh bounded original-50 repeats were run against the current tree-cap/guard source state:
+
+- `/mnt/pdf-review/pdfaf-validation/original50-slow-no-gain-guard-bounded-2026-05-21-r1/baseline_report.json`
+- `/mnt/pdf-review/pdfaf-validation/original50-current-treecap-guard-bounded-repeat-2026-05-21-r2/baseline_report.json`
+
+The first repeat improved over the blocked tree-cap repeat: `49/50` completed, all-row mean `92.24`, completed-row mean `94.1224`, `false_positive_applied=0`, and only known timeout `structure-4438`. However, p95 was `237114ms`, narrowly above the p95 bound when compared with the Form XObject confidence reference (`229628ms`, allowed `236517ms`).
+
+The second repeat kept `false_positive_applied=0` and the same known timeout, but it did not clear acceptance:
+
+- all-row mean `91.82`;
+- completed-row mean `93.6939`;
+- p95/max `253462ms / 300041ms`;
+- `4516` repeated low at `59/F`;
+- `4680` repeated low at `59/F`;
+- `4754` repeated lower at `85/B`.
+
+Updated read-only audit:
+
+- `/mnt/pdf-review/pdfaf-validation/figure-alt-tree-cap-acceptance-audit-current-repeat-2026-05-21-r2`
+- Decision: `blocked_by_validation_gate`
+- Passing gates: `false_positive_applied=0`, outside holdout improved to target, and no new timeout versus the reference.
+- Failing gate: original-50 p95 exceeds the bounded runtime allowance.
+
+The outside-corpus result remains real and useful, but the original-50 runtime/route gate is not clean enough to accept the score-active rule as a fully accepted checkpoint.
+
 ## Status
 
-This is a useful score-active improvement for outside-corpus generalization, but it is not sufficient to close the active goal. Treat it as a provisional scoring calibration until one of these happens:
+This remains a useful score-active improvement for outside-corpus generalization, but it is not sufficient to close the active goal and is still not a fully accepted broad checkpoint. Treat it as a provisional scoring calibration until one of these happens:
 
 - a fresh original-50 deterministic repeat clears the no-regression gate; or
 - the `4516` runtime/analyzer route volatility is separately resolved or explicitly waived.

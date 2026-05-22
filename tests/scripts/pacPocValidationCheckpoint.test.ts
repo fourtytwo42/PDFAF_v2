@@ -105,6 +105,42 @@ describe('PAC/POC validation checkpoint', () => {
     expect(renderValidationCheckpointMarkdown(report)).toContain('artifact_missing');
   });
 
+  it('fails a scope when p95 exceeds the runtime reference bound', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-validation-checkpoint-'));
+    try {
+      const current = join(dir, 'current.json');
+      const reference = join(dir, 'reference.json');
+      await writeBaseline(reference, [
+        { file: 'a.pdf', afterScore: 95, afterGrade: 'A', durationMs: 100, falsePositiveApplied: 0 },
+        { file: 'b.pdf', afterScore: 95, afterGrade: 'A', durationMs: 110, falsePositiveApplied: 0 },
+        { file: 'c.pdf', afterScore: 95, afterGrade: 'A', durationMs: 120, falsePositiveApplied: 0 },
+      ]);
+      await writeBaseline(current, [
+        { file: 'a.pdf', afterScore: 95, afterGrade: 'A', durationMs: 100, falsePositiveApplied: 0 },
+        { file: 'b.pdf', afterScore: 95, afterGrade: 'A', durationMs: 110, falsePositiveApplied: 0 },
+        { file: 'c.pdf', afterScore: 95, afterGrade: 'A', durationMs: 6000, falsePositiveApplied: 0 },
+      ]);
+
+      const report = await buildValidationCheckpointReport([{
+        scope: 'outside_holdout',
+        label: 'outside',
+        path: current,
+        minimumRows: 3,
+        targetMean: 93,
+        runtimeReferencePath: reference,
+      }]);
+
+      expect(report.decision.status).toBe('validation_not_passing');
+      expect(report.scopes[0]?.runtimeP95ReferenceMs).toBe(120);
+      expect(report.scopes[0]?.runtimeP95AllowedMs).toBe(5120);
+      expect(report.scopes[0]?.notes).toEqual(expect.arrayContaining([
+        'runtime_p95_above_bound:6000>5120',
+      ]));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes JSON and Markdown artifacts', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-validation-checkpoint-'));
     try {

@@ -52,6 +52,7 @@ export interface ValidationCheckpointInput {
   minimumRows: number;
   targetMean?: number;
   requireFreshAfter?: string;
+  runtimeReferencePath?: string;
 }
 
 export interface TimeoutOrErrorRow {
@@ -76,6 +77,9 @@ export interface ValidationCheckpointScopeReport {
   gradeDistribution: Record<string, number>;
   falsePositiveApplied: number | null;
   runtimeP95Ms: number | null;
+  runtimeP95ReferenceMs: number | null;
+  runtimeP95AllowedMs: number | null;
+  runtimeP95ReferencePath: string | null;
   runtimeMaxMs: number | null;
   timeoutOrErrorRows: TimeoutOrErrorRow[];
   notes: string[];
@@ -112,6 +116,10 @@ function percentile(values: number[], p: number): number | null {
   return sorted[index]!;
 }
 
+function runtimeBound(referenceP95Ms: number): number {
+  return referenceP95Ms + Math.max(referenceP95Ms * 0.03, 5000);
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isFile();
@@ -130,6 +138,63 @@ async function directoryExists(path: string): Promise<boolean> {
 
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, 'utf8')) as unknown;
+}
+
+async function runtimeP95FromArtifact(inputPath: string): Promise<{
+  path: string | null;
+  p95Ms: number | null;
+}> {
+  const artifactPath = await resolveArtifactPath(inputPath);
+  if (!artifactPath) return { path: resolve(inputPath), p95Ms: null };
+  const raw = await readJson(artifactPath);
+  const rows = baselineRowsFromJson(raw);
+  if (rows) {
+    return {
+      path: artifactPath,
+      p95Ms: summarizeBaselineRows(rows).runtimeP95Ms,
+    };
+  }
+  if (isRecord(raw) && isRecord(raw['summary'])) {
+    const value = (raw['summary'] as Record<string, unknown>)['runtimeP95Ms'];
+    return {
+      path: artifactPath,
+      p95Ms: typeof value === 'number' && Number.isFinite(value) ? value : null,
+    };
+  }
+  return { path: artifactPath, p95Ms: null };
+}
+
+async function runtimeReferenceFor(input: ValidationCheckpointInput, currentP95Ms: number | null): Promise<{
+  path: string | null;
+  referenceP95Ms: number | null;
+  allowedP95Ms: number | null;
+  notes: string[];
+}> {
+  if (!input.runtimeReferencePath) {
+    return { path: null, referenceP95Ms: null, allowedP95Ms: null, notes: [] };
+  }
+  const reference = await runtimeP95FromArtifact(input.runtimeReferencePath);
+  if (reference.p95Ms === null) {
+    return {
+      path: reference.path,
+      referenceP95Ms: null,
+      allowedP95Ms: null,
+      notes: ['runtime_reference_p95_unknown'],
+    };
+  }
+  const allowedP95Ms = runtimeBound(reference.p95Ms);
+  const notes: string[] = [];
+  if (currentP95Ms === null) {
+    notes.push('runtime_p95_unknown');
+  } else if (currentP95Ms > allowedP95Ms) {
+    notes.push(`runtime_p95_above_bound:${currentP95Ms}>${Math.round(allowedP95Ms)}`);
+  }
+  return {
+    path: reference.path,
+    referenceP95Ms: reference.p95Ms,
+    allowedP95Ms,
+    notes,
+  };
 }
 
 async function resolveArtifactPath(inputPath: string): Promise<string | null> {
@@ -193,6 +258,7 @@ async function summarizeBaselineReport(input: ValidationCheckpointInput, path: s
   const report = raw as BaselineReport;
   const rows = baselineRowsFromJson(raw) ?? [];
   const summary = summarizeBaselineRows(rows);
+  const runtimeReference = await runtimeReferenceFor(input, summary.runtimeP95Ms);
   const notes: string[] = [];
   if (report.flags?.semantic === true) notes.push('semantic_enabled');
   if (report.flags?.writePdfs === true) notes.push('write_pdfs_enabled');
@@ -201,8 +267,14 @@ async function summarizeBaselineReport(input: ValidationCheckpointInput, path: s
   if (input.targetMean !== undefined && (summary.meanAllRows ?? -Infinity) < input.targetMean) {
     notes.push(`mean_below_target:${summary.meanAllRows ?? 'n/a'}<${input.targetMean}`);
   }
+  notes.push(...runtimeReference.notes);
   const status = notes.some(note =>
-    note.startsWith('minimum_rows_not_met') || note.startsWith('false_positive_applied') || note.startsWith('mean_below_target')
+    note.startsWith('minimum_rows_not_met') ||
+    note.startsWith('false_positive_applied') ||
+    note.startsWith('mean_below_target') ||
+    note.startsWith('runtime_reference_p95_unknown') ||
+    note.startsWith('runtime_p95_unknown') ||
+    note.startsWith('runtime_p95_above_bound')
   ) ? 'fail' : 'pass';
   return {
     scope: input.scope,
@@ -221,6 +293,9 @@ async function summarizeBaselineReport(input: ValidationCheckpointInput, path: s
     gradeDistribution: summary.gradeDistribution,
     falsePositiveApplied: summary.falsePositiveApplied,
     runtimeP95Ms: summary.runtimeP95Ms,
+    runtimeP95ReferenceMs: runtimeReference.referenceP95Ms,
+    runtimeP95AllowedMs: runtimeReference.allowedP95Ms,
+    runtimeP95ReferencePath: runtimeReference.path,
     runtimeMaxMs: summary.runtimeMaxMs,
     timeoutOrErrorRows: summary.timeoutOrErrorRows,
     notes,
@@ -284,6 +359,8 @@ async function summarizeAllInputDiagnostic(input: ValidationCheckpointInput, pat
   const sourceEvidence = await summarizeFalsePositiveFromSourceRoot(raw.sourceRoot);
   const rowCount = summary.processed ?? 0;
   const falsePositiveApplied = sourceEvidence.falsePositiveApplied;
+  const currentP95Ms = typeof summary.runtimeP95Ms === 'number' ? summary.runtimeP95Ms : null;
+  const runtimeReference = await runtimeReferenceFor(input, currentP95Ms);
   const notes: string[] = [];
   if (rowCount < input.minimumRows) notes.push(`minimum_rows_not_met:${rowCount}<${input.minimumRows}`);
   if (falsePositiveApplied === null) notes.push('false_positive_applied_unknown');
@@ -292,11 +369,15 @@ async function summarizeAllInputDiagnostic(input: ValidationCheckpointInput, pat
     notes.push(`mean_below_target:${summary.mean}<${input.targetMean}`);
   }
   if (input.targetMean !== undefined && typeof summary.mean !== 'number') notes.push('mean_unknown');
+  notes.push(...runtimeReference.notes);
   const status = notes.some(note =>
     note.startsWith('minimum_rows_not_met') ||
     note.startsWith('false_positive_applied') ||
     note.startsWith('mean_below_target') ||
-    note === 'mean_unknown'
+    note === 'mean_unknown' ||
+    note.startsWith('runtime_reference_p95_unknown') ||
+    note.startsWith('runtime_p95_unknown') ||
+    note.startsWith('runtime_p95_above_bound')
   ) ? 'fail' : 'pass';
   return {
     scope: input.scope,
@@ -314,7 +395,10 @@ async function summarizeAllInputDiagnostic(input: ValidationCheckpointInput, pat
     targetMean: input.targetMean ?? null,
     gradeDistribution: summary.gradeDistribution ?? {},
     falsePositiveApplied,
-    runtimeP95Ms: typeof summary.runtimeP95Ms === 'number' ? summary.runtimeP95Ms : null,
+    runtimeP95Ms: currentP95Ms,
+    runtimeP95ReferenceMs: runtimeReference.referenceP95Ms,
+    runtimeP95AllowedMs: runtimeReference.allowedP95Ms,
+    runtimeP95ReferencePath: runtimeReference.path,
     runtimeMaxMs: typeof summary.runtimeMaxMs === 'number' ? summary.runtimeMaxMs : null,
     timeoutOrErrorRows: sourceEvidence.timeoutOrErrorRows,
     notes,
@@ -340,6 +424,9 @@ async function summarizeInput(input: ValidationCheckpointInput): Promise<Validat
       gradeDistribution: {},
       falsePositiveApplied: null,
       runtimeP95Ms: null,
+      runtimeP95ReferenceMs: null,
+      runtimeP95AllowedMs: null,
+      runtimeP95ReferencePath: null,
       runtimeMaxMs: null,
       timeoutOrErrorRows: [],
       notes: ['artifact_missing'],
@@ -364,6 +451,9 @@ async function summarizeInput(input: ValidationCheckpointInput): Promise<Validat
       gradeDistribution: {},
       falsePositiveApplied: null,
       runtimeP95Ms: null,
+      runtimeP95ReferenceMs: null,
+      runtimeP95AllowedMs: null,
+      runtimeP95ReferencePath: null,
       runtimeMaxMs: null,
       timeoutOrErrorRows: [],
       notes: ['artifact_missing'],
@@ -391,6 +481,9 @@ async function summarizeInput(input: ValidationCheckpointInput): Promise<Validat
     gradeDistribution: {},
     falsePositiveApplied: null,
     runtimeP95Ms: null,
+    runtimeP95ReferenceMs: null,
+    runtimeP95AllowedMs: null,
+    runtimeP95ReferencePath: null,
     runtimeMaxMs: null,
     timeoutOrErrorRows: [],
     notes: ['unsupported_artifact_shape'],
@@ -450,8 +543,8 @@ export function renderValidationCheckpointMarkdown(report: ValidationCheckpointR
     '',
     '## Scope Summary',
     '',
-    '| Scope | Label | Status | Rows | Completed | Mean All Rows | Completed Mean | Median | Target | False Positives | p95 ms | Notes |',
-    '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
+    '| Scope | Label | Status | Rows | Completed | Mean All Rows | Completed Mean | Median | Target | False Positives | p95 ms | p95 Ref | p95 Allowed | Notes |',
+    '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
   ];
   for (const scope of report.scopes) {
     lines.push([
@@ -466,6 +559,8 @@ export function renderValidationCheckpointMarkdown(report: ValidationCheckpointR
       formatNumber(scope.targetMean),
       formatNumber(scope.falsePositiveApplied),
       formatNumber(scope.runtimeP95Ms),
+      formatNumber(scope.runtimeP95ReferenceMs),
+      formatNumber(scope.runtimeP95AllowedMs === null ? null : Math.round(scope.runtimeP95AllowedMs)),
       scope.notes.length ? scope.notes.join(', ') : 'none',
     ].map(mdEscape).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
   }
@@ -480,6 +575,7 @@ export function renderValidationCheckpointMarkdown(report: ValidationCheckpointR
       `- Generated: ${scope.generatedAt ?? 'n/a'}`,
       `- Grade distribution: ${gradeSummary(scope.gradeDistribution)}`,
       `- Runtime max ms: ${formatNumber(scope.runtimeMaxMs)}`,
+      `- Runtime p95 reference: ${scope.runtimeP95ReferencePath ? `\`${scope.runtimeP95ReferencePath}\`` : '`none`'}`,
       `- Timeout/error rows: ${scope.timeoutOrErrorRows.length}`,
       '',
     );
@@ -517,6 +613,9 @@ Options:
   --original <path>       baseline_report.json or directory for original-50 validation
   --all-unique <path>     all-input-mean-diagnostic.json or directory for all-unique validation
   --outside <path>        baseline_report.json or directory for outside holdout validation
+  --original-runtime-reference <path>   Runtime p95 reference for original-50
+  --all-unique-runtime-reference <path> Runtime p95 reference for all-unique
+  --outside-runtime-reference <path>    Runtime p95 reference for outside holdout
   --out <dir>             Output directory (default: ${DEFAULT_OUT})
   --help                  Show this help`;
 }
@@ -533,6 +632,7 @@ async function main(): Promise<void> {
       label: 'original-50 deterministic validation artifact',
       path: argValue('--original'),
       minimumRows: 50,
+      runtimeReferencePath: argValue('--original-runtime-reference'),
     },
     {
       scope: 'all_unique',
@@ -540,6 +640,7 @@ async function main(): Promise<void> {
       path: argValue('--all-unique'),
       minimumRows: 351,
       targetMean: 93,
+      runtimeReferencePath: argValue('--all-unique-runtime-reference'),
     },
     {
       scope: 'outside_holdout',
@@ -547,6 +648,7 @@ async function main(): Promise<void> {
       path: argValue('--outside'),
       minimumRows: 20,
       targetMean: 93,
+      runtimeReferencePath: argValue('--outside-runtime-reference'),
     },
   ];
   const report = await writeValidationCheckpointReport(inputs, outDir);

@@ -98,8 +98,18 @@ Rows below `93` or errored:
 
 The focused `font-4172` repeat is `/mnt/pdf-review/pdfaf-validation/font4172-focus-repeat-2026-05-21-r1`; it completed `59/F -> 93/A` with `false_positive_applied=0`, so the broad-run `4172` drop is not treated as a stable guard-caused regression.
 
+Follow-up p95-aware validation showed the broader current scorer/runtime stack is still not accepted as a runtime gate:
+
+- `/mnt/pdf-review/pdfaf-validation/original50-current-treecap-guard-bounded-repeat-2026-05-21-r2`
+- `49/50` completed, all-row mean `91.82`, completed-row mean `93.6939`, `false_positive_applied=0`;
+- known timeout `structure-4438`;
+- p95 `253462ms` versus Form XObject confidence reference `229628ms`, allowed `236517ms`;
+- `4516` and `4680` repeated low-score route volatility.
+
+This does not invalidate the narrow guard predicate, but it means the guard must not be counted as a broad p95/runtime acceptance fix.
+
 ## Decision
 
 Decision: `accepted_narrow_runtime_guard_route_dependent`
 
-This is safe enough to keep as a narrow runtime guard because it preserves score/PAC visibility, does not lower any checkpoint floor, did not trigger on focused outside/original controls, and the fresh original-50 run kept `false_positive_applied=0`, avoided new hard timeouts versus the accepted Stage 180 reference, and stayed within the p95 runtime bound. The runtime benefit remains route-dependent: it fired on one no-gain `4683` route, stayed parked on a stricter repeat, and did not fire in the broad original-50 route. Do not count this as a broad p95 fix; count it only as a PAC-honest safety guard against repeated slow no-gain figure/alt reanalysis when the strict predicate is met.
+This is safe enough to keep as a narrow runtime guard because it preserves score/PAC visibility, does not lower any checkpoint floor, did not trigger on focused outside/original controls, and the fresh original-50 evidence kept `false_positive_applied=0` with no new hard-timeout family. The runtime benefit remains route-dependent: it fired on one no-gain `4683` route, stayed parked on a stricter repeat, and did not fire in the broad original-50 route. Do not count this as a broad p95 fix or as acceptance of the provisional tree-cap scorer; count it only as a PAC-honest safety guard against repeated slow no-gain figure/alt reanalysis when the strict predicate is met.

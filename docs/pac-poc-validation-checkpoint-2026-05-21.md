@@ -13,6 +13,15 @@ Source change:
 - `tests/scripts/pacPocValidationCheckpoint.test.ts`
 - `tests/scripts/boundedHoldoutValidation.test.ts`
 
+Follow-up source change:
+
+- `scripts/pac-poc-validation-checkpoint.ts` now supports optional runtime p95 reference artifacts per scope:
+  - `--original-runtime-reference`
+  - `--all-unique-runtime-reference`
+  - `--outside-runtime-reference`
+- A scope fails when current p95 exceeds reference p95 plus `max(3%, 5000ms)`.
+- `tests/scripts/pacPocValidationCheckpoint.test.ts` covers runtime-bound failure reporting.
+
 Local generated artifact:
 
 - `Output/pac-poc-validation-checkpoint-2026-05-21-r2/pac-poc-validation-checkpoint.md`
@@ -78,6 +87,31 @@ The useful next work is either:
 2. open a focused outside-corpus lane around the Virginia low rows, with the strongest candidates being figure/alt on `va-11`, table markup on `va-15`, and reading/link order on `va-18`.
 
 Do not describe the r39 all-unique result as goal completion. It is the best floor and misses by one raw point.
+
+## Runtime-Gated R3 Update
+
+Generated local artifact:
+
+- `Output/pac-poc-validation-checkpoint-2026-05-21-r3/pac-poc-validation-checkpoint.md`
+- `Output/pac-poc-validation-checkpoint-2026-05-21-r3/pac-poc-validation-checkpoint.json`
+
+Inputs used:
+
+- Original-50 current: `/mnt/pdf-review/pdfaf-validation/original50-current-treecap-guard-bounded-repeat-2026-05-21-r2/baseline_report.json`
+- Original-50 runtime reference: `/mnt/pdf-review/pdfaf-validation/original50-form-xobject-content-confidence-2026-05-21-r1/baseline_report.json`
+- All-unique: `Output/goal-all-input-mean-2026-05-09-r1/fresh-all-input-validation-diagnostic-2026-05-14-r39-stage194-lowconcurrency-full-r1/all-input-mean-diagnostic.json`
+- Outside holdout current: `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-figure-alt-tree-cap-full-2026-05-21-r1/baseline_report.json`
+- Outside holdout runtime reference: `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-20pdf-bounded-2026-05-21-r1/baseline_report.json`
+
+Overall decision remains `validation_not_passing`.
+
+| Scope | Status | Mean | Median | False Positives | p95 | p95 Ref | p95 Allowed | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| original-50 | `fail` | `91.82` | `95` | `0` | `253462ms` | `229628ms` | `236517ms` | p95 runtime above bound |
+| all-unique | `fail` | `92.9972` | `95` | `0` | `197611ms` | n/a | n/a | mean below `93` by one raw point |
+| outside holdout | `pass` | `93.35` | `94.5` | `0` | `199055ms` | `224644ms` | `231383ms` | passed |
+
+This update makes the checkpoint stricter and more faithful to the active goal: outside-corpus movement is real, but the current source state is not accepted overall because original-50 p95 is over the bounded runtime allowance and all-unique still misses `93.0000`.
 
 ## Bounded Runner Follow-Up
 
