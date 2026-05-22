@@ -66,3 +66,32 @@ This removes a hard timeout shape, but it does not make `4438` an A-grade row. T
 Accept the analyzer optimization as source progress. It is general native PAC-evidence work: it makes existing parent-tree and structure-syntax debt observable within bounded runtime instead of hiding it behind bridge timeouts.
 
 Do not claim all-unique or original-50 completion from this alone. The next acceptance step is a fresh original-50 deterministic validation, followed by all-unique tracking if the original-50 gate stays clean.
+
+## Original-50 Follow-Up
+
+Fresh deterministic original-50 validation was run after this source change:
+
+- Run: `/mnt/pdf-review/pdfaf-validation/original50-after-structure4438-analysis-opt-2026-05-22-r1/baseline_report.json`
+- Rows: `50/50` completed
+- All-row mean: `94.0000`
+- Median: `95.5`
+- Grades: `47 A / 1 B / 2 F`
+- `false_positive_applied=0`
+- Runtime p95/max: `133441ms / 289268ms`
+
+This clears the broad original-50 runtime and mutation-truth gate for the analyzer optimization. Compared with `/mnt/pdf-review/pdfaf-validation/original50-table-parenttree-proof-2026-05-22-r1/baseline_report.json`, the hard `4438` timeout is recovered to `83/B`, and `4516` completes at `92/A`.
+
+Two known volatile long-report rows dropped in the broad run:
+
+- `4680`: `95/A -> 59/F`
+- `4683`: `92/A -> 59/F`
+
+Focused repeat evidence shows those drops are route volatility rather than a deterministic source regression from the analyzer optimization:
+
+- Repeat: `/mnt/pdf-review/pdfaf-validation/original50-after-4438-opt-volatility-repeat-2026-05-22-r1/baseline_report.json`
+- `4680`: `59/F -> 97/A`
+- `4683`: `59/F -> 99/A`
+
+The refreshed PAC/POC validation checkpoint is local-only at `/mnt/pdf-review/pdfaf-validation/pac-poc-validation-checkpoint-after-4438-opt-2026-05-22-r1/pac-poc-validation-checkpoint.md`. It reports `original_50` passing, the Virginia outside holdout passing, and `all_unique` still failing because the available all-unique artifact is the pre-optimization r2 checkpoint at mean `92.2821`.
+
+Next broad work should either rerun all-unique from current source or first recover more all-unique timeout/low-score debt (`0120`, `0135`, and remaining long-report volatility) so the expensive full run has a plausible path back above the accepted fresh floor.
