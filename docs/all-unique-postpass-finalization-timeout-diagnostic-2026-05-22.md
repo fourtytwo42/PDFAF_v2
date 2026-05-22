@@ -49,6 +49,32 @@ Before any behavior acceptance:
 - Do not accept a guard that only avoids a zero by skipping a real required repair and returning a below-floor state.
 - Original-50 deterministic validation is required before acceptance because previous timeout guards have caused unrelated runtime regressions.
 
+## Follow-Up Proof: Local Font Guard Rejected
+
+A temporary runtime guard for late `embed_local_font_substitutes` was tested and reverted before commit. It skipped only the optional local-font-substitution subphase when there was not enough wall budget for another mutation/reanalysis window.
+
+Proof artifact:
+
+- `/mnt/pdf-review/pdfaf-validation/local-font-budget-guard-proof-2026-05-22-r1/run-r1/baseline_report.json`
+- Diagnostic: `/mnt/pdf-review/pdfaf-validation/local-font-budget-guard-proof-2026-05-22-r1/hard-timeout-tail-diagnostic-r1/hard-timeout-tail-diagnostic.md`
+- Mode: Node 22, deterministic, `--no-semantic --no-pdfs --write-runtime-traces`
+
+Result:
+
+- `0135` still hard-timed out at `300004ms`; the local font phase was skipped and `document_finalization` finished at `59/F`, but the row later timed out outside traced remediation work.
+- `4516` hard-timed out as a control after entering `tagged_cleanup_post_pass` at `223288ms`; best checkpoint was `83/B`, still below the timeout-return floor.
+- Local-font beneficiary controls stayed stable: `4057 93/A`, `4076 90/A`, `4156 95/A`, `4172 93/A`, `4699 95/A`.
+- `4683` completed at `59/F`, matching the known volatile/runtime-risk shape rather than proving a local-font fix.
+- `false_positive_applied=0`.
+
+Decision:
+
+- Do not accept or reintroduce the local-font-only runtime guard. It is too narrow to recover `0135` and it does not address the broader post-pass/runtime tail.
+- The next runtime lane should target the two newly separated shapes:
+  - `0135`: post-remediation/final-alt work after a below-floor `document_finalization` checkpoint.
+  - `4516`: `tagged_cleanup_post_pass` timeout after improving to an `83/B` but still below-floor state.
+- Do not lower checkpoint floors for either row.
+
 ## Source Change Scope
 
 The source change is trace-only:
