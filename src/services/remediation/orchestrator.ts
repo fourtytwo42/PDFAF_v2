@@ -6671,8 +6671,10 @@ async function applyTaggedCleanupPostPasses(args: {
   appliedTools: AppliedRemediationTool[];
   runtimeSummary?: RemediationRuntimeSummary;
   protectedBaseline?: ProtectedBaselineFloor;
+  tracePhase?: PostPassTracePhaseRunner;
 }): Promise<RemediationState> {
   const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const tracePhase: PostPassTracePhaseRunner = args.tracePhase ?? (async (_phase, run) => run());
   let { buffer, analysis, snapshot } = args.state;
   if (!snapshot.isTagged) {
     return args.state;
@@ -6682,33 +6684,35 @@ async function applyTaggedCleanupPostPasses(args: {
     tool => tool.toolName === 'ocr_scanned_pdf' && tool.outcome === 'applied',
   );
   if (!(snapshot.pdfUaVersion ?? '').trim() || ocrRewrotePdf) {
-    const lang = String(snapshot.lang || snapshot.metadata.language || 'en-US').slice(0, 32);
-    const { buffer: stamped, result: uaRes } = await runPythonMutationBatch(
-      buffer,
-      [{ op: 'set_pdfua_identification', params: { language: lang } }],
-      { signal },
-    );
-    if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
-      const accepted = await applyGuardedPostPass({
-        filename,
-        signal,
-        toolName: 'set_pdfua_identification',
-        stage: 10,
-        round,
-        details: 'post_pass_pdfua_xmp',
-        currentBuffer: buffer,
-        currentAnalysis: analysis,
-        currentSnapshot: snapshot,
-        nextBuffer: stamped,
-        appliedTools,
-        runtimeSummary,
-        tempPrefix: 'pdfaf-post',
-        protectedBaseline,
-      });
-      buffer = accepted.buffer;
-      analysis = accepted.analysis;
-      snapshot = accepted.snapshot;
-    }
+    await tracePhase('set_pdfua_identification', async () => {
+      const lang = String(snapshot.lang || snapshot.metadata.language || 'en-US').slice(0, 32);
+      const { buffer: stamped, result: uaRes } = await runPythonMutationBatch(
+        buffer,
+        [{ op: 'set_pdfua_identification', params: { language: lang } }],
+        { signal },
+      );
+      if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
+        const accepted = await applyGuardedPostPass({
+          filename,
+          signal,
+          toolName: 'set_pdfua_identification',
+          stage: 10,
+          round,
+          details: 'post_pass_pdfua_xmp',
+          currentBuffer: buffer,
+          currentAnalysis: analysis,
+          currentSnapshot: snapshot,
+          nextBuffer: stamped,
+          appliedTools,
+          runtimeSummary,
+          tempPrefix: 'pdfaf-post',
+          protectedBaseline,
+        });
+        buffer = accepted.buffer;
+        analysis = accepted.analysis;
+        snapshot = accepted.snapshot;
+      }
+    });
   }
 
   if (shouldSkipFigure4702SequencePostPassGuard({ filename, analysis, appliedTools })) {
@@ -6723,51 +6727,61 @@ async function applyTaggedCleanupPostPasses(args: {
   for (let pass = 0; pass < 8; pass++) {
     const orphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
     if (!orphanN) break;
-    const beforeOrphanN = orphanN;
-    const beforeSignature = JSON.stringify({
-      score: analysis.score,
-      title: categoryScore(analysis, 'title_language'),
-      alt: categoryScore(analysis, 'alt_text'),
-      table: categoryScore(analysis, 'table_markup'),
-      reading: categoryScore(analysis, 'reading_order'),
-      heading: categoryScore(analysis, 'heading_structure'),
+    let shouldBreak = false;
+    await tracePhase(`orphan_drain_${pass + 1}`, async () => {
+      const beforeOrphanN = orphanN;
+      const beforeSignature = JSON.stringify({
+        score: analysis.score,
+        title: categoryScore(analysis, 'title_language'),
+        alt: categoryScore(analysis, 'alt_text'),
+        table: categoryScore(analysis, 'table_markup'),
+        reading: categoryScore(analysis, 'reading_order'),
+        heading: categoryScore(analysis, 'heading_structure'),
+      });
+      const { buffer: drained, result: drRes } = await runPythonMutationBatch(
+        buffer,
+        [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
+        { signal },
+      );
+      if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) {
+        shouldBreak = true;
+        return;
+      }
+      const accepted = await applyGuardedPostPass({
+        filename,
+        signal,
+        toolName: 'remap_orphan_mcids_as_artifacts',
+        stage: 10,
+        round,
+        details: `post_pass_orphan_drain_${pass + 1}`,
+        currentBuffer: buffer,
+        currentAnalysis: analysis,
+        currentSnapshot: snapshot,
+        nextBuffer: drained,
+        appliedTools,
+        runtimeSummary,
+        tempPrefix: 'pdfaf-post',
+        protectedBaseline,
+      });
+      buffer = accepted.buffer;
+      analysis = accepted.analysis;
+      snapshot = accepted.snapshot;
+      if (!accepted.accepted) {
+        shouldBreak = true;
+        return;
+      }
+      const afterSignature = JSON.stringify({
+        score: analysis.score,
+        title: categoryScore(analysis, 'title_language'),
+        alt: categoryScore(analysis, 'alt_text'),
+        table: categoryScore(analysis, 'table_markup'),
+        reading: categoryScore(analysis, 'reading_order'),
+        heading: categoryScore(analysis, 'heading_structure'),
+      });
+      const afterOrphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+      if (afterSignature === beforeSignature && afterOrphanN >= beforeOrphanN) shouldBreak = true;
     });
-    const { buffer: drained, result: drRes } = await runPythonMutationBatch(
-      buffer,
-      [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
-      { signal },
-    );
-    if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
-    const accepted = await applyGuardedPostPass({
-      filename,
-      signal,
-      toolName: 'remap_orphan_mcids_as_artifacts',
-      stage: 10,
-      round,
-      details: `post_pass_orphan_drain_${pass + 1}`,
-      currentBuffer: buffer,
-      currentAnalysis: analysis,
-      currentSnapshot: snapshot,
-      nextBuffer: drained,
-      appliedTools,
-      runtimeSummary,
-      tempPrefix: 'pdfaf-post',
-      protectedBaseline,
-    });
-    buffer = accepted.buffer;
-    analysis = accepted.analysis;
-    snapshot = accepted.snapshot;
-    if (!accepted.accepted) break;
-    const afterSignature = JSON.stringify({
-      score: analysis.score,
-      title: categoryScore(analysis, 'title_language'),
-      alt: categoryScore(analysis, 'alt_text'),
-      table: categoryScore(analysis, 'table_markup'),
-      reading: categoryScore(analysis, 'reading_order'),
-      heading: categoryScore(analysis, 'heading_structure'),
-    });
-    const afterOrphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
-    if (afterSignature === beforeSignature && afterOrphanN >= beforeOrphanN) break;
+    if (shouldBreak) break;
   }
 
   return { buffer, analysis, snapshot };
@@ -9652,6 +9666,7 @@ export async function remediatePdf(
       appliedTools,
       runtimeSummary,
       protectedBaseline: options?.protectedBaseline,
+      tracePhase: (phase, run) => tracePostPassPhase(`tagged_cleanup_post_pass:${phase}`, postPassTrace.round, run),
     });
     currentBuffer = state.buffer;
     currentAnalysis = state.analysis;
