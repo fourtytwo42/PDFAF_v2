@@ -90,6 +90,40 @@ The one direct structure-language syntax row was `font-4172`. It had:
 
 This proves the new cap can detect a real original-corpus explicit `/Lang` syntax failure without inflating scores. It does not prove full remediation benchmark acceptance.
 
+### Original-50 Deterministic Validation
+
+Local bounded validation:
+
+- `/mnt/pdf-review/pdfaf-validation/original50-language-syntax-bounded-2026-05-22-r1/baseline_report.json`
+
+Command shape:
+
+- `scripts/bounded-holdout-validation.ts /mnt/pdf-review/pdfaf-validation/original50-language-syntax-flat-2026-05-22-r1 ... --limit 50 --per-pdf-timeout-ms 300000`
+- Per-row child process runs `scripts/baseline-corpus-batch.ts --no-semantic --no-pdfs`.
+
+Result:
+
+- `50` rows selected
+- `49/50` completed
+- completed-row mean `93.2449`
+- all-row mean `91.3800`
+- `false_positive_applied=0`
+- one hard timeout: `structure-4438`
+- runtime p95/max: `214971ms / 300039ms`
+
+Below-93 rows:
+
+- `font-4057`: `90/A`
+- `long-4516`: `59/F`
+- `long-4680`: `59/F`
+- `long-4683`: `59/F`
+- `structure-4076`: `89/B`
+- `structure-4438`: external timeout, counted as zero
+
+The relevant language-syntax row, `font-4172`, completed at `93/A`. Its final `title_language` category was `89`, consistent with the new verified structure-language cap, but the overall row remained A-grade with `false_positive_applied=0`.
+
+This validation is useful but not a complete broad acceptance pass versus the current best original-50 reference, because known runtime/route debt still pulls the all-row mean below recent reference artifacts. The observed low rows are the existing long/structure runtime and route-volatility families, not new language-syntax controls.
+
 ## Validation
 
 Passed:
@@ -99,7 +133,6 @@ Passed:
 
 Still required before treating this as a broad benchmark-accepted scoring checkpoint:
 
-- full original-50 deterministic validation if the team requires every score-active scoring hardening to pass the complete remediation benchmark gate;
 - all-unique and outside-holdout checkpoint updates when a broader PAC/POC validation checkpoint is next run.
 
 ## Current State
