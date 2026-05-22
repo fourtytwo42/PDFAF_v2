@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 const DEFAULT_PARITY_MAP = 'Output/pac-poc-parity-gap-map-2026-05-22-r1/pac-poc-parity-gap-map.json';
 const DEFAULT_LANE_ROLLUP = 'Output/pac-poc-lane-rollup-2026-05-22-r1/pac-poc-lane-rollup.json';
-const DEFAULT_VALIDATION = 'Output/pac-poc-validation-checkpoint-2026-05-22-r1/pac-poc-validation-checkpoint.json';
+const DEFAULT_VALIDATION = 'Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.json';
 const DEFAULT_OUTSIDE_LOW_ROW = '/mnt/pdf-review/pdfaf-validation/virginia-dcjs-low-row-diagnostic-2026-05-21-r1/outside-holdout-low-row-diagnostic.json';
 const DEFAULT_TABLE_TARGET = '/mnt/pdf-review/pdfaf-table-diagnostics/table-target-resolution-2026-05-21-r1/table-target-resolution-diagnostic.json';
 const DEFAULT_FONT_CMAP = '/mnt/pdf-review/pdfaf-font-cmap-diagnostics/font-cmap-scoring-hardening-2026-05-21-r1/font-cmap-scoring-hardening.json';
@@ -196,7 +196,16 @@ export function buildPacStressSampleSelectorReport(inputs: SelectorInputs): PacS
   const nonTableRows = nonTableRowsFromTableTarget(inputs.tableTarget);
   const unsafeTableControls = unsafeControlRowsFromTableTarget(inputs.tableTarget);
   const tableControls = controlRowsFromTableTarget(inputs.tableTarget);
-  const tableSampleReady = tablePoints >= 20 && nonTableRows.length > 0 && unsafeTableControls.length === 0;
+  const tableLaneStatus = stringValue(tableLane?.['status']) ?? 'unknown';
+  const tableLatestDecision = stringValue(tableRollupLane?.['latestDecision']) ?? 'unknown';
+  const tableAcceptedBaseline =
+    tableLaneStatus === 'mostly_aligned_monitor' &&
+    tableLatestDecision === 'accept_report_scale_object_backed_table_proof';
+  const tableSampleReady =
+    !tableAcceptedBaseline &&
+    tablePoints >= 20 &&
+    nonTableRows.length > 0 &&
+    unsafeTableControls.length === 0;
 
   const contrastReasons = isRecord(inputs.contrast) && isRecord(inputs.contrast['decision'])
     ? inputs.contrast['decision']['reasons']
@@ -218,8 +227,9 @@ export function buildPacStressSampleSelectorReport(inputs: SelectorInputs): PacS
       behaviorReady: false,
       estimatedRecoverablePoints: tablePoints + tableNearMissPoints,
       reasons: [
-        `table_lane_status=${stringValue(tableLane?.['status']) ?? 'unknown'}`,
-        `table_rollup=${stringValue(tableRollupLane?.['latestDecision']) ?? 'unknown'}`,
+        `table_lane_status=${tableLaneStatus}`,
+        `table_rollup=${tableLatestDecision}`,
+        `accepted_table_baseline=${tableAcceptedBaseline}`,
         `outside_table_points=${tablePoints}`,
         `stable_table_rows=${stableTableRows.length}`,
         `non_table_blockers=${nonTableRows.length}`,

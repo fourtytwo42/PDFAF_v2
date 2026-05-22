@@ -126,6 +126,40 @@ describe('PAC stress sample selector', () => {
     expect(report.decision.selectedKind).toBeNull();
   });
 
+  it('does not reselect table stress work after the report-scale object-backed table proof is accepted', () => {
+    const acceptedTableMap = {
+      ...parityMap,
+      lanes: [
+        { id: 'table_header_transaction', status: 'mostly_aligned_monitor' },
+        { id: 'language_parts_validation', status: 'mostly_aligned_monitor' },
+      ],
+    };
+    const acceptedTableRollup = {
+      ...laneRollup,
+      lanes: [
+        { id: 'table_header_transaction', latestDecision: 'accept_report_scale_object_backed_table_proof' },
+        { id: 'rendered_contrast_opt_in', latestDecision: 'keep_rendered_contrast_opt_in_diagnostic_only' },
+        { id: 'font_cmap_scoring_hardening', latestDecision: 'keep_font_cmap_diagnostic_only' },
+      ],
+    };
+
+    const report = buildPacStressSampleSelectorReport({
+      parityMap: acceptedTableMap,
+      laneRollup: acceptedTableRollup,
+      validation,
+      outsideLowRow,
+      tableTarget,
+      contrast,
+      fontCmap,
+    });
+
+    expect(report.decision.status).toBe('validation_first');
+    expect(report.decision.selectedKind).toBeNull();
+    const table = report.candidates.find(candidate => candidate.kind === 'object_backed_table_parenttree_targets');
+    expect(table?.status).toBe('no_current_positive_evidence');
+    expect(table?.reasons).toContain('accepted_table_baseline=true');
+  });
+
   it('renders Markdown with selected sample gates', () => {
     const markdown = renderPacStressSampleSelectorMarkdown(buildPacStressSampleSelectorReport({
       parityMap,

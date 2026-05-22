@@ -37,6 +37,19 @@ Target behavior:
 - `va-17`: `54/F -> 91/A`; existing Stage180 route still applies and stays stable.
 - `va-11`: `51/F -> 94/A`; no new report-scale Stage180 proof trigger was needed in this run.
 
+Full Virginia outside-holdout rerun after acceptance:
+
+- `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-current-table-proof-full-2026-05-22-r1/baseline_report.json`
+- `20/20` completed
+- Mean: `48.25 -> 95.10`
+- Median: `95.5`
+- `false_positive_applied=0`
+- Timeouts/errors: `0`
+- Runtime p95/max: `202448ms / 212140ms`
+- Compared with the previous Virginia checkpoint, mean improved `93.35 -> 95.10` and p95 stayed within the bounded allowance (`199055ms` reference, `205027ms` allowed).
+
+The remaining below-93 Virginia rows are `va-03 87/B` and `va-17 91/A`. They are not table proof regressions; `va-17` still runs the existing Stage180 table sequence and remains near target.
+
 Controls and blockers:
 
 - Controls stayed stable: `ADAM2 94/A`, Teams remediated `96/A`, Teams targeted `95/A`, Teams original `98/A`, and `pdfaf_fixture_accessible 96/A`.

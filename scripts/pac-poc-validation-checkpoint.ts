@@ -5,7 +5,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_OUT = 'Output/pac-poc-validation-checkpoint-2026-05-21-r1';
+const DEFAULT_OUT = 'Output/pac-poc-validation-checkpoint-2026-05-22-r2';
 
 export type ArtifactKind = 'baseline_report' | 'all_input_diagnostic' | 'missing_or_unknown';
 export type CheckpointScope = 'original_50' | 'all_unique' | 'outside_holdout';

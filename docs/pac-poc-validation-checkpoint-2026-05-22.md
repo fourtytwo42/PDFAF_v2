@@ -6,12 +6,12 @@ Date: 2026-05-22
 
 Decision: `validation_not_passing`.
 
-This checkpoint records the current validation state after direct language-syntax scoring hardening. It is an audit/reporting layer only. It does not run analysis, remediation, PAC/POC, ODL, Java, semantic AI, network checks, or PDF mutation.
+This checkpoint records the current validation state after direct language-syntax scoring hardening and the accepted Table/ParentTree behavior proof. It is an audit/reporting layer only. It does not run analysis, remediation, PAC/POC, ODL, Java, semantic AI, network checks, or PDF mutation.
 
 Local generated artifact:
 
-- `Output/pac-poc-validation-checkpoint-2026-05-22-r1/pac-poc-validation-checkpoint.md`
-- `Output/pac-poc-validation-checkpoint-2026-05-22-r1/pac-poc-validation-checkpoint.json`
+- `Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.md`
+- `Output/pac-poc-validation-checkpoint-2026-05-22-r2/pac-poc-validation-checkpoint.json`
 
 Generated artifacts remain local and are not source-tracked.
 
@@ -19,15 +19,17 @@ Generated artifacts remain local and are not source-tracked.
 
 `original_50`
 
-- Artifact: `/mnt/pdf-review/pdfaf-validation/original50-language-syntax-bounded-2026-05-22-r1/baseline_report.json`
+- Artifact: `/mnt/pdf-review/pdfaf-validation/original50-table-parenttree-proof-2026-05-22-r1/baseline_report.json`
 - Rows: `50`
 - Completed: `49`
-- All-row mean: `91.3800`
-- Completed-row mean: `93.2449`
+- All-row mean: `93.3000`
+- Completed-row mean: `95.2041`
 - Median: `95`
 - `false_positive_applied=0`
-- Runtime p95/max: `214971ms / 300039ms`
+- Runtime p95/max: `226899ms / 300036ms`
 - Timeout/error rows: `1` (`structure-4438`)
+- Runtime reference: `/mnt/pdf-review/pdfaf-validation/original50-form-xobject-content-confidence-2026-05-21-r1/baseline_report.json`
+- Runtime bound: p95 `226899ms` is below allowed `236517ms`
 
 `all_unique`
 
@@ -41,25 +43,27 @@ Generated artifacts remain local and are not source-tracked.
 
 `outside_holdout`
 
-- Artifact: `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-figure-alt-tree-cap-full-2026-05-21-r1/baseline_report.json`
+- Artifact: `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-current-table-proof-full-2026-05-22-r1/baseline_report.json`
 - Rows: `20`
-- Mean: `93.35`
-- Median: `94.5`
+- Mean: `95.10`
+- Median: `95.5`
 - `false_positive_applied=0`
 - Timeout/error rows: `0`
-- Runtime p95/max: `199055ms / 228703ms`
+- Runtime p95/max: `202448ms / 212140ms`
+- Runtime reference: `/mnt/pdf-review/pdfaf-validation/virginia-dcjs-figure-alt-tree-cap-full-2026-05-21-r1/baseline_report.json`
+- Runtime bound: p95 `202448ms` is below allowed `205027ms`
 
 ## Interpretation
 
 The source state remains improved for PAC/POC alignment, but the full goal is not achieved.
 
-The direct language-syntax scoring change preserved `false_positive_applied=0` on the original-50 bounded validation, and the outside Virginia holdout still passes. The all-unique checkpoint remains below the active target at `92.9972`, so the active goal stays open.
+The direct language-syntax scoring change and accepted Table/ParentTree proof preserve `false_positive_applied=0` on the original-50 bounded validation. The outside Virginia holdout improved from the prior source-tracked checkpoint (`93.35 -> 95.10`) and still passes with bounded runtime. The all-unique checkpoint remains below the active target at `92.9972`, so the active goal stays open.
 
-The original-50 result should not be over-read as a clean broad acceptance pass: it still has one known hard timeout and known long/structure route debt in the low-row set. The language-specific row `font-4172` stayed A-grade with the stricter `title_language=89` cap, which supports the scoring hardening itself.
+The original-50 result should not be over-read as final completion evidence: it still has one known hard timeout and the all-unique artifact is not a fresh run from this exact commit. The original-50 and outside-holdout gates are currently clean enough for the accepted table proof, but the full goal still needs fresh all-unique validation before completion.
 
 ## Next Direction
 
-Use the updated map/rollup to choose the next lane. Because no high-impact implementation lane is ready now, prefer either:
+Use the updated map/rollup and PAC-stress selector to choose the next lane. Because no high-impact implementation lane is ready now, prefer:
 
-- a PAC-stress sample aimed at object-backed ParentTree/table targets or direct language-of-parts evidence; or
-- a validation-focused checkpoint only if the next question is release/acceptance status rather than new behavior.
+- a fresh all-unique validation when the next question is goal/acceptance status; or
+- a new PAC-stress sample only if fresh evidence identifies a high-impact native gap not already covered by the accepted table proof.
