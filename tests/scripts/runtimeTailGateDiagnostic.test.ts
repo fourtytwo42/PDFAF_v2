@@ -87,6 +87,59 @@ describe('runtime tail gate diagnostic', () => {
     expect(row4683?.unaccountedDurationMs).toBeGreaterThan(200000);
   });
 
+  it('summarizes runtime telemetry hotspots when runtimeSummary is present', () => {
+    const reference = report([
+      row('4516-long-report.pdf', 85, 120000),
+      row('fast.pdf', 95, 1000),
+    ]);
+    const current = report([
+      row('4516-long-report.pdf', 59, 260000, {
+        appliedTools: [tool(1000)],
+        runtimeSummary: {
+          analysisBefore: { totalMs: 29000 },
+          analysisAfter: { totalMs: 25000 },
+          deterministicTotalMs: 220000,
+          stageTimings: [
+            { key: 'planner:stage2', stageNumber: 2, round: 1, source: 'planner', toolCount: 3, totalMs: 46000, reanalyzeMs: 24000 },
+            { key: 'planner:stage6', stageNumber: 6, round: 1, source: 'planner', toolCount: 3, totalMs: 78000, reanalyzeMs: 0 },
+          ],
+          toolTimings: [
+            { toolName: 'repair_structure_conformance', stage: 2, source: 'planner', durationMs: 21000, outcome: 'no_effect' },
+          ],
+          liveAnalysisTimings: [
+            { context: 'figure_alt_target_reanalysis', toolName: 'set_figure_alt_text', targetRef: '248_0', durationMs: 25000, scoreBefore: 59, scoreAfter: 59 },
+          ],
+          boundedWork: {
+            deterministicEarlyExitReasons: [
+              { key: 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return', count: 1 },
+            ],
+          },
+        },
+      }),
+      row('fast.pdf', 95, 1000),
+    ]);
+
+    const diagnostic = buildRuntimeTailGateDiagnostic({
+      referencePath: '/reference.json',
+      currentPath: '/current.json',
+      historyPaths: [],
+      reference,
+      current,
+      history: [],
+      stricterScoreKeys: ['4516'],
+    });
+
+    const row4516 = diagnostic.rows.find(row => row.key === '4516');
+    expect(row4516?.runtimeBreakdown?.stageReanalysisMs).toBe(24000);
+    expect(row4516?.runtimeBreakdown?.liveAnalysisMs).toBe(25000);
+    expect(row4516?.runtimeBreakdown?.earlyExitReasons[0]).toEqual({
+      key: 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return',
+      count: 1,
+    });
+    expect(row4516?.runtimeBreakdown?.topHotspots[0]?.label).toContain('planner:stage6');
+    expect(renderRuntimeTailGateDiagnosticMarkdown(diagnostic)).toContain('Runtime Hotspots');
+  });
+
   it('writes JSON and Markdown reports', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-runtime-tail-'));
     try {

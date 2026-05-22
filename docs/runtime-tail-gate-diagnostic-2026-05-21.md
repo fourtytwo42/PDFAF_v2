@@ -94,3 +94,39 @@ The next useful runtime lane is not a score cap or PAC exception. It is a genera
 - return only verified, PAC-honest checkpoints that already meet the existing bounded checkpoint rules.
 
 Do not lower timeout floors, widen checkpoint returns, suppress PAC evidence, or treat the focused `4683` completion as acceptance. Any future behavior needs targeted positives, controls, original-50 validation, `false_positive_applied=0`, no new hard timeouts, and bounded p95.
+
+## Current Runtime-Summary Update
+
+The diagnostic script now reports runtime-summary hot spots when benchmark rows include `runtimeSummary`. It surfaces repeated analysis/reanalysis cost, live analysis cost, top stage/tool hot spots, and deterministic early-exit reasons without changing analysis, remediation, scoring, PAC gates, API, Docker, or benchmark behavior.
+
+Current local report:
+
+- `/mnt/pdf-review/pdfaf-validation/runtime-tail-gate-diagnostic-current-2026-05-22-r1/runtime-tail-gate-diagnostic.md`
+- Reference: `/mnt/pdf-review/pdfaf-validation/original50-form-xobject-content-confidence-2026-05-21-r1/baseline_report.json`
+- Current: `/mnt/pdf-review/pdfaf-validation/original50-current-treecap-guard-bounded-repeat-2026-05-21-r2/baseline_report.json`
+- Decision: `runtime_gate_blocked`
+
+Gates:
+
+- `false_positive_applied=0`
+- no new timeout family: `true`
+- runtime within bound: `false`
+- reference p95 `229628ms`; current p95 `253462ms`
+
+Current blocker rows:
+
+| Row | Classification | Current | Runtime | Stage reanalysis | Live analysis | Main evidence |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `4438` | `repeated_timeout_known_debt` | timeout | `300041ms` | n/a | n/a | same known timeout family |
+| `4516` | `p95_runtime_driver` | `59/F` | `258708ms` | `97597ms` | `74543ms` | repeated score-neutral live figure/alt analysis plus repeated high-cost stage reanalysis |
+| `4076` | `p95_runtime_driver` | `89/B` | `253462ms` | `102968ms` | `0ms` | repeated native structural reanalysis and rejected post-pass tools |
+| `4683` | `analyzer_dominated_completed_tail` | `98/A` | `225012ms` | `103563ms` | `105102ms` | high-quality route, but still dominated by repeated live/reanalysis work |
+| `4680` | `material_score_regression` | `59/F` | `233741ms` | `75022ms` | `82351ms` | low-score route volatility with live figure/alt reanalysis |
+
+The rows are not one uniform failure shape. The safest next runtime work is a diagnostic-first policy proof for repeated score-neutral live/reanalysis work, with separate controls for:
+
+- high-quality live-analysis routes such as `4683 98/A`, which must not be cut short;
+- low-score volatile rows such as `4516` and `4680`, where early returns may be honest only if the checkpoint is already PAC-clean under existing rules;
+- non-live-analysis structural rows such as `4076`, where the issue is repeated native structural reanalysis/post-pass rejection rather than figure/alt live analysis.
+
+Do not promote a broad timeout shortcut from this report. The evidence supports targeted runtime policy diagnostics, not scorer changes, PAC relaxations, or hidden failure handling.

@@ -37,6 +37,46 @@ interface ToolAttempt {
   durationMs?: number | null;
 }
 
+interface RuntimeStageTiming {
+  key?: string;
+  stageNumber?: number;
+  round?: number;
+  source?: string;
+  toolCount?: number;
+  totalMs?: number | null;
+  reanalyzeMs?: number | null;
+}
+
+interface RuntimeToolTiming {
+  toolName?: string;
+  stage?: number;
+  round?: number;
+  source?: string;
+  durationMs?: number | null;
+  outcome?: string;
+}
+
+interface RuntimeLiveAnalysisTiming {
+  context?: string;
+  toolName?: string;
+  targetRef?: string;
+  durationMs?: number | null;
+  scoreBefore?: number | null;
+  scoreAfter?: number | null;
+}
+
+interface RuntimeSummary {
+  analysisBefore?: { totalMs?: number | null };
+  analysisAfter?: { totalMs?: number | null };
+  deterministicTotalMs?: number | null;
+  stageTimings?: RuntimeStageTiming[];
+  toolTimings?: RuntimeToolTiming[];
+  liveAnalysisTimings?: RuntimeLiveAnalysisTiming[];
+  boundedWork?: {
+    deterministicEarlyExitReasons?: Array<{ key?: string; count?: number | null }>;
+  };
+}
+
 interface BaselineReportRow {
   file?: string;
   afterScore?: number | null;
@@ -45,6 +85,7 @@ interface BaselineReportRow {
   error?: string | null;
   falsePositiveApplied?: number | null;
   appliedTools?: ToolAttempt[];
+  runtimeSummary?: RuntimeSummary;
 }
 
 interface BaselineReport {
@@ -70,6 +111,28 @@ interface RowObservation {
   error: string | null;
 }
 
+interface RuntimeHotspot {
+  kind: 'stage' | 'tool' | 'live_analysis';
+  label: string;
+  durationMs: number;
+  reanalyzeMs?: number;
+  outcome?: string | null;
+}
+
+interface RowRuntimeBreakdown {
+  analysisBeforeMs: number | null;
+  analysisAfterMs: number | null;
+  deterministicTotalMs: number | null;
+  stageTotalMs: number;
+  stageReanalysisMs: number;
+  runtimeToolTimingMs: number;
+  liveAnalysisMs: number;
+  appliedToolTimingMs: number;
+  unaccountedMs: number | null;
+  topHotspots: RuntimeHotspot[];
+  earlyExitReasons: Array<{ key: string; count: number }>;
+}
+
 export interface RuntimeGateRow {
   key: string;
   file: string;
@@ -83,6 +146,7 @@ export interface RuntimeGateRow {
   toolDurationMs: number;
   unaccountedDurationMs: number | null;
   toolDurationRatio: number | null;
+  runtimeBreakdown: RowRuntimeBreakdown | null;
   historicalObservations: RowObservation[];
   reason: string;
 }
@@ -183,6 +247,82 @@ function toolDuration(row?: BaselineReportRow): number {
   return (row?.appliedTools ?? []).reduce((sum, tool) => sum + (numberOrNull(tool.durationMs) ?? 0), 0);
 }
 
+function sumDurations<T>(items: T[] | undefined, read: (item: T) => unknown): number {
+  return (items ?? []).reduce((sum, item) => sum + (numberOrNull(read(item)) ?? 0), 0);
+}
+
+function runtimeLabelForStage(stage: RuntimeStageTiming): string {
+  return [
+    stage.key ?? `${stage.source ?? 'unknown'}:stage${stage.stageNumber ?? '?'}`,
+    `round ${stage.round ?? '?'}`,
+    `${stage.toolCount ?? 0} tools`,
+  ].join(' / ');
+}
+
+function runtimeBreakdown(row?: BaselineReportRow): RowRuntimeBreakdown | null {
+  const summary = row?.runtimeSummary;
+  if (!summary) return null;
+  const stageTotalMs = sumDurations(summary.stageTimings, item => item.totalMs);
+  const stageReanalysisMs = sumDurations(summary.stageTimings, item => item.reanalyzeMs);
+  const runtimeToolTimingMs = sumDurations(summary.toolTimings, item => item.durationMs);
+  const liveAnalysisMs = sumDurations(summary.liveAnalysisTimings, item => item.durationMs);
+  const appliedToolTimingMs = toolDuration(row);
+  const currentDurationMs = numberOrNull(row?.durationMs);
+  const accountedMs =
+    (numberOrNull(summary.analysisBefore?.totalMs) ?? 0) +
+    (numberOrNull(summary.analysisAfter?.totalMs) ?? 0) +
+    (numberOrNull(summary.deterministicTotalMs) ?? stageTotalMs);
+  const stageHotspots: RuntimeHotspot[] = (summary.stageTimings ?? []).map(stage => ({
+    kind: 'stage',
+    label: runtimeLabelForStage(stage),
+    durationMs: numberOrNull(stage.totalMs) ?? 0,
+    reanalyzeMs: numberOrNull(stage.reanalyzeMs) ?? 0,
+  }));
+  const toolHotspots: RuntimeHotspot[] = (summary.toolTimings ?? []).map(tool => ({
+    kind: 'tool',
+    label: [
+      tool.toolName ?? 'unknown_tool',
+      `stage ${tool.stage ?? '?'}`,
+      tool.source ?? 'unknown',
+    ].join(' / '),
+    durationMs: numberOrNull(tool.durationMs) ?? 0,
+    outcome: tool.outcome ?? null,
+  }));
+  const liveHotspots: RuntimeHotspot[] = (summary.liveAnalysisTimings ?? []).map(live => ({
+    kind: 'live_analysis',
+    label: [
+      live.context ?? 'live_analysis',
+      live.toolName ?? 'unknown_tool',
+      live.targetRef ?? 'no_target',
+      `${live.scoreBefore ?? 'n/a'}->${live.scoreAfter ?? 'n/a'}`,
+    ].join(' / '),
+    durationMs: numberOrNull(live.durationMs) ?? 0,
+  }));
+  const topHotspots = [...stageHotspots, ...toolHotspots, ...liveHotspots]
+    .filter(hotspot => hotspot.durationMs > 0)
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, 8);
+  const earlyExitReasons = (summary.boundedWork?.deterministicEarlyExitReasons ?? [])
+    .map(reason => ({
+      key: reason.key ?? 'unknown',
+      count: numberOrNull(reason.count) ?? 0,
+    }))
+    .filter(reason => reason.count > 0);
+  return {
+    analysisBeforeMs: numberOrNull(summary.analysisBefore?.totalMs),
+    analysisAfterMs: numberOrNull(summary.analysisAfter?.totalMs),
+    deterministicTotalMs: numberOrNull(summary.deterministicTotalMs),
+    stageTotalMs: Math.round(stageTotalMs),
+    stageReanalysisMs: Math.round(stageReanalysisMs),
+    runtimeToolTimingMs: Math.round(runtimeToolTimingMs),
+    liveAnalysisMs: Math.round(liveAnalysisMs),
+    appliedToolTimingMs: Math.round(appliedToolTimingMs),
+    unaccountedMs: currentDurationMs === null ? null : Math.max(0, Math.round(currentDurationMs - accountedMs)),
+    topHotspots,
+    earlyExitReasons,
+  };
+}
+
 function observation(path: string, row?: BaselineReportRow): RowObservation | null {
   if (!row) return null;
   return {
@@ -209,6 +349,7 @@ function classifyRow(input: {
   const currentError = error(input.current);
   const currentDurationMs = numberOrNull(input.current?.durationMs);
   const toolDurationMs = toolDuration(input.current);
+  const breakdown = runtimeBreakdown(input.current);
   const unaccountedDurationMs = currentDurationMs === null ? null : Math.max(0, currentDurationMs - toolDurationMs);
   const toolDurationRatio = currentDurationMs && currentDurationMs > 0 ? round4(toolDurationMs / currentDurationMs) : null;
   const base = {
@@ -223,6 +364,7 @@ function classifyRow(input: {
     toolDurationMs: Math.round(toolDurationMs),
     unaccountedDurationMs,
     toolDurationRatio,
+    runtimeBreakdown: breakdown,
     historicalObservations: input.history,
   };
 
@@ -375,8 +517,8 @@ export function buildRuntimeTailGateDiagnostic(input: {
 function rowTable(rows: RuntimeGateRow[]): string[] {
   if (rows.length === 0) return ['No runtime-tail or material score rows found.'];
   const lines = [
-    '| Key | Classification | Reference | Current | Runtime | Tool Ratio | Reason |',
-    '| --- | --- | ---: | ---: | ---: | ---: | --- |',
+    '| Key | Classification | Reference | Current | Runtime | Tool Ratio | Stage Reanalysis | Live Analysis | Reason |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
   ];
   for (const row of rows) {
     lines.push([
@@ -386,6 +528,8 @@ function rowTable(rows: RuntimeGateRow[]): string[] {
       `${row.currentScore ?? 'n/a'}${row.currentError ? ` (${row.currentError})` : ''}`,
       row.currentDurationMs ?? 'n/a',
       row.toolDurationRatio ?? 'n/a',
+      row.runtimeBreakdown?.stageReanalysisMs ?? 'n/a',
+      row.runtimeBreakdown?.liveAnalysisMs ?? 'n/a',
       `${row.reason} |`,
     ].join(' | '));
   }
@@ -427,6 +571,35 @@ export function renderRuntimeTailGateDiagnosticMarkdown(report: RuntimeTailGateD
         })
         .join('; ');
       lines.push(`- ${row.key}: ${observations}`);
+    }
+  }
+  const rowsWithBreakdown = report.rows.filter(row => row.runtimeBreakdown !== null);
+  if (rowsWithBreakdown.length > 0) {
+    lines.push('', '## Runtime Hotspots', '');
+    for (const row of rowsWithBreakdown) {
+      const breakdown = row.runtimeBreakdown!;
+      lines.push(
+        `### ${row.key}`,
+        '',
+        `- Analysis before/after: \`${breakdown.analysisBeforeMs ?? 'n/a'}ms / ${breakdown.analysisAfterMs ?? 'n/a'}ms\``,
+        `- Deterministic total: \`${breakdown.deterministicTotalMs ?? 'n/a'}ms\``,
+        `- Stage total/reanalysis: \`${breakdown.stageTotalMs}ms / ${breakdown.stageReanalysisMs}ms\``,
+        `- Runtime tool/live analysis: \`${breakdown.runtimeToolTimingMs}ms / ${breakdown.liveAnalysisMs}ms\``,
+        `- Applied-tool timing sum: \`${breakdown.appliedToolTimingMs}ms\``,
+        `- Unaccounted wall estimate: \`${breakdown.unaccountedMs ?? 'n/a'}ms\``,
+        `- Early exits: \`${breakdown.earlyExitReasons.map(reason => `${reason.key} x${reason.count}`).join(', ') || 'none'}\``,
+        '',
+      );
+      if (breakdown.topHotspots.length === 0) {
+        lines.push('- No runtime hotspots recorded.', '');
+      } else {
+        for (const hotspot of breakdown.topHotspots) {
+          const reanalysis = hotspot.reanalyzeMs ? `, reanalysis ${Math.round(hotspot.reanalyzeMs)}ms` : '';
+          const outcome = hotspot.outcome ? `, outcome ${hotspot.outcome}` : '';
+          lines.push(`- ${hotspot.kind}: \`${hotspot.label}\` ${Math.round(hotspot.durationMs)}ms${reanalysis}${outcome}`);
+        }
+        lines.push('');
+      }
     }
   }
   return `${lines.join('\n')}\n`;
