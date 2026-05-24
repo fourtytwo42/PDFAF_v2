@@ -39,6 +39,7 @@ const STAGE180_MAX_LINK_OWNERSHIP_DEBT = 40;
 const STAGE180_REPORT_TABLE_MIN_HEADER_DEBT = 100;
 const STAGE180_REPORT_TABLE_MIN_PAGES = 20;
 const STAGE180_REPORT_TABLE_MIN_SUBTREE_MCIDS = 50;
+const STAGE180_REPORT_TABLE_MIN_LINK_SCORE = 75;
 
 function categoryScore(analysis: AnalysisResult, key: CategoryKey): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
@@ -148,7 +149,7 @@ export function shouldTryStage180ReportTableProof(input: {
     alt >= 90 &&
     heading >= 60 &&
     reading >= 95 &&
-    link >= 95 &&
+    link >= STAGE180_REPORT_TABLE_MIN_LINK_SCORE &&
     annDebt === 0 &&
     headerDebt >= STAGE180_REPORT_TABLE_MIN_HEADER_DEBT &&
     !directOrMisplaced &&

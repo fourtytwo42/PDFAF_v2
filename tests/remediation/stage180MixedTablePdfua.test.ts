@@ -281,6 +281,78 @@ describe('Stage 180 mixed table/PDF-UA helpers', () => {
     });
   });
 
+  it('allows report-scale object-backed table cleanup with bounded non-annotation link debt', () => {
+    const reportTableSnapshot = snapshot({
+      pageCount: 65,
+      tableHeaderAudit: {
+        tablesChecked: 22,
+        headerAssociationMissingCount: 22,
+        orphanHeaderCellCount: 17,
+        dataCellsWithoutHeaderCount: 486,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 11,
+          stronglyIrregularTableCount: 11,
+        },
+      },
+      tables: [
+        {
+          structRef: '2040_0',
+          page: 0,
+          hasHeaders: true,
+          headerCount: 5,
+          totalCells: 63,
+          rowCount: 17,
+          cellsMisplacedCount: 0,
+          irregularRows: 16,
+          dominantColumnCount: 4,
+          reachable: true,
+          directContent: false,
+          subtreeMcidCount: 103,
+        },
+      ],
+    });
+    const reportAnalysis = analysis(69, {
+      heading_structure: 60,
+      reading_order: 98,
+      link_quality: 79,
+      alt_text: 100,
+      table_markup: 0,
+    });
+
+    expect(shouldTryStage180ReportTableProof({
+      analysis: reportAnalysis,
+      snapshot: reportTableSnapshot,
+    })).toBe(true);
+    expect(shouldTryStage180ReportTableProof({
+      analysis: analysis(69, {
+        heading_structure: 60,
+        reading_order: 98,
+        link_quality: 74,
+        alt_text: 100,
+        table_markup: 0,
+      }),
+      snapshot: reportTableSnapshot,
+    })).toBe(false);
+  });
+
   it('rejects high-score controls and layout-only blockers for the report table proof', () => {
     const reportTableSnapshot = snapshot({
       pageCount: 65,
