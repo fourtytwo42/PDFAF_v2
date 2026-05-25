@@ -10,6 +10,7 @@ import { buildEligibleHeadingBootstrapCandidates } from '../headingBootstrapCand
 export type Stage127ZeroHeadingClass =
   | 'visible_anchor_candidate'
   | 'tagged_zero_heading_anchor_candidate'
+  | 'tagged_moderate_table_heading_anchor_candidate'
   | 'safe_partial_heading_anchor_candidate'
   | 'split_mcid_heading_anchor_candidate'
   | 'paragraph_candidate_too_weak'
@@ -58,6 +59,11 @@ function headingScore(analysis: AnalysisResult): number | null {
 function textExtractabilityScore(analysis: AnalysisResult): number | null {
   const category = analysis.categories.find(row => row.key === 'text_extractability');
   return category?.applicable ? category.score : null;
+}
+
+function categoryScore(analysis: AnalysisResult, key: string): number | null {
+  const category = analysis.categories.find(row => row.key === key);
+  return category?.applicable === false ? null : typeof category?.score === 'number' ? category.score : null;
 }
 
 function normalizeText(value: string | undefined | null): string {
@@ -535,6 +541,96 @@ export function shouldTryTaggedVisibleHeadingAnchorRecovery(
     disposition.candidate.page === 0 &&
     disposition.candidate.source === 'tagged_visible_line_mcid_first_page' &&
     typeof disposition.candidate.mcid === 'number';
+}
+
+export function classifyTaggedModerateTableHeadingAnchor(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): Stage127ZeroHeadingDisposition {
+  const score = headingScore(analysis);
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  if (score == null || score !== 0 || (headingSignals?.treeHeadingCount ?? snapshot.headings.length) > 0 || snapshot.headings.length > 0) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['not_tagged_zero_heading_tail'] };
+  }
+  if (analysis.pdfClass !== 'native_tagged' || snapshot.structureTree === null || snapshot.isTagged !== true) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['not_tagged_native_pdf'] };
+  }
+  if (isOcrPageShell(snapshot, analysis)) {
+    return { classification: 'ocr_page_shell_defer', candidate: null, reasons: ['ocr_or_scanned_shell'] };
+  }
+  if ((textExtractabilityScore(analysis) ?? 0) < 90 || snapshot.textCharCount <= 0) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['text_extractability_not_strong'] };
+  }
+  const readingScore = categoryScore(analysis, 'reading_order') ?? 100;
+  if (readingScore < 75) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['reading_order_not_stable_enough'] };
+  }
+  const tableScore = categoryScore(analysis, 'table_markup');
+  if (tableScore !== null && tableScore < 70) {
+    return { classification: 'mixed_alt_table_blocker', candidate: null, reasons: ['severe_table_blocker_present'] };
+  }
+  const linkScore = categoryScore(analysis, 'link_quality');
+  if (linkScore !== null && linkScore < 90) {
+    return { classification: 'link_only_no_heading_candidate', candidate: null, reasons: ['link_quality_blocker_present'] };
+  }
+  const altScore = categoryScore(analysis, 'alt_text');
+  if (altScore !== null && altScore < 90) {
+    return { classification: 'mixed_alt_table_blocker', candidate: null, reasons: ['figure_alt_blocker_present'] };
+  }
+  const formScore = categoryScore(analysis, 'form_accessibility');
+  if (formScore !== null && formScore < 90) {
+    return { classification: 'mixed_alt_table_blocker', candidate: null, reasons: ['form_blocker_present'] };
+  }
+  const annotationSignals = snapshot.detectionProfile?.annotationSignals;
+  const annotationDebt =
+    (annotationSignals?.pagesAnnotationOrderDiffers ?? 0) +
+    (annotationSignals?.linkAnnotationsMissingStructure ?? 0) +
+    (annotationSignals?.nonLinkAnnotationsMissingStructure ?? 0) +
+    (annotationSignals?.linkAnnotationsMissingStructParent ?? 0) +
+    (annotationSignals?.nonLinkAnnotationsMissingStructParent ?? 0);
+  if (annotationDebt > 0) {
+    return { classification: 'link_only_no_heading_candidate', candidate: null, reasons: ['annotation_structure_blocker_present'] };
+  }
+  const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
+  if (!candidate || candidate.score < HEADING_BOOTSTRAP_MIN_SCORE) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['no_high_confidence_visible_content_anchor'] };
+  }
+  if (
+    candidate.source !== 'tagged_visible_line_mcid_first_page' ||
+    candidate.page !== 0 ||
+    typeof candidate.mcid !== 'number' ||
+    !candidate.reasons.includes('content_role:P') ||
+    !candidate.reasons.includes('large_visible_text_mcid')
+  ) {
+    return { classification: 'no_safe_candidate', candidate: null, reasons: ['candidate_not_page0_paragraph_mcid_title'] };
+  }
+  return {
+    classification: 'tagged_moderate_table_heading_anchor_candidate',
+    candidate,
+    reasons: ['high_confidence_tagged_paragraph_mcid_anchor', ...candidate.reasons],
+  };
+}
+
+export function shouldTryTaggedModerateTableHeadingAnchorRecovery(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  const disposition = classifyTaggedModerateTableHeadingAnchor(analysis, snapshot);
+  return disposition.classification === 'tagged_moderate_table_heading_anchor_candidate' &&
+    disposition.candidate !== null &&
+    disposition.candidate.page === 0 &&
+    disposition.candidate.source === 'tagged_visible_line_mcid_first_page' &&
+    typeof disposition.candidate.mcid === 'number';
+}
+
+export function selectTaggedModerateTableHeadingAnchorCandidate(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): VisibleHeadingAnchorCandidate | null {
+  const disposition = classifyTaggedModerateTableHeadingAnchor(analysis, snapshot);
+  return disposition.classification === 'tagged_moderate_table_heading_anchor_candidate'
+    ? disposition.candidate
+    : null;
 }
 
 export function classifyPartialHeadingReachability(

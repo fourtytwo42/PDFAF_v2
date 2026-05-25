@@ -39,9 +39,11 @@ import { isGenericLinkText, isRawUrlLinkText } from '../scorer/linkTextHeuristic
 import { classifyZeroHeadingRecovery } from './headingRecovery.js';
 import {
   selectPartialHeadingReachabilityCandidate,
+  selectTaggedModerateTableHeadingAnchorCandidate,
   selectTaggedVisibleHeadingAnchorCandidate,
   selectVisibleHeadingAnchorCandidate,
   shouldTryPartialHeadingReachabilityRecovery,
+  shouldTryTaggedModerateTableHeadingAnchorRecovery,
   shouldTryTaggedVisibleHeadingAnchorRecovery,
   shouldTryVisibleHeadingAnchorRecovery,
 } from './visibleHeadingAnchor.js';
@@ -1661,7 +1663,7 @@ export function planForRemediation(
     }
     if (
       toolName === 'create_heading_from_tagged_visible_anchor' &&
-      !((shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) || shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot) || shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)) && headingNeedsRepair)
+      !((shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) || shouldTryTaggedModerateTableHeadingAnchorRecovery(analysis, snapshot) || shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot) || shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)) && headingNeedsRepair)
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -2149,6 +2151,7 @@ export function planForRemediation(
       !toolSet.has(toolName) &&
       (
         shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot) ||
+        shouldTryTaggedModerateTableHeadingAnchorRecovery(analysis, snapshot) ||
         shouldTryPartialHeadingReachabilityRecovery(analysis, snapshot) ||
         shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot) ||
         shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)
@@ -2170,6 +2173,8 @@ export function planForRemediation(
             ? 'Stage 149 partial-heading reachability recovery from a proven first-page content anchor.'
             : shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
               ? 'Stage 187 tagged heading topup from a proven first-page content anchor.'
+              : shouldTryTaggedModerateTableHeadingAnchorRecovery(analysis, snapshot)
+                ? 'Tagged moderate-table zero-heading recovery from a high-confidence first-page paragraph MCID anchor.'
               : shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)
                 ? 'Tagged heading admission from a high-confidence first-page marked-content anchor.'
             : 'Stage 143 tagged zero-heading recovery from a proven visible content anchor.',
@@ -2616,6 +2621,8 @@ export function buildDefaultParams(
         ? selectPartialHeadingReachabilityCandidate(analysis, snapshot)
         : shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snapshot)
           ? selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot)
+          : shouldTryTaggedModerateTableHeadingAnchorRecovery(analysis, snapshot)
+            ? selectTaggedModerateTableHeadingAnchorCandidate(analysis, snapshot)
           : shouldTryStage187TaggedHeadingTopupRecovery(analysis, snapshot)
             ? selectStage187TaggedHeadingTopupCandidate(analysis, snapshot)
             : shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(analysis, snapshot)

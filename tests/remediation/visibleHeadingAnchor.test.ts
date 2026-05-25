@@ -4,11 +4,14 @@ import {
   classifyTaggedZeroHeadingAnchor,
   classifyPartialHeadingReachability,
   classifyStage127ZeroHeadingAnchor,
+  classifyTaggedModerateTableHeadingAnchor,
   extractFirstPageVisibleHeadingText,
   selectPartialHeadingReachabilityCandidate,
+  selectTaggedModerateTableHeadingAnchorCandidate,
   selectTaggedVisibleHeadingAnchorCandidate,
   selectVisibleHeadingAnchorCandidate,
   shouldTryPartialHeadingReachabilityRecovery,
+  shouldTryTaggedModerateTableHeadingAnchorRecovery,
   shouldTryTaggedVisibleHeadingAnchorRecovery,
   shouldTryVisibleHeadingAnchorRecovery,
 } from '../../src/services/remediation/visibleHeadingAnchor.js';
@@ -271,6 +274,79 @@ describe('Stage 127 visible heading anchor recovery', () => {
     };
     expect(classifyTaggedZeroHeadingAnchor(analysis, snap).classification).toBe('no_safe_candidate');
     expect(shouldTryTaggedVisibleHeadingAnchorRecovery(analysis, snap)).toBe(false);
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).not.toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('admits page-0 paragraph MCID heading anchors when only moderate table debt is present', () => {
+    const snap = snapshot({
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 7,
+        snippet: '/P <</MCID 7 >>BDC BT /F1 28 Tf 15 650 Tm [(DEPARTMENT POLICY AND PROCEDURE TITLE)]TJ ET EMC',
+      }],
+      detectionProfile: detection({
+        readingOrderSignals: {
+          ...detection().readingOrderSignals,
+          structureTreeDepth: 4,
+        },
+      }),
+    });
+    const analysis = {
+      ...analysisFor(snap),
+      categories: analysisFor(snap).categories.map(category => {
+        if (category.key === 'reading_order') return { ...category, applicable: true, score: 79 };
+        if (category.key === 'table_markup') return { ...category, applicable: true, score: 72 };
+        if (category.key === 'link_quality') return { ...category, applicable: true, score: 100 };
+        if (category.key === 'alt_text') return { ...category, applicable: false, score: 100 };
+        return category;
+      }),
+    };
+
+    expect(classifyTaggedZeroHeadingAnchor(analysis, snap).classification).toBe('no_safe_candidate');
+    expect(classifyTaggedModerateTableHeadingAnchor(analysis, snap).classification)
+      .toBe('tagged_moderate_table_heading_anchor_candidate');
+    expect(shouldTryTaggedModerateTableHeadingAnchorRecovery(analysis, snap)).toBe(true);
+    expect(selectTaggedModerateTableHeadingAnchorCandidate(analysis, snap)).toMatchObject({
+      page: 0,
+      mcid: 7,
+      source: 'tagged_visible_line_mcid_first_page',
+    });
+    expect(buildDefaultParams('create_heading_from_tagged_visible_anchor', analysis, snap)).toMatchObject({
+      page: 0,
+      mcid: 7,
+      level: 1,
+      source: 'tagged_visible_line_mcid_first_page',
+    });
+    const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('keeps moderate-table tagged heading anchors parked when annotation or severe table blockers remain', () => {
+    const snap = snapshot({
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 8,
+        snippet: '/P <</MCID 8 >>BDC BT /F1 28 Tf 15 650 Tm [(REPORT TITLE)]TJ ET EMC',
+      }],
+      detectionProfile: detection({
+        annotationSignals: {
+          ...detection().annotationSignals,
+          linkAnnotationsMissingStructure: 1,
+        },
+      }),
+    });
+    const analysis = {
+      ...analysisFor(snap),
+      categories: analysisFor(snap).categories.map(category => {
+        if (category.key === 'reading_order') return { ...category, applicable: true, score: 79 };
+        if (category.key === 'table_markup') return { ...category, applicable: true, score: 69 };
+        if (category.key === 'link_quality') return { ...category, applicable: true, score: 100 };
+        return category;
+      }),
+    };
+
+    expect(shouldTryTaggedModerateTableHeadingAnchorRecovery(analysis, snap)).toBe(false);
     const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
     expect(names).not.toContain('create_heading_from_tagged_visible_anchor');
   });
