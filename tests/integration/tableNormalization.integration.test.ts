@@ -33,6 +33,39 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildLeadingEmptyRowNoHeaderTablePdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-empty-first-row-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index, count in enumerate([0, 3, 1, 3]):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for _ in range(count):
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TD'), P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
 function buildStronglyIrregularTablePdf(): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -203,6 +236,25 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.directCellsUnderTableBefore).toBe(4);
     expect(row?.invariants?.directCellsUnderTableAfter).toBe(0);
     expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('promotes the first non-empty table row when leading rows are empty', async () => {
+    const buf = buildLeadingEmptyRowNoHeaderTablePdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      { op: 'normalize_table_structure', params: { tableFailureClass: 'missing_headers_only', dominantColumnCount: 3 } },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.headerCellCountBefore).toBe(0);
+    expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });

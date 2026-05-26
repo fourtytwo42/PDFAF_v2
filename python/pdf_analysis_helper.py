@@ -774,26 +774,38 @@ def _find_first_tr(table_elem) -> object | None:
 
 
 def _promote_first_row_td_to_th(table_elem) -> bool:
-    tr = _find_first_tr(table_elem)
-    if tr is None:
-        return False
-    changed = False
-    # Iterate TR children directly; handles both direct Dictionaries and indirect
-    # object references (pikepdf auto-dereferences via .get()). Do NOT rely on
-    # _struct_elem_children here — it requires /Type /StructElem which is optional.
-    k = tr.get("/K")
-    if k is None:
-        return False
-    children = list(k) if isinstance(k, pikepdf.Array) else [k]
-    for cell in children:
-        try:
-            tag = (get_name(cell) or "").lstrip("/").upper()
-            if tag == "TD":
+    rows = _iter_table_rows(table_elem)
+    if not rows:
+        first = _find_first_tr(table_elem)
+        rows = [first] if first is not None else []
+
+    for tr in rows:
+        if tr is None:
+            continue
+        # Iterate TR children directly; handles both direct Dictionaries and indirect
+        # object references (pikepdf auto-dereferences via .get()). Do NOT rely on
+        # _struct_elem_children here — it requires /Type /StructElem which is optional.
+        k = tr.get("/K")
+        if k is None:
+            continue
+        children = list(k) if isinstance(k, pikepdf.Array) else [k]
+        td_cells = []
+        for cell in children:
+            try:
+                tag = (get_name(cell) or "").lstrip("/").upper()
+                if tag == "TD":
+                    td_cells.append(cell)
+            except Exception:
+                pass
+        if not td_cells:
+            continue
+        for cell in td_cells:
+            try:
                 cell["/S"] = pikepdf.Name("/TH")
-                changed = True
-        except Exception:
-            pass
-    return changed
+            except Exception:
+                pass
+        return True
+    return False
 
 
 def _iter_table_rows(table_elem) -> list:
@@ -981,6 +993,8 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
             table_changed = _associate_existing_table_headers(table)
         else:
             table_changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+            if table_changed and _associate_existing_table_headers(table):
+                table_changed = True
         if table_changed:
             changed = True
             changed_refs.append(ref)
@@ -1015,6 +1029,8 @@ def _op_repair_native_table_headers(pdf: pikepdf.Pdf, params: dict) -> bool:
         if th != 0 or td <= 0:
             return False
         changed = _promote_first_row_td_to_th(table) or _promote_first_column_td_to_th(table)
+        if changed and _associate_existing_table_headers(table):
+            changed = True
         if changed:
             try:
                 _set_last_mutation_debug({"targetRef": ref})
@@ -1030,9 +1046,11 @@ def _op_repair_native_table_headers(pdf: pikepdf.Pdf, params: dict) -> bool:
         if th != 0 or td <= 0:
             continue
         if _promote_first_row_td_to_th(table):
+            _associate_existing_table_headers(table)
             changed = True
             continue
         if _promote_first_column_td_to_th(table):
+            _associate_existing_table_headers(table)
             changed = True
     return changed
 
@@ -8133,6 +8151,7 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
     row_count = int(audit_after_wrap.get("rowCount") or 0)
     if row_count > 0 and _count_table_cells(table_elem)[0] == 0:
         if _promote_first_row_td_to_th(table_elem):
+            _associate_existing_table_headers(table_elem)
             changed = True
 
     if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
