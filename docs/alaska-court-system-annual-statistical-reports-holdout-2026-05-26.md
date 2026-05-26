@@ -3,11 +3,11 @@
 ## Source
 
 - Source family: Alaska Court System annual statistical reports.
-- Source index: `https://courts.alaska.gov/admin/index.htm#annualrep`
+- Reports page: `https://courts.alaska.gov/admin/index.htm`
 - Sample size: 20 PDFs under 10 MiB.
 - Local artifacts: `/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/` during validation only; PDFs and generated run artifacts are not source-tracked.
 
-The sample used the newest 20 annual statistical report PDFs under the cap: FY2025-FY2020 narrative/statistics pairs plus FY2019-FY2012 combined annual statistical reports.
+The sample walked official `/admin/docs/fy*.pdf` annual-report links in page order, using FY2025-FY2020 narrative/statistics PDFs and FY2019-FY2012 combined annual reports. All 20 attempted PDFs were valid and under the 10 MiB cap.
 
 ## Validation
 
@@ -33,56 +33,59 @@ Results:
 | Metric | Value |
 | --- | ---: |
 | Processed | 20/20 |
-| Mean before | 47.70 |
-| Mean after | 91.25 |
+| Mean before | 48.00 |
+| Mean after | 91.15 |
 | Median after | 93 |
 | Grades after | 13 A / 6 B / 0 C / 1 D / 0 F |
-| Rows below 93 | 8 |
+| Rows below 93 | 9 |
 | Timeout/error rows | 0 |
 | `false_positive_applied` | 0 |
-| Runtime p50 | 34,196 ms |
-| Runtime p95 | 43,368 ms |
-| Runtime max | 295,658 ms |
+| Runtime p50 | 36,710 ms |
+| Runtime p95 | 50,179 ms |
+| Runtime max | 299,710 ms |
 
 Rows below 93:
 
-| Row | Baseline after | Diagnostic class |
-| --- | ---: | --- |
-| `akcourts-01.pdf` | 87/B | `no_safe_predicate` |
-| `akcourts-03.pdf` | 88/B | `no_safe_predicate` |
-| `akcourts-05.pdf` | 86/B | `no_safe_predicate` |
-| `akcourts-06.pdf` | 91/A | `near_miss_monitor` |
-| `akcourts-07.pdf` | 88/B | `no_safe_predicate` |
-| `akcourts-09.pdf` | 88/B | `no_safe_predicate` |
-| `akcourts-11.pdf` | 88/B | `no_safe_predicate` |
-| `akcourts-15.pdf` | 69/D | `table_target_resolution_needed` |
+| Row | Baseline after | Runtime | Primary residual |
+| --- | ---: | ---: | --- |
+| `akcourtsar-01.pdf` | 88/B | 40,327 ms | Stable heading/no-safe-predicate residual |
+| `akcourtsar-02.pdf` | 91/A | 46,645 ms | Near-miss heading monitor |
+| `akcourtsar-03.pdf` | 88/B | 36,710 ms | Stable heading/no-safe-predicate residual |
+| `akcourtsar-05.pdf` | 86/B | 37,293 ms | Stable heading/no-safe-predicate residual |
+| `akcourtsar-06.pdf` | 91/A | 48,120 ms | Near-miss heading monitor |
+| `akcourtsar-07.pdf` | 88/B | 31,065 ms | Stable heading/no-safe-predicate residual |
+| `akcourtsar-09.pdf` | 87/B | 37,839 ms | Stable heading/no-safe-predicate residual |
+| `akcourtsar-11.pdf` | 89/B | 43,412 ms | Stable heading/no-safe-predicate residual |
+| `akcourtsar-15.pdf` | 69/D | 299,710 ms | Stable table target/transaction residual and runtime-tail row |
 
 ## Sample
 
-The 20 valid under-10MiB PDFs downloaded from Alaska Court System annual statistical reports were:
+The 20 valid under-10MiB PDFs downloaded from the Alaska Court System reports page were:
 
-| Row | Title | Bytes |
+| Row | Report | Bytes |
 | --- | --- | ---: |
-| `akcourts-01` | FY 2025 Narratives | 3,592,365 |
-| `akcourts-02` | FY 2025 Statistics | 4,489,010 |
-| `akcourts-03` | FY 2024 Narratives | 2,863,825 |
-| `akcourts-04` | FY 2024 Statistics | 5,280,161 |
-| `akcourts-05` | FY 2023 Narratives | 2,541,331 |
-| `akcourts-06` | FY 2023 Statistics | 3,299,732 |
-| `akcourts-07` | FY 2022 Narratives | 2,167,540 |
-| `akcourts-08` | FY 2022 Statistics | 2,671,390 |
-| `akcourts-09` | FY 2021 Narratives | 3,835,704 |
-| `akcourts-10` | FY 2021 Statistics | 6,109,302 |
-| `akcourts-11` | FY 2020 Narratives | 3,202,891 |
-| `akcourts-12` | FY 2020 Statistics | 8,452,878 |
-| `akcourts-13` | FY 2019 Combined Annual Statistical Report | 6,238,051 |
-| `akcourts-14` | FY 2018 Combined Annual Statistical Report | 6,510,572 |
-| `akcourts-15` | FY 2017 Combined Annual Statistical Report | 8,524,689 |
-| `akcourts-16` | FY 2016 Combined Annual Statistical Report | 9,708,575 |
-| `akcourts-17` | FY 2015 Combined Annual Statistical Report | 6,513,411 |
-| `akcourts-18` | FY 2014 Combined Annual Statistical Report | 7,566,887 |
-| `akcourts-19` | FY 2013 Combined Annual Statistical Report | 5,922,425 |
-| `akcourts-20` | FY 2012 Combined Annual Statistical Report | 6,041,965 |
+| `akcourtsar-01` | FY2025 Narratives | 3,592,365 |
+| `akcourtsar-02` | FY2025 Statistics | 4,489,010 |
+| `akcourtsar-03` | FY2024 Narratives | 2,863,825 |
+| `akcourtsar-04` | FY2024 Statistics | 5,280,161 |
+| `akcourtsar-05` | FY2023 Narratives | 2,541,331 |
+| `akcourtsar-06` | FY2023 Statistics | 3,299,732 |
+| `akcourtsar-07` | FY2022 Narratives | 2,167,540 |
+| `akcourtsar-08` | FY2022 Statistics | 2,671,390 |
+| `akcourtsar-09` | FY2021 Narratives | 3,835,704 |
+| `akcourtsar-10` | FY2021 Statistics | 6,109,302 |
+| `akcourtsar-11` | FY2020 Narratives | 3,202,891 |
+| `akcourtsar-12` | FY2020 Statistics | 8,452,878 |
+| `akcourtsar-13` | FY2019 Annual Statistical Report | 6,238,051 |
+| `akcourtsar-14` | FY2018 Annual Statistical Report | 6,510,572 |
+| `akcourtsar-15` | FY2017 Annual Statistical Report | 8,524,689 |
+| `akcourtsar-16` | FY2016 Annual Statistical Report | 9,708,575 |
+| `akcourtsar-17` | FY2015 Annual Statistical Report | 6,513,411 |
+| `akcourtsar-18` | FY2014 Annual Statistical Report | 7,566,887 |
+| `akcourtsar-19` | FY2013 Annual Statistical Report | 5,922,425 |
+| `akcourtsar-20` | FY2012 Annual Statistical Report | 6,041,965 |
+
+The reports page exposed 25 annual-report PDF candidates; the validation sample used the first 20 under-cap candidates.
 
 ## Diagnostics
 
@@ -98,68 +101,98 @@ Decision: `plan_high_impact_targeted_diagnostic`
 
 Recommended lane: `table_target_resolution_needed`
 
-Raw points needed for mean 93: `35`
+Raw points needed for mean 93: `37`
 
-Lane summary:
+Lane split:
 
-| Candidate class | Rows | Raw points |
+| Lane | Rows | Raw points |
 | --- | ---: | ---: |
-| `no_safe_predicate` | 6 | 33 |
+| `no_safe_predicate` | 6 | 32 |
 | `table_target_resolution_needed` | 1 | 24 |
-| `near_miss_monitor` | 1 | 2 |
+| `near_miss_monitor` | 2 | 4 |
+
+Reading-order shell diagnostic:
+
+```bash
+npx -y node@22 /usr/bin/pnpm exec tsx scripts/all-input-reading-order-shell-diagnostic.ts \
+  --trace /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/run-r1/baseline_report.json \
+  --out /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/reading-order-shell-diagnostic-r1
+```
+
+Result:
+
+- `sequenceCandidateCount=0`
+- `safeRouteControlCount=0`
+- `selectedRows=[]`
+
+Visible-title/heading-anchor diagnostic:
+
+```bash
+npx -y node@22 /usr/bin/pnpm exec tsx scripts/all-input-visible-title-anchor-diagnostic.ts \
+  --all-input /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/visible-title-input.json \
+  --input-root /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input \
+  --out /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/visible-title-anchor-r1 \
+  --file akcourtsar-01 \
+  --file akcourtsar-02 \
+  --file akcourtsar-03 \
+  --file akcourtsar-05 \
+  --file akcourtsar-06 \
+  --file akcourtsar-07 \
+  --file akcourtsar-09 \
+  --file akcourtsar-11
+```
+
+Result:
+
+- seven rows classified as `existing_internal_anchor_candidate`
+- one row classified as `not_zero_heading_native_gap`
+- recommendation was to use existing visible-heading paths, not add a new source-text fallback
+
+This does not justify a new heading fallback or source-text based heading rule.
 
 Table target-resolution diagnostic:
 
 ```bash
 npx -y node@22 /usr/bin/pnpm exec tsx scripts/table-target-resolution-diagnostic.ts \
-  --manifest /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/download-manifest.json \
   --run /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/run-r1/baseline_report.json \
   --out /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/table-target-resolution-r1 \
-  --pdf akcourts-15=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourts-15.pdf \
-  --control akcourts-02=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourts-02.pdf \
-  --control akcourts-04=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourts-04.pdf \
-  --control akcourts-08=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourts-08.pdf \
-  --control akcourts-16=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourts-16.pdf \
-  --control akcourts-17=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourts-17.pdf
+  --pdf akcourtsar-15=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-15.pdf \
+  --control akcourtsar-04=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-04.pdf \
+  --control akcourtsar-08=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-08.pdf \
+  --control akcourtsar-10=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-10.pdf \
+  --control akcourtsar-12=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-12.pdf \
+  --control akcourtsar-16=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-16.pdf \
+  --control akcourtsar-17=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-17.pdf \
+  --control akcourtsar-18=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-18.pdf \
+  --control akcourtsar-19=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-19.pdf \
+  --control akcourtsar-20=/mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/input/akcourtsar-20.pdf
 ```
 
 Decision: `keep_table_target_resolution_diagnostic_only`
 
-The diagnostic found `akcourts-15` as a stable object-backed table target with `134` stable tables, `12` normalize targets, and `43` association targets. The selected controls were classified as `control_or_high_grade_noise` with no table score/PAC debt. That target-resolution signal is useful, but it is not enough for behavior acceptance because the baseline already attempted the existing table path:
+Evidence:
 
-- `normalize_table_structure`: `applied`
-- `repair_native_table_headers`: `applied`
-- later `set_table_header_cells` / `normalize_table_structure`: rejected on `pac_rule_regressed(pdfua.table.header_association_present)`
+- `akcourtsar-15` had stable normalize targets and association targets, with table score debt, shape debt, and PAC table-header association debt.
+- Same-source selected controls did not produce unsafe stable target candidates.
+- Existing table repair attempts already applied `normalize_table_structure` and `repair_native_table_headers`, then rejected `set_table_header_cells` on `pdfua.table.header_association_present`.
+- This supports the parked real table/header transaction lane, but not a new standalone broad table admission rule.
 
-High-impact repeat:
+Low-row repeat:
 
 ```bash
 npx -y node@22 /usr/bin/pnpm exec tsx scripts/bounded-holdout-validation.ts \
-  /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/high-repeat-input \
-  /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/run-high-repeat-r1 \
-  --limit 1 \
+  /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/low-repeat-input \
+  /mnt/pdf-review/public-holdouts/alaska-court-system-annual-statistical-reports-2026-05-26/run-low-repeat-r1 \
+  --limit 9 \
   --cleanup-row-artifacts
 ```
 
-Repeat result:
-
-| Row | Baseline after | Repeat after | Repeat runtime |
-| --- | ---: | ---: | ---: |
-| `akcourts-15.pdf` | 69/D | 69/D | 244,980 ms |
-
-The stable table row is also a runtime-tail row. It is a good future table/header transaction-proof candidate, but not a safe quick behavior change.
+The nine sub-93 rows repeated with mean `86.6667`, no errors/timeouts, and `false_positive_applied=0`. Repeated results were `akcourtsar-01 90/A`, `akcourtsar-02 91/A`, `akcourtsar-03 88/B`, `akcourtsar-05 87/B`, `akcourtsar-06 91/A`, `akcourtsar-07 88/B`, `akcourtsar-09 88/B`, `akcourtsar-11 88/B`, and `akcourtsar-15 69/D`.
 
 ## Decision
 
-No source behavior change was accepted from this holdout.
+No source behavior was accepted from this holdout.
 
-Reasons:
+The source misses the 93 mean target by `37` raw points. The lower narrative rows are stable heading-structure residuals, but the existing visible-heading path already has candidate evidence and no new safe heading fallback is proven. The high-impact FY2017 table row is a real object-backed table/header residual, but current table/header mutations already hit honest PAC header-association rejection and near-wall runtime.
 
-- The source does not clear the 93 mean target: mean `91.25`, median `93`.
-- `false_positive_applied=0`, with no timeout/error rows.
-- The stable high-impact table row already exercises existing table remediation and remains `69/D`.
-- Further table/header attempts were rejected on PAC-visible `pdfua.table.header_association_present`, so broadening behavior would risk hiding a real PAC-aligned failure.
-- The high-impact row has heavy runtime (`295,658 ms` baseline, `244,980 ms` repeat), making a speculative sequence probe poor evidence for a fast general fix.
-- The remaining low rows are heading-structure/no-safe-predicate near misses and do not expose an object-backed heading lane.
-
-No original-50 validation was required because no production scoring, planner, or mutation behavior changed.
+No original-50 regression validation was required because no scoring, planning, analyzer, or remediation behavior changed. Downloaded public PDFs and generated artifacts should remain local only and were deleted after metrics extraction.
