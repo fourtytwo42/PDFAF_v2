@@ -73,6 +73,7 @@ import {
   classifyReportLayoutHeadingRecovery,
   REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
 } from './reportLayoutHeadingRecovery.js';
+import { isRealRootReachableTableTarget } from './tableTargetGuards.js';
 
 /** Tesseract language id for ocrmypdf (`PDFAF_OCR_LANGUAGES` overrides, e.g. `eng+deu`). */
 function ocrmypdfLanguagesForSnapshot(snapshot: DocumentSnapshot): string {
@@ -2806,6 +2807,7 @@ export function buildDefaultParams(
       );
       const target = snapshot.tables
         .filter(table => table.structRef && !attemptedRefs.has(table.structRef))
+        .filter(isRealRootReachableTableTarget)
         .filter(table => {
           if (tableClass === 'direct_cells_under_table') return (table.cellsMisplacedCount ?? 0) > 0 || table.hasHeaders || table.totalCells >= 4;
           if (tableClass === 'rowless_dense_table') return (table.rowCount ?? 0) <= 1 && table.totalCells >= 4;
@@ -2828,11 +2830,37 @@ export function buildDefaultParams(
           || (a.structRef ?? '').localeCompare(b.structRef ?? '')
         )[0];
       if (tableClass === 'strongly_irregular_rows') {
+        const strongTableCount = snapshot.tables
+          .filter(isRealRootReachableTableTarget)
+          .filter(table =>
+            table.hasHeaders &&
+            (table.cellsMisplacedCount ?? 0) === 0 &&
+            (table.rowCount ?? 0) > 1 &&
+            (table.irregularRows ?? 0) >= 2 &&
+            (table.dominantColumnCount ?? 0) >= 2
+          ).length;
+        const nativeStrongSignalCount = snapshot.detectionProfile?.tableSignals?.stronglyIrregularTableCount ?? 0;
+        const largeObjectBackedTableBatch =
+          (
+            strongTableCount >= 12 &&
+            ((snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 500 ||
+              (snapshot.tableHeaderAudit?.headerAssociationMissingCount ?? 0) >= 12)
+          ) ||
+          (
+            strongTableCount >= 4 &&
+            (snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 3000
+          ) ||
+          (
+            strongTableCount > 0 &&
+            nativeStrongSignalCount >= 12 &&
+            (snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 3000
+          );
         return {
           dominantColumnCount: 0,
-          maxTablesPerRun: 4,
-          maxSyntheticCells: 160,
+          maxTablesPerRun: largeObjectBackedTableBatch ? 24 : 4,
+          maxSyntheticCells: largeObjectBackedTableBatch ? 480 : 160,
           tableFailureClass: tableClass,
+          ...(largeObjectBackedTableBatch ? { largeObjectBackedTableBatch: true } : {}),
         };
       }
       return target?.structRef
@@ -2853,6 +2881,7 @@ export function buildDefaultParams(
           .filter((ref): ref is string => Boolean(ref)),
       );
       const missingHeaderTarget = snapshot.tables
+        .filter(isRealRootReachableTableTarget)
         .filter(row => !row.hasHeaders && (row.cellsMisplacedCount ?? 0) === 0 && (row.rowCount ?? 0) > 1 && row.structRef && !attemptedRefs.has(row.structRef))
         .sort((a, b) => a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''))[0];
       if (missingHeaderTarget?.structRef) return { structRef: missingHeaderTarget.structRef };
@@ -2889,6 +2918,7 @@ export function buildDefaultParams(
       ));
       if (!hasAssociationDebt || !hasStrictTablePacCap || hasUnsafeTableShape) return {};
       const associationTargets = snapshot.tables
+        .filter(isRealRootReachableTableTarget)
         .filter(row =>
           row.structRef &&
           !attemptedRefs.has(row.structRef) &&

@@ -4054,6 +4054,33 @@ describe('planForRemediation', () => {
     expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({ structRef: '21_0' });
   });
 
+  it('does not target role-mapped non-table refs for table header assignment', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [
+        {
+          hasHeaders: false,
+          headerCount: 0,
+          totalCells: 8,
+          page: 0,
+          structRef: 'not-table_0',
+          rawRole: 'L',
+          resolvedRole: 'Table',
+          reachable: true,
+          rowCount: 2,
+          cellsMisplacedCount: 0,
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), { table_markup: 35 });
+
+    expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({});
+    expect(buildDefaultParams('set_table_header_cells', analysis, snap)).toEqual({});
+  });
+
   it('targets existing table headers for association only on below-A strict PAC table debt', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -4340,6 +4367,49 @@ describe('planForRemediation', () => {
       maxTablesPerRun: 4,
       maxSyntheticCells: 160,
       tableFailureClass: 'strongly_irregular_rows',
+    });
+  });
+
+  it('uses a larger bounded table batch only for many object-backed irregular tables', () => {
+    const tables = Array.from({ length: 12 }, (_, index) => ({
+      hasHeaders: true,
+      headerCount: 4,
+      totalCells: 40,
+      page: index,
+      structRef: `${100 + index}_0`,
+      rawRole: 'Table',
+      resolvedRole: 'Table',
+      reachable: true,
+      rowCount: 10,
+      cellsMisplacedCount: 0,
+      irregularRows: 6,
+      dominantColumnCount: 4,
+      rowCellCounts: [2, 4, 4, 3, 4],
+    }));
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tableHeaderAudit: {
+        tablesChecked: 12,
+        headerAssociationMissingCount: 12,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 600,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables,
+    };
+    const analysis = withCategoryScores(score(snap, META), { table_markup: 0 });
+
+    expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({
+      dominantColumnCount: 0,
+      maxTablesPerRun: 24,
+      maxSyntheticCells: 480,
+      tableFailureClass: 'strongly_irregular_rows',
+      largeObjectBackedTableBatch: true,
     });
   });
 

@@ -8145,7 +8145,8 @@ def _normalize_strongly_irregular_table_rows(table_elem, pdf: pikepdf.Pdf, param
     if irregular_rows < 2:
         return False
     try:
-        max_synthetic = max(1, min(80, int(params.get("maxSyntheticCells") or 48)))
+        max_synthetic_cap = 480 if bool(params.get("largeObjectBackedTableBatch")) else 80
+        max_synthetic = max(1, min(max_synthetic_cap, int(params.get("maxSyntheticCells") or 48)))
     except Exception:
         max_synthetic = 48
     synthetic_count = 0
@@ -8166,8 +8167,17 @@ def _normalize_strongly_irregular_table_rows(table_elem, pdf: pikepdf.Pdf, param
             missing = dominant - current
             if synthetic_count + missing > max_synthetic:
                 continue
+            cell_roles: list[str] = []
+            try:
+                for cell in _direct_role_children(ch):
+                    role_name = (get_name(cell) or "").lstrip("/").upper()
+                    if role_name in ("TH", "TD"):
+                        cell_roles.append(role_name)
+            except Exception:
+                cell_roles = []
+            synthetic_role = "TH" if cell_roles and all(role == "TH" for role in cell_roles) else "TD"
             for _ in range(missing):
-                if _append_empty_table_cell(ch, pdf, "TD"):
+                if _append_empty_table_cell(ch, pdf, synthetic_role):
                     synthetic_count += 1
                     changed = True
 
@@ -8201,6 +8211,7 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
 
     if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
         if _normalize_strongly_irregular_table_rows(table_elem, pdf, params):
+            _associate_existing_table_headers(table_elem)
             changed = True
 
     return changed
@@ -8211,7 +8222,8 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     requested_refs = _table_target_refs(params)
     max_tables = 1
     try:
-        max_tables = max(1, min(4, int(params.get("maxTablesPerRun") or 1)))
+        max_table_cap = 24 if bool(params.get("largeObjectBackedTableBatch")) else 4
+        max_tables = max(1, min(max_table_cap, int(params.get("maxTablesPerRun") or 1)))
     except Exception:
         max_tables = 1
     changed = False

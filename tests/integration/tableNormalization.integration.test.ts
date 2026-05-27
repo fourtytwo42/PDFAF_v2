@@ -394,6 +394,8 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.outcome).toBe('applied');
     expect(row?.invariants?.irregularRowsBefore).toBeGreaterThan(0);
     expect(row?.invariants?.irregularRowsAfter).toBe(0);
+    expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(row?.invariants?.headerCellCountBefore ?? 0);
+    expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });

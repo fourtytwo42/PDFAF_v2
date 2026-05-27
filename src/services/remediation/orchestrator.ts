@@ -99,6 +99,7 @@ import {
 } from './pacRuleAcceptanceGate.js';
 import { stage5PacCatalogSettingsImproved } from './stage5PacCatalogSettings.js';
 import { REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL } from './reportLayoutHeadingRecovery.js';
+import { isRealRootReachableTableTarget } from './tableTargetGuards.js';
 
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
@@ -4075,6 +4076,7 @@ export function buildAllInputTableHeaderAssociationParams(
       }),
   );
   const targets = snapshot.tables
+    .filter(isRealRootReachableTableTarget)
     .filter(row =>
       row.structRef &&
       !attemptedRefs.has(row.structRef) &&
@@ -6876,6 +6878,22 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     return { buffer, analysis, snapshot };
   }
 
+  const largeRegularity = await applyStage180LargeObjectBackedTableBatch({
+    filename,
+    signal,
+    round,
+    state: { buffer, analysis, snapshot },
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  });
+  buffer = largeRegularity.buffer;
+  analysis = largeRegularity.analysis;
+  snapshot = largeRegularity.snapshot;
+  if (largeRegularity.accepted && (categoryScore(analysis, 'table_markup') ?? 100) >= 90) {
+    return { buffer, analysis, snapshot };
+  }
+
   for (const target of decision.tableTargets) {
     if ((categoryScore(analysis, 'table_markup') ?? 100) >= 90) break;
     const params = {
@@ -6973,8 +6991,96 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   return { buffer, analysis, snapshot };
 }
 
+function shouldTryStage180LargeObjectBackedTableBatch(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}): boolean {
+  const { analysis, snapshot } = input;
+  if (analysis.pdfClass === 'scanned' || snapshot.pdfClass === 'scanned') return false;
+  if (!snapshot.isTagged && snapshot.structureTree === null) return false;
+  if ((snapshot.textCharCount ?? 0) <= 0) return false;
+  if (analysis.score >= 95) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) >= 80) return false;
+  if ((categoryScore(analysis, 'alt_text') ?? 0) < 20) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 0) < 60) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 0) < 90) return false;
+  if ((categoryScore(analysis, 'link_quality') ?? 100) < 75) return false;
+
+  const signals = snapshot.detectionProfile?.tableSignals;
+  if ((signals?.directCellUnderTableCount ?? 0) > 0 || (signals?.misplacedCellCount ?? 0) > 0) return false;
+  const strongDebt = signals?.stronglyIrregularTableCount ?? 0;
+  const audit = snapshot.tableHeaderAudit;
+  const headerDebt = pacTableHeaderDebt(snapshot);
+  const dataDebt = audit?.dataCellsWithoutHeaderCount ?? 0;
+  if (strongDebt < 4 && dataDebt < 500) return false;
+  if (headerDebt < 100 && dataDebt < 500) return false;
+  return true;
+}
+
+async function applyStage180LargeObjectBackedTableBatch(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState & { accepted: boolean }> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { buffer, analysis, snapshot } = args.state;
+  if (!shouldTryStage180LargeObjectBackedTableBatch({ analysis, snapshot })) {
+    return { ...args.state, accepted: false };
+  }
+
+  const params = {
+    tableFailureClass: 'strongly_irregular_rows',
+    dominantColumnCount: 0,
+    maxTablesPerRun: 24,
+    maxSyntheticCells: 480,
+    largeObjectBackedTableBatch: true,
+    stage: 'stage180_large_object_backed_table_batch',
+  };
+  const { buffer: nextBuffer, result } = await runPythonMutationBatch(
+    buffer,
+    [{ op: 'normalize_table_structure', params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes('normalize_table_structure')) {
+    return { ...args.state, accepted: false };
+  }
+
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'stage180_large_object_backed_table_batch',
+    mutation: parseMutationDetails(pythonMutationDetails(result, 'normalize_table_structure')) ?? null,
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName: 'normalize_table_structure',
+    stage: 10,
+    round,
+    details,
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-stage180-large-table',
+    protectedBaseline,
+  });
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+    accepted: accepted.accepted,
+  };
+}
+
 function stage180HeaderAssociationRefs(snapshot: DocumentSnapshot): string[] {
   return snapshot.tables
+    .filter(isRealRootReachableTableTarget)
     .filter(table =>
       table.structRef &&
       table.hasHeaders &&
@@ -8855,14 +8961,27 @@ export async function remediatePdf(
           || tool.toolName === 'retag_as_figure'
           || tool.toolName === 'set_figure_alt_text'
           || tool.toolName === 'mark_figure_decorative'
-          ? {
-            ...tool,
-            params: (() => {
-              const params = buildDefaultParams(tool.toolName, workingAnalysis, workingSnapshot, [...appliedTools, ...stageApplied]);
-              return Object.keys(params).length > 0 ? params : tool.params;
-            })(),
-          }
+          ? (() => {
+            const params = buildDefaultParams(tool.toolName, workingAnalysis, workingSnapshot, [...appliedTools, ...stageApplied]);
+            const hasLiveParams = Object.keys(params).length > 0;
+            if (
+              !hasLiveParams &&
+              (
+                tool.toolName === 'normalize_table_structure' ||
+                tool.toolName === 'set_table_header_cells'
+              )
+            ) {
+              return null;
+            }
+            return {
+              ...tool,
+              params: hasLiveParams ? params : tool.params,
+            };
+          })()
           : tool;
+        if (!liveTool) {
+          continue;
+        }
         if (
           liveTool.toolName === 'set_figure_alt_text' &&
           shouldSkipProtectedFigureAlt({

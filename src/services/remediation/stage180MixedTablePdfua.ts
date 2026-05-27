@@ -4,6 +4,7 @@ import type {
   CategoryKey,
   DocumentSnapshot,
 } from '../../types.js';
+import { isRealRootReachableTableTarget } from './tableTargetGuards.js';
 
 export type Stage180MixedClass =
   | 'stable_table_first_candidate'
@@ -173,6 +174,7 @@ export function stage180RemainingTableTargets(
   return snapshot.tables
     .filter(table => {
       if (!table.structRef || attempted.has(table.structRef)) return false;
+      if (!isRealRootReachableTableTarget(table)) return false;
       if (table.reachable !== true) return false;
       if (!table.hasHeaders) return false;
       if ((table.cellsMisplacedCount ?? 0) !== 0) return false;

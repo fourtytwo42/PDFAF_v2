@@ -145,6 +145,31 @@ describe('Stage 180 mixed table/PDF-UA helpers', () => {
     expect(targets.map(target => target.structRef)).toEqual(['2897_0']);
   });
 
+  it('does not admit role-mapped non-table refs as Stage 180 table targets', () => {
+    const targets = stage180RemainingTableTargets(snapshot({
+      tables: [
+        {
+          structRef: '2216_0',
+          rawRole: 'TD',
+          resolvedRole: 'Table',
+          page: 0,
+          hasHeaders: true,
+          headerCount: 2,
+          totalCells: 14,
+          rowCount: 8,
+          cellsMisplacedCount: 0,
+          irregularRows: 2,
+          dominantColumnCount: 2,
+          reachable: true,
+          directContent: false,
+          subtreeMcidCount: 20,
+        },
+      ],
+    }));
+
+    expect(targets).toEqual([]);
+  });
+
   it('rejects parked or unstable core rows', () => {
     expect(classifyStage180MixedTablePdfUa({
       analysis: analysis(59, { reading_order: 0 }),
