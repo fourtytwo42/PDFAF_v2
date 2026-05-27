@@ -3811,6 +3811,8 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                             "maxRowSpan": audit.get("maxRowSpan") or 1,
                             "maxColSpan": audit.get("maxColSpan") or 1,
                             "page": page,
+                            "rawRole": (get_name(elem) or "").lstrip("/"),
+                            "resolvedRole": tag,
                             "reachable": _root_reachable(elem),
                             "directContent": _elem_has_direct_mcid_content(elem),
                             "subtreeMcidCount": len(_collect_subtree_mcids(elem)),

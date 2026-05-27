@@ -295,6 +295,10 @@ export interface DocumentSnapshot {
     totalCells: number;
     page: number;
     structRef?: string;
+    /** Raw /S role before RoleMap resolution. Real table repairs require /Table here. */
+    rawRole?: string;
+    /** Role after applying /StructTreeRoot /RoleMap. */
+    resolvedRole?: string;
     /** Number of TR elements directly under this Table. */
     rowCount?: number;
     /** TH/TD elements found directly under Table (not under TR) — structural violation. */
