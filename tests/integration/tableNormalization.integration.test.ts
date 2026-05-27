@@ -100,6 +100,40 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildStronglyIrregularTableWithEmptyLeadingRowPdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-empty-row-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index, count in enumerate([0, 2, 4, 4, 4]):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for _ in range(count):
+        role = Name('/TH') if row_index == 1 else Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
 function buildUnassociatedHeaderTablePdf(): { buf: Buffer; tableRef: string } {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-header-association-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -396,6 +430,30 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.irregularRowsAfter).toBe(0);
     expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(row?.invariants?.headerCellCountBefore ?? 0);
     expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
+    expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('removes empty leading table rows before padding strongly irregular tables', async () => {
+    const buf = buildStronglyIrregularTableWithEmptyLeadingRowPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'strongly_irregular_rows',
+          maxTablesPerRun: 1,
+          maxSyntheticCells: 8,
+        },
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.irregularRowsBefore).toBeGreaterThan(0);
+    expect(row?.invariants?.irregularRowsAfter).toBe(0);
+    expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(row?.invariants?.headerCellCountBefore ?? 0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });

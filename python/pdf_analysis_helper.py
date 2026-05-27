@@ -4116,6 +4116,100 @@ def _count_tr_row_cells(tr_elem) -> int:
     return n
 
 
+def _subtree_has_objr_reference(elem) -> bool:
+    if not isinstance(elem, pikepdf.Dictionary):
+        return False
+    q: deque = deque([elem])
+    seen: set = set()
+    while q and len(seen) < MAX_ITEMS:
+        cur = q.popleft()
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        vk = _struct_elem_visit_key(cur)
+        if vk in seen:
+            continue
+        seen.add(vk)
+        try:
+            k = cur.get("/K")
+        except Exception:
+            k = None
+        values = list(k) if isinstance(k, pikepdf.Array) else ([k] if isinstance(k, pikepdf.Dictionary) else [])
+        for item in values:
+            if not isinstance(item, pikepdf.Dictionary):
+                continue
+            try:
+                if item.get("/Type") == pikepdf.Name("/OBJR"):
+                    return True
+            except Exception:
+                pass
+            if _is_struct_elem_dict(item):
+                q.append(item)
+    return False
+
+
+def _is_empty_table_row_struct(tr_elem) -> bool:
+    if not isinstance(tr_elem, pikepdf.Dictionary):
+        return False
+    if (get_name(tr_elem) or "").lstrip("/").upper() != "TR":
+        return False
+    if _count_tr_row_cells(tr_elem) > 0:
+        return False
+    try:
+        for key in ("/Alt", "/ActualText", "/Title"):
+            if safe_str(tr_elem.get(key)).strip():
+                return False
+    except Exception:
+        pass
+    try:
+        if len(_collect_subtree_mcids(tr_elem)) > 0:
+            return False
+    except Exception:
+        return False
+    if _subtree_has_objr_reference(tr_elem):
+        return False
+    return True
+
+
+def _remove_empty_table_rows(section_elem) -> bool:
+    """Remove empty TR structure rows that carry no cells, MCIDs, OBJR, or text metadata."""
+    if not isinstance(section_elem, pikepdf.Dictionary):
+        return False
+    changed = False
+    try:
+        k = section_elem.get("/K")
+    except Exception:
+        return False
+    if k is None:
+        return False
+    if isinstance(k, pikepdf.Dictionary):
+        tag = (get_name(k) or "").lstrip("/").upper()
+        if tag == "TR" and _is_empty_table_row_struct(k):
+            try:
+                del section_elem["/K"]
+                return True
+            except Exception:
+                return False
+        if tag in ("THEAD", "TBODY", "TFOOT"):
+            return _remove_empty_table_rows(k)
+        return False
+    if not isinstance(k, pikepdf.Array):
+        return False
+
+    new_k = pikepdf.Array()
+    for child in list(k):
+        if isinstance(child, pikepdf.Dictionary):
+            tag = (get_name(child) or "").lstrip("/").upper()
+            if tag == "TR" and _is_empty_table_row_struct(child):
+                changed = True
+                continue
+            if tag in ("THEAD", "TBODY", "TFOOT") and _remove_empty_table_rows(child):
+                changed = True
+        new_k.append(child)
+    if changed:
+        section_elem["/K"] = new_k
+    return changed
+
+
 def _append_empty_table_cell(tr_elem, pdf: pikepdf.Pdf, role: str = "TD") -> bool:
     """Append an empty TH/TD StructElem to make a row's structural column count explicit."""
     if not isinstance(tr_elem, pikepdf.Dictionary):
@@ -8192,6 +8286,9 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
     total_cells = th + td
     column_count = _infer_table_column_count(total_cells, params)
     changed = False
+
+    if _remove_empty_table_rows(table_elem):
+        changed = True
 
     if direct_cells > 0:
         if _wrap_direct_table_cells_into_rows(table_elem, pdf, column_count):
