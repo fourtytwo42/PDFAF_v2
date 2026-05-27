@@ -842,6 +842,16 @@ export interface PythonMutationInvariantPayload {
   directCellsUnderTableAfter?: number;
   headerCellCountBefore?: number;
   headerCellCountAfter?: number;
+  orphanMcidCountBefore?: number;
+  orphanMcidCountAfter?: number;
+  parentTreeDebtBefore?: number;
+  parentTreeDebtAfter?: number;
+  parentTreeMissingMcidEntriesBefore?: number;
+  parentTreeMissingMcidEntriesAfter?: number;
+  parentTreeInvalidEntriesBefore?: number;
+  parentTreeInvalidEntriesAfter?: number;
+  parentTreeObjectReferenceMismatchCountBefore?: number;
+  parentTreeObjectReferenceMismatchCountAfter?: number;
   tableTreeValidAfter?: boolean;
   visibleAnnotationsMissingStructParentBefore?: number;
   visibleAnnotationsMissingStructParentAfter?: number;

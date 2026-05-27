@@ -11776,6 +11776,21 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
         if text and text not in requested_target_refs:
             requested_target_refs.append(text)
     ref_details = _table_ref_details(pdf, requested_target_refs)
+    try:
+        orphan_mcid_count = len(collect_orphan_mcids(pdf))
+    except Exception:
+        orphan_mcid_count = 0
+    try:
+        parent_tree = collect_parent_tree_audit(pdf)
+    except Exception:
+        parent_tree = {}
+    parent_tree_debt = (
+        int(parent_tree.get("pagesMissingStructParents") or 0)
+        + int(parent_tree.get("missingMcidParentTreeEntries") or 0)
+        + int(parent_tree.get("invalidParentTreeEntries") or 0)
+        + int(parent_tree.get("annotationReferenceMismatchCount") or 0)
+        + int(parent_tree.get("objectReferenceMismatchCount") or 0)
+    )
     return {
         "targetRef": target_ref if target_ref else None,
         "targetResolved": target_resolved if target_ref else None,
@@ -11787,6 +11802,11 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
         "irregularRows": irregular_rows,
         "stronglyIrregularTableCount": strongly_irregular_tables,
         "tableTreeValid": table_tree_valid,
+        "orphanMcidCount": orphan_mcid_count,
+        "parentTreeDebt": parent_tree_debt,
+        "parentTreeMissingMcidEntries": int(parent_tree.get("missingMcidParentTreeEntries") or 0),
+        "parentTreeInvalidEntries": int(parent_tree.get("invalidParentTreeEntries") or 0),
+        "parentTreeObjectReferenceMismatchCount": int(parent_tree.get("objectReferenceMismatchCount") or 0),
         **assoc,
     }
 
@@ -12001,6 +12021,10 @@ def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, 
 
 
 def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
+    orphan_before = before.get("orphanMcidCount", 0) or 0
+    orphan_after = after.get("orphanMcidCount", 0) or 0
+    parent_debt_before = before.get("parentTreeDebt", 0) or 0
+    parent_debt_after = after.get("parentTreeDebt", 0) or 0
     invariants = {
         "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
@@ -12009,7 +12033,17 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         "targetRefDetailsBefore": before.get("targetRefDetails") or [],
         "targetRefDetailsAfter": after.get("targetRefDetails") or [],
         "targetRefDetails": after.get("targetRefDetails") or [],
-        "ownershipPreserved": True,
+        "ownershipPreserved": orphan_after <= orphan_before and parent_debt_after <= parent_debt_before,
+        "orphanMcidCountBefore": orphan_before,
+        "orphanMcidCountAfter": orphan_after,
+        "parentTreeDebtBefore": parent_debt_before,
+        "parentTreeDebtAfter": parent_debt_after,
+        "parentTreeMissingMcidEntriesBefore": before.get("parentTreeMissingMcidEntries", 0),
+        "parentTreeMissingMcidEntriesAfter": after.get("parentTreeMissingMcidEntries", 0),
+        "parentTreeInvalidEntriesBefore": before.get("parentTreeInvalidEntries", 0),
+        "parentTreeInvalidEntriesAfter": after.get("parentTreeInvalidEntries", 0),
+        "parentTreeObjectReferenceMismatchCountBefore": before.get("parentTreeObjectReferenceMismatchCount", 0),
+        "parentTreeObjectReferenceMismatchCountAfter": after.get("parentTreeObjectReferenceMismatchCount", 0),
         "directCellsUnderTableBefore": before.get("directCellsUnderTable", 0),
         "directCellsUnderTableAfter": after.get("directCellsUnderTable", 0),
         "headerCellCountBefore": before.get("headerCellCount", 0),
@@ -12036,6 +12070,10 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         return "no_effect", "target_not_found", invariants
     if invariants.get("resolvedRole") and (str(invariants["resolvedRole"]).upper() != "TABLE"):
         return "no_effect", "role_invalid_after_mutation", invariants
+    if not invariants["ownershipPreserved"]:
+        if orphan_after > orphan_before:
+            return "no_effect", "table_orphan_mcids_not_preserved", invariants
+        return "no_effect", "table_parent_tree_not_preserved", invariants
     if (after.get("directCellsUnderTable", 0) or 0) > 0 and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
         return "no_effect", "direct_cells_under_table_remain", invariants
     association_improved = (
@@ -12977,6 +13015,7 @@ def mutate_main(request_path: str) -> int:
         return 0
 
     ocr_temp_paths: list[str] = []
+    mutation_rollback_paths: list[str] = []
     try:
         for mutation_index, m in enumerate(mutations):
             op = m.get("op")
@@ -13033,6 +13072,19 @@ def mutate_main(request_path: str) -> int:
                 op_results.append({"op": op or "", "outcome": "failed", "error": "no_pdf_handle"})
                 break
             try:
+                rollback_path: str | None = None
+                if op in _STAGE35_TABLE_OPS:
+                    tok = secrets.token_hex(8)
+                    rollback_path = os.path.join(tempfile.gettempdir(), f"pdfaf-table-rollback-{tok}.pdf")
+                    try:
+                        pdf.save(rollback_path)
+                        mutation_rollback_paths.append(rollback_path)
+                    except Exception as ex:
+                        failed.append({"op": op, "error": f"save_table_rollback: {ex}"})
+                        op_results.append({"op": op, "outcome": "failed", "error": f"save_table_rollback: {ex}"})
+                        if abort_on_failed_op:
+                            break
+                        continue
                 ok = bool(fn(pdf, params))
                 note = _consume_last_mutation_note()
                 debug_payload = _consume_last_mutation_debug()
@@ -13044,6 +13096,19 @@ def mutate_main(request_path: str) -> int:
                     note,
                     before_invariants,
                 )
+                if rollback_path is not None and outcome != "applied":
+                    try:
+                        pdf.close()
+                    except Exception:
+                        pass
+                    try:
+                        pdf = pikepdf.open(rollback_path, allow_overwriting_input=False)
+                    except Exception as ex:
+                        failed.append({"op": op, "error": f"restore_table_rollback: {ex}"})
+                        op_results.append({"op": op, "outcome": "failed", "error": f"restore_table_rollback: {ex}"})
+                        if abort_on_failed_op:
+                            break
+                        continue
                 structural_benefits = _stage36_structural_benefits(op, outcome, before_invariants, invariants)
                 if outcome == "applied":
                     applied.append(op)
@@ -13103,6 +13168,12 @@ def mutate_main(request_path: str) -> int:
         except Exception:
             pass
         for tp in ocr_temp_paths:
+            try:
+                if os.path.isfile(tp):
+                    os.unlink(tp)
+            except Exception:
+                pass
+        for tp in mutation_rollback_paths:
             try:
                 if os.path.isfile(tp):
                     os.unlink(tp)

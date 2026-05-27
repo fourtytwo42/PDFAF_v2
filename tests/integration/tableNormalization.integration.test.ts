@@ -283,6 +283,9 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(0);
     expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(0);
     expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
+    expect(row?.invariants?.orphanMcidCountAfter).toBeLessThanOrEqual(row?.invariants?.orphanMcidCountBefore ?? 0);
+    expect(row?.invariants?.parentTreeDebtAfter).toBeLessThanOrEqual(row?.invariants?.parentTreeDebtBefore ?? 0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
@@ -317,6 +320,9 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.headerCellCountBefore).toBe(row?.invariants?.headerCellCountAfter);
     expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
     expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(row?.invariants?.headerCellsWithScopeCountBefore ?? 0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
+    expect(row?.invariants?.orphanMcidCountAfter).toBeLessThanOrEqual(row?.invariants?.orphanMcidCountBefore ?? 0);
+    expect(row?.invariants?.parentTreeDebtAfter).toBeLessThanOrEqual(row?.invariants?.parentTreeDebtBefore ?? 0);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 

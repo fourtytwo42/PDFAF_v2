@@ -98,6 +98,52 @@ describe('Stage 35 orchestrator mutation contract', () => {
     });
   });
 
+  it('does not commit table mutations rejected for content ownership regression', async () => {
+    const before = Buffer.from('before-table');
+    const after = Buffer.from('after-table');
+    mocks.runPythonMutationBatch.mockResolvedValue({
+      buffer: after,
+      result: {
+        success: true,
+        applied: ['set_table_header_cells'],
+        failed: [],
+        opResults: [{
+          op: 'set_table_header_cells',
+          outcome: 'no_effect',
+          note: 'table_orphan_mcids_not_preserved',
+          invariants: {
+            targetRef: '20_0',
+            targetResolved: true,
+            resolvedRole: 'Table',
+            ownershipPreserved: false,
+            orphanMcidCountBefore: 30,
+            orphanMcidCountAfter: 34,
+            parentTreeDebtBefore: 0,
+            parentTreeDebtAfter: 0,
+          },
+        }],
+      },
+    });
+
+    const result = await runSingleTool(
+      before,
+      {
+        toolName: 'set_table_header_cells',
+        params: { structRef: '20_0' },
+        stage: 4,
+        reason: 'table',
+        route: 'native_structure_repair',
+      },
+      bareSnapshot(),
+    );
+
+    expect(result.buffer.equals(before)).toBe(true);
+    expect(result.outcome).toBe('no_effect');
+    const details = parseMutationDetails(result.details);
+    expect(details?.note).toBe('table_orphan_mcids_not_preserved');
+    expect(details?.invariants?.ownershipPreserved).toBe(false);
+  });
+
   it('stores normalized invariant payloads in details for applied structural tools', async () => {
     mocks.runPythonMutationBatch.mockResolvedValue({
       buffer: Buffer.from('after'),
