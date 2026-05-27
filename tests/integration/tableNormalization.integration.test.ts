@@ -138,6 +138,51 @@ pdf.save(${JSON.stringify(pdfPath)})
   return { buf: readFileSync(pdfPath), tableRef: readFileSync(refPath, 'utf8').trim() };
 }
 
+function buildMixedTableAndParagraphPdf(): { buf: Buffer; tableRef: string; paragraphRef: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-mixed-ref-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const refPath = join(dir, 'refs.json');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import json
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index in range(3):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for cell_index in range(3):
+        role = Name('/TH') if row_index == 0 or cell_index == 0 else Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+paragraph = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/P'), P=doc))
+doc['/K'] = Array([table, paragraph])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+saved = pikepdf.open(${JSON.stringify(pdfPath)})
+kids = list(saved.Root['/StructTreeRoot']['/K']['/K'])
+with open(${JSON.stringify(refPath)}, 'w') as f:
+    json.dump({
+        "tableRef": f"{kids[0].objgen[0]}_{kids[0].objgen[1]}",
+        "paragraphRef": f"{kids[1].objgen[0]}_{kids[1].objgen[1]}",
+    }, f)
+`);
+  execFileSync('python3', [script]);
+  const refs = JSON.parse(readFileSync(refPath, 'utf8')) as { tableRef: string; paragraphRef: string };
+  return { buf: readFileSync(pdfPath), tableRef: refs.tableRef, paragraphRef: refs.paragraphRef };
+}
+
 function buildMultipleUnassociatedHeaderTablesPdf(): { buf: Buffer; tableRefs: string[] } {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-header-association-batch-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -290,6 +335,39 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
     expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('reports mixed table and non-table batch refs without changing generic batch behavior', async () => {
+    const { buf, tableRef, paragraphRef } = buildMixedTableAndParagraphPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      { op: 'set_table_header_cells', params: { structRefs: [tableRef, paragraphRef], tableHeaderAssociation: true } },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.debug?.changedTargetRefs).toEqual([tableRef]);
+    expect(row?.debug?.skippedTargetRefs).toEqual([paragraphRef]);
+    const details = row?.invariants?.targetRefDetailsAfter ?? [];
+    expect(details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: tableRef, isTable: true, targetReachable: true }),
+      expect.objectContaining({ ref: paragraphRef, isTable: false, skipReason: 'not_table' }),
+    ]));
+  });
+
+  it('reports non-table single refs as no-effect without fallback mutation', async () => {
+    const { buf, paragraphRef } = buildMixedTableAndParagraphPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      { op: 'set_table_header_cells', params: { structRef: paragraphRef, tableHeaderAssociation: true } },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(row?.outcome).toBe('no_effect');
+    expect(row?.note).toBe('no_structural_change');
+    expect(row?.invariants?.targetRefDetailsAfter).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: paragraphRef, isTable: false, skipReason: 'not_table' }),
+    ]));
   });
 
   it('pads short rows in strongly irregular dense tables with invariant-backed table improvement', async () => {

@@ -973,20 +973,32 @@ def _table_target_refs(params: dict) -> list[str]:
     return refs
 
 
+def _table_skip_ref_detail(ref: str, reason: str, resolved_role: str | None = None) -> dict:
+    out = {"ref": ref, "skipReason": reason}
+    if resolved_role:
+        out["resolvedRole"] = resolved_role
+    return out
+
+
 def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
     refs = _table_target_refs(params)
     if not refs:
         return False
     changed_refs: list[str] = []
+    skipped_ref_details: list[dict] = []
     changed = False
     for ref in refs:
         try:
             table = _resolve_ref(pdf, ref)
         except Exception:
+            skipped_ref_details.append(_table_skip_ref_detail(ref, "resolve_error"))
             continue
         if table is None or not isinstance(table, pikepdf.Dictionary):
+            skipped_ref_details.append(_table_skip_ref_detail(ref, "not_found"))
             continue
-        if (get_name(table) or "").lstrip("/").upper() != "TABLE":
+        role = (get_name(table) or "").lstrip("/")
+        if role.upper() != "TABLE":
+            skipped_ref_details.append(_table_skip_ref_detail(ref, "not_table", role or None))
             continue
         th_count, _td_count = _count_table_cells(table)
         if th_count > 0 and bool(params.get("tableHeaderAssociation")):
@@ -998,12 +1010,17 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
         if table_changed:
             changed = True
             changed_refs.append(ref)
+        else:
+            skipped_ref_details.append(_table_skip_ref_detail(ref, "no_change", role or "Table"))
     if changed:
         try:
             payload = {
                 "targetRef": changed_refs[0] if len(changed_refs) == 1 else None,
                 "targetRefs": changed_refs,
                 "requestedTargetRefs": refs,
+                "changedTargetRefs": changed_refs,
+                "skippedTargetRefs": [item.get("ref") for item in skipped_ref_details if item.get("ref")],
+                "skippedTargetRefDetails": skipped_ref_details,
                 "tableHeaderAssociation": bool(params.get("tableHeaderAssociation")),
             }
             _set_last_mutation_debug(payload)
@@ -1033,12 +1050,20 @@ def _op_repair_native_table_headers(pdf: pikepdf.Pdf, params: dict) -> bool:
             changed = True
         if changed:
             try:
-                _set_last_mutation_debug({"targetRef": ref})
+                _set_last_mutation_debug({
+                    "targetRef": ref,
+                    "targetRefs": [ref],
+                    "requestedTargetRefs": [ref],
+                    "changedTargetRefs": [ref],
+                    "skippedTargetRefs": [],
+                    "skippedTargetRefDetails": [],
+                })
             except Exception:
                 pass
         return changed
 
     changed = False
+    changed_refs: list[str] = []
     if _repair_table_role_misplacement(pdf):
         changed = True
     for table in _iter_table_struct_elems(pdf):
@@ -1047,11 +1072,29 @@ def _op_repair_native_table_headers(pdf: pikepdf.Pdf, params: dict) -> bool:
             continue
         if _promote_first_row_td_to_th(table):
             _associate_existing_table_headers(table)
+            tref = object_ref_str(table)
+            if tref and tref not in changed_refs:
+                changed_refs.append(tref)
             changed = True
             continue
         if _promote_first_column_td_to_th(table):
             _associate_existing_table_headers(table)
+            tref = object_ref_str(table)
+            if tref and tref not in changed_refs:
+                changed_refs.append(tref)
             changed = True
+    if changed:
+        try:
+            _set_last_mutation_debug({
+                "targetRef": changed_refs[0] if len(changed_refs) == 1 else None,
+                "targetRefs": changed_refs,
+                "requestedTargetRefs": [],
+                "changedTargetRefs": changed_refs,
+                "skippedTargetRefs": [],
+                "skippedTargetRefDetails": [],
+            })
+        except Exception:
+            pass
     return changed
 
 
@@ -8163,6 +8206,7 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
 
 def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = _table_target_ref(params)
+    requested_refs = _table_target_refs(params)
     max_tables = 1
     try:
         max_tables = max(1, min(4, int(params.get("maxTablesPerRun") or 1)))
@@ -8171,6 +8215,8 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     changed = False
     touched = 0
     targets: list = []
+    skipped_ref_details: list[dict] = []
+    changed_refs: list[str] = []
     if ref:
         try:
             target = _resolve_ref(pdf, ref)
@@ -8178,6 +8224,8 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
             target = None
         if isinstance(target, pikepdf.Dictionary):
             targets = [target]
+        else:
+            skipped_ref_details.append(_table_skip_ref_detail(safe_str(ref), "not_found"))
     else:
         targets = list(_iter_table_struct_elems(pdf))
         if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
@@ -8198,18 +8246,31 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     for table in targets:
         if not isinstance(table, pikepdf.Dictionary):
             continue
-        if (get_name(table) or "").lstrip("/").upper() != "TABLE":
+        role = (get_name(table) or "").lstrip("/")
+        table_ref = object_ref_str(table)
+        if role.upper() != "TABLE":
+            if ref:
+                skipped_ref_details.append(_table_skip_ref_detail(safe_str(ref), "not_table", role or None))
             continue
         if touched >= max_tables:
             break
         if _normalize_one_table_structure(table, pdf, params):
             changed = True
+            if table_ref and table_ref not in changed_refs:
+                changed_refs.append(table_ref)
+        elif ref:
+            skipped_ref_details.append(_table_skip_ref_detail(safe_str(ref), "no_change", role or "Table"))
         touched += 1
 
     if changed:
         try:
             _set_last_mutation_debug({
                 "targetRef": ref,
+                "targetRefs": changed_refs,
+                "requestedTargetRefs": requested_refs,
+                "changedTargetRefs": changed_refs,
+                "skippedTargetRefs": [item.get("ref") for item in skipped_ref_details if item.get("ref")],
+                "skippedTargetRefDetails": skipped_ref_details,
                 "maxTablesPerRun": max_tables,
                 "dominantColumnCount": params.get("dominantColumnCount"),
             })
@@ -11595,7 +11656,90 @@ def _table_header_assoc_counts_for_struct_tables(tables: list) -> dict:
     return out
 
 
-def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> dict:
+def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
+    detail = {
+        "ref": ref,
+        "targetResolved": False,
+        "rawRole": None,
+        "resolvedRole": None,
+        "targetReachable": False,
+        "isTable": False,
+        "resolvedIsTable": False,
+        "skipReason": "not_found",
+        "directCellsUnderTable": None,
+        "headerCellCount": None,
+        "dataCellCount": None,
+        "irregularRows": None,
+        "stronglyIrregularTable": False,
+        "tableTreeValid": None,
+        "headerAssociationMissingCount": None,
+        "orphanHeaderCellCount": None,
+        "dataCellsWithoutHeaderCount": None,
+        "headerCellsWithScopeCount": None,
+        "headerCellsWithIdCount": None,
+        "dataCellsWithHeadersCount": None,
+    }
+    try:
+        target = _resolve_ref(pdf, ref)
+    except Exception:
+        target = None
+    if not isinstance(target, pikepdf.Dictionary):
+        return detail
+
+    sr = pdf.Root.get("/StructTreeRoot")
+    raw_role = (get_name(target) or "").lstrip("/") or None
+    resolved_role = _resolved_struct_role(sr, target) if isinstance(sr, pikepdf.Dictionary) else raw_role
+    reachable = _is_root_reachable_elem(sr, target) if isinstance(sr, pikepdf.Dictionary) else False
+    is_table = (raw_role or "").upper() == "TABLE"
+    resolved_is_table = (resolved_role or "").upper() == "TABLE"
+    detail.update({
+        "targetResolved": True,
+        "rawRole": raw_role,
+        "resolvedRole": resolved_role,
+        "targetReachable": reachable,
+        "isTable": is_table,
+        "resolvedIsTable": resolved_is_table,
+        "skipReason": None,
+    })
+    if not is_table:
+        detail["skipReason"] = "not_table"
+        return detail
+    if not reachable:
+        detail["skipReason"] = "not_root_reachable"
+
+    try:
+        th_count, td_count = _count_table_cells(target)
+        audit = _audit_table_structure(target)
+        assoc = _table_header_assoc_counts_for_struct_tables([target])
+        direct_cells = int(audit.get("cellsMisplacedCount") or 0)
+        irregular = int(audit.get("irregularRows") or 0)
+        detail.update({
+            "directCellsUnderTable": direct_cells,
+            "headerCellCount": th_count,
+            "dataCellCount": td_count,
+            "irregularRows": irregular,
+            "stronglyIrregularTable": irregular >= 2,
+            "tableTreeValid": direct_cells == 0,
+            **assoc,
+        })
+    except Exception:
+        detail["skipReason"] = "table_stats_unavailable"
+    return detail
+
+
+def _table_ref_details(pdf: pikepdf.Pdf, refs: list[str] | None) -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for ref in refs or []:
+        text = safe_str(ref).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(_table_ref_detail(pdf, text))
+    return out
+
+
+def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requested_refs: list[str] | None = None) -> dict:
     direct_cells = 0
     header_cells = 0
     irregular_rows = 0
@@ -11624,10 +11768,18 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None) -> d
             strongly_irregular_tables += 1
     table_tree_valid = direct_cells == 0 and (target_resolved if target_ref else True)
     assoc = _table_header_assoc_counts_for_struct_tables(tables)
+    requested_target_refs = []
+    for ref in requested_refs or ([] if not target_ref else [target_ref]):
+        text = safe_str(ref).strip()
+        if text and text not in requested_target_refs:
+            requested_target_refs.append(text)
+    ref_details = _table_ref_details(pdf, requested_target_refs)
     return {
         "targetRef": target_ref if target_ref else None,
         "targetResolved": target_resolved if target_ref else None,
         "resolvedRole": target_role,
+        "requestedTargetRefs": requested_target_refs,
+        "targetRefDetails": ref_details,
         "directCellsUnderTable": direct_cells,
         "headerCellCount": header_cells,
         "irregularRows": irregular_rows,
@@ -11692,7 +11844,8 @@ def _stage35_figure_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
 
 def _stage35_table_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
     ref = _table_target_ref(params)
-    return _table_invariant_stats(pdf, ref if isinstance(ref, str) else None)
+    refs = _table_target_refs(params)
+    return _table_invariant_stats(pdf, ref if isinstance(ref, str) else None, refs)
 
 
 def _stage35_annotation_snapshot(pdf: pikepdf.Pdf, _params: dict) -> dict:
@@ -11850,6 +12003,10 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
         "resolvedRole": after.get("resolvedRole"),
+        "requestedTargetRefs": after.get("requestedTargetRefs") or before.get("requestedTargetRefs") or [],
+        "targetRefDetailsBefore": before.get("targetRefDetails") or [],
+        "targetRefDetailsAfter": after.get("targetRefDetails") or [],
+        "targetRefDetails": after.get("targetRefDetails") or [],
         "ownershipPreserved": True,
         "directCellsUnderTableBefore": before.get("directCellsUnderTable", 0),
         "directCellsUnderTableAfter": after.get("directCellsUnderTable", 0),

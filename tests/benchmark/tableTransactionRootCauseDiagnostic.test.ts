@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyTableTransactionRow,
+  pacRegressionFamily,
   parseArgs,
+  type TableTargetRefDetail,
   type TableTransactionAttempt,
   type TableTransactionRowInput,
 } from '../../scripts/table-transaction-root-cause-diagnostic.js';
 
+function refDetail(input: Partial<TableTargetRefDetail> = {}): TableTargetRefDetail {
+  const role = input.rawRole ?? input.resolvedRole ?? 'Table';
+  return {
+    ref: input.ref ?? '10_0',
+    targetResolved: input.targetResolved ?? true,
+    rawRole: input.rawRole ?? role,
+    resolvedRole: input.resolvedRole ?? role,
+    targetReachable: input.targetReachable ?? true,
+    isTable: input.isTable ?? role.toUpperCase() === 'TABLE',
+    resolvedIsTable: input.resolvedIsTable ?? role.toUpperCase() === 'TABLE',
+    skipReason: input.skipReason ?? null,
+  };
+}
+
 function attempt(input: Partial<TableTransactionAttempt> = {}): TableTransactionAttempt {
+  const targetRefDetails = input.targetRefDetails ?? [refDetail()];
   return {
     toolName: input.toolName ?? 'normalize_table_structure',
     outcome: input.outcome ?? 'rejected',
@@ -14,6 +31,11 @@ function attempt(input: Partial<TableTransactionAttempt> = {}): TableTransaction
     scoreAfter: input.scoreAfter ?? 79,
     targetRefs: input.targetRefs ?? ['10_0'],
     requestedTargetRefs: input.requestedTargetRefs ?? input.targetRefs ?? ['10_0'],
+    changedTargetRefs: input.changedTargetRefs ?? [],
+    skippedTargetRefs: input.skippedTargetRefs ?? [],
+    targetRefDetails,
+    targetRefDetailsBefore: input.targetRefDetailsBefore ?? targetRefDetails,
+    targetRefDetailsAfter: input.targetRefDetailsAfter ?? targetRefDetails,
     targetResolved: input.targetResolved ?? true,
     resolvedRole: input.resolvedRole ?? 'Table',
     tableTreeValidAfter: input.tableTreeValidAfter ?? true,
@@ -27,6 +49,14 @@ function attempt(input: Partial<TableTransactionAttempt> = {}): TableTransaction
     irregularRowsAfter: input.irregularRowsAfter ?? 1,
     tablePacRegressions: input.tablePacRegressions ?? ['pdfua.table.header_association_present'],
     nonTablePacRegressions: input.nonTablePacRegressions ?? [],
+    pacRegressionFamilies: input.pacRegressionFamilies ?? {
+      table_header: input.tablePacRegressions ?? ['pdfua.table.header_association_present'],
+      figure_alt: [],
+      orphan_mcid: [],
+      link_annotation: [],
+      reading_order: [],
+      unknown: [],
+    },
     note: input.note ?? null,
   };
 }
@@ -47,20 +77,39 @@ function row(input: Partial<TableTransactionRowInput> = {}): TableTransactionRow
 }
 
 describe('table transaction root-cause diagnostic classifier', () => {
-  it('classifies clean table-only regression with table movement as strict transaction candidate', () => {
+  it('classifies clean table-only regression with table movement as valid cleanup candidate', () => {
     const result = classifyTableTransactionRow(row());
-    expect(result.classification).toBe('strict_transaction_candidate');
+    expect(result.classification).toBe('valid_table_no_final_cleanup');
     expect(result.promotionSupported).toBe(true);
+    expect(result.laterStrictTransactionSafe).toBe(true);
     expect(result.reasons).toContain('table_evidence_improved_before_rejection');
   });
 
-  it('blocks non-table target resolution before behavior promotion', () => {
+  it('blocks planner wrong refs before behavior promotion', () => {
     const result = classifyTableTransactionRow(row({
-      attempts: [attempt({ resolvedRole: 'P' })],
+      attempts: [attempt({
+        resolvedRole: 'P',
+        targetRefDetails: [refDetail({ rawRole: 'P', resolvedRole: 'P', isTable: false, resolvedIsTable: false, skipReason: 'not_table' })],
+      })],
     }));
-    expect(result.classification).toBe('non_table_target_blocked');
+    expect(result.classification).toBe('planner_wrong_ref');
     expect(result.promotionSupported).toBe(false);
     expect(result.reasons[0]).toContain(':P');
+  });
+
+  it('separates mixed batch refs from single wrong refs', () => {
+    const result = classifyTableTransactionRow(row({
+      attempts: [attempt({
+        requestedTargetRefs: ['10_0', '11_0'],
+        targetRefs: ['10_0'],
+        targetRefDetails: [
+          refDetail({ ref: '10_0', rawRole: 'Table', resolvedRole: 'Table' }),
+          refDetail({ ref: '11_0', rawRole: 'Span', resolvedRole: 'Span', isTable: false, resolvedIsTable: false, skipReason: 'not_table' }),
+        ],
+      })],
+    }));
+    expect(result.classification).toBe('mixed_batch_refs');
+    expect(result.promotionSupported).toBe(false);
   });
 
   it('separates non-target PAC regression from table-only PAC debt', () => {
@@ -68,10 +117,19 @@ describe('table transaction root-cause diagnostic classifier', () => {
       attempts: [attempt({
         tablePacRegressions: ['pdfua.table.header_association_present'],
         nonTablePacRegressions: ['pdfua.content.orphan_mcids_absent'],
+        pacRegressionFamilies: {
+          table_header: ['pdfua.table.header_association_present'],
+          figure_alt: [],
+          orphan_mcid: ['pdfua.content.orphan_mcids_absent'],
+          link_annotation: [],
+          reading_order: [],
+          unknown: [],
+        },
       })],
     }));
-    expect(result.classification).toBe('non_target_pac_regression');
+    expect(result.classification).toBe('non_table_pac_side_effect');
     expect(result.promotionSupported).toBe(false);
+    expect(result.reasons[0]).toContain('orphan_mcid');
   });
 
   it('keeps table-only PAC rejection without movement diagnostic-only', () => {
@@ -88,7 +146,7 @@ describe('table transaction root-cause diagnostic classifier', () => {
         tableTreeValidAfter: false,
       })],
     }));
-    expect(result.classification).toBe('pac_table_regression_only');
+    expect(result.classification).toBe('table_header_pac_only');
     expect(result.promotionSupported).toBe(false);
   });
 
@@ -98,7 +156,7 @@ describe('table transaction root-cause diagnostic classifier', () => {
       score: 95,
       grade: 'A',
     }));
-    expect(result.classification).toBe('control_triggered');
+    expect(result.classification).toBe('control_table_side_effect');
     expect(result.promotionSupported).toBe(false);
   });
 
@@ -121,5 +179,13 @@ describe('table transaction root-cause diagnostic classifier', () => {
     expect(args.pdfs.get('control')).toBe('/tmp/control.pdf');
     expect(args.controls.has('control')).toBe(true);
     expect(args.analyzePdfs).toBe(false);
+  });
+
+  it('maps PAC regressions to side-effect families', () => {
+    expect(pacRegressionFamily('pdfua.table.header_association_present')).toBe('table_header');
+    expect(pacRegressionFamily('pdfua.figure.alt_present')).toBe('figure_alt');
+    expect(pacRegressionFamily('pdfua.content.orphan_mcids_absent')).toBe('orphan_mcid');
+    expect(pacRegressionFamily('pdfua.annotations.link_contents_present')).toBe('link_annotation');
+    expect(pacRegressionFamily('pdfua.reading_order.logical_order')).toBe('reading_order');
   });
 });

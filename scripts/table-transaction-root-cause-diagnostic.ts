@@ -10,19 +10,49 @@ import { analyzePdf } from '../src/services/pdfAnalyzer.js';
 import type { AnalysisResult, DocumentSnapshot } from '../src/types.js';
 
 const TABLE_TOOLS = new Set(['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells']);
-const TABLE_PAC_RULES = new Set(['pdfua.table.header_association_present', 'pdfua.table.header_cells_associated']);
 const DEFAULT_OUT_ROOT = '/mnt/pdf-review/pdfaf-table-diagnostics';
 
 type JsonRecord = Record<string, unknown>;
 
 export type TableTransactionClassification =
-  | 'strict_transaction_candidate'
-  | 'non_table_target_blocked'
-  | 'pac_table_regression_only'
-  | 'non_target_pac_regression'
-  | 'control_triggered'
+  | 'valid_table_no_final_cleanup'
+  | 'planner_wrong_ref'
+  | 'mixed_batch_refs'
+  | 'control_table_side_effect'
+  | 'non_table_pac_side_effect'
+  | 'table_header_pac_only'
   | 'runtime_or_analyzer_debt'
   | 'no_safe_transaction';
+
+const TABLE_TRANSACTION_CLASSIFICATIONS: TableTransactionClassification[] = [
+  'valid_table_no_final_cleanup',
+  'planner_wrong_ref',
+  'mixed_batch_refs',
+  'control_table_side_effect',
+  'non_table_pac_side_effect',
+  'table_header_pac_only',
+  'runtime_or_analyzer_debt',
+  'no_safe_transaction',
+];
+
+export type PacRegressionFamily =
+  | 'table_header'
+  | 'figure_alt'
+  | 'orphan_mcid'
+  | 'link_annotation'
+  | 'reading_order'
+  | 'unknown';
+
+export interface TableTargetRefDetail {
+  ref: string;
+  targetResolved: boolean | null;
+  rawRole: string | null;
+  resolvedRole: string | null;
+  targetReachable: boolean | null;
+  isTable: boolean | null;
+  resolvedIsTable: boolean | null;
+  skipReason: string | null;
+}
 
 export interface TableTransactionAttempt {
   toolName: string;
@@ -31,6 +61,11 @@ export interface TableTransactionAttempt {
   scoreAfter: number | null;
   targetRefs: string[];
   requestedTargetRefs: string[];
+  changedTargetRefs: string[];
+  skippedTargetRefs: string[];
+  targetRefDetails: TableTargetRefDetail[];
+  targetRefDetailsBefore: TableTargetRefDetail[];
+  targetRefDetailsAfter: TableTargetRefDetail[];
   targetResolved: boolean | null;
   resolvedRole: string | null;
   tableTreeValidAfter: boolean | null;
@@ -44,6 +79,7 @@ export interface TableTransactionAttempt {
   irregularRowsAfter: number | null;
   tablePacRegressions: string[];
   nonTablePacRegressions: string[];
+  pacRegressionFamilies: Record<PacRegressionFamily, string[]>;
   note: string | null;
 }
 
@@ -65,6 +101,7 @@ export interface TableTransactionRowDiagnostic extends TableTransactionRowInput 
   pdfPath: string | null;
   classification: TableTransactionClassification;
   promotionSupported: boolean;
+  laterStrictTransactionSafe: boolean;
   reasons: string[];
   native?: NativeTableSnapshot | null;
 }
@@ -88,10 +125,11 @@ export interface TableTransactionReport {
     focusCount: number;
     controlCount: number;
     byClassification: Record<TableTransactionClassification, number>;
-    strictTransactionCandidates: string[];
-    nonTableTargetBlocked: string[];
-    controlTriggered: string[];
-    nonTargetPacRegression: string[];
+    laterStrictTransactionCandidates: string[];
+    plannerWrongRef: string[];
+    mixedBatchRefs: string[];
+    controlsWithTableSideEffects: string[];
+    nonTablePacSideEffects: string[];
   };
   decision: {
     status: 'plan_strict_transaction_behavior' | 'diagnostic_only';
@@ -242,6 +280,53 @@ function mergeRefs(...values: unknown[]): string[] {
   return out;
 }
 
+function parseTargetRefDetail(value: unknown): TableTargetRefDetail | null {
+  const obj = objectValue(value);
+  if (!obj) return null;
+  const ref = stringValue(obj['ref']) ?? stringValue(obj['targetRef']);
+  if (!ref) return null;
+  return {
+    ref,
+    targetResolved: boolValue(obj['targetResolved']),
+    rawRole: normalizeRole(stringValue(obj['rawRole'])),
+    resolvedRole: normalizeRole(stringValue(obj['resolvedRole'])),
+    targetReachable: boolValue(obj['targetReachable']),
+    isTable: boolValue(obj['isTable']),
+    resolvedIsTable: boolValue(obj['resolvedIsTable']),
+    skipReason: stringValue(obj['skipReason']),
+  };
+}
+
+function targetRefDetailsFrom(...values: unknown[]): TableTargetRefDetail[] {
+  const out: TableTargetRefDetail[] = [];
+  for (const value of values) {
+    for (const item of arrayValue(value)) {
+      const parsed = parseTargetRefDetail(item);
+      if (!parsed) continue;
+      const existing = out.findIndex(row => row.ref === parsed.ref);
+      if (existing >= 0) out[existing] = { ...out[existing], ...parsed };
+      else out.push(parsed);
+    }
+  }
+  return out;
+}
+
+function fallbackTargetRefDetails(attempt: Pick<TableTransactionAttempt, 'requestedTargetRefs' | 'targetRefs' | 'targetResolved' | 'resolvedRole'>): TableTargetRefDetail[] {
+  const refs = attempt.requestedTargetRefs.length > 0 ? attempt.requestedTargetRefs : attempt.targetRefs;
+  const role = normalizeRole(attempt.resolvedRole);
+  if (refs.length === 0 || role === null) return [];
+  return refs.map(ref => ({
+    ref,
+    targetResolved: attempt.targetResolved,
+    rawRole: null,
+    resolvedRole: role,
+    targetReachable: null,
+    isTable: role.toUpperCase() === 'TABLE',
+    resolvedIsTable: role.toUpperCase() === 'TABLE',
+    skipReason: role.toUpperCase() === 'TABLE' ? null : 'not_table',
+  }));
+}
+
 function nestedObject(root: JsonRecord | null, path: string[]): JsonRecord | null {
   let current: unknown = root;
   for (const key of path) {
@@ -290,6 +375,42 @@ function extractPacRegressions(details: JsonRecord | null): string[] {
   ].filter((id, index, arr) => arr.indexOf(id) === index);
 }
 
+export function pacRegressionFamily(ruleId: string): PacRegressionFamily {
+  const id = ruleId.toLowerCase();
+  if (id.includes('table') || id.includes('header_association') || id.includes('header_cells')) {
+    return 'table_header';
+  }
+  if (id.includes('figure') || id.includes('alt')) {
+    return 'figure_alt';
+  }
+  if (id.includes('orphan') || id.includes('mcid')) {
+    return 'orphan_mcid';
+  }
+  if (id.includes('link') || id.includes('annotation') || id.includes('annot')) {
+    return 'link_annotation';
+  }
+  if (id.includes('reading') || id.includes('order')) {
+    return 'reading_order';
+  }
+  return 'unknown';
+}
+
+function groupPacRegressions(ruleIdsIn: string[]): Record<PacRegressionFamily, string[]> {
+  const out: Record<PacRegressionFamily, string[]> = {
+    table_header: [],
+    figure_alt: [],
+    orphan_mcid: [],
+    link_annotation: [],
+    reading_order: [],
+    unknown: [],
+  };
+  for (const ruleId of ruleIdsIn) {
+    const family = pacRegressionFamily(ruleId);
+    if (!out[family].includes(ruleId)) out[family].push(ruleId);
+  }
+  return out;
+}
+
 function extractAttempt(tool: JsonRecord): TableTransactionAttempt | null {
   const toolName = stringValue(tool['toolName']);
   if (!toolName || !TABLE_TOOLS.has(toolName)) return null;
@@ -298,9 +419,11 @@ function extractAttempt(tool: JsonRecord): TableTransactionAttempt | null {
   const invariants = objectValue(details?.['invariants']);
   const mutation = objectValue(details?.['mutation']);
   const mutationInvariants = objectValue(mutation?.['invariants']);
+  const mutationDebug = objectValue(mutation?.['debug']);
   const debug = objectValue(details?.['debug']);
   const replay = objectValue(debug?.['replayState']);
   const pacRegressions = extractPacRegressions(details);
+  const pacRegressionFamilies = groupPacRegressions(pacRegressions);
   const targetRefs = mergeRefs(
     details?.['targetRef'],
     details?.['targetRefs'],
@@ -310,6 +433,8 @@ function extractAttempt(tool: JsonRecord): TableTransactionAttempt | null {
     mutation?.['targetRefs'],
     mutationInvariants?.['targetRef'],
     mutationInvariants?.['targetRefs'],
+    mutationDebug?.['targetRef'],
+    mutationDebug?.['targetRefs'],
   );
   const requestedTargetRefs = mergeRefs(
     details?.['requestedTargetRefs'],
@@ -317,6 +442,18 @@ function extractAttempt(tool: JsonRecord): TableTransactionAttempt | null {
     mutation?.['requestedTargetRefs'],
     mutationInvariants?.['requestedTargetRefs'],
     targetRefs,
+  );
+  const changedTargetRefs = mergeRefs(
+    details?.['changedTargetRefs'],
+    debug?.['changedTargetRefs'],
+    mutation?.['changedTargetRefs'],
+    mutationDebug?.['changedTargetRefs'],
+  );
+  const skippedTargetRefs = mergeRefs(
+    details?.['skippedTargetRefs'],
+    debug?.['skippedTargetRefs'],
+    mutation?.['skippedTargetRefs'],
+    mutationDebug?.['skippedTargetRefs'],
   );
   const resolvedRole = normalizeRole(
     stringValue(invariants?.['resolvedRole']) ??
@@ -326,14 +463,36 @@ function extractAttempt(tool: JsonRecord): TableTransactionAttempt | null {
   const targetResolved = boolValue(invariants?.['targetResolved']) ??
     boolValue(mutationInvariants?.['targetResolved']) ??
     boolValue(mutation?.['targetResolved']);
+  const targetRefDetailsBefore = targetRefDetailsFrom(
+    invariants?.['targetRefDetailsBefore'],
+    mutationInvariants?.['targetRefDetailsBefore'],
+  );
+  const targetRefDetailsAfter = targetRefDetailsFrom(
+    invariants?.['targetRefDetailsAfter'],
+    invariants?.['targetRefDetails'],
+    mutationInvariants?.['targetRefDetailsAfter'],
+    mutationInvariants?.['targetRefDetails'],
+    debug?.['targetRefDetailsAfter'],
+    debug?.['targetRefDetails'],
+    debug?.['skippedTargetRefDetails'],
+    mutationDebug?.['targetRefDetailsAfter'],
+    mutationDebug?.['targetRefDetails'],
+    mutationDebug?.['skippedTargetRefDetails'],
+  );
+  let targetRefDetails = targetRefDetailsAfter.length > 0 ? targetRefDetailsAfter : targetRefDetailsBefore;
 
-  return {
+  const attempt: TableTransactionAttempt = {
     toolName,
     outcome: stringValue(tool['outcome']) ?? stringValue(details?.['outcome']),
     scoreBefore: numberValue(tool['scoreBefore']) ?? nestedNumber(replay, ['scoreBefore']),
     scoreAfter: numberValue(tool['scoreAfter']) ?? nestedNumber(replay, ['scoreAfter']),
     targetRefs,
     requestedTargetRefs,
+    changedTargetRefs,
+    skippedTargetRefs,
+    targetRefDetails,
+    targetRefDetailsBefore,
+    targetRefDetailsAfter,
     targetResolved,
     resolvedRole,
     tableTreeValidAfter: boolValue(invariants?.['tableTreeValidAfter']) ?? boolValue(mutationInvariants?.['tableTreeValidAfter']),
@@ -345,10 +504,17 @@ function extractAttempt(tool: JsonRecord): TableTransactionAttempt | null {
     directCellsUnderTableAfter: numberValue(invariants?.['directCellsUnderTableAfter']) ?? numberValue(mutationInvariants?.['directCellsUnderTableAfter']),
     irregularRowsBefore: numberValue(invariants?.['irregularRowsBefore']) ?? numberValue(mutationInvariants?.['irregularRowsBefore']),
     irregularRowsAfter: numberValue(invariants?.['irregularRowsAfter']) ?? numberValue(mutationInvariants?.['irregularRowsAfter']),
-    tablePacRegressions: pacRegressions.filter(id => TABLE_PAC_RULES.has(id)),
-    nonTablePacRegressions: pacRegressions.filter(id => !TABLE_PAC_RULES.has(id)),
+    tablePacRegressions: pacRegressions.filter(id => pacRegressionFamily(id) === 'table_header'),
+    nonTablePacRegressions: pacRegressions.filter(id => pacRegressionFamily(id) !== 'table_header'),
+    pacRegressionFamilies,
     note: stringValue(details?.['note']) ?? stringValue(mutation?.['note']),
   };
+  if (attempt.targetRefDetails.length === 0) {
+    targetRefDetails = fallbackTargetRefDetails(attempt);
+    attempt.targetRefDetails = targetRefDetails;
+    attempt.targetRefDetailsAfter = targetRefDetails;
+  }
+  return attempt;
 }
 
 function attemptImprovesTableEvidence(attempt: TableTransactionAttempt): boolean {
@@ -373,14 +539,54 @@ function attemptImprovesTableEvidence(attempt: TableTransactionAttempt): boolean
   return assocImproves || shapeImproves || attempt.tableTreeValidAfter === true;
 }
 
-function hasNonTableTarget(attempt: TableTransactionAttempt): boolean {
+function detailIsTable(detail: TableTargetRefDetail): boolean {
+  const rawRole = detail.rawRole?.toUpperCase() ?? '';
+  const resolvedRole = detail.resolvedRole?.toUpperCase() ?? '';
+  return detail.isTable === true || rawRole === 'TABLE' || detail.resolvedIsTable === true || resolvedRole === 'TABLE';
+}
+
+function detailIsReachableTable(detail: TableTargetRefDetail): boolean {
+  return detailIsTable(detail) && detail.targetResolved === true && detail.targetReachable === true;
+}
+
+function requestedDetails(attempt: TableTransactionAttempt): TableTargetRefDetail[] {
+  const requested = attempt.requestedTargetRefs.length > 0 ? attempt.requestedTargetRefs : attempt.targetRefs;
+  if (requested.length === 0) return attempt.targetRefDetails;
+  const byRef = new Map(attempt.targetRefDetails.map(detail => [detail.ref, detail]));
+  return requested.map(ref => byRef.get(ref)).filter((detail): detail is TableTargetRefDetail => Boolean(detail));
+}
+
+function hasWrongRef(attempt: TableTransactionAttempt): boolean {
+  const details = requestedDetails(attempt);
+  if (details.some(detail => detail.targetResolved === false || !detailIsTable(detail))) return true;
   const role = attempt.resolvedRole?.toUpperCase() ?? null;
-  return attempt.targetResolved === true && role !== null && role !== 'TABLE';
+  return details.length === 0 && attempt.targetResolved === true && role !== null && role !== 'TABLE';
+}
+
+function hasMixedBatchRefs(attempt: TableTransactionAttempt): boolean {
+  const details = requestedDetails(attempt);
+  if (details.length < 2) return false;
+  return details.some(detail => detailIsTable(detail)) && details.some(detail => !detailIsTable(detail) || detail.targetResolved === false);
+}
+
+function allRequestedRefsReachableTables(attempt: TableTransactionAttempt): boolean {
+  const requested = attempt.requestedTargetRefs.length > 0 ? attempt.requestedTargetRefs : attempt.targetRefs;
+  const details = requestedDetails(attempt);
+  return requested.length > 0 && details.length === requested.length && details.every(detailIsReachableTable);
+}
+
+function refsReason(attempt: TableTransactionAttempt): string {
+  const details = requestedDetails(attempt);
+  if (details.length === 0) {
+    return `${attempt.toolName}:${attempt.requestedTargetRefs.join(',') || attempt.targetRefs.join(',') || 'unknown'}:${attempt.resolvedRole ?? 'unknown'}`;
+  }
+  return `${attempt.toolName}:${details.map(detail => `${detail.ref}:${detail.rawRole ?? detail.resolvedRole ?? 'unresolved'}:${detail.skipReason ?? 'ok'}`).join(',')}`;
 }
 
 export function classifyTableTransactionRow(input: TableTransactionRowInput): {
   classification: TableTransactionClassification;
   promotionSupported: boolean;
+  laterStrictTransactionSafe: boolean;
   reasons: string[];
 } {
   const reasons: string[] = [];
@@ -388,41 +594,50 @@ export function classifyTableTransactionRow(input: TableTransactionRowInput): {
     if (input.timedOut) reasons.push('row_timeout');
     if (input.error) reasons.push(`row_error:${input.error}`);
     if (input.analysisError) reasons.push(`analysis_error:${input.analysisError}`);
-    return { classification: 'runtime_or_analyzer_debt', promotionSupported: false, reasons };
+    return { classification: 'runtime_or_analyzer_debt', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
   }
 
   if (input.attempts.length === 0) {
     reasons.push('no_table_tools_attempted');
-    return { classification: 'no_safe_transaction', promotionSupported: false, reasons };
-  }
-
-  const nonTableAttempts = input.attempts.filter(hasNonTableTarget);
-  if (nonTableAttempts.length > 0) {
-    reasons.push(...nonTableAttempts.map(attempt =>
-      `${attempt.toolName}:${attempt.requestedTargetRefs.join(',') || attempt.targetRefs.join(',') || 'unknown'}:${attempt.resolvedRole ?? 'unknown'}`,
-    ));
-    return { classification: 'non_table_target_blocked', promotionSupported: false, reasons };
+    return { classification: 'no_safe_transaction', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
   }
 
   const nonTablePac = input.attempts.flatMap(attempt => attempt.nonTablePacRegressions);
   if (nonTablePac.length > 0) {
-    reasons.push(...[...new Set(nonTablePac)].map(rule => `non_table_pac_regression:${rule}`));
-    return { classification: 'non_target_pac_regression', promotionSupported: false, reasons };
+    reasons.push(...[...new Set(nonTablePac)].map(rule => `non_table_pac_regression:${pacRegressionFamily(rule)}:${rule}`));
+    return { classification: 'non_table_pac_side_effect', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
+  }
+
+  const mixedBatchAttempts = input.attempts.filter(hasMixedBatchRefs);
+  if (mixedBatchAttempts.length > 0) {
+    reasons.push(...mixedBatchAttempts.map(refsReason));
+    return { classification: 'mixed_batch_refs', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
+  }
+
+  const wrongRefAttempts = input.attempts.filter(hasWrongRef);
+  if (wrongRefAttempts.length > 0) {
+    reasons.push(...wrongRefAttempts.map(refsReason));
+    return { classification: 'planner_wrong_ref', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
   }
 
   const tablePac = input.attempts.flatMap(attempt => attempt.tablePacRegressions);
   const tableEvidenceImproved = input.attempts.some(attemptImprovesTableEvidence);
+  const strictSafe = input.role === 'focus' &&
+    tableEvidenceImproved &&
+    input.attempts.some(allRequestedRefsReachableTables) &&
+    nonTablePac.length === 0;
   if (input.role === 'control') {
     reasons.push(tableEvidenceImproved ? 'control_table_mutation_or_table_movement' : 'control_table_attempted');
-    return { classification: 'control_triggered', promotionSupported: false, reasons };
+    return { classification: 'control_table_side_effect', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
   }
 
   if (tablePac.length > 0) {
-    reasons.push(...[...new Set(tablePac)].map(rule => `table_pac_regression:${rule}`));
+    reasons.push(...[...new Set(tablePac)].map(rule => `table_pac_regression:${pacRegressionFamily(rule)}:${rule}`));
     if (tableEvidenceImproved) reasons.push('table_evidence_improved_before_rejection');
     return {
-      classification: tableEvidenceImproved ? 'strict_transaction_candidate' : 'pac_table_regression_only',
-      promotionSupported: tableEvidenceImproved,
+      classification: tableEvidenceImproved ? 'valid_table_no_final_cleanup' : 'table_header_pac_only',
+      promotionSupported: strictSafe,
+      laterStrictTransactionSafe: strictSafe,
       reasons,
     };
   }
@@ -430,11 +645,11 @@ export function classifyTableTransactionRow(input: TableTransactionRowInput): {
   const lowTable = input.tableMarkup !== null && input.tableMarkup < 90;
   if (tableEvidenceImproved && lowTable) {
     reasons.push('table_evidence_improved_but_final_table_score_still_low');
-    return { classification: 'strict_transaction_candidate', promotionSupported: true, reasons };
+    return { classification: 'valid_table_no_final_cleanup', promotionSupported: strictSafe, laterStrictTransactionSafe: strictSafe, reasons };
   }
 
   reasons.push('table_attempts_do_not_support_strict_transaction');
-  return { classification: 'no_safe_transaction', promotionSupported: false, reasons };
+  return { classification: 'no_safe_transaction', promotionSupported: false, laterStrictTransactionSafe: false, reasons };
 }
 
 function idFromFile(file: string): string {
@@ -452,7 +667,7 @@ function boundedError(row: BoundedRow): string | null {
 
 function nativeTableSnapshot(result: AnalysisResult, snapshot: DocumentSnapshot): NativeTableSnapshot {
   const tablePacFailures = buildPacRuleEvidence(snapshot)
-    .filter(rule => rule.status === 'fail' && TABLE_PAC_RULES.has(rule.ruleId))
+    .filter(rule => rule.status === 'fail' && pacRegressionFamily(rule.ruleId) === 'table_header')
     .map(rule => rule.ruleId)
     .filter((id, index, arr) => arr.indexOf(id) === index);
   return {
@@ -520,26 +735,20 @@ async function buildReport(args: ParsedArgs): Promise<TableTransactionReport> {
   }
 
   const byClassification = Object.fromEntries(
-    ([
-      'strict_transaction_candidate',
-      'non_table_target_blocked',
-      'pac_table_regression_only',
-      'non_target_pac_regression',
-      'control_triggered',
-      'runtime_or_analyzer_debt',
-      'no_safe_transaction',
-    ] as TableTransactionClassification[]).map(key => [key, diagnostics.filter(row => row.classification === key).length]),
+    TABLE_TRANSACTION_CLASSIFICATIONS.map(key => [key, diagnostics.filter(row => row.classification === key).length]),
   ) as Record<TableTransactionClassification, number>;
 
-  const strictTransactionCandidates = diagnostics.filter(row => row.classification === 'strict_transaction_candidate').map(row => row.id);
-  const controlTriggered = diagnostics.filter(row => row.classification === 'control_triggered').map(row => row.id);
-  const nonTableTargetBlocked = diagnostics.filter(row => row.classification === 'non_table_target_blocked').map(row => row.id);
-  const nonTargetPacRegression = diagnostics.filter(row => row.classification === 'non_target_pac_regression').map(row => row.id);
+  const laterStrictTransactionCandidates = diagnostics.filter(row => row.laterStrictTransactionSafe).map(row => row.id);
+  const controlsWithTableSideEffects = diagnostics.filter(row => row.classification === 'control_table_side_effect').map(row => row.id);
+  const plannerWrongRef = diagnostics.filter(row => row.classification === 'planner_wrong_ref').map(row => row.id);
+  const mixedBatchRefs = diagnostics.filter(row => row.classification === 'mixed_batch_refs').map(row => row.id);
+  const nonTablePacSideEffects = diagnostics.filter(row => row.classification === 'non_table_pac_side_effect').map(row => row.id);
   const decisionReasons: string[] = [];
-  if (strictTransactionCandidates.length < 2) decisionReasons.push('fewer_than_two_strict_transaction_candidates');
-  if (controlTriggered.length > 0) decisionReasons.push('controls_trigger_table_transaction');
-  if (nonTableTargetBlocked.length > 0) decisionReasons.push('non_table_target_resolution_present');
-  if (nonTargetPacRegression.length > 0) decisionReasons.push('non_target_pac_regression_present');
+  if (laterStrictTransactionCandidates.length < 2) decisionReasons.push('fewer_than_two_later_strict_transaction_candidates');
+  if (controlsWithTableSideEffects.length > 0) decisionReasons.push('controls_trigger_table_side_effects');
+  if (plannerWrongRef.length > 0) decisionReasons.push('planner_wrong_ref_present');
+  if (mixedBatchRefs.length > 0) decisionReasons.push('mixed_batch_refs_present');
+  if (nonTablePacSideEffects.length > 0) decisionReasons.push('non_table_pac_side_effect_present');
   const status = decisionReasons.length === 0 ? 'plan_strict_transaction_behavior' : 'diagnostic_only';
 
   return {
@@ -552,14 +761,15 @@ async function buildReport(args: ParsedArgs): Promise<TableTransactionReport> {
       focusCount: diagnostics.filter(row => row.role === 'focus').length,
       controlCount: diagnostics.filter(row => row.role === 'control').length,
       byClassification,
-      strictTransactionCandidates,
-      nonTableTargetBlocked,
-      controlTriggered,
-      nonTargetPacRegression,
+      laterStrictTransactionCandidates,
+      plannerWrongRef,
+      mixedBatchRefs,
+      controlsWithTableSideEffects,
+      nonTablePacSideEffects,
     },
     decision: {
       status,
-      reasons: status === 'plan_strict_transaction_behavior' ? ['strict_transaction_candidates_clean_against_controls'] : decisionReasons,
+      reasons: status === 'plan_strict_transaction_behavior' ? ['later_strict_transaction_candidates_clean_against_controls'] : decisionReasons,
     },
     rows: diagnostics,
   };
@@ -587,17 +797,18 @@ function writeMarkdown(report: TableTransactionReport): string {
     lines.push(`| \`${key}\` | ${count} |`);
   }
   lines.push('');
-  lines.push(`- Strict transaction candidates: ${report.summary.strictTransactionCandidates.map(id => `\`${id}\``).join(', ') || 'none'}`);
-  lines.push(`- Non-table target blocked: ${report.summary.nonTableTargetBlocked.map(id => `\`${id}\``).join(', ') || 'none'}`);
-  lines.push(`- Controls triggered: ${report.summary.controlTriggered.map(id => `\`${id}\``).join(', ') || 'none'}`);
-  lines.push(`- Non-target PAC regressions: ${report.summary.nonTargetPacRegression.map(id => `\`${id}\``).join(', ') || 'none'}`);
+  lines.push(`- Later strict transaction safe candidates: ${report.summary.laterStrictTransactionCandidates.map(id => `\`${id}\``).join(', ') || 'none'}`);
+  lines.push(`- Planner wrong-ref rows: ${report.summary.plannerWrongRef.map(id => `\`${id}\``).join(', ') || 'none'}`);
+  lines.push(`- Mixed batch-ref rows: ${report.summary.mixedBatchRefs.map(id => `\`${id}\``).join(', ') || 'none'}`);
+  lines.push(`- Controls with table side effects: ${report.summary.controlsWithTableSideEffects.map(id => `\`${id}\``).join(', ') || 'none'}`);
+  lines.push(`- Non-table PAC side effects: ${report.summary.nonTablePacSideEffects.map(id => `\`${id}\``).join(', ') || 'none'}`);
   lines.push('');
   lines.push('## Rows');
   lines.push('');
-  lines.push('| ID | Role | Score | Table | PDF/UA | Attempts | Classification | Reasons |');
-  lines.push('| --- | --- | ---: | ---: | ---: | ---: | --- | --- |');
+  lines.push('| ID | Role | Score | Table | PDF/UA | Attempts | Later Strict Safe | Classification | Reasons |');
+  lines.push('| --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |');
   for (const row of report.rows) {
-    lines.push(`| \`${md(row.id)}\` | ${row.role} | ${md(row.score)} | ${md(row.tableMarkup)} | ${md(row.pdfUaCompliance)} | ${row.attempts.length} | \`${row.classification}\` | ${row.reasons.map(reason => `\`${md(reason)}\``).join(', ')} |`);
+    lines.push(`| \`${md(row.id)}\` | ${row.role} | ${md(row.score)} | ${md(row.tableMarkup)} | ${md(row.pdfUaCompliance)} | ${row.attempts.length} | ${row.laterStrictTransactionSafe ? 'yes' : 'no'} | \`${row.classification}\` | ${row.reasons.map(reason => `\`${md(reason)}\``).join(', ')} |`);
   }
   lines.push('');
   lines.push('## Table Attempts');
@@ -605,8 +816,8 @@ function writeMarkdown(report: TableTransactionReport): string {
     lines.push('');
     lines.push(`### ${row.id}`);
     lines.push('');
-    lines.push('| Tool | Outcome | Score | Requested Refs | Resolved Role | Table PAC Regressions | Non-Table PAC Regressions | Invariant Movement |');
-    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+    lines.push('| Tool | Outcome | Score | Requested Refs | Ref Details | Changed | Skipped | PAC Families | Invariant Movement |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
     for (const attempt of row.attempts) {
       const movement = [
         `assoc:${attempt.headerAssociationMissingBefore ?? ''}->${attempt.headerAssociationMissingAfter ?? ''}`,
@@ -614,7 +825,12 @@ function writeMarkdown(report: TableTransactionReport): string {
         `direct:${attempt.directCellsUnderTableBefore ?? ''}->${attempt.directCellsUnderTableAfter ?? ''}`,
         `irregular:${attempt.irregularRowsBefore ?? ''}->${attempt.irregularRowsAfter ?? ''}`,
       ].join('; ');
-      lines.push(`| \`${attempt.toolName}\` | ${md(attempt.outcome)} | ${md(attempt.scoreBefore)}->${md(attempt.scoreAfter)} | ${md(attempt.requestedTargetRefs.join(', ') || attempt.targetRefs.join(', '))} | ${md(attempt.resolvedRole)} | ${md(attempt.tablePacRegressions.join(', '))} | ${md(attempt.nonTablePacRegressions.join(', '))} | ${md(movement)} |`);
+      const refDetails = attempt.targetRefDetails.map(detail => `${detail.ref}:${detail.rawRole ?? detail.resolvedRole ?? 'unresolved'}:${detail.targetReachable === true ? 'reachable' : detail.targetReachable === false ? 'unreachable' : 'reach?' }:${detail.skipReason ?? 'ok'}`).join('; ');
+      const pacFamilies = Object.entries(attempt.pacRegressionFamilies)
+        .filter(([, rules]) => rules.length > 0)
+        .map(([family, rules]) => `${family}:${rules.join(',')}`)
+        .join('; ');
+      lines.push(`| \`${attempt.toolName}\` | ${md(attempt.outcome)} | ${md(attempt.scoreBefore)}->${md(attempt.scoreAfter)} | ${md(attempt.requestedTargetRefs.join(', ') || attempt.targetRefs.join(', '))} | ${md(refDetails || attempt.resolvedRole)} | ${md(attempt.changedTargetRefs.join(', '))} | ${md(attempt.skippedTargetRefs.join(', '))} | ${md(pacFamilies)} | ${md(movement)} |`);
     }
   }
   lines.push('');

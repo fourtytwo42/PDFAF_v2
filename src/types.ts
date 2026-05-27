@@ -815,6 +815,10 @@ export interface AppliedRemediationTool {
 
 export interface PythonMutationInvariantPayload {
   targetRef?: string | null;
+  requestedTargetRefs?: string[];
+  targetRefDetails?: Array<Record<string, unknown>>;
+  targetRefDetailsBefore?: Array<Record<string, unknown>>;
+  targetRefDetailsAfter?: Array<Record<string, unknown>>;
   targetResolved?: boolean;
   targetReachable?: boolean;
   resolvedRole?: string | null;
