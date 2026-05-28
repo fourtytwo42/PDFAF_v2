@@ -8,6 +8,12 @@ A production candidate that de-duplicated structure nodes by stable indirect obj
 
 No production remediation behavior, scoring rule, PAC gate, table admission, source gate, filename gate, row gate, hash gate, ODL/PAC/POC runtime dependency, semantic behavior, or generated PDF artifact is kept from this diagnostic.
 
+Follow-up source tooling now keeps this check explicit and non-mutating:
+
+- `scripts/mcid-attribution-diagnostic.ts` runs the Python `--diagnose-mcid-attribution` CLI and compares current wrapper traversal against stable object-key traversal.
+- The Python stable traversal helpers are diagnostic-only. `collect_orphan_mcids` still uses the accepted production collector.
+- `tests/benchmark/mcidAttributionDiagnostic.test.ts` covers the diagnostic classifier and argument parsing.
+
 ## Local Evidence
 
 Scratch root:

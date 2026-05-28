@@ -2906,6 +2906,74 @@ def collect_referenced_mcid_pairs(pdf: pikepdf.Pdf, page_map: dict) -> set[tuple
     return out
 
 
+def collect_referenced_mcid_pairs_stable(pdf: pikepdf.Pdf, page_map: dict) -> set[tuple[int, int]]:
+    """Diagnostic stable-key variant of collect_referenced_mcid_pairs."""
+    out: set[tuple[int, int]] = set()
+
+    def mcr_page_index(mcr, fallback_page: int) -> int:
+        try:
+            pg = mcr.get("/Pg")
+            if pg is not None:
+                objgen = getattr(pg, "objgen", None)
+                if objgen:
+                    return page_map.get(int(objgen[0]), fallback_page)
+        except Exception:
+            pass
+        return fallback_page
+
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        if sr is None:
+            return out
+        q: deque = deque()
+        _enqueue_children(q, sr.get("/K"))
+        seen: set = set()
+        it = 0
+        while q and it < MAX_ITEMS * 80:
+            it += 1
+            elem = q.popleft()
+            if not isinstance(elem, pikepdf.Dictionary):
+                continue
+            try:
+                visit_key = _struct_elem_visit_key(elem)
+            except Exception:
+                visit_key = id(elem)
+            if visit_key in seen:
+                continue
+            seen.add(visit_key)
+            pg = get_page_number(elem, page_map)
+            k = elem.get("/K")
+            if isinstance(k, int):
+                out.add((pg, int(k)))
+            elif isinstance(k, pikepdf.Array):
+                for ch in k:
+                    if isinstance(ch, int):
+                        out.add((pg, int(ch)))
+                    elif isinstance(ch, pikepdf.Dictionary):
+                        try:
+                            if ch.get("/Type") == pikepdf.Name("/MCR"):
+                                mid = ch.get("/MCID")
+                                if isinstance(mid, int):
+                                    out.add((mcr_page_index(ch, pg), int(mid)))
+                            else:
+                                q.append(ch)
+                        except Exception:
+                            q.append(ch)
+            elif isinstance(k, pikepdf.Dictionary):
+                try:
+                    if k.get("/Type") == pikepdf.Name("/MCR"):
+                        mid = k.get("/MCID")
+                        if isinstance(mid, int):
+                            out.add((mcr_page_index(k, pg), int(mid)))
+                    else:
+                        q.append(k)
+                except Exception:
+                    q.append(k)
+    except Exception:
+        pass
+    return out
+
+
 def _mcid_pair_key(pair: tuple[int, int]) -> str:
     try:
         return f"{int(pair[0])}:{int(pair[1])}"
@@ -2986,6 +3054,85 @@ def _collect_struct_elem_referenced_mcid_pairs(elem, page_map: dict) -> set[tupl
             except Exception:
                 q.append(k)
     return out
+
+
+def collect_page_stream_mcid_pairs(pdf: pikepdf.Pdf, max_pages: int | None = None) -> set[tuple[int, int]]:
+    mp = _mcid_max_pages() if max_pages is None else max(0, int(max_pages))
+    out: set[tuple[int, int]] = set()
+    for pi in range(min(len(pdf.pages), mp)):
+        try:
+            raw = _read_page_contents_raw(pdf.pages[pi])
+            for m in MCID_OP_RE.finditer(raw):
+                out.add((pi, int(m.group(1))))
+        except Exception:
+            pass
+    return out
+
+
+def _table_refs_covering_mcid_pairs(pdf: pikepdf.Pdf, pairs: set[tuple[int, int]], limit: int = 64) -> list[dict]:
+    if not pairs:
+        return []
+    out: list[dict] = []
+    try:
+        page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    for table in _iter_table_struct_elems(pdf):
+        if len(out) >= limit:
+            break
+        if not isinstance(table, pikepdf.Dictionary):
+            continue
+        ref = object_ref_str(table)
+        if not ref:
+            continue
+        try:
+            table_pairs = _collect_struct_elem_referenced_mcid_pairs(table, page_map)
+        except Exception:
+            table_pairs = set()
+        overlap = table_pairs & pairs
+        if not overlap:
+            continue
+        out.append({
+            "ref": ref,
+            "coveredCount": len(overlap),
+            "coveredSampleKeys": [_mcid_pair_key(pair) for pair in sorted(overlap)[:16]],
+            "referencedMcidCount": len(table_pairs),
+        })
+    return out
+
+
+def collect_mcid_attribution_diagnostic(pdf: pikepdf.Pdf, max_pages: int | None = None, sample_limit: int = 64) -> dict:
+    page_map = build_page_map(pdf)
+    stream_pairs = collect_page_stream_mcid_pairs(pdf, max_pages)
+    current_refs = collect_referenced_mcid_pairs(pdf, page_map)
+    stable_refs = collect_referenced_mcid_pairs_stable(pdf, page_map)
+    current_orphans = stream_pairs - current_refs
+    stable_orphans = stream_pairs - stable_refs
+    current_orphans_referenced_stably = current_orphans & stable_refs
+    stable_ref_only = stable_refs - current_refs
+    current_ref_only = current_refs - stable_refs
+    return {
+        "pageCount": len(pdf.pages),
+        "pagesScanned": min(len(pdf.pages), _mcid_max_pages() if max_pages is None else max(0, int(max_pages))),
+        "streamMcidCount": len(stream_pairs),
+        "currentReferencedMcidCount": len(current_refs),
+        "stableReferencedMcidCount": len(stable_refs),
+        "currentOrphanMcidCount": len(current_orphans),
+        "stableOrphanMcidCount": len(stable_orphans),
+        "currentOrphanStableReferencedCount": len(current_orphans_referenced_stably),
+        "stableRefOnlyCount": len(stable_ref_only),
+        "currentRefOnlyCount": len(current_ref_only),
+        "currentOrphanSample": _mcid_pair_sample(current_orphans, sample_limit),
+        "stableOrphanSample": _mcid_pair_sample(stable_orphans, sample_limit),
+        "currentOrphanStableReferencedSample": _mcid_pair_sample(current_orphans_referenced_stably, sample_limit),
+        "stableRefOnlySample": _mcid_pair_sample(stable_ref_only, sample_limit),
+        "currentRefOnlySample": _mcid_pair_sample(current_ref_only, sample_limit),
+        "tableRefsCoveringCurrentOrphanStableRefs": _table_refs_covering_mcid_pairs(
+            pdf,
+            current_orphans_referenced_stably,
+            limit=64,
+        ),
+    }
 
 
 def collect_orphan_mcids(pdf: pikepdf.Pdf) -> list[dict]:
@@ -14042,6 +14189,19 @@ if __name__ == "__main__":
     argv = sys.argv[1:]
     if len(argv) >= 2 and argv[0] == "--mutate":
         raise SystemExit(mutate_main(argv[1]))
+    if len(argv) >= 2 and argv[0] == "--diagnose-mcid-attribution":
+        path = argv[1]
+        try:
+            max_pages = int(argv[2]) if len(argv) >= 3 else None
+        except Exception:
+            max_pages = None
+        try:
+            with pikepdf.open(path, suppress_warnings=True) as pdf:
+                rep = collect_mcid_attribution_diagnostic(pdf, max_pages=max_pages)
+            print(json.dumps(rep, ensure_ascii=False, default=str))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(0)
     if len(argv) >= 2 and argv[0] == "--trace-structure":
         raise SystemExit(trace_structure_main(argv[1]))
     if len(argv) >= 2 and argv[0] == "--stage131-shape":
