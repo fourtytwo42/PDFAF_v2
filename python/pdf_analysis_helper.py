@@ -2819,8 +2819,20 @@ def try_struct_elem_bbox(elem) -> list[float] | None:
 
 
 def collect_referenced_mcid_pairs(pdf: pikepdf.Pdf, page_map: dict) -> set[tuple[int, int]]:
-    """(page_index, mcid) pairs referenced by structure elements' integer /K."""
+    """(page_index, mcid) pairs referenced by structure elements' integer /K or /MCR."""
     out: set[tuple[int, int]] = set()
+
+    def mcr_page_index(mcr, fallback_page: int) -> int:
+        try:
+            pg = mcr.get("/Pg")
+            if pg is not None:
+                objgen = getattr(pg, "objgen", None)
+                if objgen:
+                    return page_map.get(int(objgen[0]), fallback_page)
+        except Exception:
+            pass
+        return fallback_page
+
     try:
         sr = pdf.Root.get("/StructTreeRoot")
         if sr is None:
@@ -2852,7 +2864,7 @@ def collect_referenced_mcid_pairs(pdf: pikepdf.Pdf, page_map: dict) -> set[tuple
                             if ch.get("/Type") == pikepdf.Name("/MCR"):
                                 mid = ch.get("/MCID")
                                 if isinstance(mid, int):
-                                    out.add((pg, mid))
+                                    out.add((mcr_page_index(ch, pg), mid))
                             else:
                                 q.append(ch)
                         except Exception:
@@ -2862,7 +2874,7 @@ def collect_referenced_mcid_pairs(pdf: pikepdf.Pdf, page_map: dict) -> set[tuple
                     if k.get("/Type") == pikepdf.Name("/MCR"):
                         mid = k.get("/MCID")
                         if isinstance(mid, int):
-                            out.add((pg, mid))
+                            out.add((mcr_page_index(k, pg), mid))
                     else:
                         q.append(k)
                 except Exception:

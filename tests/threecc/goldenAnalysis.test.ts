@@ -112,6 +112,45 @@ describe('Phase 3c-c golden PDF (Python)', () => {
     expect(typeof d.taggedContentAudit?.suspectedPathPaintOutsideMc).toBe('number');
   }, 60_000);
 
+  it('uses explicit /MCR /Pg when deciding whether MCID content is orphaned', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pdfaf-mcr-pg-'));
+    const pdfPath = join(dir, 'mcr-pg.pdf');
+    const script = join(dir, 'make_mcr_pg.py');
+    writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+page0 = pdf.add_blank_page(page_size=(612, 792))
+page1 = pdf.add_blank_page(page_size=(612, 792))
+page1.obj['/Contents'] = pdf.make_stream(
+    b'/P << /MCID 0 >> BDC\\nBT /F1 12 Tf 10 10 Td (Page two) Tj ET\\nEMC\\n'
+)
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+p = pdf.make_indirect(Dictionary(
+    Type=Name('/StructElem'),
+    S=Name('/P'),
+    P=doc,
+    Pg=page0.obj,
+    K=Dictionary(Type=Name('/MCR'), Pg=page1.obj, MCID=0),
+))
+doc['/K'] = Array([p])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+    execFileSync(PY, [script], { encoding: 'utf-8' });
+    const raw = execFileSync(PY, [helper, pdfPath], { encoding: 'utf-8' });
+    const d = JSON.parse(raw) as {
+      orphanMcids?: Array<{ page: number; mcid: number }>;
+      taggedContentAudit?: { orphanMcidCount?: number };
+    };
+    expect(d.orphanMcids ?? []).toEqual([]);
+    expect(d.taggedContentAudit?.orphanMcidCount).toBe(0);
+  }, 60_000);
+
   it('golden fixture mcidTextSpans includes resolvedText for Tj literal', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pdfaf-3cc-'));
     const pdfPath = join(dir, 'golden-res.pdf');
