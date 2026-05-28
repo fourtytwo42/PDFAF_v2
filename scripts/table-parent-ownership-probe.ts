@@ -30,6 +30,7 @@ interface ParsedArgs {
   pdfs: string[];
   outDir: string;
   controls: Set<string>;
+  strictTableRefs: boolean;
 }
 
 interface ScoreMetrics {
@@ -74,6 +75,7 @@ interface TableParentOwnershipRow {
 interface TableParentOwnershipReport {
   generatedAt: string;
   outDir: string;
+  strictTableRefs: boolean;
   rows: TableParentOwnershipRow[];
   summary: {
     rowCount: number;
@@ -101,6 +103,8 @@ Options:
   --pdf <path>      PDF to probe; repeatable
   --out <dir>       Output directory (default: ${DEFAULT_OUT_ROOT}/table-parent-ownership-probe-<timestamp>)
   --control <id>    Mark row id as a control; repeatable
+  --strict-table-refs
+                    Probe table tools only with explicit object-backed refs and strict all-/Table ref validation
   --help            Show this help.`;
 }
 
@@ -108,6 +112,7 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
   const pdfs: string[] = [];
   const controls = new Set<string>();
   let outDir = join(DEFAULT_OUT_ROOT, `table-parent-ownership-probe-${timestampSlug(now)}`);
+  let strictTableRefs = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -126,12 +131,14 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
       const value = argv[++index];
       if (!value) throw new Error(`Missing --control value\n${usage()}`);
       controls.add(rowId(value));
+    } else if (arg === '--strict-table-refs') {
+      strictTableRefs = true;
     } else {
       throw new Error(`Unknown argument ${arg}\n${usage()}`);
     }
   }
   if (pdfs.length === 0) throw new Error(`Missing --pdf\n${usage()}`);
-  return { pdfs, outDir, controls };
+  return { pdfs, outDir, controls, strictTableRefs };
 }
 
 function rowId(file: string): string {
@@ -232,6 +239,26 @@ function collectRefs(...values: unknown[]): string[] {
     }
   }
   return out;
+}
+
+function hasTableRefParam(params: Record<string, unknown>): boolean {
+  return Boolean(
+    stringValue(params['structRef']) ||
+    stringValue(params['targetRef']) ||
+    stringValue(params['targetStructRef']) ||
+    stringArray(params['structRefs']).length > 0
+  );
+}
+
+export function strictTableProbeParams(
+  toolName: TableToolName,
+  params: Record<string, unknown>,
+  strictTableRefs: boolean,
+): Record<string, unknown> {
+  if (!strictTableRefs) return params;
+  if (!TABLE_TOOLS.includes(toolName)) return params;
+  if (!hasTableRefParam(params)) return {};
+  return { ...params, strictTableTargetRef: true };
 }
 
 function targetDetails(details: Record<string, unknown> | null): Record<string, unknown>[] {
@@ -351,7 +378,7 @@ async function analyzeBuffer(buffer: Buffer, filename: string): Promise<{ result
   }
 }
 
-async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control'): Promise<TableParentOwnershipRow> {
+async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strictTableRefs: boolean): Promise<TableParentOwnershipRow> {
   const file = basename(pdfPath);
   const id = rowId(file);
   try {
@@ -362,7 +389,11 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control'): Promi
     const steps: TableParentOwnershipStep[] = [];
 
     for (const toolName of TABLE_TOOLS) {
-      const params = buildDefaultParams(toolName, current.result, current.snapshot, applied);
+      const params = strictTableProbeParams(
+        toolName,
+        buildDefaultParams(toolName, current.result, current.snapshot, applied),
+        strictTableRefs,
+      );
       const before = metrics(current.result, current.snapshot);
       if (Object.keys(params).length === 0) {
         const classified = classifyTableParentOwnershipStep({
@@ -522,7 +553,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
   const rows: TableParentOwnershipRow[] = [];
   for (const pdf of args.pdfs) {
     const id = rowId(pdf);
-    rows.push(await probePdf(pdf, args.controls.has(id) ? 'control' : 'focus'));
+    rows.push(await probePdf(pdf, args.controls.has(id) ? 'control' : 'focus', args.strictTableRefs));
   }
   const ownershipRegressionCandidates = rows
     .filter(row => row.classification === 'ownership_regression_candidate')
@@ -538,6 +569,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
   return {
     generatedAt: new Date().toISOString(),
     outDir: args.outDir,
+    strictTableRefs: args.strictTableRefs,
     rows,
     summary: {
       rowCount: rows.length,
@@ -561,6 +593,7 @@ function renderMarkdown(report: TableParentOwnershipReport): string {
     '',
     `Generated: ${report.generatedAt}`,
     `Decision: \`${report.decision.status}\``,
+    `Strict table refs: \`${report.strictTableRefs}\``,
     `Reasons: ${report.decision.reasons.map(reason => `\`${reason}\``).join(', ')}`,
     '',
     '## Summary',

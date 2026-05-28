@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyTableParentOwnershipStep,
   parseArgs,
+  strictTableProbeParams,
   type TableParentOwnershipStepClassification,
 } from '../../scripts/table-parent-ownership-probe.js';
 
@@ -78,10 +79,37 @@ describe('table parent ownership probe classification', () => {
       '--pdf', '/tmp/b.pdf',
       '--out', '/tmp/out',
       '--control', 'b.pdf',
+      '--strict-table-refs',
     ], new Date('2026-05-27T00:00:00Z'));
 
     expect(args.pdfs).toEqual(['/tmp/a.pdf', '/tmp/b.pdf']);
     expect(args.outDir).toBe('/tmp/out');
     expect(args.controls.has('b')).toBe(true);
+    expect(args.strictTableRefs).toBe(true);
+  });
+
+  it('defaults strict table refs off', () => {
+    const args = parseArgs(['--pdf', '/tmp/a.pdf'], new Date('2026-05-27T00:00:00Z'));
+
+    expect(args.strictTableRefs).toBe(false);
+  });
+
+  it('adds strict validation to object-backed table params', () => {
+    expect(strictTableProbeParams('normalize_table_structure', { structRef: '10_0' }, true)).toEqual({
+      structRef: '10_0',
+      strictTableTargetRef: true,
+    });
+    expect(strictTableProbeParams('set_table_header_cells', { structRefs: ['10_0', '11_0'] }, true)).toEqual({
+      structRefs: ['10_0', '11_0'],
+      strictTableTargetRef: true,
+    });
+  });
+
+  it('skips broad no-ref table params in strict mode', () => {
+    expect(strictTableProbeParams('repair_native_table_headers', { maxTables: 2 }, true)).toEqual({});
+  });
+
+  it('leaves table params unchanged when strict mode is off', () => {
+    expect(strictTableProbeParams('normalize_table_structure', { maxTables: 2 }, false)).toEqual({ maxTables: 2 });
   });
 });
