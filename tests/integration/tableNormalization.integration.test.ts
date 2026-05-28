@@ -171,6 +171,156 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildEmptyTableShellPdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-empty-shell-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+empty_table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+empty_row = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=empty_table))
+empty_table['/K'] = Array([empty_row])
+real_table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index in range(2):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=real_table))
+    cells = []
+    for _ in range(2):
+        role = Name('/TH') if row_index == 0 else Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+real_table['/K'] = Array(rows)
+doc['/K'] = Array([empty_table, real_table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
+function buildSingleColumnVarianceTablePdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-single-column-variance-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index, count in enumerate([1, 1, 1, 2, 1, 1, 1, 2]):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for _ in range(count):
+        role = Name('/TH') if row_index == 0 else Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
+function buildEmptyCornerHeaderCellTablePdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-empty-corner-header-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+header_ids = {}
+for row_index in range(3):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for cell_index in range(3):
+        if row_index == 0 and cell_index == 0:
+            role = Name('/TD')
+        elif row_index == 0 or cell_index == 0:
+            role = Name('/TH')
+        else:
+            role = Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        if row_index == 0 and cell_index > 0:
+            header_id = f"h-c{cell_index}"
+            cell['/ID'] = header_id
+            cell['/Scope'] = Name('/Column')
+            header_ids[(row_index, cell_index)] = header_id
+        elif cell_index == 0 and row_index > 0:
+            header_id = f"h-r{row_index}"
+            cell['/ID'] = header_id
+            cell['/Scope'] = Name('/Row')
+            header_ids[(row_index, cell_index)] = header_id
+        elif row_index > 0 and cell_index > 0:
+            cell['/Headers'] = Array([header_ids[(row_index, 0)], header_ids[(0, cell_index)]])
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
+function buildHeaderOnlyTablePdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-header-only-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TH'), P=tr))
+tr['/K'] = Array([cell])
+table['/K'] = Array([tr])
+doc['/K'] = Array([table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
 function buildStronglyIrregularTableWithEmptyLeadingRowPdf(): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-empty-row-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -640,6 +790,151 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.irregularRowsBefore).toBeGreaterThan(row?.invariants?.irregularRowsAfter ?? 0);
     expect(row?.invariants?.stronglyIrregularTableCountBefore).toBe(0);
     expect(row?.debug?.changedTargetRefs).toHaveLength(4);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('removes empty table shells only when the explicit class is requested', async () => {
+    const buf = buildEmptyTableShellPdf();
+    const generic = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'short_header_row_template',
+          maxTablesPerRun: 1,
+        },
+      },
+    ]);
+    const genericRow = generic.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(genericRow?.outcome).toBe('no_effect');
+
+    const specific = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'empty_table_shell',
+          maxTablesPerRun: 1,
+        },
+      },
+    ]);
+
+    expect(specific.result.success).toBe(true);
+    const row = specific.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.note).toBe('empty_table_shell_removed');
+    expect(row?.invariants?.emptyTableShellCountBefore).toBe(1);
+    expect(row?.invariants?.emptyTableShellCountAfter).toBe(0);
+    expect(row?.invariants?.tableCountAfter).toBeLessThan(row?.invariants?.tableCountBefore ?? 0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('pads single-column variance templates only when the explicit class is requested', async () => {
+    const buf = buildSingleColumnVarianceTablePdf();
+    const generic = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'strongly_irregular_rows',
+          maxTablesPerRun: 1,
+          maxSyntheticCells: 16,
+        },
+      },
+    ]);
+    const genericRow = generic.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(genericRow?.outcome).toBe('no_effect');
+
+    const specific = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'single_column_variance_template',
+          maxTablesPerRun: 1,
+          maxSyntheticCells: 16,
+        },
+      },
+    ]);
+
+    expect(specific.result.success).toBe(true);
+    const row = specific.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.irregularRowsBefore).toBeGreaterThan(0);
+    expect(row?.invariants?.irregularRowsAfter).toBe(0);
+    expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(row?.invariants?.headerCellCountBefore ?? 0);
+    expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('retags empty corner data cells only when the explicit class is requested', async () => {
+    const buf = buildEmptyCornerHeaderCellTablePdf();
+    const generic = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'short_header_row_template',
+          maxTablesPerRun: 1,
+          maxSyntheticCells: 4,
+        },
+      },
+    ]);
+    const genericRow = generic.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(genericRow?.outcome).toBe('no_effect');
+
+    const specific = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'empty_corner_header_cell',
+          maxTablesPerRun: 1,
+        },
+      },
+    ]);
+
+    expect(specific.result.success).toBe(true);
+    const row = specific.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.dataCellsWithoutHeaderCountBefore).toBe(1);
+    expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBe(0);
+    expect(row?.invariants?.orphanHeaderCellCountAfter).toBeLessThanOrEqual(row?.invariants?.orphanHeaderCellCountBefore ?? 0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('associates header-only tables only when explicitly requested', async () => {
+    const buf = buildHeaderOnlyTablePdf();
+    const generic = await runPythonMutationBatch(buf, [
+      {
+        op: 'set_table_header_cells',
+        params: {
+          tableHeaderAssociation: true,
+          associateAllTableHeaders: true,
+          maxTableHeaderAssociationTargets: 1,
+        },
+      },
+    ]);
+    const genericRow = generic.result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(genericRow?.outcome).toBe('no_effect');
+
+    const explicit = await runPythonMutationBatch(buf, [
+      {
+        op: 'set_table_header_cells',
+        params: {
+          tableHeaderAssociation: true,
+          associateAllTableHeaders: true,
+          includeHeaderOnlyTables: true,
+          maxTableHeaderAssociationTargets: 1,
+        },
+      },
+    ]);
+
+    expect(explicit.result.success).toBe(true);
+    const row = explicit.result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.debug?.includeHeaderOnlyTables).toBe(true);
+    expect(row?.invariants?.orphanHeaderCellCountBefore).toBe(1);
+    expect(row?.invariants?.orphanHeaderCellCountAfter).toBe(0);
+    expect(row?.invariants?.headerCellsWithScopeCountAfter).toBeGreaterThan(0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 

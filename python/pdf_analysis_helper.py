@@ -983,6 +983,7 @@ def _table_skip_ref_detail(ref: str, reason: str, resolved_role: str | None = No
 def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
     refs = _table_target_refs(params)
     strict_table_targets = bool(params.get("strictTableTargetRef") or params.get("strictTableTargetRefs"))
+    include_header_only_tables = bool(params.get("includeHeaderOnlyTables"))
     changed_refs: list[str] = []
     skipped_ref_details: list[dict] = []
     targets: list[tuple[str, pikepdf.Dictionary]] = []
@@ -1000,7 +1001,7 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
             if role.upper() != "TABLE":
                 continue
             th_count, td_count = _count_table_cells(table)
-            if th_count <= 0 or td_count <= 0:
+            if th_count <= 0 or (td_count <= 0 and not include_header_only_tables):
                 continue
             ref = object_ref_str(table) or ""
             targets.append((ref, table))
@@ -1032,6 +1033,7 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
                 "skippedTargetRefDetails": skipped_ref_details,
                 "strictTableTargetRef": True,
                 "tableHeaderAssociation": bool(params.get("tableHeaderAssociation")),
+                "includeHeaderOnlyTables": include_header_only_tables,
             })
         except Exception:
             pass
@@ -1063,6 +1065,7 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
                 "skippedTargetRefDetails": skipped_ref_details,
                 "tableHeaderAssociation": bool(params.get("tableHeaderAssociation")),
                 "strictTableTargetRef": strict_table_targets,
+                "includeHeaderOnlyTables": include_header_only_tables,
             }
             _set_last_mutation_debug(payload)
         except Exception:
@@ -1080,6 +1083,7 @@ def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
                 "skippedTargetRefDetails": skipped_ref_details,
                 "tableHeaderAssociation": bool(params.get("tableHeaderAssociation")),
                 "strictTableTargetRef": strict_table_targets,
+                "includeHeaderOnlyTables": include_header_only_tables,
             })
         except Exception:
             pass
@@ -4271,6 +4275,78 @@ def _is_empty_table_row_struct(tr_elem) -> bool:
     if _subtree_has_objr_reference(tr_elem):
         return False
     return True
+
+
+def _subtree_has_text_metadata(elem) -> bool:
+    if not isinstance(elem, pikepdf.Dictionary):
+        return False
+    q: deque = deque([elem])
+    seen: set = set()
+    while q and len(seen) < MAX_ITEMS:
+        cur = q.popleft()
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        vk = _struct_elem_visit_key(cur)
+        if vk in seen:
+            continue
+        seen.add(vk)
+        try:
+            for key in ("/Alt", "/ActualText", "/Title"):
+                if safe_str(cur.get(key)).strip():
+                    return True
+        except Exception:
+            pass
+        try:
+            k = cur.get("/K")
+        except Exception:
+            k = None
+        values = list(k) if isinstance(k, pikepdf.Array) else ([k] if isinstance(k, pikepdf.Dictionary) else [])
+        for item in values:
+            if isinstance(item, pikepdf.Dictionary) and _is_struct_elem_dict(item):
+                q.append(item)
+    return False
+
+
+def _is_empty_table_shell_struct(table_elem) -> bool:
+    if not isinstance(table_elem, pikepdf.Dictionary):
+        return False
+    if (get_name(table_elem) or "").lstrip("/").upper() != "TABLE":
+        return False
+    th_count, td_count = _count_table_cells(table_elem)
+    if th_count > 0 or td_count > 0:
+        return False
+    audit = _audit_table_structure(table_elem)
+    if int(audit.get("cellsMisplacedCount") or 0) > 0:
+        return False
+    row_count = int(audit.get("rowCount") or 0)
+    removable_rows = int(audit.get("removableEmptyRowCount") or 0)
+    if row_count > 0 and removable_rows < row_count:
+        return False
+    try:
+        if len(_collect_subtree_mcids(table_elem)) > 0:
+            return False
+    except Exception:
+        return False
+    if _subtree_has_objr_reference(table_elem):
+        return False
+    if _subtree_has_text_metadata(table_elem):
+        return False
+    try:
+        parent = table_elem.get("/P")
+    except Exception:
+        parent = None
+    return isinstance(parent, pikepdf.Dictionary)
+
+
+def _remove_empty_table_shell(table_elem) -> bool:
+    """Remove an empty /Table shell only when it carries no content ownership."""
+    if not _is_empty_table_shell_struct(table_elem):
+        return False
+    try:
+        parent = table_elem.get("/P")
+    except Exception:
+        return False
+    return _remove_struct_child(parent, table_elem)
 
 
 def _remove_empty_table_rows(section_elem) -> bool:
@@ -8457,7 +8533,165 @@ def _normalize_short_header_row_table(table_elem, pdf: pikepdf.Pdf, params: dict
     return changed
 
 
+def _single_column_variance_template_info(table_elem, params: dict | None = None) -> tuple[int, int] | None:
+    """Return (target_column_count, missing_cell_count) for narrow 1/2-column variance tables."""
+    params = params or {}
+    audit = _audit_table_structure(table_elem)
+    if int(audit.get("cellsMisplacedCount") or 0) > 0:
+        return None
+    row_counts = [int(value or 0) for value in list(audit.get("rowCellCounts") or [])]
+    if len(row_counts) < 3 or len(row_counts) > 20:
+        return None
+    if any(value <= 0 for value in row_counts):
+        return None
+    max_count = max(row_counts)
+    min_count = min(row_counts)
+    if max_count != 2 or min_count != 1:
+        return None
+    if row_counts.count(2) < 2 or row_counts.count(1) < 2:
+        return None
+    try:
+        if int(audit.get("maxRowSpan") or 1) > 1 or int(audit.get("maxColSpan") or 1) > 1:
+            return None
+    except Exception:
+        return None
+    requested = int(params.get("dominantColumnCount") or max_count or 0)
+    if requested != 2:
+        return None
+    missing = sum(max_count - value for value in row_counts)
+    if missing <= 0:
+        return None
+    return max_count, missing
+
+
+def _normalize_single_column_variance_table(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Repair narrow single-column-dominant templates where repeated rows have one
+    structural cell but the same table also proves a two-column template.
+    """
+    info = _single_column_variance_template_info(table_elem, params)
+    if info is None:
+        return False
+    target_columns, missing_total = info
+    try:
+        max_added = max(1, min(32, int(params.get("maxSyntheticCells") or 16)))
+    except Exception:
+        max_added = 16
+    if missing_total > max_added:
+        return False
+
+    synthetic_count = 0
+    changed = False
+    for row in _iter_table_rows(table_elem):
+        current = _count_tr_row_cells(row)
+        if current <= 0 or current >= target_columns:
+            continue
+        missing = target_columns - current
+        if synthetic_count + missing > max_added:
+            break
+        try:
+            cells = [
+                child for child in _direct_role_children(row)
+                if (get_name(child) or "").lstrip("/").upper() in ("TH", "TD")
+            ]
+        except Exception:
+            cells = []
+        role_names = [(get_name(cell) or "").lstrip("/").upper() for cell in cells]
+        synthetic_role = "TH" if role_names and all(role == "TH" for role in role_names) else "TD"
+        for _ in range(missing):
+            if _append_empty_table_cell(row, pdf, synthetic_role):
+                synthetic_count += 1
+                changed = True
+    if changed:
+        _associate_existing_table_headers(table_elem)
+    return changed
+
+
+def _empty_corner_header_cell_info(table_elem, params: dict | None = None) -> int | None:
+    """Return column count when an empty top-left TD should be a corner TH."""
+    _ = params
+    audit = _audit_table_structure(table_elem)
+    if int(audit.get("cellsMisplacedCount") or 0) > 0:
+        return None
+    row_counts = [int(value or 0) for value in list(audit.get("rowCellCounts") or [])]
+    if len(row_counts) < 2 or len(row_counts) > 20:
+        return None
+    column_count = row_counts[0]
+    if column_count < 2 or any(value != column_count for value in row_counts):
+        return None
+    try:
+        if int(audit.get("maxRowSpan") or 1) > 1 or int(audit.get("maxColSpan") or 1) > 1:
+            return None
+    except Exception:
+        return None
+    rows = _iter_table_rows(table_elem)
+    if len(rows) < len(row_counts):
+        return None
+    first_row_cells = [
+        child for child in _direct_role_children(rows[0])
+        if (get_name(child) or "").lstrip("/").upper() in ("TH", "TD")
+    ]
+    if len(first_row_cells) != column_count:
+        return None
+    corner = first_row_cells[0]
+    if (get_name(corner) or "").lstrip("/").upper() != "TD":
+        return None
+    if _collect_subtree_mcids(corner):
+        return None
+    if _subtree_has_objr_reference(corner) or _subtree_has_text_metadata(corner):
+        return None
+    if any((get_name(cell) or "").lstrip("/").upper() != "TH" for cell in first_row_cells[1:]):
+        return None
+    body_has_data = False
+    for row in rows[1:]:
+        cells = [
+            child for child in _direct_role_children(row)
+            if (get_name(child) or "").lstrip("/").upper() in ("TH", "TD")
+        ]
+        if len(cells) != column_count:
+            return None
+        if (get_name(cells[0]) or "").lstrip("/").upper() != "TH":
+            return None
+        if any((get_name(cell) or "").lstrip("/").upper() == "TD" for cell in cells[1:]):
+            body_has_data = True
+    if not body_has_data:
+        return None
+    assoc = _table_header_assoc_counts_for_struct_tables([table_elem])
+    if int(assoc.get("dataCellsWithoutHeaderCount") or 0) != 1:
+        return None
+    return column_count
+
+
+def _normalize_empty_corner_header_cell_table(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Retag an empty top-left corner TD as TH when the surrounding row and column
+    already prove a regular row/column header grid.
+    """
+    if _empty_corner_header_cell_info(table_elem, params) is None:
+        return False
+    rows = _iter_table_rows(table_elem)
+    if not rows:
+        return False
+    cells = [
+        child for child in _direct_role_children(rows[0])
+        if (get_name(child) or "").lstrip("/").upper() in ("TH", "TD")
+    ]
+    if not cells:
+        return False
+    corner = cells[0]
+    try:
+        corner["/S"] = pikepdf.Name("/TH")
+    except Exception:
+        return False
+    _associate_existing_table_headers(table_elem)
+    return True
+
+
 def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
+    failure_class = str(params.get("tableFailureClass") or "")
+    if failure_class == "empty_table_shell":
+        return _remove_empty_table_shell(table_elem)
+
     audit_before = _audit_table_structure(table_elem)
     direct_cells = int(audit_before.get("directCellUnderTableCount") or audit_before.get("cellsMisplacedCount") or 0)
     th, td = _count_table_cells(table_elem)
@@ -8484,13 +8718,21 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
             _associate_existing_table_headers(table_elem)
             changed = True
 
-    if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
+    if failure_class == "strongly_irregular_rows":
         if _normalize_strongly_irregular_table_rows(table_elem, pdf, params):
             _associate_existing_table_headers(table_elem)
             changed = True
 
-    if str(params.get("tableFailureClass") or "") == "short_header_row_template":
+    if failure_class == "short_header_row_template":
         if _normalize_short_header_row_table(table_elem, pdf, params):
+            changed = True
+
+    if failure_class == "single_column_variance_template":
+        if _normalize_single_column_variance_table(table_elem, pdf, params):
+            changed = True
+
+    if failure_class == "empty_corner_header_cell":
+        if _normalize_empty_corner_header_cell_table(table_elem, pdf, params):
             changed = True
 
     return changed
@@ -8604,6 +8846,33 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
                     return -1
             targets = [table for table in targets if short_header_key(table) > 0]
             targets.sort(key=short_header_key, reverse=True)
+        elif str(params.get("tableFailureClass") or "") == "single_column_variance_template":
+            def single_column_key(table) -> int:
+                try:
+                    info = _single_column_variance_template_info(table, params)
+                    if info is None:
+                        return -1
+                    _target_columns, missing = info
+                    audit = _audit_table_structure(table)
+                    return missing * 10 + int(audit.get("rowCount") or 0)
+                except Exception:
+                    return -1
+            targets = [table for table in targets if single_column_key(table) > 0]
+            targets.sort(key=single_column_key, reverse=True)
+        elif str(params.get("tableFailureClass") or "") == "empty_table_shell":
+            targets = [table for table in targets if _is_empty_table_shell_struct(table)]
+        elif str(params.get("tableFailureClass") or "") == "empty_corner_header_cell":
+            def empty_corner_key(table) -> int:
+                try:
+                    column_count = _empty_corner_header_cell_info(table, params)
+                    if column_count is None:
+                        return -1
+                    audit = _audit_table_structure(table)
+                    return column_count * 10 + int(audit.get("rowCount") or 0)
+                except Exception:
+                    return -1
+            targets = [table for table in targets if empty_corner_key(table) > 0]
+            targets.sort(key=empty_corner_key, reverse=True)
         targets = targets[:max_tables]
 
     for table in targets:
@@ -12035,6 +12304,7 @@ def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
         "dataCellCount": None,
         "irregularRows": None,
         "stronglyIrregularTable": False,
+        "emptyTableShell": False,
         "tableTreeValid": None,
         "headerAssociationMissingCount": None,
         "orphanHeaderCellCount": None,
@@ -12083,6 +12353,7 @@ def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
             "dataCellCount": td_count,
             "irregularRows": irregular,
             "stronglyIrregularTable": irregular >= 2,
+            "emptyTableShell": _is_empty_table_shell_struct(target),
             "tableTreeValid": direct_cells == 0,
             **assoc,
         })
@@ -12108,6 +12379,8 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
     header_cells = 0
     irregular_rows = 0
     strongly_irregular_tables = 0
+    table_count = 0
+    empty_table_shell_count = 0
     table_tree_valid = False
     target_resolved = False
     target_role = None
@@ -12122,6 +12395,7 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
     for table in tables:
         if not isinstance(table, pikepdf.Dictionary):
             continue
+        table_count += 1
         th_count, _td_count = _count_table_cells(table)
         audit = _audit_table_structure(table)
         direct_cells += int(audit.get("cellsMisplacedCount") or 0)
@@ -12130,6 +12404,8 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
         irregular_rows += table_irregular
         if table_irregular >= 2:
             strongly_irregular_tables += 1
+        if _is_empty_table_shell_struct(table):
+            empty_table_shell_count += 1
     table_tree_valid = direct_cells == 0 and (target_resolved if target_ref else True)
     assoc = _table_header_assoc_counts_for_struct_tables(tables)
     requested_target_refs = []
@@ -12163,6 +12439,8 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
         "headerCellCount": header_cells,
         "irregularRows": irregular_rows,
         "stronglyIrregularTableCount": strongly_irregular_tables,
+        "tableCount": table_count,
+        "emptyTableShellCount": empty_table_shell_count,
         "tableTreeValid": table_tree_valid,
         "orphanMcidCount": orphan_mcid_count,
         "parentTreeDebt": parent_tree_debt,
@@ -12414,6 +12692,10 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         "irregularRowsAfter": after.get("irregularRows", 0),
         "stronglyIrregularTableCountBefore": before.get("stronglyIrregularTableCount", 0),
         "stronglyIrregularTableCountAfter": after.get("stronglyIrregularTableCount", 0),
+        "tableCountBefore": before.get("tableCount", 0),
+        "tableCountAfter": after.get("tableCount", 0),
+        "emptyTableShellCountBefore": before.get("emptyTableShellCount", 0),
+        "emptyTableShellCountAfter": after.get("emptyTableShellCount", 0),
         "tableTreeValidAfter": after.get("tableTreeValid", False),
         "headerAssociationMissingCountBefore": before.get("headerAssociationMissingCount", 0),
         "headerAssociationMissingCountAfter": after.get("headerAssociationMissingCount", 0),
@@ -12445,10 +12727,15 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         or (after.get("dataCellsWithHeadersCount", 0) or 0) > (before.get("dataCellsWithHeadersCount", 0) or 0)
         or (after.get("headerCellsWithScopeCount", 0) or 0) > (before.get("headerCellsWithScopeCount", 0) or 0)
     )
+    empty_shell_improved = (
+        (after.get("emptyTableShellCount", 0) or 0) < (before.get("emptyTableShellCount", 0) or 0)
+    )
     if op == "set_table_header_cells" and association_improved:
         return "applied", note or "table_header_association_improved", invariants
+    if op == "normalize_table_structure" and empty_shell_improved:
+        return "applied", note or "empty_table_shell_removed", invariants
     if (after.get("headerCellCount", 0) or 0) <= (before.get("headerCellCount", 0) or 0) and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
-        if (after.get("irregularRows", 0) or 0) >= (before.get("irregularRows", 0) or 0):
+        if (after.get("irregularRows", 0) or 0) >= (before.get("irregularRows", 0) or 0) and not empty_shell_improved:
             return "no_effect", "headers_not_created", invariants
     if not invariants.get("tableTreeValidAfter"):
         return "no_effect", "table_tree_still_invalid", invariants
@@ -12560,6 +12847,7 @@ def _stage36_structural_benefits(op: str, outcome: str, before: dict | None, inv
             or after_header_assoc < before_header_assoc
             or int(invariants.get("irregularRowsAfter") or 0) < int(before.get("irregularRowsAfter") or before.get("irregularRows") or 0)
             or int(invariants.get("stronglyIrregularTableCountAfter") or 0) < int(before.get("stronglyIrregularTableCountAfter") or before.get("stronglyIrregularTableCount") or 0)
+            or int(invariants.get("emptyTableShellCountAfter") or 0) < int(before.get("emptyTableShellCountAfter") or before.get("emptyTableShellCount") or 0)
             or bool(invariants.get("tableTreeValidAfter"))
         )
 
