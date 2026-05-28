@@ -74,3 +74,39 @@ This source is useful because it separates table target admission from table mut
 Do not patch with West Virginia/source/facility/year/PDF gates, scorer masking, PAC relaxations, broad table admission, or a lower Stage 180 heading threshold from this evidence.
 
 Because no source behavior changed, no original-50 regression validation was required for this source.
+
+## Current-Code Follow-up - 2026-05-28
+
+A fresh current-code proof pack was rebuilt from the same WV DCR PREA source page under local scratch:
+
+- `/mnt/pdf-review/pdfaf-table-wv-proof-2026-05-28-r1`
+
+All selected PDFs were public PDFs under 10 MB. Generated PDFs and JSON/Markdown artifacts remained local scratch only.
+
+Current deterministic bounded result:
+
+- Processed: `20/20`
+- Mean: `56.10 -> 76.85`
+- Timeout/error rows: `0`
+- `false_positive_applied`: `0`
+- A/high rows: `wvdcrprea-01 94/A`, `03 96/A`, `09 96/A`, `12 96/A`, `13 93/A`, `17 96/A`
+- Remaining lows: `14` rows at `69/D`, mostly `table_markup=0` or `5`, strong heading/reading/link/alt, and real table/PDF-UA debt
+
+The current target-resolution diagnostic is still a clean discriminator:
+
+- Decision: `plan_table_target_behavior_proof`
+- Stable focus candidates: all `14` low rows
+- Same-source controls matching the target predicate: `0`
+- Prior non-table target rows: `0`
+
+However, behavior is still not ready:
+
+- Default strict table probes skip because planner params are empty on the plateau state.
+- Direct strict `set_table_header_cells` on selected association refs reduces `dataCellsWithoutHeaderCount` but does not move score.
+- Direct strict normalize/header over `24` real `/Table` refs reduces table/header debt but leaves the row at `69/D`.
+- A diagnostic multi-pass over `wvdcrprea-02` normalized `126` real table refs and then associated headers across `246` table refs. It reduced `dataCellsWithoutHeaderCount` `1477 -> 122`, increased `dataCellsWithHeadersCount` `0 -> 1439`, and reduced strong irregularity `129 -> 3`, but the final score stayed `69/D` and `table_markup` only reached `5`.
+- A tested `/ColSpan`/span-aware header-row idea was not kept: focused production validation on `wvdcrprea-02` and `wvdcrprea-04` still ended `69/D`.
+
+Decision: still no source behavior change is accepted from WV.
+
+This source proves the next table weakness is not wrong-ref admission and not a simple one-pass transaction. It is a high-volume repeated-table finalization problem: many real table refs can be improved PAC-honestly, but the current bounded repair cannot clear enough residual regularity/header debt to produce material final score movement. A future behavior stage should target a faster general repeated-table-template transaction or a stricter subtype-specific table-regularity model, then prove score movement on WV plus at least one independent outside source before original-50 validation.
