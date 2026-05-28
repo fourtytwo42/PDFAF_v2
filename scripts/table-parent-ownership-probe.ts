@@ -70,6 +70,8 @@ export interface TableParentOwnershipStep {
   pacRegressions: string[];
   orphanMcidSampleAdded: string[];
   orphanMcidSampleRemoved: string[];
+  orphanAddedReferencedByTargetTable: string[];
+  tableMcidOwnershipDeltas: string[];
   durationMs: number;
 }
 
@@ -371,6 +373,8 @@ export function strictMissingHeaderBatchParams(refs: string[]): { normalizeParam
       dominantColumnCount: 0,
       maxTablesPerRun: uniqueRefs.length,
       maxSyntheticCells: Math.max(80, uniqueRefs.length * 40),
+      diagnosticTableMcidOwnership: true,
+      diagnosticTableMcidSampleLimit: 128,
       stage: 'diagnostic_missing_header_batch',
     },
     headerParams: {
@@ -378,6 +382,8 @@ export function strictMissingHeaderBatchParams(refs: string[]): { normalizeParam
       strictTableTargetRef: true,
       tableHeaderAssociation: true,
       maxTableHeaderAssociationTargets: uniqueRefs.length,
+      diagnosticTableMcidOwnership: true,
+      diagnosticTableMcidSampleLimit: 128,
       stage: 'diagnostic_missing_header_batch',
     },
   };
@@ -438,6 +444,48 @@ function batchTargetDetails(result: BatchMutationResult): Record<string, unknown
 
 function batchWrongRefs(result: BatchMutationResult): string[] {
   return wrongRefs({ debug: { targetRefDetails: batchTargetDetails(result) } });
+}
+
+function formatTableMcidDelta(value: unknown): string | null {
+  const obj = objectValue(value);
+  if (!obj) return null;
+  const ref = stringValue(obj['ref']);
+  if (!ref) return null;
+  const before = typeof obj['referencedMcidCountBefore'] === 'number' ? obj['referencedMcidCountBefore'] : 'n/a';
+  const after = typeof obj['referencedMcidCountAfter'] === 'number' ? obj['referencedMcidCountAfter'] : 'n/a';
+  const added = stringArray(obj['referencedMcidSampleAdded']).slice(0, 6);
+  const removed = stringArray(obj['referencedMcidSampleRemoved']).slice(0, 6);
+  const flags = [
+    added.length > 0 ? `added=${added.join(',')}` : null,
+    removed.length > 0 ? `removed=${removed.join(',')}` : null,
+    obj['sampleTruncatedBefore'] === true || obj['sampleTruncatedAfter'] === true ? 'sample_truncated' : null,
+  ].filter((item): item is string => Boolean(item));
+  return `${ref}:${before}->${after}${flags.length > 0 ? `:${flags.join(';')}` : ''}`;
+}
+
+function tableMcidOwnershipDeltasFrom(...values: unknown[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    for (const item of arrayValue(value)) {
+      const formatted = formatTableMcidDelta(item);
+      if (formatted && !out.includes(formatted)) out.push(formatted);
+    }
+  }
+  return out;
+}
+
+function targetReferencedMcidKeysFrom(...values: unknown[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    for (const detail of arrayValue(value)) {
+      const obj = objectValue(detail);
+      if (!obj) continue;
+      for (const key of stringArray(obj['referencedMcidSampleKeys'])) {
+        if (key && !out.includes(key)) out.push(key);
+      }
+    }
+  }
+  return out;
 }
 
 function pacRuleIds(details: Record<string, unknown> | null): string[] {
@@ -556,6 +604,8 @@ async function probePdf(
           pacRegressions: [],
           orphanMcidSampleAdded: [],
           orphanMcidSampleRemoved: [],
+          orphanAddedReferencedByTargetTable: [],
+          tableMcidOwnershipDeltas: [],
           durationMs: 0,
         };
         steps.push(step);
@@ -594,6 +644,16 @@ async function probePdf(
       const pacRegressions = pacRuleIds(parsedDetails);
       const refsWrong = wrongRefs(parsedDetails);
       const orphanDiff = orphanMcidSampleDiff({ before: before.orphanMcids, after: after.orphanMcids });
+      const targetReferencedMcidKeys = targetReferencedMcidKeysFrom(
+        invariants?.['targetRefDetailsAfter'],
+        invariants?.['targetRefDetails'],
+        mutationInvariants?.['targetRefDetailsAfter'],
+        mutationInvariants?.['targetRefDetails'],
+      );
+      const tableMcidOwnershipDeltas = tableMcidOwnershipDeltasFrom(
+        invariants?.['targetRefMcidDeltas'],
+        mutationInvariants?.['targetRefMcidDeltas'],
+      );
       const classified = classifyTableParentOwnershipStep({
         outcome: result.outcome,
         params,
@@ -615,6 +675,8 @@ async function probePdf(
         pacRegressions,
         orphanMcidSampleAdded: orphanDiff.added,
         orphanMcidSampleRemoved: orphanDiff.removed,
+        orphanAddedReferencedByTargetTable: orphanDiff.added.filter(key => targetReferencedMcidKeys.includes(key)),
+        tableMcidOwnershipDeltas,
         durationMs: Math.round(result.durationMs),
       };
       steps.push(step);
@@ -673,6 +735,8 @@ async function probePdf(
           pacRegressions: [],
           orphanMcidSampleAdded: [],
           orphanMcidSampleRemoved: [],
+          orphanAddedReferencedByTargetTable: [],
+          tableMcidOwnershipDeltas: [],
           durationMs: 0,
         });
         return;
@@ -696,6 +760,15 @@ async function probePdf(
       const after = metrics(next.result, next.snapshot);
       const refsWrong = batchWrongRefs(result.result);
       const orphanDiff = orphanMcidSampleDiff({ before: before.orphanMcids, after: after.orphanMcids });
+      const targetReferencedMcidKeys = targetReferencedMcidKeysFrom(
+        ...(result.result.opResults ?? []).flatMap(row => [
+          row.invariants?.targetRefDetailsAfter,
+          row.invariants?.targetRefDetails,
+        ]),
+      );
+      const tableMcidOwnershipDeltas = tableMcidOwnershipDeltasFrom(
+        ...(result.result.opResults ?? []).map(row => row.invariants?.targetRefMcidDeltas),
+      );
       const outcome = result.result.success && result.result.applied.length > 0 && !result.buffer.equals(buffer)
         ? 'applied'
         : result.result.success
@@ -731,6 +804,8 @@ async function probePdf(
         pacRegressions: [],
         orphanMcidSampleAdded: orphanDiff.added,
         orphanMcidSampleRemoved: orphanDiff.removed,
+        orphanAddedReferencedByTargetTable: orphanDiff.added.filter(key => targetReferencedMcidKeys.includes(key)),
+        tableMcidOwnershipDeltas,
         durationMs: Math.round(performance.now() - started),
       });
       buffer = nextBuffer;
@@ -933,6 +1008,8 @@ function renderMarkdown(report: TableParentOwnershipReport): string {
         ...step.reasons,
         step.orphanMcidSampleAdded.length > 0 ? `orphan_sample_added:${step.orphanMcidSampleAdded.slice(0, 8).join(',')}` : null,
         step.orphanMcidSampleRemoved.length > 0 ? `orphan_sample_removed:${step.orphanMcidSampleRemoved.slice(0, 8).join(',')}` : null,
+        step.orphanAddedReferencedByTargetTable.length > 0 ? `orphan_added_still_referenced_by_target:${step.orphanAddedReferencedByTargetTable.slice(0, 8).join(',')}` : null,
+        step.tableMcidOwnershipDeltas.length > 0 ? `table_mcid_delta:${step.tableMcidOwnershipDeltas.slice(0, 4).join(';')}` : null,
       ].filter((reason): reason is string => Boolean(reason));
       lines.push(`| \`${step.toolName}\` | \`${step.outcome}\` | ${step.before.tableMarkup ?? 'n/a'} / ${step.before.orphanMcidCount} / ${step.before.parentTreeDebt} | ${step.after.tableMarkup ?? 'n/a'} / ${step.after.orphanMcidCount} / ${step.after.parentTreeDebt} | \`${step.classification}\` | ${sampleReasons.map(reason => `\`${reason}\``).join(', ')} |`);
     }

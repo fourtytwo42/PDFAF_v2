@@ -2906,6 +2906,88 @@ def collect_referenced_mcid_pairs(pdf: pikepdf.Pdf, page_map: dict) -> set[tuple
     return out
 
 
+def _mcid_pair_key(pair: tuple[int, int]) -> str:
+    try:
+        return f"{int(pair[0])}:{int(pair[1])}"
+    except Exception:
+        return ""
+
+
+def _mcid_pair_sample(pairs: set[tuple[int, int]], limit: int = 64) -> list[dict]:
+    out: list[dict] = []
+    try:
+        ordered = sorted(pairs, key=lambda item: (int(item[0]), int(item[1])))
+    except Exception:
+        ordered = []
+    for page, mcid in ordered[: max(0, limit)]:
+        try:
+            out.append({"page": int(page), "mcid": int(mcid)})
+        except Exception:
+            pass
+    return out
+
+
+def _collect_struct_elem_referenced_mcid_pairs(elem, page_map: dict) -> set[tuple[int, int]]:
+    """Referenced (page_index, mcid) pairs inside one structure subtree."""
+    out: set[tuple[int, int]] = set()
+
+    def mcr_page_index(mcr, fallback_page: int) -> int:
+        try:
+            pg = mcr.get("/Pg")
+            if pg is not None:
+                objgen = getattr(pg, "objgen", None)
+                if objgen:
+                    return page_map.get(int(objgen[0]), fallback_page)
+        except Exception:
+            pass
+        return fallback_page
+
+    q: deque = deque([elem])
+    seen: set = set()
+    it = 0
+    while q and it < MAX_ITEMS * 16:
+        it += 1
+        cur = q.popleft()
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        try:
+            visit_key = _struct_elem_visit_key(cur)
+        except Exception:
+            visit_key = id(cur)
+        if visit_key in seen:
+            continue
+        seen.add(visit_key)
+        pg = get_page_number(cur, page_map)
+        k = cur.get("/K")
+        if isinstance(k, int):
+            out.add((pg, int(k)))
+        elif isinstance(k, pikepdf.Array):
+            for ch in k:
+                if isinstance(ch, int):
+                    out.add((pg, int(ch)))
+                elif isinstance(ch, pikepdf.Dictionary):
+                    try:
+                        if ch.get("/Type") == pikepdf.Name("/MCR"):
+                            mid = ch.get("/MCID")
+                            if isinstance(mid, int):
+                                out.add((mcr_page_index(ch, pg), int(mid)))
+                        else:
+                            q.append(ch)
+                    except Exception:
+                        q.append(ch)
+        elif isinstance(k, pikepdf.Dictionary):
+            try:
+                if k.get("/Type") == pikepdf.Name("/MCR"):
+                    mid = k.get("/MCID")
+                    if isinstance(mid, int):
+                        out.add((mcr_page_index(k, pg), int(mid)))
+                else:
+                    q.append(k)
+            except Exception:
+                q.append(k)
+    return out
+
+
 def collect_orphan_mcids(pdf: pikepdf.Pdf) -> list[dict]:
     """MCIDs appearing in page streams but not referenced as integer /K on any StructElem."""
     page_map = build_page_map(pdf)
@@ -12289,7 +12371,13 @@ def _table_header_assoc_counts_for_struct_tables(tables: list) -> dict:
     return out
 
 
-def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
+def _table_ref_detail(
+    pdf: pikepdf.Pdf,
+    ref: str,
+    include_mcid_ownership: bool = False,
+    page_map: dict | None = None,
+    max_mcid_sample: int = 64,
+) -> dict:
     detail = {
         "ref": ref,
         "targetResolved": False,
@@ -12313,6 +12401,13 @@ def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
         "headerCellsWithIdCount": None,
         "dataCellsWithHeadersCount": None,
     }
+    if include_mcid_ownership:
+        detail.update({
+            "referencedMcidCount": None,
+            "referencedMcidSample": [],
+            "referencedMcidSampleKeys": [],
+            "referencedMcidSampleTruncated": False,
+        })
     try:
         target = _resolve_ref(pdf, ref)
     except Exception:
@@ -12335,6 +12430,27 @@ def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
         "resolvedIsTable": resolved_is_table,
         "skipReason": None,
     })
+    if include_mcid_ownership:
+        try:
+            local_page_map = page_map if page_map is not None else build_page_map(pdf)
+            referenced_pairs = _collect_struct_elem_referenced_mcid_pairs(target, local_page_map)
+            sample = _mcid_pair_sample(referenced_pairs, max_mcid_sample)
+            detail.update({
+                "referencedMcidCount": len(referenced_pairs),
+                "referencedMcidSample": sample,
+                "referencedMcidSampleKeys": [
+                    _mcid_pair_key((int(item.get("page", 0)), int(item.get("mcid", 0))))
+                    for item in sample
+                ],
+                "referencedMcidSampleTruncated": len(referenced_pairs) > len(sample),
+            })
+        except Exception:
+            detail.update({
+                "referencedMcidCount": None,
+                "referencedMcidSample": [],
+                "referencedMcidSampleKeys": [],
+                "referencedMcidSampleTruncated": False,
+            })
     if not is_table:
         detail["skipReason"] = "not_table"
         return detail
@@ -12362,19 +12478,36 @@ def _table_ref_detail(pdf: pikepdf.Pdf, ref: str) -> dict:
     return detail
 
 
-def _table_ref_details(pdf: pikepdf.Pdf, refs: list[str] | None) -> list[dict]:
+def _table_ref_details(
+    pdf: pikepdf.Pdf,
+    refs: list[str] | None,
+    include_mcid_ownership: bool = False,
+    max_mcid_sample: int = 64,
+) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
+    page_map = None
+    if include_mcid_ownership:
+        try:
+            page_map = build_page_map(pdf)
+        except Exception:
+            page_map = None
     for ref in refs or []:
         text = safe_str(ref).strip()
         if not text or text in seen:
             continue
         seen.add(text)
-        out.append(_table_ref_detail(pdf, text))
+        out.append(_table_ref_detail(pdf, text, include_mcid_ownership, page_map, max_mcid_sample))
     return out
 
 
-def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requested_refs: list[str] | None = None) -> dict:
+def _table_invariant_stats(
+    pdf: pikepdf.Pdf,
+    target_ref: str | None = None,
+    requested_refs: list[str] | None = None,
+    include_mcid_ownership: bool = False,
+    max_mcid_sample: int = 64,
+) -> dict:
     direct_cells = 0
     header_cells = 0
     irregular_rows = 0
@@ -12413,7 +12546,7 @@ def _table_invariant_stats(pdf: pikepdf.Pdf, target_ref: str | None = None, requ
         text = safe_str(ref).strip()
         if text and text not in requested_target_refs:
             requested_target_refs.append(text)
-    ref_details = _table_ref_details(pdf, requested_target_refs)
+    ref_details = _table_ref_details(pdf, requested_target_refs, include_mcid_ownership, max_mcid_sample)
     try:
         orphan_mcid_count = len(collect_orphan_mcids(pdf))
     except Exception:
@@ -12507,7 +12640,18 @@ def _stage35_figure_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
 def _stage35_table_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
     ref = _table_target_ref(params)
     refs = _table_target_refs(params)
-    return _table_invariant_stats(pdf, ref if isinstance(ref, str) else None, refs)
+    include_mcid_ownership = bool(params.get("diagnosticTableMcidOwnership"))
+    try:
+        max_mcid_sample = max(1, min(256, int(params.get("diagnosticTableMcidSampleLimit") or 64)))
+    except Exception:
+        max_mcid_sample = 64
+    return _table_invariant_stats(
+        pdf,
+        ref if isinstance(ref, str) else None,
+        refs,
+        include_mcid_ownership,
+        max_mcid_sample,
+    )
 
 
 def _stage35_annotation_snapshot(pdf: pikepdf.Pdf, _params: dict) -> dict:
@@ -12660,19 +12804,78 @@ def _stage35_validate_figure(op: str, before: dict, after: dict, mutated: bool, 
     return "applied", note, invariants
 
 
+def _target_ref_mcid_deltas(before_details: list, after_details: list) -> list[dict]:
+    before_by_ref: dict[str, dict] = {}
+    after_by_ref: dict[str, dict] = {}
+    for detail in before_details or []:
+        if not isinstance(detail, dict):
+            continue
+        ref = safe_str(detail.get("ref") or detail.get("targetRef")).strip()
+        if ref:
+            before_by_ref[ref] = detail
+    for detail in after_details or []:
+        if not isinstance(detail, dict):
+            continue
+        ref = safe_str(detail.get("ref") or detail.get("targetRef")).strip()
+        if ref:
+            after_by_ref[ref] = detail
+
+    out: list[dict] = []
+    for ref in sorted(set(before_by_ref.keys()) | set(after_by_ref.keys())):
+        before_detail = before_by_ref.get(ref, {})
+        after_detail = after_by_ref.get(ref, {})
+        before_keys = {
+            safe_str(value).strip()
+            for value in (before_detail.get("referencedMcidSampleKeys") or [])
+            if safe_str(value).strip()
+        }
+        after_keys = {
+            safe_str(value).strip()
+            for value in (after_detail.get("referencedMcidSampleKeys") or [])
+            if safe_str(value).strip()
+        }
+        if not before_keys and not after_keys:
+            continue
+        try:
+            before_count = int(before_detail.get("referencedMcidCount") or 0)
+        except Exception:
+            before_count = 0
+        try:
+            after_count = int(after_detail.get("referencedMcidCount") or 0)
+        except Exception:
+            after_count = 0
+        added = sorted(after_keys - before_keys)
+        removed = sorted(before_keys - after_keys)
+        if before_count == after_count and not added and not removed:
+            continue
+        out.append({
+            "ref": ref,
+            "referencedMcidCountBefore": before_count,
+            "referencedMcidCountAfter": after_count,
+            "referencedMcidSampleAdded": added[:32],
+            "referencedMcidSampleRemoved": removed[:32],
+            "sampleTruncatedBefore": bool(before_detail.get("referencedMcidSampleTruncated")),
+            "sampleTruncatedAfter": bool(after_detail.get("referencedMcidSampleTruncated")),
+        })
+    return out
+
+
 def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
     orphan_before = before.get("orphanMcidCount", 0) or 0
     orphan_after = after.get("orphanMcidCount", 0) or 0
     parent_debt_before = before.get("parentTreeDebt", 0) or 0
     parent_debt_after = after.get("parentTreeDebt", 0) or 0
+    target_ref_details_before = before.get("targetRefDetails") or []
+    target_ref_details_after = after.get("targetRefDetails") or []
     invariants = {
         "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
         "resolvedRole": after.get("resolvedRole"),
         "requestedTargetRefs": after.get("requestedTargetRefs") or before.get("requestedTargetRefs") or [],
-        "targetRefDetailsBefore": before.get("targetRefDetails") or [],
-        "targetRefDetailsAfter": after.get("targetRefDetails") or [],
-        "targetRefDetails": after.get("targetRefDetails") or [],
+        "targetRefDetailsBefore": target_ref_details_before,
+        "targetRefDetailsAfter": target_ref_details_after,
+        "targetRefDetails": target_ref_details_after,
+        "targetRefMcidDeltas": _target_ref_mcid_deltas(target_ref_details_before, target_ref_details_after),
         "ownershipPreserved": orphan_after <= orphan_before and parent_debt_after <= parent_debt_before,
         "orphanMcidCountBefore": orphan_before,
         "orphanMcidCountAfter": orphan_after,

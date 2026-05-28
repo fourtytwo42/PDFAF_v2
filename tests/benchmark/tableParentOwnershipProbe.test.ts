@@ -173,6 +173,8 @@ describe('table parent ownership probe classification', () => {
         dominantColumnCount: 0,
         maxTablesPerRun: 2,
         maxSyntheticCells: 80,
+        diagnosticTableMcidOwnership: true,
+        diagnosticTableMcidSampleLimit: 128,
         stage: 'diagnostic_missing_header_batch',
       },
       headerParams: {
@@ -180,6 +182,8 @@ describe('table parent ownership probe classification', () => {
         strictTableTargetRef: true,
         tableHeaderAssociation: true,
         maxTableHeaderAssociationTargets: 2,
+        diagnosticTableMcidOwnership: true,
+        diagnosticTableMcidSampleLimit: 128,
         stage: 'diagnostic_missing_header_batch',
       },
     });

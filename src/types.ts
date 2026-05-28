@@ -825,6 +825,7 @@ export interface PythonMutationInvariantPayload {
   targetRefDetails?: Array<Record<string, unknown>>;
   targetRefDetailsBefore?: Array<Record<string, unknown>>;
   targetRefDetailsAfter?: Array<Record<string, unknown>>;
+  targetRefMcidDeltas?: Array<Record<string, unknown>>;
   targetResolved?: boolean;
   targetReachable?: boolean;
   resolvedRole?: string | null;

@@ -33,6 +33,39 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildDirectCellTableWithMcidPdf(): { buf: Buffer; tableRef: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-normalize-mcid-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const refPath = join(dir, 'table-ref.txt');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+page = pdf.pages[0].obj
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc, Pg=page))
+cells = []
+for idx in range(4):
+    cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TD'), P=table, Pg=page, K=idx))
+    cells.append(cell)
+table['/K'] = Array(cells)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+n, g = table.objgen
+with open(${JSON.stringify(refPath)}, 'w') as f:
+    f.write(f"{n}_{g}")
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return { buf: readFileSync(pdfPath), tableRef: readFileSync(refPath, 'utf8').trim() };
+}
+
 function buildLeadingEmptyRowNoHeaderTablePdf(): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-empty-first-row-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -550,6 +583,44 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.orphanMcidCountAfter).toBeLessThanOrEqual(row?.invariants?.orphanMcidCountBefore ?? 0);
     expect(row?.invariants?.parentTreeDebtAfter).toBeLessThanOrEqual(row?.invariants?.parentTreeDebtBefore ?? 0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('reports diagnostic table-ref MCID ownership without changing table acceptance', async () => {
+    const { buf, tableRef } = buildDirectCellTableWithMcidPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          structRef: tableRef,
+          strictTableTargetRef: true,
+          dominantColumnCount: 2,
+          diagnosticTableMcidOwnership: true,
+        },
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    const beforeDetails = row?.invariants?.targetRefDetailsBefore ?? [];
+    const afterDetails = row?.invariants?.targetRefDetailsAfter ?? [];
+    expect(beforeDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: tableRef,
+        referencedMcidCount: 4,
+        referencedMcidSampleKeys: ['0:0', '0:1', '0:2', '0:3'],
+      }),
+    ]));
+    expect(afterDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: tableRef,
+        referencedMcidCount: 4,
+        referencedMcidSampleKeys: ['0:0', '0:1', '0:2', '0:3'],
+      }),
+    ]));
+    expect(row?.invariants?.targetRefMcidDeltas).toEqual([]);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 
