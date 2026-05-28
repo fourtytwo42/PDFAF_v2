@@ -371,7 +371,7 @@ describe('normalize_table_structure python mutation', () => {
   it('adds deterministic associations across multiple targeted tables without changing table shape', async () => {
     const { buf, tableRefs } = buildMultipleUnassociatedHeaderTablesPdf();
     const { result } = await runPythonMutationBatch(buf, [
-      { op: 'set_table_header_cells', params: { structRefs: tableRefs, tableHeaderAssociation: true } },
+      { op: 'set_table_header_cells', params: { structRefs: tableRefs, tableHeaderAssociation: true, strictTableTargetRef: true } },
     ]);
 
     expect(result.success).toBe(true);
@@ -379,6 +379,7 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.outcome).toBe('applied');
     expect(row?.note).toBe('table_header_association_batch_improved');
     expect(row?.debug?.targetRefs).toEqual(tableRefs);
+    expect(row?.debug?.strictTableTargetRef).toBe(true);
     expect(row?.invariants?.headerCellCountBefore).toBe(row?.invariants?.headerCellCountAfter);
     expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
     expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
@@ -401,6 +402,24 @@ describe('normalize_table_structure python mutation', () => {
       expect.objectContaining({ ref: tableRef, isTable: true, targetReachable: true }),
       expect.objectContaining({ ref: paragraphRef, isTable: false, skipReason: 'not_table' }),
     ]));
+
+    const strictSet = await runPythonMutationBatch(buf, [
+      { op: 'set_table_header_cells', params: { structRefs: [tableRef, paragraphRef], tableHeaderAssociation: true, strictTableTargetRef: true } },
+    ]);
+    const strictSetRow = strictSet.result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(strictSetRow?.outcome).toBe('no_effect');
+    expect(strictSetRow?.debug?.changedTargetRefs).toEqual([]);
+    expect(strictSetRow?.debug?.skippedTargetRefs).toEqual([paragraphRef]);
+    expect(strictSetRow?.debug?.strictTableTargetRef).toBe(true);
+
+    const strictRepair = await runPythonMutationBatch(buf, [
+      { op: 'repair_native_table_headers', params: { structRefs: [tableRef, paragraphRef], strictTableTargetRef: true } },
+    ]);
+    const strictRepairRow = strictRepair.result.opResults?.find(op => op.op === 'repair_native_table_headers');
+    expect(strictRepairRow?.outcome).toBe('no_effect');
+    expect(strictRepairRow?.debug?.changedTargetRefs).toEqual([]);
+    expect(strictRepairRow?.debug?.skippedTargetRefs).toEqual([paragraphRef]);
+    expect(strictRepairRow?.debug?.strictTableTargetRef).toBe(true);
   });
 
   it('reports non-table single refs as no-effect without fallback mutation', async () => {

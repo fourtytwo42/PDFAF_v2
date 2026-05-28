@@ -6,7 +6,7 @@ This stage keeps strict table-target infrastructure, but parks the attempted Sta
 
 The useful accepted source change is diagnostic/infrastructure only:
 
-- `normalize_table_structure` can now run a strict `structRefs` batch when `strictTableTargetRef` is set.
+- `normalize_table_structure`, `set_table_header_cells`, and `repair_native_table_headers` can now run a strict `structRefs` batch when `strictTableTargetRef` is set.
 - Strict mode resolves every requested ref before mutation.
 - If any requested ref is unresolved or not a real `/Table`, the whole strict batch refuses to mutate.
 - Generic table behavior is unchanged unless a caller explicitly passes the strict flag.
@@ -34,11 +34,18 @@ Decision: `keep_strict_ref_infrastructure_park_behavior`.
 
 The strict ref primitive is worth keeping because it directly supports the active table-heavy goal's wrong-ref and mixed-ref requirements. The score-moving post-pass is not accepted. The remaining blocker appears to be upstream table/PAC side-effect and route-state variance, not simply lack of a strict batch primitive.
 
+Follow-up in the same checkpoint extended strict all-or-none semantics from normalization to header association and native header repair. A future transaction can now require the entire sequence to operate only on pre-resolved `/Table` refs:
+
+1. `normalize_table_structure`
+2. `set_table_header_cells`
+3. `repair_native_table_headers` when used as a shape/header fallback
+
 No original-50 full validation was required for the parked behavior because no production route uses the new strict flag.
 
 ## Verification
 
 - `npx -y node@22 /usr/bin/pnpm exec vitest run tests/remediation/stage180MixedTablePdfua.test.ts tests/integration/tableNormalization.integration.test.ts tests/benchmark/tableOriginalControlImpactDiagnostic.test.ts`
+- `npx -y node@22 /usr/bin/pnpm exec vitest run tests/integration/tableNormalization.integration.test.ts`
 - `npx -y node@22 /usr/bin/pnpm run lint`
 
 Both passed.
@@ -53,4 +60,3 @@ The next table-heavy stage should use the strict-ref primitive diagnostically to
 - no orphan MCID, figure/alt, link/annotation, or reading/order PAC family regresses,
 - controls do not trigger,
 - the object-backed target set is stable across repeats.
-
