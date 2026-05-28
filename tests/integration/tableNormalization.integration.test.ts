@@ -100,6 +100,77 @@ pdf.save(${JSON.stringify(pdfPath)})
   return readFileSync(pdfPath);
 }
 
+function buildShortHeaderRowTemplatePdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-short-header-template-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+rows = []
+for row_index, count in enumerate([2, 3]):
+    tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+    cells = []
+    for _ in range(count):
+        role = Name('/TH') if row_index == 0 else Name('/TD')
+        cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+        cells.append(cell)
+    tr['/K'] = Array(cells)
+    rows.append(tr)
+table['/K'] = Array(rows)
+doc['/K'] = Array([table])
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
+function buildMultipleShortHeaderRowTemplatePdf(): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-short-header-template-multi-'));
+  const pdfPath = join(dir, 'table.pdf');
+  const script = join(dir, 'make_table.py');
+  writeFileSync(script, `
+import pikepdf
+from pikepdf import Name, Dictionary, Array
+
+pdf = pikepdf.Pdf.new()
+pdf.add_blank_page(page_size=(612, 792))
+root = pdf.Root
+sr = pdf.make_indirect(Dictionary(Type=Name('/StructTreeRoot')))
+root['/StructTreeRoot'] = sr
+doc = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Document'), P=sr))
+tables = []
+for table_index in range(5):
+    table = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/Table'), P=doc))
+    rows = []
+    for row_index, count in enumerate([2, 3]):
+        tr = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=Name('/TR'), P=table))
+        cells = []
+        for _ in range(count):
+            role = Name('/TH') if row_index == 0 else Name('/TD')
+            cell = pdf.make_indirect(Dictionary(Type=Name('/StructElem'), S=role, P=tr))
+            cells.append(cell)
+        tr['/K'] = Array(cells)
+        rows.append(tr)
+    table['/K'] = Array(rows)
+    tables.append(table)
+doc['/K'] = Array(tables)
+sr['/K'] = doc
+pdf.save(${JSON.stringify(pdfPath)})
+`);
+  execFileSync('python3', [script]);
+  return readFileSync(pdfPath);
+}
+
 function buildStronglyIrregularTableWithEmptyLeadingRowPdf(): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-empty-row-'));
   const pdfPath = join(dir, 'table.pdf');
@@ -386,6 +457,34 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 
+  it('can associate existing headers across table objects only when explicitly requested', async () => {
+    const { buf } = buildMultipleUnassociatedHeaderTablesPdf();
+    const generic = await runPythonMutationBatch(buf, [
+      { op: 'set_table_header_cells', params: { tableHeaderAssociation: true } },
+    ]);
+    const genericRow = generic.result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(genericRow?.outcome).toBe('no_effect');
+
+    const explicit = await runPythonMutationBatch(buf, [
+      {
+        op: 'set_table_header_cells',
+        params: {
+          tableHeaderAssociation: true,
+          associateAllTableHeaders: true,
+          maxTableHeaderAssociationTargets: 3,
+        },
+      },
+    ]);
+
+    expect(explicit.result.success).toBe(true);
+    const row = explicit.result.opResults?.find(op => op.op === 'set_table_header_cells');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.debug?.changedTargetRefs).toHaveLength(3);
+    expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
+    expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
   it('reports mixed table and non-table batch refs without changing generic batch behavior', async () => {
     const { buf, tableRef, paragraphRef } = buildMixedTableAndParagraphPdf();
     const { result } = await runPythonMutationBatch(buf, [
@@ -481,6 +580,66 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(row?.invariants?.headerCellCountBefore ?? 0);
     expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
     expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('pads short header rows only when the explicit repeated-template class is requested', async () => {
+    const buf = buildShortHeaderRowTemplatePdf();
+    const generic = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'strongly_irregular_rows',
+          maxTablesPerRun: 1,
+          maxSyntheticCells: 4,
+        },
+      },
+    ]);
+    const genericRow = generic.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(genericRow?.outcome).toBe('no_effect');
+
+    const specific = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'short_header_row_template',
+          maxTablesPerRun: 1,
+          maxSyntheticCells: 4,
+        },
+      },
+    ]);
+
+    expect(specific.result.success).toBe(true);
+    const row = specific.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.irregularRowsBefore).toBe(1);
+    expect(row?.invariants?.irregularRowsAfter).toBe(0);
+    expect(row?.invariants?.headerCellCountAfter).toBeGreaterThan(row?.invariants?.headerCellCountBefore ?? 0);
+    expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
+    expect(row?.invariants?.ownershipPreserved).toBe(true);
+    expect(row?.invariants?.tableTreeValidAfter).toBe(true);
+    expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('selects short-header row templates directly when the explicit class is requested without refs', async () => {
+    const buf = buildMultipleShortHeaderRowTemplatePdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          tableFailureClass: 'short_header_row_template',
+          maxTablesPerRun: 4,
+          maxSyntheticCells: 4,
+        },
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.invariants?.irregularRowsBefore).toBeGreaterThan(row?.invariants?.irregularRowsAfter ?? 0);
+    expect(row?.invariants?.stronglyIrregularTableCountBefore).toBe(0);
+    expect(row?.debug?.changedTargetRefs).toHaveLength(4);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
   });
 

@@ -982,12 +982,30 @@ def _table_skip_ref_detail(ref: str, reason: str, resolved_role: str | None = No
 
 def _op_set_table_header_cells(pdf: pikepdf.Pdf, params: dict) -> bool:
     refs = _table_target_refs(params)
-    if not refs:
-        return False
     strict_table_targets = bool(params.get("strictTableTargetRef") or params.get("strictTableTargetRefs"))
     changed_refs: list[str] = []
     skipped_ref_details: list[dict] = []
     targets: list[tuple[str, pikepdf.Dictionary]] = []
+    if not refs and bool(params.get("tableHeaderAssociation")) and bool(params.get("associateAllTableHeaders")):
+        try:
+            max_targets = max(1, min(512, int(params.get("maxTableHeaderAssociationTargets") or 24)))
+        except Exception:
+            max_targets = 24
+        for table in _iter_table_struct_elems(pdf):
+            if len(targets) >= max_targets:
+                break
+            if not isinstance(table, pikepdf.Dictionary):
+                continue
+            role = (get_name(table) or "").lstrip("/")
+            if role.upper() != "TABLE":
+                continue
+            th_count, td_count = _count_table_cells(table)
+            if th_count <= 0 or td_count <= 0:
+                continue
+            ref = object_ref_str(table) or ""
+            targets.append((ref, table))
+    if not refs and not targets:
+        return False
     for ref in refs:
         try:
             table = _resolve_ref(pdf, ref)
@@ -8371,6 +8389,74 @@ def _normalize_strongly_irregular_table_rows(table_elem, pdf: pikepdf.Pdf, param
     return changed
 
 
+def _short_header_row_template_info(table_elem, params: dict | None = None) -> tuple[int, int] | None:
+    """Return (dominant_column_count, missing_header_cells) for a short TH header row template."""
+    params = params or {}
+    audit = _audit_table_structure(table_elem)
+    if int(audit.get("cellsMisplacedCount") or 0) > 0:
+        return None
+    row_counts = list(audit.get("rowCellCounts") or [])
+    if len(row_counts) < 2 or len(row_counts) > 8:
+        return None
+    first_count = int(row_counts[0] or 0)
+    body_counts = [int(value or 0) for value in row_counts[1:]]
+    if first_count <= 0 or any(value <= 0 for value in body_counts):
+        return None
+    dominant = int(params.get("dominantColumnCount") or max(body_counts) or 0)
+    if dominant < 2 or first_count >= dominant:
+        return None
+    if any(value != dominant for value in body_counts):
+        return None
+    missing = dominant - first_count
+    if missing <= 0:
+        return None
+    rows = _iter_table_rows(table_elem)
+    if len(rows) < len(row_counts):
+        return None
+    first_row = rows[0]
+    try:
+        first_cells = [
+            child for child in _direct_role_children(first_row)
+            if (get_name(child) or "").lstrip("/").upper() in ("TH", "TD")
+        ]
+    except Exception:
+        return None
+    if len(first_cells) != first_count:
+        return None
+    if any((get_name(cell) or "").lstrip("/").upper() != "TH" for cell in first_cells):
+        return None
+    return dominant, missing
+
+
+def _normalize_short_header_row_table(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
+    """
+    Repair repeated small-table templates where the header row has fewer TH cells
+    than every body row has TD cells, such as [2, 3]. This is guarded behind an
+    explicit tableFailureClass so generic normalization behavior is unchanged.
+    """
+    info = _short_header_row_template_info(table_elem, params)
+    if info is None:
+        return False
+    _dominant, missing = info
+    try:
+        max_added = max(1, min(8, int(params.get("maxSyntheticCells") or 4)))
+    except Exception:
+        max_added = 4
+    if missing > max_added:
+        return False
+    rows = _iter_table_rows(table_elem)
+    if not rows:
+        return False
+    first_row = rows[0]
+    changed = False
+    for _ in range(missing):
+        if _append_empty_table_cell(first_row, pdf, "TH"):
+            changed = True
+    if changed:
+        _associate_existing_table_headers(table_elem)
+    return changed
+
+
 def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
     audit_before = _audit_table_structure(table_elem)
     direct_cells = int(audit_before.get("directCellUnderTableCount") or audit_before.get("cellsMisplacedCount") or 0)
@@ -8401,6 +8487,10 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
     if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":
         if _normalize_strongly_irregular_table_rows(table_elem, pdf, params):
             _associate_existing_table_headers(table_elem)
+            changed = True
+
+    if str(params.get("tableFailureClass") or "") == "short_header_row_template":
+        if _normalize_short_header_row_table(table_elem, pdf, params):
             changed = True
 
     return changed
@@ -8501,6 +8591,19 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
                     return -1
             targets = [table for table in targets if strong_key(table) >= 2]
             targets.sort(key=strong_key, reverse=True)
+        elif str(params.get("tableFailureClass") or "") == "short_header_row_template":
+            def short_header_key(table) -> int:
+                try:
+                    info = _short_header_row_template_info(table, params)
+                    if info is None:
+                        return -1
+                    dominant, missing = info
+                    audit = _audit_table_structure(table)
+                    return dominant * 10 + missing + int(audit.get("rowCount") or 0)
+                except Exception:
+                    return -1
+            targets = [table for table in targets if short_header_key(table) > 0]
+            targets.sort(key=short_header_key, reverse=True)
         targets = targets[:max_tables]
 
     for table in targets:
