@@ -437,6 +437,29 @@ describe('normalize_table_structure python mutation', () => {
     ]));
   });
 
+  it('refuses explicit non-table refs for normalize without falling back to broad table mutation', async () => {
+    const { buf, paragraphRef } = buildMixedTableAndParagraphPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          structRef: paragraphRef,
+          tableFailureClass: 'missing_headers_only',
+          maxTablesPerRun: 1,
+        },
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('no_effect');
+    expect(row?.debug?.changedTargetRefs).toEqual([]);
+    expect(row?.debug?.skippedTargetRefs).toEqual([paragraphRef]);
+    expect(row?.debug?.skippedTargetRefDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: paragraphRef, skipReason: 'not_table', resolvedRole: 'P' }),
+    ]));
+  });
+
   it('pads short rows in strongly irregular dense tables with invariant-backed table improvement', async () => {
     const buf = buildStronglyIrregularTablePdf();
     const { result } = await runPythonMutationBatch(buf, [

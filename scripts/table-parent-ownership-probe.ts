@@ -345,6 +345,7 @@ export function strictMissingHeaderBatchParams(refs: string[]): { normalizeParam
     headerParams: {
       structRefs: uniqueRefs,
       strictTableTargetRef: true,
+      tableHeaderAssociation: true,
       maxTableHeaderAssociationTargets: uniqueRefs.length,
       stage: 'diagnostic_missing_header_batch',
     },

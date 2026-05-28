@@ -8463,9 +8463,29 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
         except Exception:
             target = None
         if isinstance(target, pikepdf.Dictionary):
-            targets = [target]
+            role = (get_name(target) or "").lstrip("/")
+            if role.upper() != "TABLE":
+                skipped_ref_details.append(_table_skip_ref_detail(safe_str(ref), "not_table", role or None))
+            else:
+                targets = [target]
         else:
             skipped_ref_details.append(_table_skip_ref_detail(safe_str(ref), "not_found"))
+        if skipped_ref_details:
+            try:
+                _set_last_mutation_debug({
+                    "targetRef": ref,
+                    "targetRefs": [],
+                    "requestedTargetRefs": requested_refs or ([ref] if ref else []),
+                    "changedTargetRefs": [],
+                    "skippedTargetRefs": [item.get("ref") for item in skipped_ref_details if item.get("ref")],
+                    "skippedTargetRefDetails": skipped_ref_details,
+                    "strictTableTargetRef": strict_table_targets,
+                    "maxTablesPerRun": max_tables,
+                    "dominantColumnCount": params.get("dominantColumnCount"),
+                })
+            except Exception:
+                pass
+            return False
     else:
         targets = list(_iter_table_struct_elems(pdf))
         if str(params.get("tableFailureClass") or "") == "strongly_irregular_rows":

@@ -176,6 +176,7 @@ describe('table parent ownership probe classification', () => {
       headerParams: {
         structRefs: ['10_0', '11_0'],
         strictTableTargetRef: true,
+        tableHeaderAssociation: true,
         maxTableHeaderAssociationTargets: 2,
         stage: 'diagnostic_missing_header_batch',
       },
