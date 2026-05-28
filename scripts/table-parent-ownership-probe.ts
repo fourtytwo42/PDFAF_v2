@@ -31,6 +31,7 @@ interface ParsedArgs {
   outDir: string;
   controls: Set<string>;
   strictTableRefs: boolean;
+  sameRefTransaction: boolean;
 }
 
 interface ScoreMetrics {
@@ -76,6 +77,7 @@ interface TableParentOwnershipReport {
   generatedAt: string;
   outDir: string;
   strictTableRefs: boolean;
+  sameRefTransaction: boolean;
   rows: TableParentOwnershipRow[];
   summary: {
     rowCount: number;
@@ -105,6 +107,8 @@ Options:
   --control <id>    Mark row id as a control; repeatable
   --strict-table-refs
                     Probe table tools only with explicit object-backed refs and strict all-/Table ref validation
+  --same-ref-transaction
+                    Probe normalize_table_structure -> set_table_header_cells on the same strict /Table refs
   --help            Show this help.`;
 }
 
@@ -113,6 +117,7 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
   const controls = new Set<string>();
   let outDir = join(DEFAULT_OUT_ROOT, `table-parent-ownership-probe-${timestampSlug(now)}`);
   let strictTableRefs = false;
+  let sameRefTransaction = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -133,12 +138,14 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
       controls.add(rowId(value));
     } else if (arg === '--strict-table-refs') {
       strictTableRefs = true;
+    } else if (arg === '--same-ref-transaction') {
+      sameRefTransaction = true;
     } else {
       throw new Error(`Unknown argument ${arg}\n${usage()}`);
     }
   }
   if (pdfs.length === 0) throw new Error(`Missing --pdf\n${usage()}`);
-  return { pdfs, outDir, controls, strictTableRefs };
+  return { pdfs, outDir, controls, strictTableRefs: strictTableRefs || sameRefTransaction, sameRefTransaction };
 }
 
 function rowId(file: string): string {
@@ -261,6 +268,23 @@ export function strictTableProbeParams(
   return { ...params, strictTableTargetRef: true };
 }
 
+export function strictSameRefHeaderParams(refs: string[]): Record<string, unknown> {
+  const uniqueRefs = stringArray(refs).filter((ref, index, all) => all.indexOf(ref) === index);
+  if (uniqueRefs.length === 0) return {};
+  const base = {
+    tableHeaderAssociation: true,
+    strictTableTargetRef: true,
+    stage: 'diagnostic_same_ref_table_transaction',
+  };
+  return uniqueRefs.length === 1
+    ? { ...base, structRef: uniqueRefs[0] }
+    : {
+      ...base,
+      structRefs: uniqueRefs,
+      maxTableHeaderAssociationTargets: uniqueRefs.length,
+    };
+}
+
 function targetDetails(details: Record<string, unknown> | null): Record<string, unknown>[] {
   const invariants = objectValue(details?.['invariants']);
   const mutation = objectValue(details?.['mutation']);
@@ -378,7 +402,12 @@ async function analyzeBuffer(buffer: Buffer, filename: string): Promise<{ result
   }
 }
 
-async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strictTableRefs: boolean): Promise<TableParentOwnershipRow> {
+async function probePdf(
+  pdfPath: string,
+  roleForRow: 'focus' | 'control',
+  strictTableRefs: boolean,
+  sameRefTransaction: boolean,
+): Promise<TableParentOwnershipRow> {
   const file = basename(pdfPath);
   const id = rowId(file);
   try {
@@ -388,12 +417,7 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strict
     const applied: AppliedRemediationTool[] = [];
     const steps: TableParentOwnershipStep[] = [];
 
-    for (const toolName of TABLE_TOOLS) {
-      const params = strictTableProbeParams(
-        toolName,
-        buildDefaultParams(toolName, current.result, current.snapshot, applied),
-        strictTableRefs,
-      );
+    const runProbeTool = async (toolName: TableToolName, params: Record<string, unknown>): Promise<TableParentOwnershipStep> => {
       const before = metrics(current.result, current.snapshot);
       if (Object.keys(params).length === 0) {
         const classified = classifyTableParentOwnershipStep({
@@ -404,7 +428,7 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strict
           wrongRefs: [],
           pacRegressions: [],
         });
-        steps.push({
+        const step = {
           toolName,
           outcome: 'skipped',
           params,
@@ -416,8 +440,9 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strict
           changedRefs: [],
           pacRegressions: [],
           durationMs: 0,
-        });
-        continue;
+        };
+        steps.push(step);
+        return step;
       }
       const planned: PlannedRemediationTool = {
         toolName,
@@ -459,7 +484,7 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strict
         wrongRefs: refsWrong,
         pacRegressions,
       });
-      steps.push({
+      const step = {
         toolName,
         outcome: result.outcome,
         params,
@@ -471,7 +496,8 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strict
         changedRefs,
         pacRegressions,
         durationMs: Math.round(result.durationMs),
-      });
+      };
+      steps.push(step);
       applied.push({
         toolName,
         stage: 0,
@@ -485,6 +511,33 @@ async function probePdf(pdfPath: string, roleForRow: 'focus' | 'control', strict
       });
       buffer = nextBuffer;
       current = next;
+      return step;
+    };
+
+    if (sameRefTransaction) {
+      const normalizeParams = strictTableProbeParams(
+        'normalize_table_structure',
+        buildDefaultParams('normalize_table_structure', current.result, current.snapshot, applied),
+        true,
+      );
+      const normalizeStep = await runProbeTool('normalize_table_structure', normalizeParams);
+      const refs = collectRefs(
+        normalizeParams['structRef'],
+        normalizeParams['targetRef'],
+        normalizeParams['targetStructRef'],
+        normalizeParams['structRefs'],
+        normalizeStep.requestedRefs,
+      );
+      await runProbeTool('set_table_header_cells', strictSameRefHeaderParams(refs));
+    } else {
+      for (const toolName of TABLE_TOOLS) {
+        const params = strictTableProbeParams(
+          toolName,
+          buildDefaultParams(toolName, current.result, current.snapshot, applied),
+          strictTableRefs,
+        );
+        await runProbeTool(toolName, params);
+      }
     }
 
     const final = metrics(current.result, current.snapshot);
@@ -553,7 +606,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
   const rows: TableParentOwnershipRow[] = [];
   for (const pdf of args.pdfs) {
     const id = rowId(pdf);
-    rows.push(await probePdf(pdf, args.controls.has(id) ? 'control' : 'focus', args.strictTableRefs));
+    rows.push(await probePdf(pdf, args.controls.has(id) ? 'control' : 'focus', args.strictTableRefs, args.sameRefTransaction));
   }
   const ownershipRegressionCandidates = rows
     .filter(row => row.classification === 'ownership_regression_candidate')
@@ -570,6 +623,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
     generatedAt: new Date().toISOString(),
     outDir: args.outDir,
     strictTableRefs: args.strictTableRefs,
+    sameRefTransaction: args.sameRefTransaction,
     rows,
     summary: {
       rowCount: rows.length,
@@ -594,6 +648,7 @@ function renderMarkdown(report: TableParentOwnershipReport): string {
     `Generated: ${report.generatedAt}`,
     `Decision: \`${report.decision.status}\``,
     `Strict table refs: \`${report.strictTableRefs}\``,
+    `Same-ref transaction: \`${report.sameRefTransaction}\``,
     `Reasons: ${report.decision.reasons.map(reason => `\`${reason}\``).join(', ')}`,
     '',
     '## Summary',

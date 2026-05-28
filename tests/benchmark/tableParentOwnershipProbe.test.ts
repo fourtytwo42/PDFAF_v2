@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyTableParentOwnershipStep,
   parseArgs,
+  strictSameRefHeaderParams,
   strictTableProbeParams,
   type TableParentOwnershipStepClassification,
 } from '../../scripts/table-parent-ownership-probe.js';
@@ -80,18 +81,28 @@ describe('table parent ownership probe classification', () => {
       '--out', '/tmp/out',
       '--control', 'b.pdf',
       '--strict-table-refs',
+      '--same-ref-transaction',
     ], new Date('2026-05-27T00:00:00Z'));
 
     expect(args.pdfs).toEqual(['/tmp/a.pdf', '/tmp/b.pdf']);
     expect(args.outDir).toBe('/tmp/out');
     expect(args.controls.has('b')).toBe(true);
     expect(args.strictTableRefs).toBe(true);
+    expect(args.sameRefTransaction).toBe(true);
   });
 
   it('defaults strict table refs off', () => {
     const args = parseArgs(['--pdf', '/tmp/a.pdf'], new Date('2026-05-27T00:00:00Z'));
 
     expect(args.strictTableRefs).toBe(false);
+    expect(args.sameRefTransaction).toBe(false);
+  });
+
+  it('same-ref transaction implies strict table refs', () => {
+    const args = parseArgs(['--pdf', '/tmp/a.pdf', '--same-ref-transaction'], new Date('2026-05-27T00:00:00Z'));
+
+    expect(args.strictTableRefs).toBe(true);
+    expect(args.sameRefTransaction).toBe(true);
   });
 
   it('adds strict validation to object-backed table params', () => {
@@ -111,5 +122,22 @@ describe('table parent ownership probe classification', () => {
 
   it('leaves table params unchanged when strict mode is off', () => {
     expect(strictTableProbeParams('normalize_table_structure', { maxTables: 2 }, false)).toEqual({ maxTables: 2 });
+  });
+
+  it('builds strict same-ref header params from normalized table refs', () => {
+    expect(strictSameRefHeaderParams(['10_0'])).toEqual({
+      structRef: '10_0',
+      tableHeaderAssociation: true,
+      strictTableTargetRef: true,
+      stage: 'diagnostic_same_ref_table_transaction',
+    });
+    expect(strictSameRefHeaderParams(['10_0', '10_0', '11_0'])).toEqual({
+      structRefs: ['10_0', '11_0'],
+      tableHeaderAssociation: true,
+      strictTableTargetRef: true,
+      maxTableHeaderAssociationTargets: 2,
+      stage: 'diagnostic_same_ref_table_transaction',
+    });
+    expect(strictSameRefHeaderParams([])).toEqual({});
   });
 });
