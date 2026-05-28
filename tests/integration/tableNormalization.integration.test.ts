@@ -265,9 +265,10 @@ with open(${JSON.stringify(refPath)}, 'w') as f:
   };
 }
 
-function buildMultipleStronglyIrregularTablesPdf(): Buffer {
+function buildMultipleStronglyIrregularTablesPdf(): { buf: Buffer; tableRefs: string[] } {
   const dir = mkdtempSync(join(tmpdir(), 'pdfaf-table-irregular-multi-'));
   const pdfPath = join(dir, 'table.pdf');
+  const refPath = join(dir, 'table-refs.txt');
   const script = join(dir, 'make_table.py');
   writeFileSync(script, `
 import pikepdf
@@ -297,9 +298,16 @@ for table_index in range(5):
 doc['/K'] = Array(tables)
 sr['/K'] = doc
 pdf.save(${JSON.stringify(pdfPath)})
+saved = pikepdf.open(${JSON.stringify(pdfPath)})
+saved_tables = list(saved.Root['/StructTreeRoot']['/K']['/K'])
+with open(${JSON.stringify(refPath)}, 'w') as f:
+    f.write("\\n".join(f"{table.objgen[0]}_{table.objgen[1]}" for table in saved_tables))
 `);
   execFileSync('python3', [script]);
-  return readFileSync(pdfPath);
+  return {
+    buf: readFileSync(pdfPath),
+    tableRefs: readFileSync(refPath, 'utf8').trim().split('\n').filter(Boolean),
+  };
 }
 
 describe('normalize_table_structure python mutation', () => {
@@ -459,7 +467,7 @@ describe('normalize_table_structure python mutation', () => {
   });
 
   it('normalizes up to four strongly irregular dense tables in one bounded pass', async () => {
-    const buf = buildMultipleStronglyIrregularTablesPdf();
+    const { buf } = buildMultipleStronglyIrregularTablesPdf();
     const { result } = await runPythonMutationBatch(buf, [
       {
         op: 'normalize_table_structure',
@@ -477,5 +485,48 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.invariants?.stronglyIrregularTableCountBefore).toBe(5);
     expect(row?.invariants?.stronglyIrregularTableCountAfter).toBe(1);
     expect(row?.structuralBenefits?.tableValidityImproved).toBe(true);
+  });
+
+  it('strictly normalizes only requested table refs and refuses mixed non-table batches', async () => {
+    const { buf, tableRefs } = buildMultipleStronglyIrregularTablesPdf();
+    const { result } = await runPythonMutationBatch(buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          structRefs: tableRefs.slice(0, 4),
+          strictTableTargetRef: true,
+          tableFailureClass: 'strongly_irregular_rows',
+          maxTablesPerRun: 4,
+          maxSyntheticCells: 32,
+        },
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    const row = result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(row?.outcome).toBe('applied');
+    expect(row?.debug?.requestedTargetRefs).toEqual(tableRefs.slice(0, 4));
+    expect(row?.debug?.changedTargetRefs).toEqual(tableRefs.slice(0, 4));
+    expect(row?.debug?.strictTableTargetRef).toBe(true);
+    expect(row?.invariants?.stronglyIrregularTableCountAfter).toBe(1);
+
+    const mixed = buildMixedTableAndParagraphPdf();
+    const mixedResult = await runPythonMutationBatch(mixed.buf, [
+      {
+        op: 'normalize_table_structure',
+        params: {
+          structRefs: [mixed.tableRef, mixed.paragraphRef],
+          strictTableTargetRef: true,
+          tableFailureClass: 'strongly_irregular_rows',
+          maxTablesPerRun: 2,
+          maxSyntheticCells: 8,
+        },
+      },
+    ]);
+    const mixedRow = mixedResult.result.opResults?.find(op => op.op === 'normalize_table_structure');
+    expect(mixedRow?.outcome).toBe('no_effect');
+    expect(mixedRow?.debug?.changedTargetRefs).toEqual([]);
+    expect(mixedRow?.debug?.skippedTargetRefs).toEqual([mixed.paragraphRef]);
+    expect(mixedRow?.debug?.strictTableTargetRef).toBe(true);
   });
 });

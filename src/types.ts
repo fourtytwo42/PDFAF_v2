@@ -310,6 +310,8 @@ export interface DocumentSnapshot {
     dominantColumnCount?: number;
     maxRowSpan?: number;
     maxColSpan?: number;
+    /** Empty TR rows that carry no cells, MCIDs, OBJR, or text metadata. */
+    removableEmptyRowCount?: number;
     reachable?: boolean;
     directContent?: boolean;
     subtreeMcidCount?: number;

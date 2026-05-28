@@ -3810,6 +3810,7 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                             "dominantColumnCount": audit.get("dominantColumnCount") or 0,
                             "maxRowSpan": audit.get("maxRowSpan") or 1,
                             "maxColSpan": audit.get("maxColSpan") or 1,
+                            "removableEmptyRowCount": audit.get("removableEmptyRowCount") or 0,
                             "page": page,
                             "rawRole": (get_name(elem) or "").lstrip("/"),
                             "resolvedRole": tag,
@@ -4270,6 +4271,7 @@ def _audit_table_structure(table_elem) -> dict:
     - rowCount: TR rows under Table, THead, TBody, or TFoot
     - cellsMisplacedCount: TH/TD that are direct children of Table or of THead/TBody/TFoot but not under TR
     - irregularRows: TR siblings with differing TH+TD counts (capped sample)
+    - removableEmptyRowCount: empty TR rows that carry no cells, MCIDs, OBJR, or text metadata
     - rowCellCounts, dominantColumnCount, maxRowSpan, maxColSpan: for pdfaf-style advisory regularity (Tier A)
     """
     row_count = 0
@@ -4277,14 +4279,17 @@ def _audit_table_structure(table_elem) -> dict:
     row_cell_counts: list[int] = []
     max_row_span = 1
     max_col_span = 1
+    removable_empty_rows = 0
 
     def scan_section(section) -> None:
-        nonlocal row_count, cells_misplaced, row_cell_counts, max_row_span, max_col_span
+        nonlocal row_count, cells_misplaced, row_cell_counts, max_row_span, max_col_span, removable_empty_rows
         try:
             for ch in _direct_role_children(section):
                 tag = (get_name(ch) or "").lstrip("/").upper()
                 if tag == "TR":
                     row_count += 1
+                    if _is_empty_table_row_struct(ch):
+                        removable_empty_rows += 1
                     if len(row_cell_counts) < 20:
                         row_cell_counts.append(_count_tr_row_cells(ch))
                     rs, cs = _tr_cell_span_max(ch)
@@ -4302,6 +4307,8 @@ def _audit_table_structure(table_elem) -> dict:
             tag = (get_name(ch) or "").lstrip("/").upper()
             if tag == "TR":
                 row_count += 1
+                if _is_empty_table_row_struct(ch):
+                    removable_empty_rows += 1
                 if len(row_cell_counts) < 20:
                     row_cell_counts.append(_count_tr_row_cells(ch))
                 rs, cs = _tr_cell_span_max(ch)
@@ -4331,6 +4338,7 @@ def _audit_table_structure(table_elem) -> dict:
         "dominantColumnCount": dominant,
         "maxRowSpan": max_row_span,
         "maxColSpan": max_col_span,
+        "removableEmptyRowCount": removable_empty_rows,
     }
 
 
@@ -8317,9 +8325,10 @@ def _normalize_one_table_structure(table_elem, pdf: pikepdf.Pdf, params: dict) -
 def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     ref = _table_target_ref(params)
     requested_refs = _table_target_refs(params)
+    strict_table_targets = bool(params.get("strictTableTargetRef") or params.get("strictTableTargetRefs"))
+    max_table_cap = 24 if bool(params.get("largeObjectBackedTableBatch")) else (8 if strict_table_targets else 4)
     max_tables = 1
     try:
-        max_table_cap = 24 if bool(params.get("largeObjectBackedTableBatch")) else 4
         max_tables = max(1, min(max_table_cap, int(params.get("maxTablesPerRun") or 1)))
     except Exception:
         max_tables = 1
@@ -8328,7 +8337,43 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
     targets: list = []
     skipped_ref_details: list[dict] = []
     changed_refs: list[str] = []
-    if ref:
+
+    if strict_table_targets and requested_refs:
+        if len(requested_refs) > max_tables:
+            max_tables = min(max_table_cap, len(requested_refs))
+        if len(requested_refs) > max_table_cap:
+            for requested in requested_refs[max_table_cap:]:
+                skipped_ref_details.append(_table_skip_ref_detail(safe_str(requested), "too_many_refs"))
+        for requested in requested_refs[:max_table_cap]:
+            try:
+                target = _resolve_ref(pdf, requested)
+            except Exception:
+                target = None
+            if not isinstance(target, pikepdf.Dictionary):
+                skipped_ref_details.append(_table_skip_ref_detail(safe_str(requested), "not_found"))
+                continue
+            role = (get_name(target) or "").lstrip("/")
+            if role.upper() != "TABLE":
+                skipped_ref_details.append(_table_skip_ref_detail(safe_str(requested), "not_table", role or None))
+                continue
+            targets.append(target)
+        if skipped_ref_details:
+            try:
+                _set_last_mutation_debug({
+                    "targetRef": ref,
+                    "targetRefs": [],
+                    "requestedTargetRefs": requested_refs,
+                    "changedTargetRefs": [],
+                    "skippedTargetRefs": [item.get("ref") for item in skipped_ref_details if item.get("ref")],
+                    "skippedTargetRefDetails": skipped_ref_details,
+                    "strictTableTargetRef": True,
+                    "maxTablesPerRun": max_tables,
+                    "dominantColumnCount": params.get("dominantColumnCount"),
+                })
+            except Exception:
+                pass
+            return False
+    elif ref:
         try:
             target = _resolve_ref(pdf, ref)
         except Exception:
@@ -8382,6 +8427,7 @@ def _op_normalize_table_structure(pdf: pikepdf.Pdf, params: dict) -> bool:
                 "changedTargetRefs": changed_refs,
                 "skippedTargetRefs": [item.get("ref") for item in skipped_ref_details if item.get("ref")],
                 "skippedTargetRefDetails": skipped_ref_details,
+                "strictTableTargetRef": strict_table_targets,
                 "maxTablesPerRun": max_tables,
                 "dominantColumnCount": params.get("dominantColumnCount"),
             })
