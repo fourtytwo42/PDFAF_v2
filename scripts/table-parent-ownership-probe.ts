@@ -10,6 +10,7 @@ import { analyzePdf } from '../src/services/pdfAnalyzer.js';
 import { runPythonMutationBatch, type BatchMutationResult, type PythonMutation } from '../src/python/bridge.js';
 import { runSingleTool } from '../src/services/remediation/orchestrator.js';
 import { buildDefaultParams } from '../src/services/remediation/planner.js';
+import { isRealRootReachableTableTarget } from '../src/services/remediation/tableTargetGuards.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, PlannedRemediationTool } from '../src/types.js';
 
 const DEFAULT_OUT_ROOT = '/mnt/pdf-review/pdfaf-table-diagnostics';
@@ -34,6 +35,7 @@ interface ParsedArgs {
   strictTableRefs: boolean;
   sameRefTransaction: boolean;
   batchTransaction: boolean;
+  missingHeaderBatch: boolean;
 }
 
 interface ScoreMetrics {
@@ -81,6 +83,7 @@ interface TableParentOwnershipReport {
   strictTableRefs: boolean;
   sameRefTransaction: boolean;
   batchTransaction: boolean;
+  missingHeaderBatch: boolean;
   rows: TableParentOwnershipRow[];
   summary: {
     rowCount: number;
@@ -114,6 +117,8 @@ Options:
                     Probe normalize_table_structure -> set_table_header_cells on the same strict /Table refs
   --batch-transaction
                     Probe the same strict transaction inside one Python mutation batch
+  --missing-header-batch
+                    Probe a strict multi-ref missing-header normalize/header batch
   --help            Show this help.`;
 }
 
@@ -124,6 +129,7 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
   let strictTableRefs = false;
   let sameRefTransaction = false;
   let batchTransaction = false;
+  let missingHeaderBatch = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -148,6 +154,8 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
       sameRefTransaction = true;
     } else if (arg === '--batch-transaction') {
       batchTransaction = true;
+    } else if (arg === '--missing-header-batch') {
+      missingHeaderBatch = true;
     } else {
       throw new Error(`Unknown argument ${arg}\n${usage()}`);
     }
@@ -157,9 +165,10 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
     pdfs,
     outDir,
     controls,
-    strictTableRefs: strictTableRefs || sameRefTransaction || batchTransaction,
+    strictTableRefs: strictTableRefs || sameRefTransaction || batchTransaction || missingHeaderBatch,
     sameRefTransaction,
     batchTransaction,
+    missingHeaderBatch,
   };
 }
 
@@ -300,6 +309,48 @@ export function strictSameRefHeaderParams(refs: string[]): Record<string, unknow
     };
 }
 
+function missingHeaderTargetRefs(snapshot: DocumentSnapshot, limit = 8): string[] {
+  return snapshot.tables
+    .filter(isRealRootReachableTableTarget)
+    .filter(table =>
+      table.structRef &&
+      !table.hasHeaders &&
+      (table.totalCells ?? 0) >= 4 &&
+      (table.rowCount ?? 0) > 1 &&
+      (table.cellsMisplacedCount ?? 0) === 0
+    )
+    .sort((a, b) =>
+      (b.totalCells ?? 0) - (a.totalCells ?? 0) ||
+      (b.irregularRows ?? 0) - (a.irregularRows ?? 0) ||
+      a.page - b.page ||
+      (a.structRef ?? '').localeCompare(b.structRef ?? '')
+    )
+    .map(table => table.structRef!)
+    .slice(0, limit);
+}
+
+export function strictMissingHeaderBatchParams(refs: string[]): { normalizeParams: Record<string, unknown>; headerParams: Record<string, unknown> } {
+  const uniqueRefs = stringArray(refs).filter((ref, index, all) => all.indexOf(ref) === index);
+  if (uniqueRefs.length === 0) return { normalizeParams: {}, headerParams: {} };
+  return {
+    normalizeParams: {
+      structRefs: uniqueRefs,
+      strictTableTargetRef: true,
+      tableFailureClass: 'missing_headers_only',
+      dominantColumnCount: 0,
+      maxTablesPerRun: uniqueRefs.length,
+      maxSyntheticCells: Math.max(80, uniqueRefs.length * 40),
+      stage: 'diagnostic_missing_header_batch',
+    },
+    headerParams: {
+      structRefs: uniqueRefs,
+      strictTableTargetRef: true,
+      maxTableHeaderAssociationTargets: uniqueRefs.length,
+      stage: 'diagnostic_missing_header_batch',
+    },
+  };
+}
+
 function targetDetails(details: Record<string, unknown> | null): Record<string, unknown>[] {
   const invariants = objectValue(details?.['invariants']);
   const mutation = objectValue(details?.['mutation']);
@@ -438,6 +489,7 @@ async function probePdf(
   strictTableRefs: boolean,
   sameRefTransaction: boolean,
   batchTransaction: boolean,
+  missingHeaderBatch: boolean,
 ): Promise<TableParentOwnershipRow> {
   const file = basename(pdfPath);
   const id = rowId(file);
@@ -545,22 +597,24 @@ async function probePdf(
       return step;
     };
 
-    const runBatchTransaction = async (): Promise<void> => {
-      const normalizeParams = strictTableProbeParams(
-        'normalize_table_structure',
-        buildDefaultParams('normalize_table_structure', current.result, current.snapshot, applied),
-        true,
-      );
+    const runBatchTransaction = async (
+      normalizeParams: Record<string, unknown>,
+      headerParams: Record<string, unknown>,
+      transactionName: string,
+    ): Promise<void> => {
       const refs = collectRefs(
         normalizeParams['structRef'],
         normalizeParams['targetRef'],
         normalizeParams['targetStructRef'],
         normalizeParams['structRefs'],
+        headerParams['structRef'],
+        headerParams['targetRef'],
+        headerParams['targetStructRef'],
+        headerParams['structRefs'],
       );
-      const headerParams = strictSameRefHeaderParams(refs);
       const before = metrics(current.result, current.snapshot);
       if (Object.keys(normalizeParams).length === 0 || Object.keys(headerParams).length === 0) {
-        const params = { normalizeParams, headerParams, transaction: 'python_batch_same_ref' };
+        const params = { normalizeParams, headerParams, transaction: transactionName };
         const classified = classifyTableParentOwnershipStep({
           outcome: 'skipped',
           params,
@@ -608,7 +662,7 @@ async function probePdf(
           ? 'no_effect'
           : 'failed';
       const params = {
-        transaction: 'python_batch_same_ref',
+        transaction: transactionName,
         normalizeParams,
         headerParams,
         opResults: result.result.opResults ?? [],
@@ -642,7 +696,22 @@ async function probePdf(
     };
 
     if (batchTransaction) {
-      await runBatchTransaction();
+      const normalizeParams = strictTableProbeParams(
+        'normalize_table_structure',
+        buildDefaultParams('normalize_table_structure', current.result, current.snapshot, applied),
+        true,
+      );
+      const refs = collectRefs(
+        normalizeParams['structRef'],
+        normalizeParams['targetRef'],
+        normalizeParams['targetStructRef'],
+        normalizeParams['structRefs'],
+      );
+      await runBatchTransaction(normalizeParams, strictSameRefHeaderParams(refs), 'python_batch_same_ref');
+    } else if (missingHeaderBatch) {
+      const refs = missingHeaderTargetRefs(current.snapshot);
+      const params = strictMissingHeaderBatchParams(refs);
+      await runBatchTransaction(params.normalizeParams, params.headerParams, 'python_batch_missing_header_refs');
     } else if (sameRefTransaction) {
       const normalizeParams = strictTableProbeParams(
         'normalize_table_structure',
@@ -741,6 +810,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
       args.strictTableRefs,
       args.sameRefTransaction,
       args.batchTransaction,
+      args.missingHeaderBatch,
     ));
   }
   const ownershipRegressionCandidates = rows
@@ -760,6 +830,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
     strictTableRefs: args.strictTableRefs,
     sameRefTransaction: args.sameRefTransaction,
     batchTransaction: args.batchTransaction,
+    missingHeaderBatch: args.missingHeaderBatch,
     rows,
     summary: {
       rowCount: rows.length,
@@ -786,6 +857,7 @@ function renderMarkdown(report: TableParentOwnershipReport): string {
     `Strict table refs: \`${report.strictTableRefs}\``,
     `Same-ref transaction: \`${report.sameRefTransaction}\``,
     `Batch transaction: \`${report.batchTransaction}\``,
+    `Missing-header batch: \`${report.missingHeaderBatch}\``,
     `Reasons: ${report.decision.reasons.map(reason => `\`${reason}\``).join(', ')}`,
     '',
     '## Summary',

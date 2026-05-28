@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyTableParentOwnershipStep,
   parseArgs,
+  strictMissingHeaderBatchParams,
   strictSameRefHeaderParams,
   strictTableProbeParams,
   type TableParentOwnershipStepClassification,
@@ -83,6 +84,7 @@ describe('table parent ownership probe classification', () => {
       '--strict-table-refs',
       '--same-ref-transaction',
       '--batch-transaction',
+      '--missing-header-batch',
     ], new Date('2026-05-27T00:00:00Z'));
 
     expect(args.pdfs).toEqual(['/tmp/a.pdf', '/tmp/b.pdf']);
@@ -91,6 +93,7 @@ describe('table parent ownership probe classification', () => {
     expect(args.strictTableRefs).toBe(true);
     expect(args.sameRefTransaction).toBe(true);
     expect(args.batchTransaction).toBe(true);
+    expect(args.missingHeaderBatch).toBe(true);
   });
 
   it('defaults strict table refs off', () => {
@@ -99,6 +102,7 @@ describe('table parent ownership probe classification', () => {
     expect(args.strictTableRefs).toBe(false);
     expect(args.sameRefTransaction).toBe(false);
     expect(args.batchTransaction).toBe(false);
+    expect(args.missingHeaderBatch).toBe(false);
   });
 
   it('same-ref transaction implies strict table refs', () => {
@@ -113,6 +117,13 @@ describe('table parent ownership probe classification', () => {
 
     expect(args.strictTableRefs).toBe(true);
     expect(args.batchTransaction).toBe(true);
+  });
+
+  it('missing-header batch implies strict table refs', () => {
+    const args = parseArgs(['--pdf', '/tmp/a.pdf', '--missing-header-batch'], new Date('2026-05-27T00:00:00Z'));
+
+    expect(args.strictTableRefs).toBe(true);
+    expect(args.missingHeaderBatch).toBe(true);
   });
 
   it('adds strict validation to object-backed table params', () => {
@@ -149,5 +160,26 @@ describe('table parent ownership probe classification', () => {
       stage: 'diagnostic_same_ref_table_transaction',
     });
     expect(strictSameRefHeaderParams([])).toEqual({});
+  });
+
+  it('builds strict missing-header batch params', () => {
+    expect(strictMissingHeaderBatchParams(['10_0', '10_0', '11_0'])).toEqual({
+      normalizeParams: {
+        structRefs: ['10_0', '11_0'],
+        strictTableTargetRef: true,
+        tableFailureClass: 'missing_headers_only',
+        dominantColumnCount: 0,
+        maxTablesPerRun: 2,
+        maxSyntheticCells: 80,
+        stage: 'diagnostic_missing_header_batch',
+      },
+      headerParams: {
+        structRefs: ['10_0', '11_0'],
+        strictTableTargetRef: true,
+        maxTableHeaderAssociationTargets: 2,
+        stage: 'diagnostic_missing_header_batch',
+      },
+    });
+    expect(strictMissingHeaderBatchParams([])).toEqual({ normalizeParams: {}, headerParams: {} });
   });
 });
