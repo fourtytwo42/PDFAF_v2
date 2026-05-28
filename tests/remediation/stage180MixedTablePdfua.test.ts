@@ -3,8 +3,10 @@ import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnaps
 import {
   classifyStage180MixedTablePdfUa,
   hasAppliedStage180MixedTablePdfUa,
+  shouldTryStage180RepeatedTemplateFinalization,
   shouldTryStage180ReportTableProof,
   shouldTryStage180LinkRepairAfterTable,
+  stage180RepeatedTemplateEvidence,
   stage180RemainingTableTargets,
 } from '../../src/services/remediation/stage180MixedTablePdfua.js';
 
@@ -120,6 +122,28 @@ function applied(toolName: string, targetRef: string): AppliedRemediationTool {
     outcome: 'applied',
     details: JSON.stringify({ outcome: 'applied', invariants: { targetRef } }),
   };
+}
+
+function repeatedTemplateTables(count = 120): DocumentSnapshot['tables'] {
+  return Array.from({ length: count }, (_, index) => ({
+    structRef: `${2000 + index}_0`,
+    rawRole: 'Table',
+    resolvedRole: 'Table',
+    page: Math.floor(index / 4),
+    hasHeaders: true,
+    headerCount: 2,
+    totalCells: 5,
+    rowCount: 2,
+    rowCellCounts: [2, 3],
+    cellsMisplacedCount: 0,
+    irregularRows: 1,
+    dominantColumnCount: 2,
+    maxRowSpan: 1,
+    maxColSpan: 1,
+    reachable: true,
+    directContent: false,
+    subtreeMcidCount: 5,
+  }));
 }
 
 describe('Stage 180 mixed table/PDF-UA helpers', () => {
@@ -493,6 +517,146 @@ describe('Stage 180 mixed table/PDF-UA helpers', () => {
     expect(shouldTryStage180LinkRepairAfterTable({
       analysis: analysis(74, { table_markup: 44, pdf_ua_compliance: 50 }),
       snapshot: snapshot(),
+    })).toBe(false);
+  });
+
+  it('admits only high-volume repeated real-table template finalization candidates', () => {
+    const candidateSnapshot = snapshot({
+      pageCount: 44,
+      tables: repeatedTemplateTables(120),
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      tableHeaderAudit: {
+        tablesChecked: 120,
+        headerAssociationMissingCount: 148,
+        orphanHeaderCellCount: 326,
+        dataCellsWithoutHeaderCount: 608,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 141,
+          stronglyIrregularTableCount: 31,
+        },
+      },
+    });
+    const candidateAnalysis = analysis(69, {
+      heading_structure: 58,
+      reading_order: 100,
+      link_quality: 100,
+      alt_text: 100,
+      table_markup: 5,
+    });
+
+    expect(stage180RepeatedTemplateEvidence(candidateSnapshot)).toMatchObject({
+      realReachableTableCount: 120,
+      repeatedTemplateTableCount: 120,
+      largestRepeatedGroupCount: 120,
+      largestRepeatedGroupDebt: 360,
+      tableHeaderDebt: 1082,
+    });
+    expect(shouldTryStage180RepeatedTemplateFinalization({
+      analysis: candidateAnalysis,
+      snapshot: candidateSnapshot,
+    })).toBe(true);
+
+    expect(shouldTryStage180RepeatedTemplateFinalization({
+      analysis: analysis(93, { table_markup: 100, alt_text: 100, heading_structure: 100, reading_order: 100 }),
+      snapshot: candidateSnapshot,
+    })).toBe(false);
+    expect(shouldTryStage180RepeatedTemplateFinalization({
+      analysis: candidateAnalysis,
+      snapshot: snapshot({
+        ...candidateSnapshot,
+        tables: repeatedTemplateTables(10),
+      }),
+    })).toBe(false);
+  });
+
+  it('rejects repeated-template candidates with non-table role evidence or non-table core debt', () => {
+    const repeatedNonTables = repeatedTemplateTables(120).map(table => ({
+      ...table,
+      rawRole: 'Span',
+      resolvedRole: 'Table',
+    }));
+    const coreSnapshot = snapshot({
+      pageCount: 44,
+      tables: repeatedNonTables,
+      annotationAccessibility: {
+        pagesMissingTabsS: 0,
+        pagesAnnotationOrderDiffers: 0,
+        linkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingStructure: 0,
+        nonLinkAnnotationsMissingContents: 0,
+        linkAnnotationsMissingStructParent: 0,
+        nonLinkAnnotationsMissingStructParent: 0,
+      },
+      tableHeaderAudit: {
+        tablesChecked: 120,
+        headerAssociationMissingCount: 148,
+        orphanHeaderCellCount: 326,
+        dataCellsWithoutHeaderCount: 608,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      detectionProfile: {
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { linkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0 },
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 141,
+          stronglyIrregularTableCount: 31,
+        },
+      },
+    });
+
+    expect(stage180RepeatedTemplateEvidence(coreSnapshot).realReachableTableCount).toBe(0);
+    expect(shouldTryStage180RepeatedTemplateFinalization({
+      analysis: analysis(69, {
+        heading_structure: 58,
+        reading_order: 100,
+        link_quality: 100,
+        alt_text: 100,
+        table_markup: 5,
+      }),
+      snapshot: coreSnapshot,
+    })).toBe(false);
+    expect(shouldTryStage180RepeatedTemplateFinalization({
+      analysis: analysis(69, {
+        heading_structure: 58,
+        reading_order: 100,
+        link_quality: 100,
+        alt_text: 100,
+        table_markup: 5,
+      }),
+      snapshot: snapshot({
+        ...coreSnapshot,
+        tables: repeatedTemplateTables(120),
+        annotationAccessibility: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 1,
+          nonLinkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingContents: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+      }),
     })).toBe(false);
   });
 

@@ -81,8 +81,10 @@ import {
 import {
   classifyStage180MixedTablePdfUa,
   hasAppliedStage180MixedTablePdfUa,
+  shouldTryStage180RepeatedTemplateFinalization,
   shouldTryStage180ReportTableProof,
   shouldTryStage180LinkRepairAfterTable,
+  stage180RepeatedTemplateEvidence,
 } from './stage180MixedTablePdfua.js';
 import {
   classifyStage181HiddenAlt,
@@ -6860,7 +6862,13 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
   let { buffer, analysis, snapshot } = args.state;
   const decision = classifyStage180MixedTablePdfUa({ analysis, snapshot, appliedTools });
-  if (!decision.shouldAttempt) return args.state;
+  const repeatedTemplateEvidenceForDecision = stage180RepeatedTemplateEvidence(snapshot);
+  const repeatedTemplateCandidate = shouldTryStage180RepeatedTemplateFinalization({
+    analysis,
+    snapshot,
+    evidence: repeatedTemplateEvidenceForDecision,
+  });
+  if (!decision.shouldAttempt && !repeatedTemplateCandidate) return args.state;
 
   const headerRegularity = await applyStage180HeaderRegularitySequence({
     filename,
@@ -6891,6 +6899,22 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   analysis = largeRegularity.analysis;
   snapshot = largeRegularity.snapshot;
   if (largeRegularity.accepted && (categoryScore(analysis, 'table_markup') ?? 100) >= 90) {
+    return { buffer, analysis, snapshot };
+  }
+
+  const repeatedTemplate = await applyStage180RepeatedTemplateFinalization({
+    filename,
+    signal,
+    round,
+    state: { buffer, analysis, snapshot },
+    appliedTools,
+    runtimeSummary,
+    protectedBaseline,
+  });
+  buffer = repeatedTemplate.buffer;
+  analysis = repeatedTemplate.analysis;
+  snapshot = repeatedTemplate.snapshot;
+  if (repeatedTemplate.accepted && (categoryScore(analysis, 'table_markup') ?? 100) >= 90) {
     return { buffer, analysis, snapshot };
   }
 
@@ -6989,6 +7013,169 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   }
 
   return { buffer, analysis, snapshot };
+}
+
+function buildStage180RepeatedTemplateFinalizationMutations(): PythonMutation[] {
+  const mutations: PythonMutation[] = [];
+  for (let index = 0; index < 8; index += 1) {
+    mutations.push({
+      op: 'normalize_table_structure',
+      params: {
+        tableFailureClass: 'short_header_row_template',
+        largeObjectBackedTableBatch: true,
+        maxTablesPerRun: 24,
+        maxSyntheticCells: 8,
+        stage: 'stage180_repeated_template_finalization',
+      },
+    });
+  }
+  for (let index = 0; index < 6; index += 1) {
+    mutations.push({
+      op: 'normalize_table_structure',
+      params: {
+        tableFailureClass: 'strongly_irregular_rows',
+        largeObjectBackedTableBatch: true,
+        maxTablesPerRun: 24,
+        maxSyntheticCells: 480,
+        stage: 'stage180_repeated_template_finalization',
+      },
+    });
+  }
+  for (let index = 0; index < 2; index += 1) {
+    mutations.push({
+      op: 'normalize_table_structure',
+      params: {
+        tableFailureClass: 'single_column_variance_template',
+        largeObjectBackedTableBatch: true,
+        maxTablesPerRun: 8,
+        maxSyntheticCells: 64,
+        stage: 'stage180_repeated_template_finalization',
+      },
+    });
+  }
+  for (let index = 0; index < 2; index += 1) {
+    mutations.push({
+      op: 'normalize_table_structure',
+      params: {
+        tableFailureClass: 'empty_table_shell',
+        largeObjectBackedTableBatch: true,
+        maxTablesPerRun: 8,
+        stage: 'stage180_repeated_template_finalization',
+      },
+    });
+  }
+  mutations.push({
+    op: 'set_table_header_cells',
+    params: {
+      tableHeaderAssociation: true,
+      associateAllTableHeaders: true,
+      includeHeaderOnlyTables: true,
+      maxTableHeaderAssociationTargets: 512,
+      stage: 'stage180_repeated_template_finalization',
+    },
+  });
+  for (let index = 0; index < 2; index += 1) {
+    mutations.push({
+      op: 'normalize_table_structure',
+      params: {
+        tableFailureClass: 'empty_corner_header_cell',
+        largeObjectBackedTableBatch: true,
+        maxTablesPerRun: 8,
+        stage: 'stage180_repeated_template_finalization',
+      },
+    });
+  }
+  mutations.push({
+    op: 'set_table_header_cells',
+    params: {
+      tableHeaderAssociation: true,
+      associateAllTableHeaders: true,
+      includeHeaderOnlyTables: true,
+      maxTableHeaderAssociationTargets: 512,
+      stage: 'stage180_repeated_template_finalization',
+    },
+  });
+  return mutations;
+}
+
+async function applyStage180RepeatedTemplateFinalization(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState & { accepted: boolean }> {
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { buffer, analysis, snapshot } = args.state;
+  const evidence = stage180RepeatedTemplateEvidence(snapshot);
+  if (!shouldTryStage180RepeatedTemplateFinalization({ analysis, snapshot, evidence })) {
+    return { ...args.state, accepted: false };
+  }
+
+  const { buffer: nextBuffer, result } = await runPythonMutationBatch(
+    buffer,
+    buildStage180RepeatedTemplateFinalizationMutations(),
+    { signal, abortOnFailedOp: false, reopenBetweenOps: false },
+  );
+  if (result.applied.length === 0) {
+    return { ...args.state, accepted: false };
+  }
+
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'stage180_repeated_template_finalization',
+    evidence,
+    mutationResults: (result.opResults ?? []).map(row => {
+      const invariants = row.invariants as Record<string, unknown> | undefined;
+      return {
+        op: row.op,
+        outcome: row.outcome,
+        note: row.note,
+        changedTargetCount: Array.isArray(row.debug?.changedTargetRefs) ? row.debug.changedTargetRefs.length : undefined,
+        skippedTargetCount: Array.isArray(row.debug?.skippedTargetRefs) ? row.debug.skippedTargetRefs.length : undefined,
+        invariants: invariants
+          ? {
+            headerAssociationMissingCountBefore: invariants['headerAssociationMissingCountBefore'],
+            headerAssociationMissingCountAfter: invariants['headerAssociationMissingCountAfter'],
+            dataCellsWithoutHeaderCountBefore: invariants['dataCellsWithoutHeaderCountBefore'],
+            dataCellsWithoutHeaderCountAfter: invariants['dataCellsWithoutHeaderCountAfter'],
+            orphanHeaderCellCountBefore: invariants['orphanHeaderCellCountBefore'],
+            orphanHeaderCellCountAfter: invariants['orphanHeaderCellCountAfter'],
+            irregularRowsBefore: invariants['irregularRowsBefore'],
+            irregularRowsAfter: invariants['irregularRowsAfter'],
+            stronglyIrregularTableCountBefore: invariants['stronglyIrregularTableCountBefore'],
+            stronglyIrregularTableCountAfter: invariants['stronglyIrregularTableCountAfter'],
+            emptyTableShellCountBefore: invariants['emptyTableShellCountBefore'],
+            emptyTableShellCountAfter: invariants['emptyTableShellCountAfter'],
+          }
+          : undefined,
+      };
+    }),
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName: 'normalize_table_structure',
+    stage: 10,
+    round,
+    details,
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-stage180-repeated-template',
+    protectedBaseline,
+  });
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+    accepted: accepted.accepted,
+  };
 }
 
 function shouldTryStage180LargeObjectBackedTableBatch(input: {

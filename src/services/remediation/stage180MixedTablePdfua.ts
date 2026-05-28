@@ -35,12 +35,33 @@ export interface Stage180Decision {
   orphanMcidCount: number;
 }
 
+export interface Stage180RepeatedTemplateEvidence {
+  realReachableTableCount: number;
+  repeatedTemplateTableCount: number;
+  largestRepeatedGroupCount: number;
+  largestRepeatedGroupDebt: number;
+  largestRepeatedGroupSignature: string | null;
+  tableHeaderDebt: number;
+  dataCellsWithoutHeaderCount: number;
+  irregularTableCount: number;
+  stronglyIrregularTableCount: number;
+}
+
 const STAGE180_MAX_TABLE_TARGETS = 2;
 const STAGE180_MAX_LINK_OWNERSHIP_DEBT = 40;
 const STAGE180_REPORT_TABLE_MIN_HEADER_DEBT = 100;
 const STAGE180_REPORT_TABLE_MIN_PAGES = 20;
 const STAGE180_REPORT_TABLE_MIN_SUBTREE_MCIDS = 50;
 const STAGE180_REPORT_TABLE_MIN_LINK_SCORE = 75;
+const STAGE180_REPEATED_TEMPLATE_MIN_REAL_TABLES = 80;
+const STAGE180_REPEATED_TEMPLATE_MIN_GROUP_COUNT = 40;
+const STAGE180_REPEATED_TEMPLATE_MIN_GROUP_DEBT = 120;
+const STAGE180_REPEATED_TEMPLATE_MIN_TABLES = 40;
+const STAGE180_REPEATED_TEMPLATE_MIN_HEADER_DEBT = 500;
+const STAGE180_REPEATED_TEMPLATE_MIN_DATA_DEBT = 500;
+const STAGE180_REPEATED_TEMPLATE_MIN_IRREGULAR_TABLES = 80;
+const STAGE180_REPEATED_TEMPLATE_MIN_STRONG_IRREGULAR_TABLES = 24;
+const STAGE180_REPEATED_TEMPLATE_MIN_HEADING_SCORE = 55;
 
 function categoryScore(analysis: AnalysisResult, key: CategoryKey): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
@@ -101,6 +122,116 @@ function tableHeaderAssociationDebt(snapshot: DocumentSnapshot): number {
     Math.max(0, audit.headerAssociationMissingCount ?? 0) +
     Math.max(0, audit.dataCellsWithoutHeaderCount ?? 0) +
     Math.max(0, audit.orphanHeaderCellCount ?? 0)
+  );
+}
+
+function boundedRowCounts(table: DocumentSnapshot['tables'][number]): number[] {
+  if (Array.isArray(table.rowCellCounts) && table.rowCellCounts.length > 0) {
+    return table.rowCellCounts
+      .map(value => Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0)
+      .slice(0, 16);
+  }
+  const rowCount = Math.max(0, Math.trunc(table.rowCount ?? 0));
+  const dominant = Math.max(0, Math.trunc(table.dominantColumnCount ?? 0));
+  if (rowCount > 0 && dominant > 0) return Array.from({ length: Math.min(16, rowCount) }, () => dominant);
+  return [];
+}
+
+function tableTemplateSignature(table: DocumentSnapshot['tables'][number]): string {
+  const rowCounts = boundedRowCounts(table);
+  const rowCount = Math.max(0, Math.trunc(table.rowCount ?? rowCounts.length));
+  const dominant = Math.max(0, Math.trunc(table.dominantColumnCount ?? 0));
+  const headerCount = Math.max(0, Math.trunc(table.headerCount ?? 0));
+  const role = typeof table.rawRole === 'string' && table.rawRole.trim()
+    ? table.rawRole.trim().replace(/^\//, '').toUpperCase()
+    : typeof table.resolvedRole === 'string' && table.resolvedRole.trim()
+      ? table.resolvedRole.trim().replace(/^\//, '').toUpperCase()
+      : 'TABLE';
+  return [
+    `role=${role}`,
+    `headers=${table.hasHeaders === true ? 'yes' : table.hasHeaders === false ? 'no' : 'unknown'}:${headerCount}`,
+    `rows=${rowCount}`,
+    `dom=${dominant}`,
+    `span=${Math.max(1, Math.trunc(table.maxRowSpan ?? 1))}x${Math.max(1, Math.trunc(table.maxColSpan ?? 1))}`,
+    `cells=${rowCounts.length > 0 ? rowCounts.join('-') : 'unknown'}`,
+  ].join('|');
+}
+
+export function stage180RepeatedTemplateEvidence(snapshot: DocumentSnapshot): Stage180RepeatedTemplateEvidence {
+  const groups = new Map<string, DocumentSnapshot['tables']>();
+  let realReachableTableCount = 0;
+  for (const table of snapshot.tables) {
+    if (!isRealRootReachableTableTarget(table)) continue;
+    realReachableTableCount += 1;
+    const signature = tableTemplateSignature(table);
+    const existing = groups.get(signature) ?? [];
+    existing.push(table);
+    groups.set(signature, existing);
+  }
+
+  let repeatedTemplateTableCount = 0;
+  let largestRepeatedGroupCount = 0;
+  let largestRepeatedGroupDebt = 0;
+  let largestRepeatedGroupSignature: string | null = null;
+  for (const [signature, tables] of groups.entries()) {
+    const groupDebt = tables.reduce(
+      (sum, table) => sum + Math.max(0, (table.totalCells ?? 0) - (table.headerCount ?? 0)),
+      0,
+    );
+    if (tables.length >= 8) repeatedTemplateTableCount += tables.length;
+    if (
+      tables.length > largestRepeatedGroupCount ||
+      (tables.length === largestRepeatedGroupCount && groupDebt > largestRepeatedGroupDebt)
+    ) {
+      largestRepeatedGroupCount = tables.length;
+      largestRepeatedGroupDebt = groupDebt;
+      largestRepeatedGroupSignature = signature;
+    }
+  }
+
+  const audit = snapshot.tableHeaderAudit;
+  const signals = snapshot.detectionProfile?.tableSignals;
+  return {
+    realReachableTableCount,
+    repeatedTemplateTableCount,
+    largestRepeatedGroupCount,
+    largestRepeatedGroupDebt,
+    largestRepeatedGroupSignature,
+    tableHeaderDebt: tableHeaderAssociationDebt(snapshot),
+    dataCellsWithoutHeaderCount: audit?.dataCellsWithoutHeaderCount ?? 0,
+    irregularTableCount: signals?.irregularTableCount ?? 0,
+    stronglyIrregularTableCount: signals?.stronglyIrregularTableCount ?? 0,
+  };
+}
+
+export function shouldTryStage180RepeatedTemplateFinalization(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  evidence?: Stage180RepeatedTemplateEvidence;
+}): boolean {
+  const { analysis, snapshot } = input;
+  if (analysis.pdfClass === 'scanned' || snapshot.pdfClass === 'scanned') return false;
+  if (!snapshot.isTagged && snapshot.structureTree === null) return false;
+  if ((snapshot.textCharCount ?? 0) <= 0) return false;
+  if (analysis.score >= 93) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) >= 80) return false;
+  if ((categoryScore(analysis, 'alt_text') ?? 0) < 90) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 0) < STAGE180_REPEATED_TEMPLATE_MIN_HEADING_SCORE) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 0) < 95) return false;
+  if ((categoryScore(analysis, 'link_quality') ?? 100) < STAGE180_REPORT_TABLE_MIN_LINK_SCORE) return false;
+  if (annotationDebt(snapshot) !== 0) return false;
+  if (hasDirectOrMisplacedTableShape(snapshot)) return false;
+
+  const evidence = input.evidence ?? stage180RepeatedTemplateEvidence(snapshot);
+  return (
+    evidence.realReachableTableCount >= STAGE180_REPEATED_TEMPLATE_MIN_REAL_TABLES &&
+    evidence.repeatedTemplateTableCount >= STAGE180_REPEATED_TEMPLATE_MIN_TABLES &&
+    evidence.largestRepeatedGroupCount >= STAGE180_REPEATED_TEMPLATE_MIN_GROUP_COUNT &&
+    evidence.largestRepeatedGroupDebt >= STAGE180_REPEATED_TEMPLATE_MIN_GROUP_DEBT &&
+    evidence.tableHeaderDebt >= STAGE180_REPEATED_TEMPLATE_MIN_HEADER_DEBT &&
+    evidence.dataCellsWithoutHeaderCount >= STAGE180_REPEATED_TEMPLATE_MIN_DATA_DEBT &&
+    evidence.irregularTableCount >= STAGE180_REPEATED_TEMPLATE_MIN_IRREGULAR_TABLES &&
+    evidence.stronglyIrregularTableCount >= STAGE180_REPEATED_TEMPLATE_MIN_STRONG_IRREGULAR_TABLES
   );
 }
 
