@@ -7,6 +7,7 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { REMEDIATION_ANALYSIS_TIMEOUT_MS } from '../src/config.js';
 import { analyzePdf } from '../src/services/pdfAnalyzer.js';
+import { runPythonMutationBatch, type BatchMutationResult, type PythonMutation } from '../src/python/bridge.js';
 import { runSingleTool } from '../src/services/remediation/orchestrator.js';
 import { buildDefaultParams } from '../src/services/remediation/planner.js';
 import type { AnalysisResult, AppliedRemediationTool, DocumentSnapshot, PlannedRemediationTool } from '../src/types.js';
@@ -32,6 +33,7 @@ interface ParsedArgs {
   controls: Set<string>;
   strictTableRefs: boolean;
   sameRefTransaction: boolean;
+  batchTransaction: boolean;
 }
 
 interface ScoreMetrics {
@@ -78,6 +80,7 @@ interface TableParentOwnershipReport {
   outDir: string;
   strictTableRefs: boolean;
   sameRefTransaction: boolean;
+  batchTransaction: boolean;
   rows: TableParentOwnershipRow[];
   summary: {
     rowCount: number;
@@ -109,6 +112,8 @@ Options:
                     Probe table tools only with explicit object-backed refs and strict all-/Table ref validation
   --same-ref-transaction
                     Probe normalize_table_structure -> set_table_header_cells on the same strict /Table refs
+  --batch-transaction
+                    Probe the same strict transaction inside one Python mutation batch
   --help            Show this help.`;
 }
 
@@ -118,6 +123,7 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
   let outDir = join(DEFAULT_OUT_ROOT, `table-parent-ownership-probe-${timestampSlug(now)}`);
   let strictTableRefs = false;
   let sameRefTransaction = false;
+  let batchTransaction = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -140,12 +146,21 @@ export function parseArgs(argv = process.argv.slice(2), now = new Date()): Parse
       strictTableRefs = true;
     } else if (arg === '--same-ref-transaction') {
       sameRefTransaction = true;
+    } else if (arg === '--batch-transaction') {
+      batchTransaction = true;
     } else {
       throw new Error(`Unknown argument ${arg}\n${usage()}`);
     }
   }
   if (pdfs.length === 0) throw new Error(`Missing --pdf\n${usage()}`);
-  return { pdfs, outDir, controls, strictTableRefs: strictTableRefs || sameRefTransaction, sameRefTransaction };
+  return {
+    pdfs,
+    outDir,
+    controls,
+    strictTableRefs: strictTableRefs || sameRefTransaction || batchTransaction,
+    sameRefTransaction,
+    batchTransaction,
+  };
 }
 
 function rowId(file: string): string {
@@ -327,6 +342,21 @@ function wrongRefs(details: Record<string, unknown> | null): string[] {
   return [...new Set(out)];
 }
 
+function batchTargetDetails(result: BatchMutationResult): Record<string, unknown>[] {
+  return (result.opResults ?? []).flatMap(row => {
+    const debug = objectValue(row.debug);
+    return [
+      ...arrayValue(debug?.['targetRefDetails']),
+      ...arrayValue(debug?.['targetRefDetailsAfter']),
+      ...arrayValue(debug?.['skippedTargetRefDetails']),
+    ].map(objectValue).filter((item): item is Record<string, unknown> => Boolean(item));
+  });
+}
+
+function batchWrongRefs(result: BatchMutationResult): string[] {
+  return wrongRefs({ debug: { targetRefDetails: batchTargetDetails(result) } });
+}
+
 function pacRuleIds(details: Record<string, unknown> | null): string[] {
   const out: string[] = [];
   const visit = (value: unknown): void => {
@@ -407,6 +437,7 @@ async function probePdf(
   roleForRow: 'focus' | 'control',
   strictTableRefs: boolean,
   sameRefTransaction: boolean,
+  batchTransaction: boolean,
 ): Promise<TableParentOwnershipRow> {
   const file = basename(pdfPath);
   const id = rowId(file);
@@ -514,7 +545,105 @@ async function probePdf(
       return step;
     };
 
-    if (sameRefTransaction) {
+    const runBatchTransaction = async (): Promise<void> => {
+      const normalizeParams = strictTableProbeParams(
+        'normalize_table_structure',
+        buildDefaultParams('normalize_table_structure', current.result, current.snapshot, applied),
+        true,
+      );
+      const refs = collectRefs(
+        normalizeParams['structRef'],
+        normalizeParams['targetRef'],
+        normalizeParams['targetStructRef'],
+        normalizeParams['structRefs'],
+      );
+      const headerParams = strictSameRefHeaderParams(refs);
+      const before = metrics(current.result, current.snapshot);
+      if (Object.keys(normalizeParams).length === 0 || Object.keys(headerParams).length === 0) {
+        const params = { normalizeParams, headerParams, transaction: 'python_batch_same_ref' };
+        const classified = classifyTableParentOwnershipStep({
+          outcome: 'skipped',
+          params,
+          before,
+          after: before,
+          wrongRefs: [],
+          pacRegressions: [],
+        });
+        steps.push({
+          toolName: 'normalize_table_structure',
+          outcome: 'skipped',
+          params,
+          ...classified,
+          before,
+          after: before,
+          requestedRefs: refs,
+          wrongRefs: [],
+          changedRefs: [],
+          pacRegressions: [],
+          durationMs: 0,
+        });
+        return;
+      }
+      const mutations: PythonMutation[] = [
+        { op: 'normalize_table_structure', params: normalizeParams },
+        { op: 'set_table_header_cells', params: headerParams },
+      ];
+      const started = performance.now();
+      const result = await runPythonMutationBatch(buffer, mutations, {
+        timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+        abortOnFailedOp: false,
+        reopenBetweenOps: false,
+      });
+      let next = current;
+      let nextBuffer = buffer;
+      if (result.result.success && !result.buffer.equals(buffer)) {
+        nextBuffer = result.buffer;
+        next = await analyzeBuffer(nextBuffer, file);
+      }
+      const after = metrics(next.result, next.snapshot);
+      const refsWrong = batchWrongRefs(result.result);
+      const outcome = result.result.success && result.result.applied.length > 0 && !result.buffer.equals(buffer)
+        ? 'applied'
+        : result.result.success
+          ? 'no_effect'
+          : 'failed';
+      const params = {
+        transaction: 'python_batch_same_ref',
+        normalizeParams,
+        headerParams,
+        opResults: result.result.opResults ?? [],
+        failed: result.result.failed,
+      };
+      const classified = classifyTableParentOwnershipStep({
+        outcome,
+        params,
+        before,
+        after,
+        wrongRefs: refsWrong,
+        pacRegressions: [],
+      });
+      steps.push({
+        toolName: 'normalize_table_structure',
+        outcome,
+        params,
+        ...classified,
+        before,
+        after,
+        requestedRefs: refs,
+        wrongRefs: refsWrong,
+        changedRefs: collectRefs(
+          ...(result.result.opResults ?? []).map(row => objectValue(row.debug)?.['changedTargetRefs']),
+        ),
+        pacRegressions: [],
+        durationMs: Math.round(performance.now() - started),
+      });
+      buffer = nextBuffer;
+      current = next;
+    };
+
+    if (batchTransaction) {
+      await runBatchTransaction();
+    } else if (sameRefTransaction) {
       const normalizeParams = strictTableProbeParams(
         'normalize_table_structure',
         buildDefaultParams('normalize_table_structure', current.result, current.snapshot, applied),
@@ -606,7 +735,13 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
   const rows: TableParentOwnershipRow[] = [];
   for (const pdf of args.pdfs) {
     const id = rowId(pdf);
-    rows.push(await probePdf(pdf, args.controls.has(id) ? 'control' : 'focus', args.strictTableRefs, args.sameRefTransaction));
+    rows.push(await probePdf(
+      pdf,
+      args.controls.has(id) ? 'control' : 'focus',
+      args.strictTableRefs,
+      args.sameRefTransaction,
+      args.batchTransaction,
+    ));
   }
   const ownershipRegressionCandidates = rows
     .filter(row => row.classification === 'ownership_regression_candidate')
@@ -624,6 +759,7 @@ async function buildReport(args: ParsedArgs): Promise<TableParentOwnershipReport
     outDir: args.outDir,
     strictTableRefs: args.strictTableRefs,
     sameRefTransaction: args.sameRefTransaction,
+    batchTransaction: args.batchTransaction,
     rows,
     summary: {
       rowCount: rows.length,
@@ -649,6 +785,7 @@ function renderMarkdown(report: TableParentOwnershipReport): string {
     `Decision: \`${report.decision.status}\``,
     `Strict table refs: \`${report.strictTableRefs}\``,
     `Same-ref transaction: \`${report.sameRefTransaction}\``,
+    `Batch transaction: \`${report.batchTransaction}\``,
     `Reasons: ${report.decision.reasons.map(reason => `\`${reason}\``).join(', ')}`,
     '',
     '## Summary',

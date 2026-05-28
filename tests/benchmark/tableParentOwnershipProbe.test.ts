@@ -82,6 +82,7 @@ describe('table parent ownership probe classification', () => {
       '--control', 'b.pdf',
       '--strict-table-refs',
       '--same-ref-transaction',
+      '--batch-transaction',
     ], new Date('2026-05-27T00:00:00Z'));
 
     expect(args.pdfs).toEqual(['/tmp/a.pdf', '/tmp/b.pdf']);
@@ -89,6 +90,7 @@ describe('table parent ownership probe classification', () => {
     expect(args.controls.has('b')).toBe(true);
     expect(args.strictTableRefs).toBe(true);
     expect(args.sameRefTransaction).toBe(true);
+    expect(args.batchTransaction).toBe(true);
   });
 
   it('defaults strict table refs off', () => {
@@ -96,6 +98,7 @@ describe('table parent ownership probe classification', () => {
 
     expect(args.strictTableRefs).toBe(false);
     expect(args.sameRefTransaction).toBe(false);
+    expect(args.batchTransaction).toBe(false);
   });
 
   it('same-ref transaction implies strict table refs', () => {
@@ -103,6 +106,13 @@ describe('table parent ownership probe classification', () => {
 
     expect(args.strictTableRefs).toBe(true);
     expect(args.sameRefTransaction).toBe(true);
+  });
+
+  it('batch transaction implies strict table refs', () => {
+    const args = parseArgs(['--pdf', '/tmp/a.pdf', '--batch-transaction'], new Date('2026-05-27T00:00:00Z'));
+
+    expect(args.strictTableRefs).toBe(true);
+    expect(args.batchTransaction).toBe(true);
   });
 
   it('adds strict validation to object-backed table params', () => {
