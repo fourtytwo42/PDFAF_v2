@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyTableParentOwnershipStep,
+  orphanMcidSampleDiff,
   parseArgs,
   strictMissingHeaderBatchParams,
   strictSameRefHeaderParams,
@@ -14,6 +15,7 @@ const baseMetrics = {
   tableMarkup: 16,
   pdfUaCompliance: 83,
   orphanMcidCount: 0,
+  orphanMcids: [],
   parentTreeDebt: 0,
   tableHeaderDebt: 10,
   tableRegularityDebt: 4,
@@ -182,5 +184,24 @@ describe('table parent ownership probe classification', () => {
       },
     });
     expect(strictMissingHeaderBatchParams([])).toEqual({ normalizeParams: {}, headerParams: {} });
+  });
+});
+
+describe('table parent ownership orphan sample attribution', () => {
+  it('reports added and removed orphan MCID samples in page/mcid order', () => {
+    expect(orphanMcidSampleDiff({
+      before: [
+        { page: 2, mcid: 8 },
+        { page: 1, mcid: 4 },
+      ],
+      after: [
+        { page: 1, mcid: 4 },
+        { page: 2, mcid: 9 },
+        { page: 1, mcid: 7 },
+      ],
+    })).toEqual({
+      added: ['1:7', '2:9'],
+      removed: ['2:8'],
+    });
   });
 });

@@ -44,10 +44,16 @@ interface ScoreMetrics {
   tableMarkup: number | null;
   pdfUaCompliance: number | null;
   orphanMcidCount: number;
+  orphanMcids: OrphanMcidSample[];
   parentTreeDebt: number;
   tableHeaderDebt: number;
   tableRegularityDebt: number;
   textCharCount: number;
+}
+
+export interface OrphanMcidSample {
+  page: number;
+  mcid: number;
 }
 
 export interface TableParentOwnershipStep {
@@ -62,6 +68,8 @@ export interface TableParentOwnershipStep {
   wrongRefs: string[];
   changedRefs: string[];
   pacRegressions: string[];
+  orphanMcidSampleAdded: string[];
+  orphanMcidSampleRemoved: string[];
   durationMs: number;
 }
 
@@ -212,6 +220,28 @@ function orphanMcidCount(snapshot: DocumentSnapshot): number {
     0;
 }
 
+function orphanMcidSamples(snapshot: DocumentSnapshot): OrphanMcidSample[] {
+  return (snapshot.orphanMcids ?? [])
+    .filter(item => Number.isFinite(item.page) && Number.isFinite(item.mcid))
+    .map(item => ({ page: Math.trunc(item.page), mcid: Math.trunc(item.mcid) }))
+    .sort((a, b) => a.page - b.page || a.mcid - b.mcid);
+}
+
+function orphanMcidKey(item: OrphanMcidSample): string {
+  return `${item.page}:${item.mcid}`;
+}
+
+export function orphanMcidSampleDiff(input: {
+  before: readonly OrphanMcidSample[];
+  after: readonly OrphanMcidSample[];
+}): { added: string[]; removed: string[] } {
+  const before = new Set(input.before.map(orphanMcidKey));
+  const after = new Set(input.after.map(orphanMcidKey));
+  const added = [...after].filter(key => !before.has(key)).sort();
+  const removed = [...before].filter(key => !after.has(key)).sort();
+  return { added, removed };
+}
+
 function metrics(result: AnalysisResult, snapshot: DocumentSnapshot): ScoreMetrics {
   return {
     score: result.score,
@@ -219,6 +249,7 @@ function metrics(result: AnalysisResult, snapshot: DocumentSnapshot): ScoreMetri
     tableMarkup: categoryScore(result, 'table_markup'),
     pdfUaCompliance: categoryScore(result, 'pdf_ua_compliance'),
     orphanMcidCount: orphanMcidCount(snapshot),
+    orphanMcids: orphanMcidSamples(snapshot),
     parentTreeDebt: parentTreeDebt(snapshot),
     tableHeaderDebt: tableHeaderDebt(snapshot),
     tableRegularityDebt: tableRegularityDebt(snapshot),
@@ -523,6 +554,8 @@ async function probePdf(
           wrongRefs: [],
           changedRefs: [],
           pacRegressions: [],
+          orphanMcidSampleAdded: [],
+          orphanMcidSampleRemoved: [],
           durationMs: 0,
         };
         steps.push(step);
@@ -560,6 +593,7 @@ async function probePdf(
       );
       const pacRegressions = pacRuleIds(parsedDetails);
       const refsWrong = wrongRefs(parsedDetails);
+      const orphanDiff = orphanMcidSampleDiff({ before: before.orphanMcids, after: after.orphanMcids });
       const classified = classifyTableParentOwnershipStep({
         outcome: result.outcome,
         params,
@@ -579,6 +613,8 @@ async function probePdf(
         wrongRefs: refsWrong,
         changedRefs,
         pacRegressions,
+        orphanMcidSampleAdded: orphanDiff.added,
+        orphanMcidSampleRemoved: orphanDiff.removed,
         durationMs: Math.round(result.durationMs),
       };
       steps.push(step);
@@ -635,6 +671,8 @@ async function probePdf(
           wrongRefs: [],
           changedRefs: [],
           pacRegressions: [],
+          orphanMcidSampleAdded: [],
+          orphanMcidSampleRemoved: [],
           durationMs: 0,
         });
         return;
@@ -657,6 +695,7 @@ async function probePdf(
       }
       const after = metrics(next.result, next.snapshot);
       const refsWrong = batchWrongRefs(result.result);
+      const orphanDiff = orphanMcidSampleDiff({ before: before.orphanMcids, after: after.orphanMcids });
       const outcome = result.result.success && result.result.applied.length > 0 && !result.buffer.equals(buffer)
         ? 'applied'
         : result.result.success
@@ -690,6 +729,8 @@ async function probePdf(
           ...(result.result.opResults ?? []).map(row => objectValue(row.debug)?.['changedTargetRefs']),
         ),
         pacRegressions: [],
+        orphanMcidSampleAdded: orphanDiff.added,
+        orphanMcidSampleRemoved: orphanDiff.removed,
         durationMs: Math.round(performance.now() - started),
       });
       buffer = nextBuffer;
@@ -765,6 +806,7 @@ function emptyMetrics(): ScoreMetrics {
     tableMarkup: null,
     pdfUaCompliance: null,
     orphanMcidCount: 0,
+    orphanMcids: [],
     parentTreeDebt: 0,
     tableHeaderDebt: 0,
     tableRegularityDebt: 0,
@@ -887,7 +929,12 @@ function renderMarkdown(report: TableParentOwnershipReport): string {
     lines.push('| Tool | Outcome | Before table/orphan/parent | After table/orphan/parent | Classification | Reasons |');
     lines.push('| --- | --- | ---: | ---: | --- | --- |');
     for (const step of row.steps) {
-      lines.push(`| \`${step.toolName}\` | \`${step.outcome}\` | ${step.before.tableMarkup ?? 'n/a'} / ${step.before.orphanMcidCount} / ${step.before.parentTreeDebt} | ${step.after.tableMarkup ?? 'n/a'} / ${step.after.orphanMcidCount} / ${step.after.parentTreeDebt} | \`${step.classification}\` | ${step.reasons.map(reason => `\`${reason}\``).join(', ')} |`);
+      const sampleReasons = [
+        ...step.reasons,
+        step.orphanMcidSampleAdded.length > 0 ? `orphan_sample_added:${step.orphanMcidSampleAdded.slice(0, 8).join(',')}` : null,
+        step.orphanMcidSampleRemoved.length > 0 ? `orphan_sample_removed:${step.orphanMcidSampleRemoved.slice(0, 8).join(',')}` : null,
+      ].filter((reason): reason is string => Boolean(reason));
+      lines.push(`| \`${step.toolName}\` | \`${step.outcome}\` | ${step.before.tableMarkup ?? 'n/a'} / ${step.before.orphanMcidCount} / ${step.before.parentTreeDebt} | ${step.after.tableMarkup ?? 'n/a'} / ${step.after.orphanMcidCount} / ${step.after.parentTreeDebt} | \`${step.classification}\` | ${sampleReasons.map(reason => `\`${reason}\``).join(', ')} |`);
     }
     lines.push('');
   }
