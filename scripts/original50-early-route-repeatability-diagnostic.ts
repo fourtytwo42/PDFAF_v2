@@ -627,10 +627,23 @@ function summarizeRun(label: string, path: string, row: NormalizedRow | null): O
   };
 }
 
-function selectBestReference(references: Original50EarlyRunSummary[]): Original50EarlyRunSummary | null {
+function selectBestReference(gate: Original50EarlyRunSummary, references: Original50EarlyRunSummary[]): Original50EarlyRunSummary | null {
   const present = references.filter(reference => reference.present && reference.score !== null);
   if (present.length === 0) return null;
-  return [...present].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0] ?? null;
+  return [...present].sort((a, b) => {
+    const scoreDelta = (b.score ?? -1) - (a.score ?? -1);
+    if (scoreDelta !== 0) return scoreDelta;
+    const aInitial = gate.firstStateSignature !== null && a.firstStateSignature === gate.firstStateSignature ? 1 : 0;
+    const bInitial = gate.firstStateSignature !== null && b.firstStateSignature === gate.firstStateSignature ? 1 : 0;
+    if (aInitial !== bInitial) return bInitial - aInitial;
+    const aMetadata = a.metadataDecisionKey === gate.metadataDecisionKey ? 1 : 0;
+    const bMetadata = b.metadataDecisionKey === gate.metadataDecisionKey ? 1 : 0;
+    if (aMetadata !== bMetadata) return bMetadata - aMetadata;
+    const aEarly = a.earlyDecisionKey === gate.earlyDecisionKey ? 1 : 0;
+    const bEarly = b.earlyDecisionKey === gate.earlyDecisionKey ? 1 : 0;
+    if (aEarly !== bEarly) return bEarly - aEarly;
+    return a.label.localeCompare(b.label);
+  })[0] ?? null;
 }
 
 function scoreSpread(gate: Original50EarlyRunSummary, references: Original50EarlyRunSummary[]): number | null {
@@ -835,7 +848,7 @@ export function buildOriginal50EarlyRouteDiagnostic(input: {
     const gateRow = gateRows.get(key) ?? null;
     const gate = summarizeRun('gate', input.gatePath, gateRow);
     const references = referenceMaps.map(reference => summarizeRun(reference.label, reference.path, reference.rows.get(key) ?? null));
-    const best = selectBestReference(references);
+    const best = selectBestReference(gate, references);
     const bestMap = best ? referenceMaps.find(reference => reference.label === best.label) ?? null : null;
     const bestRow = bestMap?.rows.get(key) ?? null;
     const spread = scoreSpread(gate, references);

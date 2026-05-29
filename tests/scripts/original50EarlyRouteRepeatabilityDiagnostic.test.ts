@@ -179,6 +179,47 @@ describe('original50 early route repeatability diagnostic', () => {
     expect(renderOriginal50EarlyRouteMarkdown(diagnostic)).toContain('figure_alt_route_blocker');
   });
 
+  it('prefers a tied high reference with matching initial signature', () => {
+    const gateEarly = [
+      tool(1, 'set_document_language', 'applied', 'same-initial', 'same-meta', 59, 59),
+      tool(2, 'remap_orphan_mcids_as_artifacts', 'rejected', 'same-meta', 'gate-struct', 59, 59, {
+        note: 'stage_no_gain_orphan_artifact_mutation',
+      }),
+    ];
+    const diagnostic = buildOriginal50EarlyRouteDiagnostic({
+      outDir: '/out',
+      gatePath: '/gate.json',
+      gate: report([
+        row('4754-current.pdf', 59, gateEarly),
+      ]),
+      referenceInputs: [
+        {
+          label: 'accepted-different-initial',
+          path: '/different.json',
+          report: report([
+            row('4754-current.pdf', 94, [
+              tool(1, 'set_document_language', 'applied', 'different-initial', 'different-meta', 59, 59),
+            ]),
+          ]),
+        },
+        {
+          label: 'accepted-same-initial',
+          path: '/same.json',
+          report: report([
+            row('4754-current.pdf', 94, [
+              tool(1, 'set_document_language', 'applied', 'same-initial', 'same-meta', 59, 59),
+              tool(2, 'remap_orphan_mcids_as_artifacts', 'applied', 'same-meta', 'ref-struct', 59, 94),
+            ]),
+          ]),
+        },
+      ],
+      rows: ['4754'],
+    });
+
+    expect(diagnostic.rows[0]?.bestReferenceLabel).toBe('accepted-same-initial');
+    expect(diagnostic.rows[0]?.classification).toBe('early_structural_route_variance');
+  });
+
   it('writes JSON and Markdown from raw remediate result arrays', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-early-route-'));
     try {
