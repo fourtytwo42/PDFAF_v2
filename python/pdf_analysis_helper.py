@@ -13086,6 +13086,123 @@ def _target_ref_mcid_deltas(before_details: list, after_details: list) -> list[d
     return out
 
 
+def _target_ref_detail_map(details: list) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for detail in details or []:
+        if not isinstance(detail, dict):
+            continue
+        ref = safe_str(detail.get("ref") or detail.get("targetRef")).strip()
+        if ref:
+            out[ref] = detail
+    return out
+
+
+def _target_ref_int(detail: dict, key: str) -> int | None:
+    if not isinstance(detail, dict):
+        return None
+    value = detail.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _target_ref_is_strict_reachable_table(detail: dict) -> bool:
+    if not isinstance(detail, dict):
+        return False
+    return (
+        bool(detail.get("targetResolved"))
+        and bool(detail.get("targetReachable"))
+        and bool(detail.get("isTable"))
+        and bool(detail.get("resolvedIsTable"))
+        and detail.get("skipReason") is None
+    )
+
+
+def _target_ref_table_improvement(before_details: list, after_details: list, requested_refs: list) -> tuple[bool, list[dict], list[dict]]:
+    before_by_ref = _target_ref_detail_map(before_details)
+    after_by_ref = _target_ref_detail_map(after_details)
+    refs: list[str] = []
+    for ref in requested_refs or []:
+        text = safe_str(ref).strip()
+        if text and text not in refs:
+            refs.append(text)
+
+    if not refs:
+        return False, [], []
+
+    improvements: list[dict] = []
+    blockers: list[dict] = []
+    debt_decrease_metrics = [
+        "directCellsUnderTable",
+        "irregularRows",
+        "headerAssociationMissingCount",
+        "orphanHeaderCellCount",
+        "dataCellsWithoutHeaderCount",
+    ]
+    support_increase_metrics = [
+        "headerCellCount",
+        "headerCellsWithScopeCount",
+        "headerCellsWithIdCount",
+        "dataCellsWithHeadersCount",
+    ]
+
+    for ref in refs:
+        before_detail = before_by_ref.get(ref)
+        after_detail = after_by_ref.get(ref)
+        if not _target_ref_is_strict_reachable_table(before_detail or {}):
+            blockers.append({
+                "ref": ref,
+                "reason": "before_not_reachable_table",
+                "before": before_detail,
+            })
+            continue
+        if not _target_ref_is_strict_reachable_table(after_detail or {}):
+            blockers.append({
+                "ref": ref,
+                "reason": "after_not_reachable_table",
+                "after": after_detail,
+            })
+            continue
+
+        for key in debt_decrease_metrics:
+            before_value = _target_ref_int(before_detail or {}, key)
+            after_value = _target_ref_int(after_detail or {}, key)
+            if before_value is None or after_value is None:
+                continue
+            if after_value < before_value:
+                improvements.append({"ref": ref, "metric": key, "before": before_value, "after": after_value})
+            elif after_value > before_value:
+                blockers.append({"ref": ref, "reason": f"{key}_worsened", "before": before_value, "after": after_value})
+
+        for key in support_increase_metrics:
+            before_value = _target_ref_int(before_detail or {}, key)
+            after_value = _target_ref_int(after_detail or {}, key)
+            if before_value is None or after_value is None:
+                continue
+            if after_value > before_value:
+                improvements.append({"ref": ref, "metric": key, "before": before_value, "after": after_value})
+
+        boolean_improvements = [
+            ("stronglyIrregularTable", True, False),
+            ("emptyTableShell", True, False),
+            ("tableTreeValid", False, True),
+        ]
+        for key, before_good_debt, after_good_value in boolean_improvements:
+            before_value = bool((before_detail or {}).get(key))
+            after_value = bool((after_detail or {}).get(key))
+            if before_value == before_good_debt and after_value == after_good_value:
+                improvements.append({"ref": ref, "metric": key, "before": before_value, "after": after_value})
+            elif before_value == after_good_value and after_value == before_good_debt:
+                blockers.append({"ref": ref, "reason": f"{key}_worsened", "before": before_value, "after": after_value})
+
+    if blockers:
+        return False, improvements, blockers
+    return bool(improvements), improvements, []
+
+
 def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, note: str | None) -> tuple[str, str | None, dict]:
     orphan_before = before.get("orphanMcidCount", 0) or 0
     orphan_after = after.get("orphanMcidCount", 0) or 0
@@ -13093,15 +13210,24 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
     parent_debt_after = after.get("parentTreeDebt", 0) or 0
     target_ref_details_before = before.get("targetRefDetails") or []
     target_ref_details_after = after.get("targetRefDetails") or []
+    requested_target_refs = after.get("requestedTargetRefs") or before.get("requestedTargetRefs") or []
+    target_ref_improved, target_ref_improvements, target_ref_blockers = _target_ref_table_improvement(
+        target_ref_details_before,
+        target_ref_details_after,
+        requested_target_refs,
+    )
     invariants = {
         "targetRef": before.get("targetRef") if before.get("targetRef") is not None else after.get("targetRef"),
         "targetResolved": before.get("targetResolved") if before.get("targetResolved") is not None else after.get("targetResolved"),
         "resolvedRole": after.get("resolvedRole"),
-        "requestedTargetRefs": after.get("requestedTargetRefs") or before.get("requestedTargetRefs") or [],
+        "requestedTargetRefs": requested_target_refs,
         "targetRefDetailsBefore": target_ref_details_before,
         "targetRefDetailsAfter": target_ref_details_after,
         "targetRefDetails": target_ref_details_after,
         "targetRefMcidDeltas": _target_ref_mcid_deltas(target_ref_details_before, target_ref_details_after),
+        "targetRefTableImproved": target_ref_improved,
+        "targetRefTableImprovements": target_ref_improvements,
+        "targetRefTableBlockers": target_ref_blockers,
         "ownershipPreserved": orphan_after <= orphan_before and parent_debt_after <= parent_debt_before,
         "orphanMcidCountBefore": orphan_before,
         "orphanMcidCountAfter": orphan_after,
@@ -13147,8 +13273,6 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         if orphan_after > orphan_before:
             return "no_effect", "table_orphan_mcids_not_preserved", invariants
         return "no_effect", "table_parent_tree_not_preserved", invariants
-    if (after.get("directCellsUnderTable", 0) or 0) > 0 and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
-        return "no_effect", "direct_cells_under_table_remain", invariants
     association_improved = (
         (after.get("headerAssociationMissingCount", 0) or 0) < (before.get("headerAssociationMissingCount", 0) or 0)
         or (after.get("dataCellsWithoutHeaderCount", 0) or 0) < (before.get("dataCellsWithoutHeaderCount", 0) or 0)
@@ -13163,6 +13287,10 @@ def _stage35_validate_table(op: str, before: dict, after: dict, mutated: bool, n
         return "applied", note or "table_header_association_improved", invariants
     if op == "normalize_table_structure" and empty_shell_improved:
         return "applied", note or "empty_table_shell_removed", invariants
+    if target_ref_improved:
+        return "applied", note or "target_ref_table_invariants_improved", invariants
+    if (after.get("directCellsUnderTable", 0) or 0) > 0 and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
+        return "no_effect", "direct_cells_under_table_remain", invariants
     if (after.get("headerCellCount", 0) or 0) <= (before.get("headerCellCount", 0) or 0) and (after.get("directCellsUnderTable", 0) or 0) >= (before.get("directCellsUnderTable", 0) or 0):
         if (after.get("irregularRows", 0) or 0) >= (before.get("irregularRows", 0) or 0) and not empty_shell_improved:
             return "no_effect", "headers_not_created", invariants
@@ -13274,6 +13402,7 @@ def _stage36_structural_benefits(op: str, outcome: str, before: dict | None, inv
             or after_headers > before_headers
             or after_missing_headers < before_missing_headers
             or after_header_assoc < before_header_assoc
+            or bool(invariants.get("targetRefTableImproved"))
             or int(invariants.get("irregularRowsAfter") or 0) < int(before.get("irregularRowsAfter") or before.get("irregularRows") or 0)
             or int(invariants.get("stronglyIrregularTableCountAfter") or 0) < int(before.get("stronglyIrregularTableCountAfter") or before.get("stronglyIrregularTableCount") or 0)
             or int(invariants.get("emptyTableShellCountAfter") or 0) < int(before.get("emptyTableShellCountAfter") or before.get("emptyTableShellCount") or 0)

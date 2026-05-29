@@ -672,6 +672,8 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.note).toBe('table_header_association_batch_improved');
     expect(row?.debug?.targetRefs).toEqual(tableRefs);
     expect(row?.debug?.strictTableTargetRef).toBe(true);
+    expect(row?.invariants?.targetRefTableImproved).toBe(true);
+    expect(row?.invariants?.targetRefTableImprovements?.length).toBeGreaterThan(0);
     expect(row?.invariants?.headerCellCountBefore).toBe(row?.invariants?.headerCellCountAfter);
     expect(row?.invariants?.dataCellsWithoutHeaderCountAfter).toBeLessThan(row?.invariants?.dataCellsWithoutHeaderCountBefore ?? 0);
     expect(row?.invariants?.dataCellsWithHeadersCountAfter).toBeGreaterThan(row?.invariants?.dataCellsWithHeadersCountBefore ?? 0);
@@ -1075,6 +1077,10 @@ describe('normalize_table_structure python mutation', () => {
     expect(row?.debug?.requestedTargetRefs).toEqual(tableRefs.slice(0, 4));
     expect(row?.debug?.changedTargetRefs).toEqual(tableRefs.slice(0, 4));
     expect(row?.debug?.strictTableTargetRef).toBe(true);
+    expect(row?.invariants?.targetRefTableImproved).toBe(true);
+    expect(row?.invariants?.targetRefTableImprovements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: tableRefs[0], metric: 'irregularRows' }),
+    ]));
     expect(row?.invariants?.stronglyIrregularTableCountAfter).toBe(1);
 
     const mixed = buildMixedTableAndParagraphPdf();
@@ -1095,5 +1101,9 @@ describe('normalize_table_structure python mutation', () => {
     expect(mixedRow?.debug?.changedTargetRefs).toEqual([]);
     expect(mixedRow?.debug?.skippedTargetRefs).toEqual([mixed.paragraphRef]);
     expect(mixedRow?.debug?.strictTableTargetRef).toBe(true);
+    expect(mixedRow?.invariants?.targetRefTableImproved).toBe(false);
+    expect(mixedRow?.invariants?.targetRefTableBlockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: mixed.paragraphRef }),
+    ]));
   });
 });
