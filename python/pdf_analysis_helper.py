@@ -3910,7 +3910,7 @@ def _finalize_structure_trace(
     }
 
 
-def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = None) -> dict:
+def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = None, visit_key_mode: str = "identity") -> dict:
     """
     Walk the structure tree iteratively, collecting headings, figures, tables,
     and form fields. Returns counts/lists suitable for JSON serialisation.
@@ -4035,17 +4035,19 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                 elem = queue.popleft()
                 _trace_inc(trace, "queuePops")
 
-                # Avoid infinite loops on circular refs
+                # Avoid infinite loops on circular refs. The default identity
+                # mode preserves production behavior; stable mode is used only
+                # by explicit diagnostics to investigate pikepdf wrapper reuse.
                 try:
-                    oid = id(elem)
-                    if oid in visited:
-                        _trace_inc(trace, "duplicateVisitedIdCount")
+                    visit_key = _struct_elem_visit_key(elem) if visit_key_mode == "stable" else id(elem)
+                    if visit_key in visited:
+                        _trace_inc(trace, "duplicateVisitedStableKeyCount" if visit_key_mode == "stable" else "duplicateVisitedIdCount")
                         _trace_sample(trace, "duplicateSamples", {
-                            "reason": "duplicate_id",
+                            "reason": "duplicate_stable_key" if visit_key_mode == "stable" else "duplicate_id",
                             "structRef": _trace_safe_ref(elem),
                         })
                         continue
-                    visited.add(oid)
+                    visited.add(visit_key)
                     _trace_inc(trace, "visitedCount")
                 except Exception:
                     pass
@@ -7162,6 +7164,83 @@ def trace_structure_main(pdf_path: str) -> int:
         out["error"] = str(e)
         _trace_exception(trace, "trace_open_or_parse", e)
     print(json.dumps(out, ensure_ascii=False))
+    return 0
+
+
+def _stable_table_target_probe_for_mode(pdf_path: str, visit_key_mode: str) -> dict:
+    trace = _new_structure_trace()
+    out = {
+        "ok": False,
+        "visitKeyMode": visit_key_mode,
+        "error": None,
+        "finalCounts": {},
+        "traceCounters": {},
+        "tableHeaderAudit": {},
+        "tables": [],
+    }
+    try:
+        pdf = pikepdf.open(pdf_path, suppress_warnings=True)
+        page_map = build_page_map(pdf)
+        struct = traverse_struct_tree(pdf, page_map, trace=trace, visit_key_mode=visit_key_mode)
+        tables = struct.get("tables") or []
+        out["ok"] = True
+        out["finalCounts"] = {
+            "headings": len(struct.get("headings") or []),
+            "figures": len(struct.get("figures") or []),
+            "checkerFigureTargets": len(struct.get("checkerFigureTargets") or []),
+            "tables": len(tables),
+            "paragraphStructElems": len(struct.get("paragraphStructElems") or []),
+        }
+        out["traceCounters"] = trace.get("counters") or {}
+        out["tableHeaderAudit"] = collect_table_header_audit(pdf, tables)
+        out["tables"] = [
+            {
+                "structRef": row.get("structRef"),
+                "page": row.get("page"),
+                "rawRole": row.get("rawRole"),
+                "resolvedRole": row.get("resolvedRole"),
+                "reachable": row.get("reachable"),
+                "hasHeaders": row.get("hasHeaders"),
+                "headerCount": row.get("headerCount"),
+                "totalCells": row.get("totalCells"),
+                "rowCount": row.get("rowCount"),
+                "cellsMisplacedCount": row.get("cellsMisplacedCount"),
+                "irregularRows": row.get("irregularRows"),
+                "rowCellCounts": row.get("rowCellCounts"),
+                "dominantColumnCount": row.get("dominantColumnCount"),
+                "maxRowSpan": row.get("maxRowSpan"),
+                "maxColSpan": row.get("maxColSpan"),
+                "removableEmptyRowCount": row.get("removableEmptyRowCount"),
+                "directContent": row.get("directContent"),
+                "subtreeMcidCount": row.get("subtreeMcidCount"),
+            }
+            for row in tables
+        ]
+        try:
+            pdf.close()
+        except Exception:
+            pass
+    except Exception as e:
+        out["error"] = str(e)
+        _trace_exception(trace, "stable_table_target_probe", e)
+        out["traceCounters"] = trace.get("counters") or {}
+    return out
+
+
+def diagnose_stable_table_targets_main(pdf_path: str) -> int:
+    out = {
+        "ok": False,
+        "pdfPath": pdf_path,
+        "modes": {},
+        "error": None,
+    }
+    try:
+        out["modes"]["identity"] = _stable_table_target_probe_for_mode(pdf_path, "identity")
+        out["modes"]["stable"] = _stable_table_target_probe_for_mode(pdf_path, "stable")
+        out["ok"] = bool(out["modes"]["identity"].get("ok") or out["modes"]["stable"].get("ok"))
+    except Exception as e:
+        out["error"] = str(e)
+    print(json.dumps(out, ensure_ascii=False, default=str))
     return 0
 
 
@@ -14204,6 +14283,8 @@ if __name__ == "__main__":
         sys.exit(0)
     if len(argv) >= 2 and argv[0] == "--trace-structure":
         raise SystemExit(trace_structure_main(argv[1]))
+    if len(argv) >= 2 and argv[0] == "--diagnose-stable-table-targets":
+        raise SystemExit(diagnose_stable_table_targets_main(argv[1]))
     if len(argv) >= 2 and argv[0] == "--stage131-shape":
         raise SystemExit(stage131_shape_main(argv[1]))
     if len(argv) >= 2 and argv[0] == "--stage155-title-owner":
