@@ -188,4 +188,43 @@ describe('original50 route-drop diagnostic', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('reads raw remediate result arrays and current category fields', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-route-drop-raw-'));
+    try {
+      const gatePath = join(dir, 'remediate.results.json');
+      await writeFile(gatePath, JSON.stringify([
+        {
+          file: '4680-current-route.pdf',
+          beforeScore: 50,
+          afterScore: 59,
+          afterGrade: 'F',
+          durationMs: 1000,
+          falsePositiveApplied: 0,
+          afterCategories: [
+            category('alt_text', 20),
+            category('heading_structure', 100),
+            category('reading_order', 100),
+            category('table_markup', 100),
+            category('pdf_ua_compliance', 57),
+          ],
+        },
+      ]), 'utf8');
+      const outDir = join(dir, 'out');
+
+      const diagnostic = await writeOriginal50RouteDropDiagnostic({
+        gate: gatePath,
+        references: [],
+        rows: ['4680'],
+        outDir,
+        targetScore: 93,
+        timeoutMs: 300000,
+      });
+
+      expect(diagnostic.rows[0]?.gate.categories.alt_text).toBe(20);
+      expect(diagnostic.summary.rowCount).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

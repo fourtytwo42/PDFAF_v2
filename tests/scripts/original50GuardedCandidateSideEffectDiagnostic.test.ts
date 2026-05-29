@@ -220,4 +220,51 @@ describe('original50 guarded candidate side-effect diagnostic', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('reads raw remediate result arrays and current after categories', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-guarded-side-effect-raw-'));
+    try {
+      const gatePath = join(dir, 'remediate.results.json');
+      await writeFile(gatePath, JSON.stringify([
+        {
+          file: '4683-route.pdf',
+          afterScore: 59,
+          afterGrade: 'F',
+          falsePositiveApplied: 0,
+          afterCategories: [
+            category('reading_order', 96),
+            category('heading_structure', 99),
+            category('alt_text', 20),
+            category('table_markup', 100),
+            category('pdf_ua_compliance', 57),
+          ],
+          appliedTools: [
+            tool('retag_as_figure', 'rejected', details({
+              reason: 'stage_regressed_category(reading_order:100->96)',
+              beforeSig: 'a',
+              afterSig: 'b',
+              scoreBefore: 59,
+              scoreAfter: 98,
+              before: { reading_order: 100 },
+              after: { reading_order: 96 },
+            })),
+          ],
+        },
+      ]), 'utf8');
+      const outDir = join(dir, 'out');
+
+      const diagnostic = await writeGuardedCandidateSideEffectDiagnostic({
+        gate: gatePath,
+        references: [],
+        rows: ['4683'],
+        outDir,
+        targetScore: 93,
+      });
+
+      expect(diagnostic.rows[0]?.key).toBe('4683');
+      expect(diagnostic.summary.highBlockedAttemptCount).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

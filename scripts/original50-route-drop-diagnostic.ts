@@ -62,6 +62,8 @@ interface BaselineRow {
   falsePositiveApplied?: number | null;
   falsePositiveAppliedCount?: number | null;
   categoryGap?: { after?: CategoryScore[]; before?: CategoryScore[] };
+  afterCategories?: CategoryScore[];
+  reanalyzedCategories?: CategoryScore[];
   categoriesAfter?: CategoryScore[];
   afterCategoryScores?: CategoryScore[];
   reanalyzedCategoryScores?: CategoryScore[];
@@ -69,7 +71,7 @@ interface BaselineRow {
   boundedRunner?: { errorType?: string | null };
 }
 
-interface BaselineReport {
+type BaselineReport = {
   rows?: BaselineRow[];
   remediateResults?: BaselineRow[];
   summary?: {
@@ -78,7 +80,7 @@ interface BaselineReport {
     falsePositiveApplied?: number | null;
     timeoutOrErrorCount?: number | null;
   };
-}
+} | BaselineRow[];
 
 interface NormalizedTool {
   toolName: string;
@@ -359,6 +361,8 @@ function categoryRecord(value: unknown): Record<string, number> {
 function categoryMap(row: BaselineRow): Record<string, number> {
   const out: Record<string, number> = {};
   const categories = row.categoryGap?.after
+    ?? row.reanalyzedCategories
+    ?? row.afterCategories
     ?? row.categoriesAfter
     ?? row.afterCategoryScores
     ?? row.reanalyzedCategoryScores
@@ -791,6 +795,7 @@ function buildDecision(rows: Original50RouteDropRow[]): Original50RouteDropDiagn
 }
 
 function reportRows(report: BaselineReport): BaselineRow[] {
+  if (Array.isArray(report)) return report;
   return report.rows ?? report.remediateResults ?? [];
 }
 

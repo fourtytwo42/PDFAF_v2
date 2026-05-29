@@ -59,16 +59,18 @@ interface BaselineRow {
   falsePositiveApplied?: number | null;
   falsePositiveAppliedCount?: number | null;
   categoryGap?: { after?: CategoryScore[] };
+  afterCategories?: CategoryScore[];
+  reanalyzedCategories?: CategoryScore[];
   categoriesAfter?: CategoryScore[];
   afterCategoryScores?: CategoryScore[];
   reanalyzedCategoryScores?: CategoryScore[];
   appliedTools?: AppliedTool[] | null;
 }
 
-interface BaselineReport {
+type BaselineReport = {
   rows?: BaselineRow[];
   remediateResults?: BaselineRow[];
-}
+} | BaselineRow[];
 
 interface ParsedDetails {
   reason: string | null;
@@ -274,6 +276,7 @@ async function readJson<T>(path: string): Promise<T> {
 }
 
 function rowsOf(report: BaselineReport): BaselineRow[] {
+  if (Array.isArray(report)) return report;
   return Array.isArray(report.rows) ? report.rows : Array.isArray(report.remediateResults) ? report.remediateResults : [];
 }
 
@@ -371,7 +374,7 @@ function parseDetails(details: unknown): ParsedDetails {
 }
 
 function categories(row: BaselineRow): Record<string, number> {
-  const list = row.categoryGap?.after ?? row.categoriesAfter ?? row.afterCategoryScores ?? row.reanalyzedCategoryScores ?? [];
+  const list = row.categoryGap?.after ?? row.reanalyzedCategories ?? row.afterCategories ?? row.categoriesAfter ?? row.afterCategoryScores ?? row.reanalyzedCategoryScores ?? [];
   const out: Record<string, number> = {};
   for (const item of list) {
     if (item.key && typeof item.score === 'number') out[item.key] = item.score;

@@ -183,4 +183,42 @@ describe('original50 route-state timeline diagnostic', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('reads raw remediate result arrays and current reanalyzed categories', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-route-state-raw-'));
+    try {
+      const gatePath = join(dir, 'remediate.results.json');
+      await writeFile(gatePath, JSON.stringify([
+        {
+          file: '4754-route.pdf',
+          afterScore: 59,
+          afterGrade: 'F',
+          durationMs: 1000,
+          falsePositiveApplied: 0,
+          reanalyzedCategories: [
+            category('heading_structure', 44),
+            category('alt_text', 20),
+            category('table_markup', 79),
+            category('reading_order', 100),
+            category('pdf_ua_compliance', 71),
+          ],
+        },
+      ]), 'utf8');
+      const outDir = join(dir, 'out');
+
+      const diagnostic = await writeOriginal50RouteStateTimelineDiagnostic({
+        gate: gatePath,
+        references: [],
+        rows: ['4754'],
+        outDir,
+        targetScore: 93,
+        timeoutMs: 300000,
+      });
+
+      expect(diagnostic.rows[0]?.gate.categories.heading_structure).toBe(44);
+      expect(diagnostic.summary.rowCount).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

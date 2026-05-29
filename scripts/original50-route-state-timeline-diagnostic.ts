@@ -59,6 +59,8 @@ interface BaselineRow {
   falsePositiveApplied?: number | null;
   falsePositiveAppliedCount?: number | null;
   categoryGap?: { after?: CategoryScore[] };
+  afterCategories?: CategoryScore[];
+  reanalyzedCategories?: CategoryScore[];
   categoriesAfter?: CategoryScore[];
   afterCategoryScores?: CategoryScore[];
   reanalyzedCategoryScores?: CategoryScore[];
@@ -66,10 +68,10 @@ interface BaselineRow {
   boundedRunner?: { errorType?: string | null };
 }
 
-interface BaselineReport {
+type BaselineReport = {
   rows?: BaselineRow[];
   remediateResults?: BaselineRow[];
-}
+} | BaselineRow[];
 
 interface ParsedDetails {
   reason: string | null;
@@ -328,6 +330,8 @@ function firstString(input: Record<string, unknown> | null, keys: string[]): str
 function categoryMap(row: BaselineRow): Record<string, number> {
   const out: Record<string, number> = {};
   const categories = row.categoryGap?.after
+    ?? row.reanalyzedCategories
+    ?? row.afterCategories
     ?? row.categoriesAfter
     ?? row.afterCategoryScores
     ?? row.reanalyzedCategoryScores
@@ -463,7 +467,7 @@ function normalizeTimeline(tools: AppliedTool[] | null | undefined): Original50R
 }
 
 function rowMap(report: BaselineReport, timeoutMs: number): Map<string, NormalizedRow> {
-  const rows = report.rows ?? report.remediateResults ?? [];
+  const rows = Array.isArray(report) ? report : report.rows ?? report.remediateResults ?? [];
   return new Map(rows.map(row => {
     const score = numberOrNull(row.afterScore ?? row.reanalyzedScore ?? row.afterDeterministicScore);
     const grade = stringOrNull(row.afterGrade ?? row.reanalyzedGrade ?? row.afterDeterministicGrade);
