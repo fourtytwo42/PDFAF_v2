@@ -72,3 +72,20 @@ Do not reopen table-heavy outside-source behavior from this evidence alone.
 The next original-50 stabilization step should target quality-preserving Python structure traversal/analyzer repeat stability on `4516` final buffers. A safe future behavior needs to make the analyzer consistently expose the same checker-visible structure without suppressing PAC debt or hiding the stricter table evidence.
 
 `4683`, `4680`, `4754`, and `4438` should remain separate stable-low or route/failure-shape work items unless later repeats show final-buffer score volatility.
+
+## Rejected Stable-Traversal Experiment
+
+After this diagnostic, a local source experiment changed normal `traverse_struct_tree` from transient pikepdf wrapper identity to stable PDF object keys. This was tested only on `long-4516` plus the `structure-4438` control and then reverted.
+
+Local artifact:
+
+`/mnt/pdf-review/original50-stable-traversal-targetref-focus-2026-05-29-r1/run-2026-05-29T20-50-00-964Z`
+
+Result:
+
+| Row | After | Final reanalysis |
+| --- | ---: | ---: |
+| `structure-4438` | `69/D` | `69/D` |
+| `long-4516` | `68/D` | `68/D` |
+
+The experiment made `4516` deterministic but lower quality. Stable traversal alone is therefore still not acceptable, even with strict target-ref table improvement acceptance now in place. The next viable analyzer work needs a quality-preserving traversal/canonicalization design, not a blanket switch to stable object-key traversal.
