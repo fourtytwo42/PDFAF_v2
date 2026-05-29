@@ -111,6 +111,8 @@ interface NormalizedRow {
   timeline: Original50RouteTimelineEvent[];
 }
 
+const COMMITTED_OUTCOMES = new Set(['applied', 'no_effect']);
+
 export interface Original50RouteStateRun {
   label: string;
   path: string;
@@ -485,8 +487,9 @@ function rowMap(report: BaselineReport, timeoutMs: number): Map<string, Normaliz
 }
 
 function summarizeRun(label: string, path: string, row: NormalizedRow | null): Original50RouteStateRun {
-  const first = row?.timeline.find(event => event.stateSignatureBefore || event.stateSignatureAfter);
-  const last = row ? [...row.timeline].reverse().find(event => event.stateSignatureAfter || event.stateSignatureBefore) : undefined;
+  const committedTimeline = (row?.timeline ?? []).filter(event => COMMITTED_OUTCOMES.has(event.outcome));
+  const first = committedTimeline.find(event => event.stateSignatureBefore || event.stateSignatureAfter);
+  const last = [...committedTimeline].reverse().find(event => event.stateSignatureAfter || event.stateSignatureBefore);
   return {
     label,
     path,

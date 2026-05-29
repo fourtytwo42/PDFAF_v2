@@ -100,6 +100,8 @@ interface NormalizedTool extends ParsedDetails {
   durationMs: number | null;
 }
 
+const COMMITTED_OUTCOMES = new Set(['applied', 'no_effect']);
+
 interface NormalizedRow {
   key: string;
   file: string;
@@ -394,6 +396,7 @@ function normalizeTool(tool: AppliedTool): NormalizedTool {
 
 function normalizeRow(row: BaselineRow): NormalizedRow {
   const tools = (row.appliedTools ?? []).map(normalizeTool);
+  const committedTools = tools.filter(tool => COMMITTED_OUTCOMES.has(tool.outcome));
   const score = asNumber(row.afterScore) ?? asNumber(row.afterDeterministicScore) ?? asNumber(row.reanalyzedScore);
   const grade = row.afterGrade ?? row.afterDeterministicGrade ?? row.reanalyzedGrade ?? null;
   return {
@@ -404,8 +407,8 @@ function normalizeRow(row: BaselineRow): NormalizedRow {
     falsePositiveApplied: asNumber(row.falsePositiveApplied) ?? asNumber(row.falsePositiveAppliedCount) ?? 0,
     categories: categories(row),
     tools,
-    firstStateSignature: tools.find(tool => tool.stateSignatureBefore)?.stateSignatureBefore ?? null,
-    lastStateSignature: [...tools].reverse().find(tool => tool.stateSignatureAfter)?.stateSignatureAfter ?? null,
+    firstStateSignature: committedTools.find(tool => tool.stateSignatureBefore)?.stateSignatureBefore ?? null,
+    lastStateSignature: [...committedTools].reverse().find(tool => tool.stateSignatureAfter)?.stateSignatureAfter ?? null,
   };
 }
 

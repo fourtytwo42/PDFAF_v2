@@ -19,8 +19,10 @@ Source tests:
 
 Local artifacts:
 
-- Report: `/mnt/pdf-review/pdfaf-validation/original50-guarded-candidate-side-effect-diagnostic-2026-05-29-r1/original50-guarded-candidate-side-effect-diagnostic.md`
-- JSON: `/mnt/pdf-review/pdfaf-validation/original50-guarded-candidate-side-effect-diagnostic-2026-05-29-r1/original50-guarded-candidate-side-effect-diagnostic.json`
+- Corrected report: `/mnt/pdf-review/pdfaf-validation/original50-guarded-candidate-side-effect-diagnostic-2026-05-29-r2/original50-guarded-candidate-side-effect-diagnostic.md`
+- Corrected JSON: `/mnt/pdf-review/pdfaf-validation/original50-guarded-candidate-side-effect-diagnostic-2026-05-29-r2/original50-guarded-candidate-side-effect-diagnostic.json`
+
+Correction note: the first local run (`r1`) treated a rejected reference candidate's `stateSignatureAfter` as an accepted final state. The script now derives committed final state only from `applied` or `no_effect` events, so rejected after-states do not create false same-state acceptance matches.
 
 ## Inputs
 
@@ -45,14 +47,14 @@ Focused rows:
 
 ## Decision
 
-Decision: `diagnose_acceptance_context_determinism`
+Decision: `diagnose_analysis_count_drift`
 
 The diagnostic found `7` rejected high-scoring candidates across `2` rows:
 
-- `2` accepted-reference same-state context divergences;
 - `5` structure-stable analysis count drift cases.
+- `2` PAC count increments without category score drops.
 
-The next safest lane is `same_state_pac_acceptance_context_probe`, focused first on `4754`, because it reaches the exact accepted-reference final state but is rejected in the current gate for a PAC count increment. This is not a reason to suppress PAC; it is a reason to compare acceptance context and PAC replay for the same state.
+The next safest lane is `native_analysis_count_drift_probe`, focused first on `4683`, because its rejected high-scoring candidates show stable native structure but sharp extracted-count changes that produce a small `reading_order` regression. `4754` remains a secondary PAC count-attribution lane, not an accepted same-state lane.
 
 ## Row Findings
 
@@ -63,9 +65,9 @@ The next safest lane is `same_state_pac_acceptance_context_probe`, focused first
 - `normalize_heading_hierarchy`
 - `repair_native_table_headers`
 
-Both replay from `85/B` to `94/A`, both are rejected for `pac_rule_regressed(pdfua.table.header_association_present)`, and both land on state signature `6b3ea8d4ebfa0766e461f72f`, which matches the accepted-template reference final state.
+Both replay from `85/B` to `94/A` and both are rejected for `pac_rule_regressed(pdfua.table.header_association_present)`.
 
-The PAC count change is `21 -> 22` table header-association issues while category scores do not drop. This is acceptance-context / PAC replay evidence, not table-admission evidence. The next useful diagnostic should attribute why the same final state is accepted in one route but rejected in another.
+The PAC count change is `21 -> 22` table header-association issues while category scores do not drop. After the committed-state correction, there is no accepted-reference same-state match: the earlier apparent match came from a rejected post-pass candidate state. This is PAC count-attribution evidence, not table-admission evidence and not a basis for suppressing `pdfua.table.header_association_present`.
 
 ### `4683`
 
@@ -91,4 +93,4 @@ This supports a native analysis count-drift diagnostic before any behavior promo
 - Do not relax PAC regression guards, category regression guards, score caps, timeout policy, or false-positive truth.
 - Do not accept high rejected candidates just because their score is high.
 - Do not reopen parked table-heavy outside-source lanes from this evidence alone.
-- Future behavior must either prevent the side effect or prove same-state acceptance/PAC replay determinism with controls.
+- Future behavior must either prevent the side effect or prove analyzer/PAC attribution stability with controls.

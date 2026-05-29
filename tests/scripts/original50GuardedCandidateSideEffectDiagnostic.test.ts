@@ -154,6 +154,36 @@ describe('original50 guarded candidate side-effect diagnostic', () => {
     });
   });
 
+  it('does not treat rejected reference candidate states as accepted final states', () => {
+    const rejectedAfter = details({
+      reason: 'pac_rule_regressed(pdfua.table.header_association_present)',
+      beforeSig: 'before',
+      afterSig: 'rejected-only',
+      scoreBefore: 85,
+      scoreAfter: 94,
+      before: { heading_structure: 44, table_markup: 79 },
+      after: { heading_structure: 86, table_markup: 79 },
+      pac: [{ ruleId: 'pdfua.table.header_association_present', category: 'table_markup', beforeCount: 21, afterCount: 22 }],
+    });
+    const diagnostic = buildGuardedCandidateSideEffectDiagnostic({
+      outDir: '/out',
+      gatePath: '/gate.json',
+      gate: report([row('4754-route.pdf', 85, [tool('normalize_heading_hierarchy', 'rejected', rejectedAfter)])]),
+      referenceInputs: [
+        {
+          label: 'reference',
+          path: '/reference.json',
+          report: report([row('4754-route.pdf', 94, [
+            tool('embed_local_font_substitutes', 'rejected', rejectedAfter),
+          ])]),
+        },
+      ],
+    });
+
+    expect(diagnostic.rows[0]?.attempts[0]?.matchingAcceptedReferences).toHaveLength(0);
+    expect(diagnostic.rows[0]?.attempts[0]?.classification).toBe('pac_count_increment_without_score_drop');
+  });
+
   it('writes JSON and Markdown reports', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pdfaf-guarded-side-effect-'));
     try {
