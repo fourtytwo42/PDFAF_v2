@@ -89,3 +89,22 @@ Minimum corpus baseline:
 - `Input/experiment-corpus/50-long-report-mixed/`
 
 Generated benchmark artifacts remain local scratch unless explicitly needed for evidence review.
+
+## New VM Setup Status
+
+Initial migration target:
+
+- Host: `192.168.50.118`
+- Hostname: `pdfaf-work`
+- Repo path: `~/PDFAF_v2`
+- Repo commit: `c48cbaa` after the first handoff commit, then updated by the follow-up tracking commit.
+- Root filesystem was expanded from the initial `97G` filesystem to about `195G`; after expansion it showed about `179G` free.
+- Original-50 corpus was copied to `Input/experiment-corpus` with `52` files and about `62M` of payload.
+- `memory.md`, `AGENTS.md`, and `docs/pac-table-strong-handoff-2026-05-30.md` are present.
+
+Expected remote git status after setup:
+
+- `main...origin/main`;
+- untracked `Input/experiment-corpus/*` PDF directories, because the base corpus payloads are intentionally local and not committed.
+
+No passwords or generated benchmark artifacts are stored in source-tracked files.
