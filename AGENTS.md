@@ -1,7 +1,7 @@
 # Repository Working Rules
 
 - Read `memory.md` at the repository root when starting work, after context compression, or whenever stage/checkpoint status is unclear. Add concise durable updates there whenever the repo learns something future agents should remember; keep transient benchmark artifacts and PDF payloads out of it.
-- Commit and push after every major completed change.
+- GitHub is the shared source of truth for this repository. After every major completed change, commit the source/documentation changes and push them to GitHub. Keep generated benchmark outputs, transient verification artifacts, PDF payloads, Base64 content, and local secrets out of those commits unless explicitly required source assets.
 - Do not include local verification artifacts in commits unless they are explicitly required source assets.
 - Keep PDF payloads and generated Base64 content out of logs, docs, and commits.
 - Before starting any local LLM instance or benchmark path that can spawn one, first check whether an existing LLM process or listener is already running, such as `llama-server` on the expected port. Reuse the existing instance when possible and do not start a second copy on the same machine unless explicitly required.
