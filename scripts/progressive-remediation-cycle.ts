@@ -11,15 +11,10 @@
  * 6) Delete source PDFs only after a successful batch (set --no-delete to retain).
  */
 import 'dotenv/config';
-import Database from 'better-sqlite3';
+import { spawnSync } from 'node:child_process';
 import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, extname, join, basename, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
 import type { AnalysisResult, CategoryKey } from '../src/types.js';
-import { initSchema } from '../src/db/schema.js';
-import { createPlaybookStore } from '../src/services/learning/playbookStore.js';
-import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js';
 
 type RemediationConfig = {
   targetScore: number;
@@ -254,10 +249,6 @@ function categoryRegression(before: AnalysisResult, after: AnalysisResult): Arra
   return out;
 }
 
-function makeTempPath(filename: string): string {
-  return join(tmpdir(), `pdfaf-progressive-${Date.now()}-${randomUUID()}-${filename}`);
-}
-
 async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
@@ -328,6 +319,13 @@ async function probeOpenAiCompatServer(): Promise<boolean> {
   }
 }
 
+type WorkerResult = {
+  ok: true;
+  before: AnalysisResult;
+  after: AnalysisResult;
+  durationMs: number;
+};
+
 async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allowSemantic: boolean, llmReady: boolean): Promise<{
   before: AnalysisResult;
   after: AnalysisResult;
@@ -337,123 +335,98 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
 }> {
   const start = Date.now();
   const filename = basename(filePath);
+  const tsxCli = resolve(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const worker = resolve(process.cwd(), 'scripts', 'progressive-remediation-worker.ts');
+
+  const attempts = [
+    { label: 'safe-10', maxRounds: cfg.maxRounds, safeMode: '1', retries: 2 },
+    { label: 'safe-1', maxRounds: 1, safeMode: '1', retries: 3 },
+    { label: 'full-10', maxRounds: cfg.maxRounds, safeMode: '0', retries: 1 },
+    { label: 'full-1', maxRounds: 1, safeMode: '0', retries: 1 },
+  ] as const;
+  let lastError = `worker failed without output for ${filename}`;
+  let lastStderr = '';
+
+  for (const attempt of attempts) {
+    for (let retry = 0; retry < attempt.retries; retry++) {
+      const suffix = attempt.retries > 1 ? ` ${attempt.label}#${retry + 1}` : attempt.label;
+      const workerResult = spawnSync(process.execPath, [
+        tsxCli,
+        worker,
+        filePath,
+        String(cfg.targetScore),
+        String(attempt.maxRounds),
+        allowSemantic ? '1' : '0',
+        llmReady ? '1' : '0',
+        attempt.safeMode,
+      ], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+        timeout: 360_000,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+
+      const stdout = (workerResult.stdout ?? '').toString().trim();
+      const workerError = (workerResult.stderr ?? '').toString().trim();
+      if (workerError) lastStderr = workerError;
+
+      if (workerResult.status === 0 && stdout) {
+        try {
+          const parsed = JSON.parse(stdout) as WorkerResult;
+          if (parsed.ok) {
+            return {
+              before: parsed.before,
+              after: parsed.after,
+              durationMs: Date.now() - start,
+              status: 'ok',
+            };
+          }
+          lastError = `worker returned invalid payload (${suffix})`;
+        } catch (error) {
+          lastError = `worker parse failure for ${filename} (${suffix}): ${(error as Error).message}`;
+        }
+        continue;
+      }
+
+      if (!workerResult.status) {
+        if (workerResult.error) {
+          lastError = `worker execution error (${suffix}): ${workerResult.error.message}`;
+        } else {
+          lastError = `worker returned no payload (${suffix})`;
+        }
+        continue;
+      }
+
+      if (workerResult.status === 3221225477) {
+        lastError = `worker crashed (exit ${workerResult.status}) in ${suffix}`;
+        continue;
+      }
+
+      lastError = `worker failed (exit ${workerResult.status}) in ${suffix}: ${workerError}`.trim();
+    }
+  }
 
   try {
     const { analyzePdf } = await import('../src/services/pdfAnalyzer.js');
-    const { remediatePdf } = await import('../src/services/remediation/orchestrator.js');
-    const { applyPostRemediationAltRepair } = await import('../src/services/remediation/altStructureRepair.js');
-
-    const buf = await readFile(filePath);
-    const { result: before, snapshot } = await analyzePdf(filePath, filename, { bypassCache: true });
-
-    const memDb = new Database(':memory:');
-    initSchema(memDb);
-    const run = await remediatePdf(buf, filename, before, snapshot, {
-      maxRounds: cfg.maxRounds,
-      playbookStore: createPlaybookStore(memDb),
-      toolOutcomeStore: createToolOutcomeStore(memDb),
-    });
-    memDb.close();
-
-    let outBuf = run.buffer;
-    let outAfter = run.remediation.after;
-    let outSnapshot = run.snapshot;
-
-    if (outSnapshot.isTagged && outAfter.score < cfg.targetScore) {
-      const ar = await applyPostRemediationAltRepair(outBuf, filename, outAfter, outSnapshot, {
-        signal: AbortSignal.timeout(120_000),
-      });
-      outBuf = ar.buffer;
-      outAfter = ar.analysis;
-      outSnapshot = ar.snapshot;
-    }
-
-    if (allowSemantic && llmReady && outAfter.score < cfg.targetScore) {
-      const { applySemanticRepairs } = await import('../src/services/semantic/semanticService.js');
-      const { applySemanticPromoteHeadingRepairs } = await import('../src/services/semantic/promoteHeadingSemantic.js');
-      const { applySemanticHeadingRepairs } = await import('../src/services/semantic/headingSemantic.js');
-      const { applySemanticUntaggedHeadingRepairs } = await import('../src/services/semantic/untaggedHeadingSemantic.js');
-
-      const semanticOptions = { timeoutMs: cfg.semanticTimeoutMs, signal: AbortSignal.timeout(cfg.semanticTimeoutMs) };
-      for (let wave = 0; wave < 8 && outAfter.score < cfg.targetScore; wave++) {
-        for (let pass = 0; pass < cfg.semanticFigurePasses; pass++) {
-          const figure = await applySemanticRepairs({
-            buffer: outBuf,
-            filename,
-            analysis: outAfter,
-            snapshot: outSnapshot,
-            options: semanticOptions,
-          });
-          outBuf = figure.buffer;
-          outAfter = figure.analysis;
-          outSnapshot = figure.snapshot;
-          if (figure.summary.proposalsAccepted === 0 || figure.summary.skippedReason !== 'completed') {
-            break;
-          }
-        }
-        for (let pass = 0; pass < cfg.semanticPromotePasses; pass++) {
-          const promote = await applySemanticPromoteHeadingRepairs({
-            buffer: outBuf,
-            filename,
-            analysis: outAfter,
-            snapshot: outSnapshot,
-            options: semanticOptions,
-          });
-          outBuf = promote.buffer;
-          outAfter = promote.analysis;
-          outSnapshot = promote.snapshot;
-          if (promote.summary.proposalsAccepted === 0 || promote.summary.skippedReason !== 'completed') {
-            break;
-          }
-        }
-
-        const heading = await applySemanticHeadingRepairs({
-          buffer: outBuf,
-          filename,
-          analysis: outAfter,
-          snapshot: outSnapshot,
-          options: semanticOptions,
-        });
-        outBuf = heading.buffer;
-        outAfter = heading.analysis;
-        outSnapshot = heading.snapshot;
-
-        const untagged = await applySemanticUntaggedHeadingRepairs({
-          buffer: outBuf,
-          filename,
-          analysis: outAfter,
-          snapshot: outSnapshot,
-          options: semanticOptions,
-        });
-        outBuf = untagged.buffer;
-        outAfter = untagged.analysis;
-        outSnapshot = untagged.snapshot;
-
-        if (outSnapshot.isTagged && outAfter.score < cfg.targetScore) {
-          const ar = await applyPostRemediationAltRepair(outBuf, filename, outAfter, outSnapshot, {
-            signal: AbortSignal.timeout(120_000),
-          });
-          outBuf = ar.buffer;
-          outAfter = ar.analysis;
-          outSnapshot = ar.snapshot;
-        }
-      }
-    }
-
-    const tmpPath = makeTempPath(filename);
-    await ensureDir(dirname(tmpPath));
-    await writeFile(tmpPath, outBuf);
-    try {
-      const final = await analyzePdf(tmpPath, filename, { bypassCache: true });
-      return {
-        before,
-        after: final.result,
-        durationMs: Date.now() - start,
-        status: 'ok',
-      };
-    } finally {
-      await unlink(tmpPath).catch(() => {});
-    }
+    const { result: before } = await analyzePdf(filePath, filename, { bypassCache: true });
+    return {
+      before,
+      after: {
+        id: '',
+        timestamp: '',
+        filename,
+        pageCount: 0,
+        pdfClass: 'native_untagged',
+        score: 0,
+        grade: 'F',
+        categories: [],
+        findings: [],
+        analysisDurationMs: Date.now() - start,
+      },
+      durationMs: Date.now() - start,
+      status: 'failed',
+      error: `${lastError}. ${lastStderr}`.trim(),
+    };
   } catch (error) {
     return {
       before: {
@@ -466,7 +439,7 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
         grade: 'F',
         categories: [],
         findings: [],
-        analysisDurationMs: 0,
+        analysisDurationMs: Date.now() - start,
       },
       after: {
         id: '',
@@ -478,11 +451,11 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
         grade: 'F',
         categories: [],
         findings: [],
-        analysisDurationMs: 0,
+        analysisDurationMs: Date.now() - start,
       },
       durationMs: Date.now() - start,
       status: 'failed',
-      error: (error as Error).message,
+      error: `${lastError}. ${lastStderr}. ${(error as Error).message}`.trim(),
     };
   }
 }
