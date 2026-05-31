@@ -8,7 +8,7 @@
  * 3) Validate mean score against a target threshold.
  * 4) Optionally validate a protected corpus as a regression guard.
  * 5) On success, move to next batch automatically for --iterations rounds.
- * 6) Delete source PDFs by default after each processed file (set --no-delete to retain).
+ * 6) Delete source PDFs only after a successful batch (set --no-delete to retain).
  */
 import 'dotenv/config';
 import Database from 'better-sqlite3';
@@ -55,6 +55,8 @@ type BatchReport = {
   protectedDir?: string;
   protectedBeforeMean?: number;
   protectedAfterMean?: number;
+  protectedAnalyzedCount?: number;
+  protectedFailedCount?: number;
   protectedWorstCategoryRegression?: number;
   protectedWorstOverallRegression?: number;
   passed: boolean;
@@ -100,7 +102,7 @@ Options:
   --protected-category-drop <1>        Allowed category regression in a protected PDF (max per category)
   --iterations <1>                     Number of batches to process before stopping (default: 1)
   --max-rounds <10>                    Max deterministic remediation rounds per file (default: 10)
-  --no-delete                          Keep source PDFs after each run (default: delete)
+  --no-delete                          Keep source PDFs on fail/insufficient batches (default: delete on pass)
   --no-protected-check                  Skip protected corpus regression check.
   --include-failed                      Reprocess files that were previously marked failed.
   --work-root <path>                    Working folder for reports and state (default: ./tmp/progressive-remediation)
@@ -499,6 +501,8 @@ function toReportMd(run: BatchReport): string {
   if (run.protectedDir) {
     lines.push(`- Protected before: ${run.protectedBeforeMean?.toFixed(2)}`);
     lines.push(`- Protected after: ${run.protectedAfterMean?.toFixed(2)}`);
+    const protectedTotal = (run.protectedAnalyzedCount ?? 0) + (run.protectedFailedCount ?? 0);
+    lines.push(`- Protected analyzed: ${run.protectedAnalyzedCount ?? 0}/${protectedTotal}`);
     lines.push(`- Protected worst category regression: ${run.protectedWorstCategoryRegression?.toFixed(2)}`);
     lines.push(`- Protected worst overall regression: ${run.protectedWorstOverallRegression?.toFixed(2)}`);
   }
@@ -519,15 +523,29 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
   afterMean: number;
   worstCategoryRegression: number;
   worstOverallRegression: number;
+  analyzedCount: number;
+  failedCount: number;
 }> {
-  if (!opts.protectedDir) return { beforeMean: 0, afterMean: 0, worstCategoryRegression: 0, worstOverallRegression: 0 };
+  if (!opts.protectedDir) {
+    return {
+      beforeMean: 0,
+      afterMean: 0,
+      worstCategoryRegression: 0,
+      worstOverallRegression: 0,
+      analyzedCount: 0,
+      failedCount: 0,
+    };
+  }
 
   const files = (await listPdfs(opts.protectedDir)).sort();
   const rows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
+  let failedCount = 0;
   for (const file of files) {
     const out = await runPipelineOnFile(file, cfg, false, llmReady);
     if (out.status === 'ok') {
       rows.push({ before: out.before, after: out.after });
+    } else {
+      failedCount += 1;
     }
   }
 
@@ -540,7 +558,14 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
       if (reg.drop > worstCategoryRegression) worstCategoryRegression = reg.drop;
     }
   }
-  return { beforeMean, afterMean, worstCategoryRegression, worstOverallRegression };
+  return {
+    beforeMean,
+    afterMean,
+    worstCategoryRegression,
+    worstOverallRegression,
+    analyzedCount: rows.length,
+    failedCount,
+  };
 }
 
 async function main(): Promise<void> {
@@ -608,15 +633,12 @@ async function main(): Promise<void> {
         batch: state.batchCount + 1,
         ...(out.error ? { error: out.error } : {}),
       };
-
-      if (!opts.keepSources && out.status === 'ok') {
-        await unlink(pdfPath).catch(() => {});
-      }
     }
 
     const okRows = rows.filter(r => r.status === 'ok');
     const beforeMean = mean(okRows.map(r => r.beforeScore));
     const afterMean = mean(okRows.map(r => r.afterScore));
+    const hasFailures = rows.some(r => r.status !== 'ok');
     const report: BatchReport = {
       batch: state.batchCount + 1,
       startedAt: new Date(start).toISOString(),
@@ -635,15 +657,21 @@ async function main(): Promise<void> {
       report.protectedDir = opts.protectedDir;
       report.protectedBeforeMean = protectedSummary.beforeMean;
       report.protectedAfterMean = protectedSummary.afterMean;
+      report.protectedAnalyzedCount = protectedSummary.analyzedCount;
+      report.protectedFailedCount = protectedSummary.failedCount;
       report.protectedWorstCategoryRegression = protectedSummary.worstCategoryRegression;
       report.protectedWorstOverallRegression = protectedSummary.worstOverallRegression;
     }
 
     if (
+      !hasFailures &&
       afterMean >= cfg.targetScore &&
       (!opts.checkProtected ||
         !opts.protectedDir ||
-        (report.protectedAfterMean !== undefined &&
+        (report.protectedFailedCount === 0 &&
+          report.protectedAnalyzedCount !== undefined &&
+          report.protectedAnalyzedCount > 0 &&
+          report.protectedAfterMean !== undefined &&
           report.protectedAfterMean >= opts.protectedTargetScore &&
           report.protectedWorstOverallRegression !== undefined &&
           report.protectedWorstOverallRegression <= opts.protectedOverallRegressionTolerance &&
@@ -656,6 +684,12 @@ async function main(): Promise<void> {
     state.batchCount += 1;
     state.lastRunAt = new Date().toISOString();
     await saveState(statePath, state);
+
+    if (report.passed && !opts.keepSources) {
+      for (const pdfPath of batch) {
+        await unlink(pdfPath).catch(() => {});
+      }
+    }
 
     const batchDir = join(opts.workRoot, `batch-${String(state.batchCount).padStart(3, '0')}`);
     await ensureDir(batchDir);
