@@ -19,6 +19,11 @@ import unicodedata
 import secrets
 from collections import Counter, deque
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     import pikepdf
 except ImportError:
@@ -45,6 +50,18 @@ except ImportError:
         "linkScoringRows": [],
     }))
     sys.exit(0)
+
+try:
+    _PDF_INTEGER = pikepdf.Integer
+    _PDF_INT_TYPES = (int, pikepdf.Integer)
+except AttributeError:
+    _PDF_INTEGER = int
+    _PDF_INT_TYPES = (int,)
+
+
+def _pdf_int(value: int) -> int:
+    """Create an integer node with graceful fallback for older pikepdf versions."""
+    return _PDF_INTEGER(value)
 
 MAX_ITEMS = 2000  # cap per collection to avoid runaway on malformed trees
 MAX_MCID_SPANS = 500  # Phase 3c-c: cap MCID scan results in analysis JSON
@@ -288,51 +305,102 @@ def extract_resolved_text_after_mcid(raw: bytes, mcid_match: re.Match) -> str:
 
 
 def _sync_parent_tree_orphan_fixture(pdf: pikepdf.Pdf, page, struct_elem) -> None:
-    """Append ParentTree /Nums entry and page /StructParents for single-page orphan CI PDF only."""
+    """Append ParentTree /Nums entry and page /StructParents for orphan CI PDFs."""
+    if not pdf_has_3cc_orphan_marker(pdf):
+        return
     try:
-        if not pdf_has_3cc_orphan_marker(pdf) or len(pdf.pages) != 1:
-            return
-        sr = pdf.Root.get("/StructTreeRoot")
-        if sr is None:
-            return
-        pt = sr.get("/ParentTree")
-        if pt is None:
-            pt = pdf.make_indirect(pikepdf.Dictionary(Nums=pikepdf.Array([])))
-            sr["/ParentTree"] = pt
-        nums = pt.get("/Nums")
-        if nums is None or not isinstance(nums, pikepdf.Array):
-            nums = pikepdf.Array([])
-            pt["/Nums"] = nums
-        parent_id = len(nums) // 2
-        nums.append(pikepdf.Integer(parent_id))
-        nums.append(struct_elem)
-        page["/StructParents"] = pikepdf.Integer(parent_id)
+        _sync_parent_tree_for_struct_ref(pdf, page, struct_elem)
     except Exception:
         pass
-
 
 def _sync_parent_tree_single_page_wrap(pdf: pikepdf.Pdf, page, struct_elem) -> None:
-    """Best-effort ParentTree append for one-page PDFs after inserting an MCID-backed /P (non-CI)."""
+    """Best-effort ParentTree append for MCID-backed /P insertion."""
     try:
-        if len(pdf.pages) != 1:
-            return
-        sr = pdf.Root.get("/StructTreeRoot")
-        if sr is None:
-            return
-        pt = sr.get("/ParentTree")
-        if pt is None:
-            pt = pdf.make_indirect(pikepdf.Dictionary(Nums=pikepdf.Array([])))
-            sr["/ParentTree"] = pt
-        nums = pt.get("/Nums")
-        if nums is None or not isinstance(nums, pikepdf.Array):
-            nums = pikepdf.Array([])
-            pt["/Nums"] = nums
-        parent_id = len(nums) // 2
-        nums.append(pikepdf.Integer(parent_id))
-        nums.append(struct_elem)
-        page["/StructParents"] = pikepdf.Integer(parent_id)
+        _sync_parent_tree_for_struct_ref(pdf, page, struct_elem)
     except Exception:
         pass
+
+
+def _next_parent_tree_key(parent_tree_nums: pikepdf.Array, default_hint: int) -> int:
+    """Return a non-negative key that does not collide with existing ParentTree keys."""
+    key = int(default_hint)
+    used: set[int] = set()
+    i = 0
+    while i + 1 < len(parent_tree_nums):
+        try:
+            used.add(int(parent_tree_nums[i]))
+        except Exception:
+            pass
+        i += 2
+    if key not in used:
+        return key
+    if used:
+        return max(used) + 1
+    return key
+
+
+def _parent_tree_entry_at(nums: pikepdf.Array, struct_parent_key: int) -> tuple[int | None, object | None]:
+    """Return (index, entry) for the first ParentTree matching key, where entry is a value object."""
+    i = 0
+    while i + 1 < len(nums):
+        try:
+            if int(nums[i]) == int(struct_parent_key):
+                return i + 1, nums[i + 1]
+        except Exception:
+            pass
+        i += 2
+    return None, None
+
+
+def _sync_parent_tree_for_struct_ref(pdf: pikepdf.Pdf, page, struct_elem) -> None:
+    """Register a struct element under the page's StructParent entry in ParentTree."""
+    sr = pdf.Root.get("/StructTreeRoot")
+    if sr is None:
+        return
+    _, nums = _ensure_parent_tree(sr, pdf)
+    if not isinstance(nums, pikepdf.Array):
+        return
+
+    struct_parent = page.get("/StructParents")
+    try:
+        struct_parent_int = int(struct_parent)
+    except Exception:
+        struct_parent_int = None
+
+    if struct_parent_int is None:
+        next_key = int(sr.get("/ParentTreeNextKey", 0) or 0)
+        struct_parent_int = _next_parent_tree_key(nums, next_key)
+        page["/StructParents"] = _pdf_int(struct_parent_int)
+        if struct_parent_int >= next_key:
+            sr["/ParentTreeNextKey"] = _pdf_int(struct_parent_int + 1)
+
+    entry_idx, entry = _parent_tree_entry_at(nums, struct_parent_int)
+    if entry_idx is None:
+        nums.append(_pdf_int(struct_parent_int))
+        nums.append(struct_elem)
+        return
+
+    if isinstance(entry, pikepdf.Array):
+        already = False
+        for i in entry:
+            try:
+                if i == struct_elem:
+                    already = True
+                    break
+            except Exception:
+                pass
+        if already:
+            return
+        entry.append(struct_elem)
+        return
+
+    if isinstance(entry, pikepdf.Dictionary):
+        if entry == struct_elem:
+            return
+        nums[entry_idx] = pikepdf.Array([entry, struct_elem])
+        return
+
+    nums[entry_idx] = pikepdf.Array([struct_elem])
 
 
 def _outline_dest_fit(pdf: pikepdf.Pdf, page_idx: int) -> pikepdf.Array:
@@ -2262,26 +2330,26 @@ def _apply_urw_substitute_to_font(pdf: pikepdf.Pdf, font: pikepdf.Dictionary) ->
         font_stream = pikepdf.Stream(pdf, t1_bytes)
         flags = _font_descriptor_flags(urw_stem, italic_angle)
         bbox_arr = pikepdf.Array([fb[0], fb[1], fb[2], fb[3]])
-        widths_arr = pikepdf.Array([pikepdf.Integer(w) for w in widths_list])
+        widths_arr = pikepdf.Array([_pdf_int(w) for w in widths_list])
         desc = pikepdf.Dictionary(
             {
                 "/Type": pikepdf.Name("/FontDescriptor"),
                 "/FontName": pikepdf.Name("/" + urw_stem),
-                "/Flags": pikepdf.Integer(flags),
+                "/Flags": _pdf_int(flags),
                 "/FontBBox": bbox_arr,
                 "/ItalicAngle": pikepdf.Real(italic_angle),
-                "/Ascent": pikepdf.Integer(ascent),
-                "/Descent": pikepdf.Integer(descent),
-                "/CapHeight": pikepdf.Integer(cap_h),
-                "/StemV": pikepdf.Integer(stem_v),
+                "/Ascent": _pdf_int(ascent),
+                "/Descent": _pdf_int(descent),
+                "/CapHeight": _pdf_int(cap_h),
+                "/StemV": _pdf_int(stem_v),
                 "/FontFile": font_stream,
             }
         )
         font["/FontDescriptor"] = desc
         font[pikepdf.Name("/BaseFont")] = pikepdf.Name("/" + urw_stem)
         font[pikepdf.Name("/Encoding")] = pikepdf.Name("/WinAnsiEncoding")
-        font[pikepdf.Name("/FirstChar")] = pikepdf.Integer(first_c)
-        font[pikepdf.Name("/LastChar")] = pikepdf.Integer(last_c)
+        font[pikepdf.Name("/FirstChar")] = _pdf_int(first_c)
+        font[pikepdf.Name("/LastChar")] = _pdf_int(last_c)
         font[pikepdf.Name("/Widths")] = widths_arr
         try:
             if font.get("/ToUnicode") is not None:
@@ -2798,7 +2866,7 @@ def _repair_annotation_struct_ownership(
     if struct_parent_int is None:
         struct_parent_int = next_key
         next_key += 1
-        annot["/StructParent"] = pikepdf.Integer(struct_parent_int)
+        annot["/StructParent"] = _pdf_int(struct_parent_int)
         changed = True
 
     objr = pdf.make_indirect(pikepdf.Dictionary({
@@ -2911,7 +2979,7 @@ def _clear_hidden_link_flag_if_needed(annot: pikepdf.Dictionary) -> bool:
     except Exception:
         fi = 0
     if fi & 2:
-        annot["/F"] = pikepdf.Integer(fi & ~2)
+        annot["/F"] = _pdf_int(fi & ~2)
         return True
     return False
 
@@ -3108,7 +3176,7 @@ def _mut_repair_native_link_structure(pdf: pikepdf.Pdf) -> bool:
             )
             if row_changed:
                 changed = True
-    sr["/ParentTreeNextKey"] = pikepdf.Integer(next_key)
+    sr["/ParentTreeNextKey"] = _pdf_int(next_key)
     return changed
 
 
@@ -3149,7 +3217,7 @@ def _mut_tag_unowned_annotations(pdf: pikepdf.Pdf) -> bool:
             )
             if row_changed:
                 changed = True
-    sr["/ParentTreeNextKey"] = pikepdf.Integer(next_key)
+    sr["/ParentTreeNextKey"] = _pdf_int(next_key)
     return changed
 
 
@@ -3294,7 +3362,7 @@ def _mut_repair_annotation_alt_text(pdf: pikepdf.Pdf) -> bool:
                             kids = pikepdf.Array([kids]) if kids is not None else pikepdf.Array()
                         kids.append(annot_elem)
                         struct_document["/K"] = kids
-                        annot["/StructParent"] = pikepdf.Integer(struct_next_key)
+                        annot["/StructParent"] = _pdf_int(struct_next_key)
                         _upsert_parent_tree_entry(struct_nums, struct_next_key, annot_elem)
                         struct_next_key += 1
                         changed = True
@@ -3302,7 +3370,7 @@ def _mut_repair_annotation_alt_text(pdf: pikepdf.Pdf) -> bool:
                         pass
 
     if struct_root is not None and isinstance(struct_root, pikepdf.Dictionary):
-        struct_root["/ParentTreeNextKey"] = pikepdf.Integer(struct_next_key)
+        struct_root["/ParentTreeNextKey"] = _pdf_int(struct_next_key)
     return changed
 
 
@@ -3800,7 +3868,7 @@ def _k_has_mcid_association(k) -> bool:
     """True when /K directly references marked content (integer MCID or /MCR)."""
     if k is None:
         return False
-    if isinstance(k, (int, pikepdf.Integer)):
+    if isinstance(k, _PDF_INT_TYPES):
         return True
     if isinstance(k, pikepdf.Dictionary):
         try:
@@ -3811,7 +3879,7 @@ def _k_has_mcid_association(k) -> bool:
         return False
     if isinstance(k, pikepdf.Array):
         for ch in k:
-            if isinstance(ch, (int, pikepdf.Integer)):
+            if isinstance(ch, _PDF_INT_TYPES):
                 return True
             if isinstance(ch, pikepdf.Dictionary):
                 try:
@@ -3928,8 +3996,11 @@ def _repair_alt_text_subtree(elem) -> bool:
     for ch in _direct_role_children(elem):
         changed = _repair_alt_text_subtree(ch) or changed
 
-    if not _has_nonempty_alt_or_actual(elem):
+    if not _elem_has_alt_or_actual(elem):
         return changed
+    if not _has_nonempty_alt_or_actual(elem):
+        _clear_alt_actual_and_title(elem);
+        return True
 
     if _k_absent_or_empty(elem):
         _clear_alt_actual_and_title(elem)
@@ -4990,3 +5061,9 @@ if __name__ == "__main__":
             print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         sys.exit(0)
     main()
+
+
+
+
+
+

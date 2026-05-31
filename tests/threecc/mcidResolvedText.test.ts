@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PY = process.env['PYTHON'] ?? 'python3';
+const PY = process.env['PYTHON'] ?? (process.platform === 'win32' ? 'python' : 'python3');
 const here = dirname(fileURLToPath(import.meta.url));
 const helper = join(here, '../../python/pdf_analysis_helper.py');
 

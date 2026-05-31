@@ -41,6 +41,7 @@
     "icjia:retry-failed": "tsx scripts/icjia-retry-failed-audits.ts",
     "icjia:aggregate-findings": "tsx scripts/icjia-aggregate-findings.ts",
     "openapi:validate": "swagger-cli validate openapi.yaml",
+    "progressive:cycle": "tsx scripts/progressive-remediation-cycle.ts",
     "docker:up": "docker compose up --build",
     "docker:llm": "docker compose up llm -d --build"
   },

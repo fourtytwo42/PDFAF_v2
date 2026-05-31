@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-const PY = process.env['PYTHON'] ?? 'python3';
+const PY = process.env['PYTHON'] ?? (process.platform === 'win32' ? 'python' : 'python3');
 const here = dirname(fileURLToPath(import.meta.url));
 const helper = join(here, '../../python/pdf_analysis_helper.py');
 
