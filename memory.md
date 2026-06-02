@@ -48,6 +48,14 @@
     - `ensure_accessibility_tagging` link-quality drop rollback path
     - guarded orphan-MCID remap rollback
     - regression roll-forward protection in `scripts/progressive-remediation-cycle.ts`
+  - 2nd pass: `2026-06-02` using `/home/hendo420/pdfaf-public-cycles/set03/input` (public) and `/home/hendo420/pdfaf-public-cycles/set02/input` (protected):
+    - Result: `it-cycle-20g3/batch-001` PASS.
+    - Public mean: `61.10 -> 96.95`
+    - Protected mean: `87.35 -> 95.25`
+    - Protected analyzed/fail: `20/20`
+    - Protected worst overall regression: `-7.90`
+    - Protected worst category regression: `0`
+    - Protected check attempts: `2` with retry recovery
 
 - 2026-05-31:
   - Updated `scripts/progressive-remediation-cycle.ts` to isolate remediation work in a separate worker process (`scripts/progressive-remediation-worker.ts`), preventing native access-violation crashes from taking down the whole batch loop.
