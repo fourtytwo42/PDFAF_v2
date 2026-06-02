@@ -30,6 +30,28 @@
   - `batch-XXX/report.md`
 - Copy durable findings (failure signatures, regressions, and mitigation decisions) here before major commits.
 
+- 2026-06-02:
+  - `scripts/progressive-remediation-cycle.ts` now enforces score-gated acceptance in `runPipelineOnFile`:
+    - a worker result is only accepted when `parsed.ok` **and** `parsed.after.score >= targetScore`.
+    - attempts continue for `safe/full` modes when score is below target.
+    - when below target, errors now record: `worker score X below target Y (suffix)`.
+  - Executed remote cycle:
+    - `ssh pdfaf-work`
+    - `pnpm exec tsx scripts/progressive-remediation-cycle.ts`
+      `--public-dir /home/hendo420/pdfaf-public-cycles/set03/input`
+      `--batch-size 20 --iterations 1 --max-rounds 10`
+      `--target-score 93 --no-protected-check --no-delete`
+      `--work-root /home/hendo420/it-goal-20260602-B3`
+  - Result: `it-goal-20260602-B3/batch-001` FAIL.
+    - Public mean: `44.80 -> 94.60` on accepted (`ok`) files
+    - Files failed: `5/20` because final worker score remained below `93` after all attempts
+    - `05-AnnualReport2017` and `09-AnnualReport2013` still low (`59/F`) unless high-variance run variants improve them
+    - Most persistent failure signatures now show up consistently in failed rows:
+      - `alt_text` heavy penalties (e.g., 03/19/09/18 variants)
+      - `heading_structure` zeros in old annual reports
+      - residual `pdf_ua_compliance` drops
+    - This confirms earlier silent acceptance of low-score rows was masking partial remediation failures; pass criteria remain strict by design.
+
 ## Major Changes (Latest Cycle)
 - 2026-06-02:
   - Executed `scripts/progressive-remediation-cycle.ts` remotely on `ssh pdfaf-work` with safeguards enabled:

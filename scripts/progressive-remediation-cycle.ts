@@ -383,13 +383,17 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
       if (workerResult.status === 0 && stdout) {
         try {
           const parsed = JSON.parse(stdout) as WorkerResult;
-          if (parsed.ok) {
+          if (parsed.ok && parsed.after.score >= cfg.targetScore) {
             return {
               before: parsed.before,
               after: parsed.after,
               durationMs: Date.now() - start,
               status: 'ok',
             };
+          }
+          if (parsed.ok) {
+            lastError = `worker score ${parsed.after.score.toFixed(2)} below target ${cfg.targetScore.toFixed(2)} (${suffix})`;
+            continue;
           }
           lastError = `worker returned invalid payload (${suffix})`;
         } catch (error) {
