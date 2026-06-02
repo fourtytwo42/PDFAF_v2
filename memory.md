@@ -51,6 +51,10 @@
       - `heading_structure` zeros in old annual reports
       - residual `pdf_ua_compliance` drops
     - This confirms earlier silent acceptance of low-score rows was masking partial remediation failures; pass criteria remain strict by design.
+  - Additional verification attempt (protected check) with reduced protected sample:
+    - command target used `/home/hendo420/pdfaf-public-cycles/set02/sample` with `--max-rounds 1`
+    - no report was produced within practical timeout windows; protected path execution remained active without report finalization for extended runtime
+    - this run is incomplete in logs and needs follow-up tooling/timeout policy before concluding protected safety behavior for this sample set.
 
 ## Major Changes (Latest Cycle)
 - 2026-06-02:
