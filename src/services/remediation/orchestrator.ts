@@ -227,6 +227,7 @@ async function applyAccessibilityStructureEnsure(args: {
   };
 
   const scoreBeforeFin = currentAnalysis.score;
+  const linkBeforeFin = currentAnalysis.categories.find(c => c.key === 'link_quality')?.score;
   const { buffer: fb, result: fr } = await runPythonMutationBatch(
     currentBuffer,
     [{ op: 'ensure_accessibility_tagging', params: { pdfClass: currentSnapshot.pdfClass } }],
@@ -235,6 +236,14 @@ async function applyAccessibilityStructureEnsure(args: {
   if (fr.success && fr.applied.length > 0) {
     currentBuffer = fb;
     const an = await reanalyzeFinal(currentBuffer);
+    const linkAfterFin = an.result.categories.find(c => c.key === 'link_quality')?.score;
+    if (
+      typeof linkBeforeFin === 'number' &&
+      typeof linkAfterFin === 'number' &&
+      linkAfterFin + 1 < linkBeforeFin
+    ) {
+      return { buffer: args.currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
+    }
     currentAnalysis = an.result;
     currentSnapshot = an.snapshot;
     appliedTools.push({
@@ -876,6 +885,9 @@ export async function remediatePdf(
     for (let pass = 0; pass < 8; pass++) {
       const orphanN = currentSnapshot.taggedContentAudit?.orphanMcidCount ?? 0;
       if (!orphanN) break;
+      const prePassBuffer = currentBuffer;
+      const prePassAnalysis = currentAnalysis;
+      const prePassSnapshot = currentSnapshot;
       const { buffer: drained, result: drRes } = await runPythonMutationBatch(
         currentBuffer,
         [{ op: 'remap_orphan_mcids_as_artifacts', params: {} }],
@@ -885,6 +897,14 @@ export async function remediatePdf(
       const scoreBeforeDr = currentAnalysis.score;
       currentBuffer = drained;
       const drAn = await reanalyzeAfterBuffer(currentBuffer);
+      const orphanAfter = drAn.snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
+      if (drAn.result.score < scoreBeforeDr || orphanAfter >= orphanN) {
+        currentBuffer = prePassBuffer;
+        currentAnalysis = prePassAnalysis;
+        currentSnapshot = prePassSnapshot;
+        break;
+      }
+
       currentAnalysis = drAn.result;
       currentSnapshot = drAn.snapshot;
       appliedTools.push({

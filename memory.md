@@ -31,6 +31,24 @@
 - Copy durable findings (failure signatures, regressions, and mitigation decisions) here before major commits.
 
 ## Major Changes (Latest Cycle)
+- 2026-06-02:
+  - Executed `scripts/progressive-remediation-cycle.ts` remotely on `ssh pdfaf-work` with safeguards enabled:
+    - `--public-dir /home/hendo420/pdfaf-public-cycles/set01/input`
+    - `--protected-dir /home/hendo420/pdfaf-public-cycles/set02/input`
+    - `--batch-size 20 --iterations 1 --max-rounds 1 --target-score 93`
+    - `--protected-reruns-on-failure 1`
+    - `--no-delete`
+  - Result: `it-cycle-20g2/batch-001` PASS.
+    - Public mean: `87.30 -> 95.05`
+    - Protected mean: `87.30 -> 94.95`
+    - Protected analyzed/fail: `20/20`, protected worst overall regression `-7.65`
+    - Protected worst category regression `1` (within 1-point tolerance)
+    - `protectedCheckAttempts: 1`, no retry recovery triggered
+  - This run confirms the new structural safeguards after code changes:
+    - `ensure_accessibility_tagging` link-quality drop rollback path
+    - guarded orphan-MCID remap rollback
+    - regression roll-forward protection in `scripts/progressive-remediation-cycle.ts`
+
 - 2026-05-31:
   - Updated `scripts/progressive-remediation-cycle.ts` to isolate remediation work in a separate worker process (`scripts/progressive-remediation-worker.ts`), preventing native access-violation crashes from taking down the whole batch loop.
   - Added safe-mode worker profile and retry policy (`safe-10`, `safe-1`, then full modes) to recover from non-deterministic native crashes while preserving regression safeguards.

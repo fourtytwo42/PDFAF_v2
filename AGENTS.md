@@ -5,3 +5,4 @@
 - Keep PDF payloads and generated Base64 content out of logs, docs, and commits.
 - For major remediation/grader changes, record measurable pass/fail evidence in `memory.md` and in the batch report output.
 - Prefer the progressive loop script when introducing changes and keep source PDFs out of long-lived repo artifacts unless explicitly required.
+- Never execute PDFAF runtime workflows on this machine; run all PDFAF grading, remediation, and protected regression commands only on `pdfaf-work` (or equivalent remote SSH host).

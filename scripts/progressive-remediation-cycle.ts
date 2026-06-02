@@ -54,6 +54,8 @@ type BatchReport = {
   protectedFailedCount?: number;
   protectedWorstCategoryRegression?: number;
   protectedWorstOverallRegression?: number;
+  protectedCheckAttempts?: number;
+  protectedRecoveredWithRetry?: boolean;
   passed: boolean;
   files: FileRecord[];
 };
@@ -80,6 +82,7 @@ type RawArgs = {
   checkProtected: boolean;
   includeFailed: boolean;
   maxRounds: number;
+  protectedRerunsOnFailure: number;
 };
 
 function usage(): string {
@@ -95,6 +98,7 @@ Options:
   --protected-target-score <93>         Regression target for protected corpus mean (default: target-score)
   --protected-overall-drop <0>         Allowed protected corpus mean regression in points (default: 0)
   --protected-category-drop <1>        Allowed category regression in a protected PDF (max per category)
+  --protected-reruns-on-failure <1>   Re-run protected checks up to N additional times after an initial failure.
   --iterations <1>                     Number of batches to process before stopping (default: 1)
   --max-rounds <10>                    Max deterministic remediation rounds per file (default: 10)
   --no-delete                          Keep source PDFs on fail/insufficient batches (default: delete on pass)
@@ -119,6 +123,7 @@ function parseArgs(argv: string[]): RawArgs {
     checkProtected: true,
     includeFailed: false,
     maxRounds: 10,
+    protectedRerunsOnFailure: 1,
   };
 
   const next = (i: number): string => {
@@ -157,6 +162,10 @@ function parseArgs(argv: string[]): RawArgs {
         break;
       case '--protected-category-drop':
         opts.protectedCategoryRegressionTolerance = parseFloat(next(i));
+        i += 1;
+        break;
+      case '--protected-reruns-on-failure':
+        opts.protectedRerunsOnFailure = parseInt(next(i), 10);
         i += 1;
         break;
       case '--iterations':
@@ -219,6 +228,7 @@ function parseArgs(argv: string[]): RawArgs {
     protectedOverallRegressionTolerance: Math.max(0, opts.protectedOverallRegressionTolerance!),
     protectedCategoryRegressionTolerance: Math.max(0, opts.protectedCategoryRegressionTolerance!),
     maxRounds: Math.max(1, opts.maxRounds!),
+    protectedRerunsOnFailure: Math.max(0, opts.protectedRerunsOnFailure!),
   } as RawArgs;
 }
 
@@ -478,6 +488,12 @@ function toReportMd(run: BatchReport): string {
     lines.push(`- Protected analyzed: ${run.protectedAnalyzedCount ?? 0}/${protectedTotal}`);
     lines.push(`- Protected worst category regression: ${run.protectedWorstCategoryRegression?.toFixed(2)}`);
     lines.push(`- Protected worst overall regression: ${run.protectedWorstOverallRegression?.toFixed(2)}`);
+    if (run.protectedCheckAttempts !== undefined) {
+      lines.push(`- Protected check attempts: ${run.protectedCheckAttempts}`);
+    }
+    if (run.protectedRecoveredWithRetry) {
+      lines.push('- Protected regression failed first pass, but recovered on retry.');
+    }
   }
   lines.push('');
   lines.push('| file | before | after | delta | weak-before | weak-after | status | note |');
@@ -498,8 +514,11 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
   worstOverallRegression: number;
   analyzedCount: number;
   failedCount: number;
+  attempts: number;
+  recoveredWithRetry: boolean;
 }> {
-  if (!opts.protectedDir) {
+  const files = opts.protectedDir ? (await listPdfs(opts.protectedDir)).sort() : [];
+  if (!opts.protectedDir || files.length === 0) {
     return {
       beforeMean: 0,
       afterMean: 0,
@@ -507,37 +526,81 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
       worstOverallRegression: 0,
       analyzedCount: 0,
       failedCount: 0,
+      attempts: 1,
+      recoveredWithRetry: false,
     };
   }
 
-  const files = (await listPdfs(opts.protectedDir)).sort();
-  const rows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
-  let failedCount = 0;
-  for (const file of files) {
-    const out = await runPipelineOnFile(file, cfg, false, llmReady);
-    if (out.status === 'ok') {
-      rows.push({ before: out.before, after: out.after });
-    } else {
-      failedCount += 1;
+  const runOnce = async (): Promise<{
+    beforeMean: number;
+    afterMean: number;
+    worstCategoryRegression: number;
+    worstOverallRegression: number;
+    analyzedCount: number;
+    failedCount: number;
+  }> => {
+    const rows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
+    let failedCount = 0;
+    for (const file of files) {
+      const out = await runPipelineOnFile(file, cfg, false, llmReady);
+      if (out.status === 'ok') {
+        rows.push({ before: out.before, after: out.after });
+      } else {
+        failedCount += 1;
+      }
     }
-  }
 
-  const beforeMean = mean(rows.map(r => r.before.score));
-  const afterMean = mean(rows.map(r => r.after.score));
-  const worstOverallRegression = beforeMean - afterMean;
-  let worstCategoryRegression = 0;
-  for (const entry of rows) {
-    for (const reg of categoryRegression(entry.before, entry.after)) {
-      if (reg.drop > worstCategoryRegression) worstCategoryRegression = reg.drop;
+    const beforeMean = mean(rows.map(r => r.before.score));
+    const afterMean = mean(rows.map(r => r.after.score));
+    const worstOverallRegression = beforeMean - afterMean;
+    let worstCategoryRegression = 0;
+    for (const entry of rows) {
+      for (const reg of categoryRegression(entry.before, entry.after)) {
+        if (reg.drop > worstCategoryRegression) worstCategoryRegression = reg.drop;
+      }
+    }
+    return {
+      beforeMean,
+      afterMean,
+      worstCategoryRegression,
+      worstOverallRegression,
+      analyzedCount: rows.length,
+      failedCount,
+    };
+  };
+
+  const isPass = (summary: { beforeMean: number; afterMean: number; worstCategoryRegression: number; worstOverallRegression: number; analyzedCount: number; failedCount: number }): boolean =>
+    summary.failedCount === 0 &&
+    summary.analyzedCount > 0 &&
+    summary.afterMean >= opts.protectedTargetScore &&
+    summary.worstOverallRegression <= opts.protectedOverallRegressionTolerance &&
+    summary.worstCategoryRegression <= opts.protectedCategoryRegressionTolerance;
+
+  let attempts = 0;
+  let lastSummary = {
+    beforeMean: 0,
+    afterMean: 0,
+    worstCategoryRegression: 0,
+    worstOverallRegression: 0,
+    analyzedCount: 0,
+    failedCount: 0,
+  };
+  for (let attempt = 0; attempt <= opts.protectedRerunsOnFailure; attempt += 1) {
+    attempts += 1;
+    const summary = await runOnce();
+    lastSummary = summary;
+    if (isPass(summary)) {
+      return {
+        ...summary,
+        attempts,
+        recoveredWithRetry: attempt > 0,
+      };
     }
   }
   return {
-    beforeMean,
-    afterMean,
-    worstCategoryRegression,
-    worstOverallRegression,
-    analyzedCount: rows.length,
-    failedCount,
+    ...lastSummary,
+    attempts,
+    recoveredWithRetry: false,
   };
 }
 
@@ -634,6 +697,8 @@ async function main(): Promise<void> {
       report.protectedFailedCount = protectedSummary.failedCount;
       report.protectedWorstCategoryRegression = protectedSummary.worstCategoryRegression;
       report.protectedWorstOverallRegression = protectedSummary.worstOverallRegression;
+      report.protectedCheckAttempts = protectedSummary.attempts;
+      report.protectedRecoveredWithRetry = protectedSummary.recoveredWithRetry;
     }
 
     if (

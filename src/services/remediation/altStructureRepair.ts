@@ -34,6 +34,7 @@ export async function applyPostRemediationAltRepair(
     return { buffer, analysis, snapshot };
   }
   const beforeH = createHash('sha256').update(buffer).digest('hex');
+  const beforePdfUa = analysis.categories.find(item => item.key === 'pdf_ua_compliance')?.score;
   const { buffer: nextBuf, result } = await runPythonMutationBatch(
     buffer,
     [
@@ -55,6 +56,10 @@ export async function applyPostRemediationAltRepair(
   await writeFile(tmp, nextBuf);
   try {
     const out = await analyzePdf(tmp, filename);
+    const afterPdfUa = out.result.categories.find(item => item.key === 'pdf_ua_compliance')?.score;
+    if (beforePdfUa !== undefined && afterPdfUa !== undefined && afterPdfUa < beforePdfUa) {
+      return { buffer, analysis, snapshot };
+    }
     return { buffer: nextBuf, analysis: out.result, snapshot: out.snapshot };
   } finally {
     await unlink(tmp).catch(() => {});
