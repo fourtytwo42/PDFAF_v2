@@ -329,6 +329,10 @@ export async function runPythonMutationBatch(
     const proc = spawn('python3', [PYTHON_SCRIPT_PATH, '--mutate', requestPath], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        PDFAF_PDF_HELPER_INTEGER_COMPAT: '1',
+      },
     });
 
     const killProcessGroup = () => {

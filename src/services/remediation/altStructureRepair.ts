@@ -14,7 +14,18 @@ const POST_ALT_CORE_CATEGORIES: CategoryKey[] = [
   'pdf_ua_compliance',
   'link_quality',
   'text_extractability',
+  'alt_text',
 ];
+
+const POST_ALT_CORE_CATEGORY_DROP_TOLERANCE: Partial<Record<CategoryKey, number>> = {
+  heading_structure: 0,
+  reading_order: 0,
+  table_markup: 0,
+  pdf_ua_compliance: 0,
+  link_quality: 0,
+  text_extractability: 0,
+  alt_text: 1,
+};
 
 function scoreOf(analysis: AnalysisResult): number {
   return analysis.scoreProfile?.overallScore ?? analysis.score;
@@ -30,7 +41,14 @@ export function shouldKeepPostRemediationAltRepair(before: AnalysisResult, after
   for (const key of POST_ALT_CORE_CATEGORIES) {
     const beforeScore = categoryScore(before, key);
     const afterScore = categoryScore(after, key);
-    if (beforeScore != null && afterScore != null && afterScore < beforeScore) return false;
+    const maxDrop = POST_ALT_CORE_CATEGORY_DROP_TOLERANCE[key] ?? 0;
+    if (
+      beforeScore != null &&
+      afterScore != null &&
+      afterScore + Number.EPSILON < beforeScore - maxDrop
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -86,6 +104,9 @@ export async function applyPostRemediationAltRepair(
       signal: opts?.signal,
       timeoutMs: opts?.timeoutMs ?? REMEDIATION_ANALYSIS_TIMEOUT_MS,
     });
+    if (!shouldKeepPostRemediationAltRepair(analysis, out.result)) {
+      return { buffer, analysis, snapshot };
+    }
     return { buffer: nextBuf, analysis: out.result, snapshot: out.snapshot };
   } finally {
     await unlink(tmp).catch(() => {});

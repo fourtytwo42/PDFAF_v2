@@ -23,6 +23,8 @@ from collections import Counter, deque
 
 try:
     import pikepdf
+    if not hasattr(pikepdf, 'Integer'):
+        pikepdf.Integer = int
 except ImportError:
     print(json.dumps({
         "error": "pikepdf not installed",
