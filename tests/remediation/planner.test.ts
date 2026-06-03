@@ -4851,7 +4851,7 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('create_heading_from_candidate');
   });
 
-  it('schedules visible-title-backed heading synthesis when paragraph bootstrap candidates are raw operator noise', () => {
+  it('marks raw-operator visible-title fallbacks for page-0 synthesis', () => {
     const snap = reportLayoutPlanningSnapshot({
       textByPage: ['Arizona Judicial Branch Annual Report Fiscal Year 2013'],
       paragraphStructElems: [
@@ -4887,11 +4887,13 @@ describe('planForRemediation', () => {
     expect(buildEligibleHeadingBootstrapCandidates(snap)).toHaveLength(0);
     expect(buildDefaultParams('create_heading_from_candidate', analysis, snap, [])).toMatchObject({
       text: 'Arizona Judicial Branch Annual Report Fiscal Year 2013',
+      preferPage0TitleSynthesis: true,
     });
     const plan = planForRemediation(analysis, snap, []);
     const headingTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_candidate');
     expect(headingTool?.params).toMatchObject({
       text: 'Arizona Judicial Branch Annual Report Fiscal Year 2013',
+      preferPage0TitleSynthesis: true,
     });
   });
 

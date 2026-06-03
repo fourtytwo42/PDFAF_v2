@@ -9948,6 +9948,7 @@ def _op_create_heading_from_candidate(pdf: pikepdf.Pdf, params: dict) -> bool:
         "level": level,
         "text": params.get("text"),
         "strictTargetRef": params.get("strictTargetRef") or params.get("strict_target_ref"),
+        "preferPage0TitleSynthesis": params.get("preferPage0TitleSynthesis") or params.get("prefer_page0_title_synthesis"),
     })
 
 
@@ -10139,12 +10140,13 @@ def _synthesize_heading_from_page_mcid(
         lookup = _build_mcid_resolved_lookup(pdf)
     except Exception:
         return None, "mcid_lookup_failed"
-    page0_rows = [(mcid, text) for (page, mcid), text in lookup.items() if page == 0 and text]
+    page0_rows = [(mcid, text) for (page, mcid), text in lookup.items() if page == 0]
     if not page0_rows:
         return None, "no_page0_mcid_text"
     scored: list[tuple[int, int, str]] = []
     for mcid, text in page0_rows:
-        s = _score_mcid_text_as_heading(text, prefer_text)
+        candidate_text = text or prefer_text
+        s = _score_mcid_text_as_heading(candidate_text, prefer_text)
         if s is None:
             continue
         scored.append((s, mcid, text))
@@ -11448,6 +11450,21 @@ def _op_retag_struct_as_heading(pdf: pikepdf.Pdf, params: dict) -> bool:
     if strict_target_ref and elem is None:
         _set_last_mutation_debug(_heading_promotion_debug(pdf, None, "before"))
         _set_last_mutation_note("strict_target_not_resolved")
+        return False
+    prefer_page0_title_synthesis = params.get('preferPage0TitleSynthesis') is True or str(params.get('preferPage0TitleSynthesis') or params.get('prefer_page0_title_synthesis') or '').lower() in ('1', 'true', 'yes')
+    if prefer_page0_title_synthesis:
+        sr_syn, doc_elem_syn = _find_or_create_document_elem(pdf)
+        if isinstance(sr_syn, pikepdf.Dictionary) and isinstance(doc_elem_syn, pikepdf.Dictionary):
+            syn_elem, syn_note = _synthesize_heading_from_page_mcid(
+                pdf, sr_syn, doc_elem_syn, level, target_text,
+            )
+            if syn_elem is not None:
+                after_debug = _heading_promotion_debug(pdf, syn_elem, 'after')
+                _set_last_mutation_debug({'before': _heading_promotion_debug(pdf, None, 'before'), 'after': after_debug})
+                _set_last_mutation_note(syn_note)
+                return True
+        _set_last_mutation_debug(_heading_promotion_debug(pdf, None, 'before'))
+        _set_last_mutation_note('prefer_page0_title_synthesis')
         return False
     if elem is None and target_text:
         elem = _find_heading_candidate_by_text(pdf, target_text)
@@ -12951,6 +12968,8 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
     }
     if not mutated:
         return "no_effect", note or "no_structural_change", invariants
+    if note == 'synthesized_from_page0_mcid':
+        return 'applied', note, invariants
     if invariants["targetResolved"] is False:
         return "no_effect", "target_not_found", invariants
     if (after.get("globalH1Count", 0) or 0) > 1 and (before.get("globalH1Count", 0) or 0) <= 1:

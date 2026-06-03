@@ -2587,6 +2587,7 @@ export function buildDefaultParams(
         return {
           level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
           text: visibleTitle.slice(0, 200),
+          preferPage0TitleSynthesis: true,
         };
       }
       const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
