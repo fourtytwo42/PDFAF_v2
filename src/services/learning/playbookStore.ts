@@ -41,6 +41,9 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
   'normalize_heading_hierarchy',
+  'create_heading_from_candidate',
+  'mark_untagged_content_as_artifact',
+  'repair_top_level_parent_links',
   'repair_native_reading_order',
 ]);
 

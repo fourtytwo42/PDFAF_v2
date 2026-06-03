@@ -74,6 +74,39 @@ function appliedNativeReadingOrder(): AppliedRemediationTool[] {
   ];
 }
 
+
+function appliedStructureFollowup(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'create_heading_from_candidate',
+      stage: 2,
+      round: 1,
+      scoreBefore: 40,
+      scoreAfter: 55,
+      delta: 15,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 4,
+      round: 1,
+      scoreBefore: 55,
+      scoreAfter: 84,
+      delta: 29,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_top_level_parent_links',
+      stage: 5,
+      round: 1,
+      scoreBefore: 84,
+      scoreAfter: 96,
+      delta: 12,
+      outcome: 'applied',
+    },
+  ];
+}
+
 describe('playbookStore', () => {
   let db: Database.Database;
 
@@ -108,6 +141,21 @@ describe('playbookStore', () => {
     const row = store.listAll().find(p => p.failureSignature === sig);
     expect(row).toBeDefined();
     expect(row!.toolSequence.map(step => step.toolName)).toEqual(['repair_native_reading_order']);
+  });
+
+  it('learnFromSuccess persists repeatable heading and parent-link follow-up tools', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedStructureFollowup(), 56);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'create_heading_from_candidate',
+      'mark_untagged_content_as_artifact',
+      'repair_top_level_parent_links',
+    ]);
   });
 
   it('promotes to active after 3 successes', () => {
