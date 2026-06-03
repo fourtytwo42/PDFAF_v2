@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { score } from '../../src/services/scorer/scorer.js';
+import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import {
   classifyTaggedZeroHeadingAnchor,
   classifyPartialHeadingReachability,
@@ -224,6 +225,36 @@ describe('Stage 127 visible heading anchor recovery', () => {
     expect(shouldTryVisibleHeadingAnchorRecovery(analysis, snap)).toBe(false);
     const names = planForRemediation(analysis, snap, []).stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
     expect(names).not.toContain('create_heading_from_visible_text_anchor');
+  });
+
+  it('rejects paragraph candidates that are raw PDF operator noise and falls back to the visible title', () => {
+    const snap = snapshot({
+      textByPage: ['Arizona Judicial Branch Annual Report Fiscal Year 2013'],
+      paragraphStructElems: [{
+        tag: 'P',
+        page: 0,
+        structRef: '1218_0',
+        text: 'BT /P <</MCID 0 >>BDC /TT0 1 Tf 11.04 -0 0 11.04 36 75',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document'],
+        bbox: [36, 60, 540, 78],
+      }],
+      mcidTextSpans: [{
+        page: 0,
+        mcid: 0,
+        snippet: '/H1 <</MCID 0>>BDC BT /F10 24 Tf 36 72 Tm',
+        resolvedText: 'Arizona Judicial Branch',
+      }],
+    });
+    const analysis = analysisFor(snap);
+    expect(buildEligibleHeadingBootstrapCandidates(snap)).toHaveLength(0);
+    expect(selectVisibleHeadingAnchorCandidate(analysis, snap)).toMatchObject({
+      page: 0,
+      mcid: 0,
+      text: 'Arizona Judicial Branch Annual Report Fiscal Year 2013',
+      source: 'role_tagged_mcid_first_page',
+    });
   });
 
   it('schedules tagged visible-anchor recovery for strong tagged zero-heading rows', () => {

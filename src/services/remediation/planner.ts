@@ -41,6 +41,7 @@ import {
   selectPartialHeadingReachabilityCandidate,
   selectTaggedModerateTableHeadingAnchorCandidate,
   selectTaggedVisibleHeadingAnchorCandidate,
+  extractFirstPageVisibleHeadingText,
   selectVisibleHeadingAnchorCandidate,
   shouldTryPartialHeadingReachabilityRecovery,
   shouldTryTaggedModerateTableHeadingAnchorRecovery,
@@ -1651,6 +1652,7 @@ export function planForRemediation(
             && headingAttemptTotal < eligibleHeadingCandidates.length
             && (selectHeadingBootstrapCandidate(snapshot)?.score ?? -1) >= HEADING_BOOTSTRAP_MIN_SCORE
           )
+          || Boolean(extractFirstPageVisibleHeadingText(snapshot, analysis.filename))
         )
       )
     ) {
@@ -2578,21 +2580,13 @@ export function buildDefaultParams(
         )
         : null;
       if (!candidate) {
-        const elems = (snapshot.paragraphStructElems ?? []).filter(
-          item => item.structRef && item.text.trim().length >= 4,
-        );
-        const page0 = elems
-          .filter(e => e.page === 0)
-          .sort((a, b) => b.text.length - a.text.length)[0];
-        const legacyCandidate = page0
-          ?? elems.sort((a, b) => a.page - b.page || b.text.length - a.text.length)[0];
-        if (!legacyCandidate) return {};
+        const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
+        if (!visibleTitle) return {};
         const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
         const zeroExportedHeadings = snapshot.headings.length === 0;
         return {
-          targetRef: legacyCandidate.structRef,
           level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
-          text: legacyCandidate.text.slice(0, 200),
+          text: visibleTitle.slice(0, 200),
         };
       }
       const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);

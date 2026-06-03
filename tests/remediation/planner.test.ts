@@ -4851,6 +4851,50 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('create_heading_from_candidate');
   });
 
+  it('schedules visible-title-backed heading synthesis when paragraph bootstrap candidates are raw operator noise', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      textByPage: ['Arizona Judicial Branch Annual Report Fiscal Year 2013'],
+      paragraphStructElems: [
+        {
+          tag: 'P',
+          page: 0,
+          structRef: '1218_0',
+          text: 'BT /P <</MCID 0 >>BDC /TT0 1 Tf 11.04 -0 0 11.04 36 75',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+        {
+          tag: 'P',
+          page: 0,
+          structRef: '1219_0',
+          text: '-0 0 11.04 36 754.56 Tm ( )Tj EMC  /P <</MCID 1 >>BDC  0 -3.88 TD ( )Tj 0.267 0.447 0.7',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+      ],
+      mcidTextSpans: [
+        { page: 0, mcid: 0, snippet: '/H1 <</MCID 0>>BDC BT /F10 24 Tf 36 72 Tm', resolvedText: 'Arizona Judicial Branch' },
+      ],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 96,
+      text_extractability: 100,
+    });
+
+    expect(buildEligibleHeadingBootstrapCandidates(snap)).toHaveLength(0);
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap, [])).toMatchObject({
+      text: 'Arizona Judicial Branch Annual Report Fiscal Year 2013',
+    });
+    const plan = planForRemediation(analysis, snap, []);
+    const headingTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_candidate');
+    expect(headingTool?.params).toMatchObject({
+      text: 'Arizona Judicial Branch Annual Report Fiscal Year 2013',
+    });
+  });
+
   it('does not schedule report-layout paragraph heading creation for MCID-only rows', () => {
     const snap = reportLayoutPlanningSnapshot({
       paragraphStructElems: [],

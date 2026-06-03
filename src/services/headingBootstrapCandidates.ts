@@ -77,6 +77,17 @@ function looksLikeFurnitureOrBoilerplate(text: string): boolean {
   return /\b(page\s+\d+|www\.|http|copyright|all rights reserved|state of illinois|department of|research brief|source:)\b/i.test(normalized);
 }
 
+function looksLikeRawPdfOperatorNoise(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  const operatorMatches = normalized.match(/\b(?:BT|ET|BDC|EMC|MCID|Tf|Tm|TJ|Tj|Td|TD|T\*|cm|re|Do|gs|q|Q|BI|ID|EI)\b/g) ?? [];
+  if (operatorMatches.length < 2) return false;
+  const structuralMarkers = (normalized.match(/\/[A-Za-z][A-Za-z0-9_]*/g) ?? []).length + (normalized.match(/<<|>>/g) ?? []).length;
+  const numericTokens = normalized.match(/\b-?\d+(?:\.\d+)?\b/g)?.length ?? 0;
+  const alphaWords = normalized.match(/[A-Za-z]{2,}/g)?.length ?? 0;
+  return structuralMarkers >= 2 && numericTokens >= 3 && alphaWords <= 8;
+}
+
 function looksLikeRepeatingHeaderOrFooter(candidate: HeadingBootstrapCandidate, pagesByFingerprint: Map<string, Set<number>>): boolean {
   const key = normalizeCandidateFingerprint(candidate.text);
   if (!key) return false;
@@ -176,6 +187,7 @@ export function scoreHeadingBootstrapCandidate(
   const text = normalizeText(row.text);
   if (text.length < MIN_TEXT_LEN || text.length > HEADING_BOOTSTRAP_MAX_TEXT_LEN) return null;
   if (looksLikeRawUrl(text) || rawUrlTokenRatio(text) >= 0.5) return null;
+  if (looksLikeRawPdfOperatorNoise(text)) return null;
   if (
     looksLikeCaption(text)
     || looksLikeTableLine(text)
