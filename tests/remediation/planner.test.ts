@@ -3098,6 +3098,48 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_figure_alt_text');
   });
 
+  it('keeps Stage 146 figure alt continuation at the protected cap on 55/79 public-shaped rows', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 55,
+      reading_order: 100,
+      table_markup: 79,
+    });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied, {
+      protectedBaselineActive: true,
+      protectedBaseline: { score: 59, categories: { alt_text: 12 } },
+    })).toBe(3);
+  });
+
   it('keeps Stage 146 figure alt continuation out of protected-baseline runs', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -3130,6 +3172,46 @@ describe('planForRemediation', () => {
     }));
 
     expect(maxFigureAltTargetsForRun(analysis, snap, applied, { protectedBaselineActive: true })).toBe(3);
+  });
+
+  it('allows Stage 146 figure alt continuation once heading is stable at 55 on public rows', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 100,
+      checkerFigureTargets: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document@root', `Figure@${index}_0`],
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 55,
+      reading_order: 100,
+      table_markup: 79,
+    });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(true);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(5);
   });
 
   it('keeps Stage 146 figure alt continuation at the default cap when heading remains a severe blocker', () => {
