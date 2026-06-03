@@ -183,6 +183,75 @@ function appliedLinkAnnotationContents(): AppliedRemediationTool[] {
 }
 
 
+function appliedAnnotationTabOrder(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 43,
+      scoreAfter: 51,
+      delta: 8,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 51,
+      scoreAfter: 51,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'create_heading_from_candidate',
+      stage: 4,
+      round: 1,
+      scoreBefore: 51,
+      scoreAfter: 92,
+      delta: 41,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 5,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 92,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_native_reading_order',
+      stage: 5,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 92,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 4,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 92,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_top_level_parent_links',
+      stage: 5,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 96,
+      delta: 4,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
   return [
     {
@@ -349,6 +418,25 @@ describe('playbookStore', () => {
       'set_document_title',
       'set_link_annotation_contents',
       'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists normalize_annotation_tab_order from a public heading and tab-order path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedAnnotationTabOrder(), 53);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'create_heading_from_candidate',
+      'normalize_annotation_tab_order',
+      'repair_native_reading_order',
+      'mark_untagged_content_as_artifact',
+      'repair_top_level_parent_links',
     ]);
   });
 
