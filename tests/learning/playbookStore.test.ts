@@ -399,6 +399,57 @@ function appliedAltTextStructureRepair(): AppliedRemediationTool[] {
 }
 
 
+function appliedFormTooltipPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 41,
+      scoreAfter: 45,
+      delta: 4,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 45,
+      scoreAfter: 45,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 5,
+      round: 1,
+      scoreBefore: 45,
+      scoreAfter: 49,
+      delta: 4,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'fill_form_field_tooltips',
+      stage: 6,
+      round: 1,
+      scoreBefore: 49,
+      scoreAfter: 53,
+      delta: 4,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 53,
+      scoreAfter: 59,
+      delta: 6,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
   return [
     {
@@ -621,6 +672,23 @@ describe('playbookStore', () => {
       'bootstrap_struct_tree',
       'synthesize_basic_structure_from_layout',
       'repair_alt_text_structure',
+      'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists fill_form_field_tooltips from the active public 4660 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedFormTooltipPath(), 41);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'normalize_annotation_tab_order',
+      'fill_form_field_tooltips',
       'set_pdfua_identification',
     ]);
   });
