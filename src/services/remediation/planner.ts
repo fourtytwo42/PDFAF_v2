@@ -2463,7 +2463,9 @@ export function planForRemediation(
 
   const reliabilityExemptTools = protectedZeroHeadingConvergence
     ? new Set(['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'])
-    : new Set<string>();
+    : failureDisposition.headingMalformedExistingTree
+      ? new Set(['normalize_heading_hierarchy'])
+      : new Set<string>();
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,
     analysis.pdfClass,

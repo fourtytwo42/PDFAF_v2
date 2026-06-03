@@ -3098,6 +3098,49 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_figure_alt_text');
   });
 
+  it('does not reliability-filter heading normalization on malformed public heading trees', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (let i = 0; i < 10; i++) {
+      store.record({
+        toolName: 'normalize_heading_hierarchy',
+        pdfClass: 'native_tagged',
+        outcome: 'no_effect',
+        scoreBefore: 55,
+        scoreAfter: 55,
+      });
+    }
+
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      headings: [
+        { level: 1, text: 'Intro', page: 0, structRef: '1_0' },
+        { level: 1, text: 'Body', page: 1, structRef: '2_0' },
+        { level: 3, text: 'Detail', page: 2, structRef: '3_0' },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 55,
+      reading_order: 100,
+      table_markup: 79,
+      alt_text: 20,
+    });
+
+    const plan = planForRemediation(analysis, snap, [], store);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('normalize_heading_hierarchy');
+  });
+
   it('keeps Stage 146 figure alt continuation at the protected cap on 55/79 public-shaped rows', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
