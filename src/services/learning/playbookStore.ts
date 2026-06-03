@@ -39,6 +39,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'set_pdfua_identification',
   'bootstrap_struct_tree',
   'repair_structure_conformance',
+  'remap_orphan_mcids_as_artifacts',
 ]);
 
 /**

@@ -60,6 +60,65 @@ function appliedTitle(): AppliedRemediationTool[] {
   ];
 }
 
+function appliedRemapOrphanMcids(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 40,
+      scoreAfter: 42,
+      delta: 2,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 42,
+      scoreAfter: 45,
+      delta: 3,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_link_annotation_contents',
+      stage: 1,
+      round: 1,
+      scoreBefore: 45,
+      scoreAfter: 47,
+      delta: 2,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 1,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 49,
+      delta: 2,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 49,
+      scoreAfter: 52,
+      delta: 3,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 1,
+      round: 1,
+      scoreBefore: 52,
+      scoreAfter: 58,
+      delta: 6,
+      outcome: 'applied',
+    },
+  ];
+}
+
 describe('playbookStore', () => {
   let db: Database.Database;
 
@@ -82,6 +141,18 @@ describe('playbookStore', () => {
     const row = store.listAll().find(p => p.failureSignature === sig);
     expect(row).toBeDefined();
     expect(row!.status).toBe('candidate');
+    expect(store.findActive(sig)).toBeNull();
+  });
+
+  it('learnFromSuccess persists remap_orphan_mcids_as_artifacts in the playbook sequence', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedRemapOrphanMcids(), 18);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toContain('remap_orphan_mcids_as_artifacts');
     expect(store.findActive(sig)).toBeNull();
   });
 
