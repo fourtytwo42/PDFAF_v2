@@ -356,6 +356,29 @@ describe('Stage 14 deterministic tools', () => {
     expect(nonArtifactFigures.filter(figure => figure.hasAlt && figure.altText?.trim()).length).toBe(beforeNonArtifactAltCount);
   });
 
+  it('repair_native_reading_order aliases the shell repair implementation', async () => {
+    const buf = await buildUntaggedStructurePdf();
+    const synthesized = await runPythonMutationBatch(buf, [
+      { op: 'synthesize_basic_structure_from_layout', params: {} },
+    ]);
+    expect(synthesized.result.success).toBe(true);
+
+    const shellRepair = await runPythonMutationBatch(synthesized.buffer, [
+      { op: 'repair_degenerate_native_reading_order_shell', params: {} },
+    ]);
+    const aliasRepair = await runPythonMutationBatch(synthesized.buffer, [
+      { op: 'repair_native_reading_order', params: {} },
+    ]);
+
+    expect(shellRepair.result.success).toBe(true);
+    expect(aliasRepair.result.success).toBe(true);
+    const shellRow = shellRepair.result.opResults?.find(row => row.op === 'repair_degenerate_native_reading_order_shell');
+    const aliasRow = aliasRepair.result.opResults?.find(row => row.op === 'repair_native_reading_order');
+    expect(aliasRow?.outcome).toBe(shellRow?.outcome);
+    expect(aliasRow?.note).toBe(shellRow?.note);
+    expect(aliasRepair.result.failed).toHaveLength(0);
+  });
+
   it('create_heading_from_candidate promotes a paragraph-like struct elem to a heading', async () => {
     const buf = await buildUntaggedStructurePdf();
     const synthesized = await runPythonMutationBatch(buf, [

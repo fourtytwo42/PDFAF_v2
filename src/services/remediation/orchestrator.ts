@@ -6026,6 +6026,7 @@ export async function runSingleTool(
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
       case 'repair_degenerate_native_reading_order_shell':
+      case 'repair_native_reading_order':
       case 'create_structure_from_degenerate_native_anchor':
       case 'create_heading_from_visible_text_anchor':
       case 'create_heading_from_tagged_visible_anchor':
