@@ -450,6 +450,66 @@ function appliedFormTooltipPath(): AppliedRemediationTool[] {
 }
 
 
+function appliedListStructureRepair(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 58,
+      scoreAfter: 59,
+      delta: 1,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 5,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_list_li_wrong_parent',
+      stage: 4,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 92,
+      delta: 33,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 92,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
   return [
     {
@@ -690,6 +750,24 @@ describe('playbookStore', () => {
       'set_document_title',
       'normalize_annotation_tab_order',
       'fill_form_field_tooltips',
+      'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists repair_list_li_wrong_parent from the active public 4516 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedListStructureRepair(), 58);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'normalize_annotation_tab_order',
+      'repair_list_li_wrong_parent',
+      'repair_alt_text_structure',
       'set_pdfua_identification',
     ]);
   });

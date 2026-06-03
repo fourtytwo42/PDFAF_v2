@@ -41,6 +41,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'repair_alt_text_structure',
   'fill_form_field_tooltips',
   'post_pass_bookmarks',
+  'repair_list_li_wrong_parent',
   'bootstrap_struct_tree',
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
