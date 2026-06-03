@@ -140,6 +140,75 @@ function appliedAccessibilityTagging(): AppliedRemediationTool[] {
   ];
 }
 
+
+function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'create_heading_from_candidate',
+      stage: 4,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 69,
+      delta: 10,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 4,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_degenerate_native_reading_order_shell',
+      stage: 3,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 87,
+      delta: 18,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_top_level_parent_links',
+      stage: 5,
+      round: 1,
+      scoreBefore: 87,
+      scoreAfter: 91,
+      delta: 4,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 91,
+      scoreAfter: 96,
+      delta: 5,
+      outcome: 'applied',
+    },
+  ];
+}
+
 describe('playbookStore', () => {
   let db: Database.Database;
 
@@ -203,6 +272,25 @@ describe('playbookStore', () => {
       'set_pdfua_identification',
       'ensure_accessibility_tagging',
       'set_document_title',
+    ]);
+  });
+
+  it('learnFromSuccess persists the degenerate-native shell public success path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedDegenerateNativeShellPath(), 37);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'create_heading_from_candidate',
+      'mark_untagged_content_as_artifact',
+      'set_document_title',
+      'repair_degenerate_native_reading_order_shell',
+      'repair_top_level_parent_links',
+      'set_pdfua_identification',
     ]);
   });
 

@@ -45,6 +45,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'mark_untagged_content_as_artifact',
   'repair_top_level_parent_links',
   'repair_native_reading_order',
+  'repair_degenerate_native_reading_order_shell',
   'ensure_accessibility_tagging',
 ]);
 
