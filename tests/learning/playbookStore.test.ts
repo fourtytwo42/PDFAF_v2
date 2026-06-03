@@ -60,6 +60,20 @@ function appliedTitle(): AppliedRemediationTool[] {
   ];
 }
 
+function appliedNativeReadingOrder(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'repair_native_reading_order',
+      stage: 3,
+      round: 1,
+      scoreBefore: 40,
+      scoreAfter: 52,
+      delta: 12,
+      outcome: 'applied',
+    },
+  ];
+}
+
 describe('playbookStore', () => {
   let db: Database.Database;
 
@@ -83,6 +97,17 @@ describe('playbookStore', () => {
     expect(row).toBeDefined();
     expect(row!.status).toBe('candidate');
     expect(store.findActive(sig)).toBeNull();
+  });
+
+  it('learnFromSuccess persists repair_native_reading_order sequences', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedNativeReadingOrder(), 12);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual(['repair_native_reading_order']);
   });
 
   it('promotes to active after 3 successes', () => {
