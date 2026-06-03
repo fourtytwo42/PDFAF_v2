@@ -107,6 +107,39 @@ function appliedStructureFollowup(): AppliedRemediationTool[] {
   ];
 }
 
+
+function appliedAccessibilityTagging(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 39,
+      scoreAfter: 44,
+      delta: 5,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'ensure_accessibility_tagging',
+      stage: 2,
+      round: 1,
+      scoreBefore: 44,
+      scoreAfter: 45,
+      delta: 1,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 45,
+      scoreAfter: 52,
+      delta: 7,
+      outcome: 'applied',
+    },
+  ];
+}
+
 describe('playbookStore', () => {
   let db: Database.Database;
 
@@ -155,6 +188,21 @@ describe('playbookStore', () => {
       'create_heading_from_candidate',
       'mark_untagged_content_as_artifact',
       'repair_top_level_parent_links',
+    ]);
+  });
+
+  it('learnFromSuccess persists ensure_accessibility_tagging sequences from a real public trace pattern', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedAccessibilityTagging(), 13);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_pdfua_identification',
+      'ensure_accessibility_tagging',
+      'set_document_title',
     ]);
   });
 
