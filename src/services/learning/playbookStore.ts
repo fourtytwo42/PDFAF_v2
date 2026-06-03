@@ -57,6 +57,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'repair_native_reading_order',
   'repair_degenerate_native_reading_order_shell',
   'ensure_accessibility_tagging',
+  'canonicalize_figure_alt_ownership',
 ]);
 
 /**
