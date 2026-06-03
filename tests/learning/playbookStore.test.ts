@@ -570,6 +570,66 @@ function appliedFigureAltPath(): AppliedRemediationTool[] {
 }
 
 
+function appliedOrphanMcidRemapPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 37,
+      scoreAfter: 48,
+      delta: 11,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 48,
+      scoreAfter: 48,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_link_annotation_contents',
+      stage: 2,
+      round: 1,
+      scoreBefore: 48,
+      scoreAfter: 48,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 4,
+      round: 1,
+      scoreBefore: 48,
+      scoreAfter: 48,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 48,
+      scoreAfter: 48,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 4,
+      round: 1,
+      scoreBefore: 48,
+      scoreAfter: 48,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
   return [
     {
@@ -847,6 +907,24 @@ describe('playbookStore', () => {
       'normalize_heading_hierarchy',
       'set_figure_alt_text',
       'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists remap_orphan_mcids_as_artifacts from the active public 4702 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedOrphanMcidRemapPath(), 37);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'set_link_annotation_contents',
+      'mark_untagged_content_as_artifact',
+      'set_pdfua_identification',
+      'remap_orphan_mcids_as_artifacts',
     ]);
   });
 
