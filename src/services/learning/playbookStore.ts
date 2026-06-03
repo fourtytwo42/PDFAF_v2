@@ -38,6 +38,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'set_document_language',
   'set_pdfua_identification',
   'normalize_pdfua_catalog_settings',
+  'repair_alt_text_structure',
   'bootstrap_struct_tree',
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',

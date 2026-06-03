@@ -330,6 +330,75 @@ function appliedPdfuaCatalogNormalization(): AppliedRemediationTool[] {
 }
 
 
+function appliedAltTextStructureRepair(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 28,
+      scoreAfter: 41,
+      delta: 13,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 41,
+      scoreAfter: 41,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'bootstrap_struct_tree',
+      stage: 2,
+      round: 1,
+      scoreBefore: 41,
+      scoreAfter: 83,
+      delta: 42,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'synthesize_basic_structure_from_layout',
+      stage: 2,
+      round: 1,
+      scoreBefore: 83,
+      scoreAfter: 83,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 83,
+      scoreAfter: 93,
+      delta: 10,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 93,
+      scoreAfter: 93,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'post_pass_bookmarks',
+      stage: 6,
+      round: 1,
+      scoreBefore: 93,
+      scoreAfter: 93,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
   return [
     {
@@ -534,6 +603,24 @@ describe('playbookStore', () => {
       'synthesize_basic_structure_from_layout',
       'normalize_annotation_tab_order',
       'repair_native_reading_order',
+      'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists repair_alt_text_structure from the public 4194 success path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedAltTextStructureRepair(), 28);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'bootstrap_struct_tree',
+      'synthesize_basic_structure_from_layout',
+      'repair_alt_text_structure',
       'set_pdfua_identification',
     ]);
   });
