@@ -31,7 +31,8 @@ export interface PlaybookStore {
 
 /**
  * Steps safe to persist: no structRef / figure ids / doc-specific blobs.
- * Figure tools are omitted when they depend on per-document structure references.
+ * Figure tools that can be re-derived from the current snapshot are included individually;
+ * tools that depend on fixed per-document refs stay out of the learner allowlist.
  */
 const LEARNABLE_TOOL_NAMES = new Set([
   'set_document_title',
@@ -42,6 +43,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'fill_form_field_tooltips',
   'post_pass_bookmarks',
   'repair_list_li_wrong_parent',
+  'set_figure_alt_text',
   'bootstrap_struct_tree',
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',

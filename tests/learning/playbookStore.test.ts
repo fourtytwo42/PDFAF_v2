@@ -510,6 +510,66 @@ function appliedListStructureRepair(): AppliedRemediationTool[] {
 }
 
 
+function appliedFigureAltPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 5,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_heading_hierarchy',
+      stage: 4,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedDegenerateNativeShellPath(): AppliedRemediationTool[] {
   return [
     {
@@ -768,6 +828,24 @@ describe('playbookStore', () => {
       'normalize_annotation_tab_order',
       'repair_list_li_wrong_parent',
       'repair_alt_text_structure',
+      'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists set_figure_alt_text from the active public 4754 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedFigureAltPath(), 59);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'normalize_annotation_tab_order',
+      'normalize_heading_hierarchy',
+      'set_figure_alt_text',
       'set_pdfua_identification',
     ]);
   });
