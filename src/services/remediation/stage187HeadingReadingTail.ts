@@ -10,6 +10,7 @@ import {
   classifyTaggedZeroHeadingAnchor,
   isOcrPageShell,
   isWeakVisibleHeadingAnchorText,
+  extractFirstPageVisibleHeadingText,
   selectTaggedVisibleHeadingAnchorCandidate,
   type VisibleHeadingAnchorCandidate,
 } from './visibleHeadingAnchor.js';
@@ -98,10 +99,24 @@ export function selectStage187TaggedHeadingTopupCandidate(
   if (isOcrPageShell(snapshot, analysis)) return null;
   if ((scoreOr(analysis, 'text_extractability', 0)) < 90 || snapshot.textCharCount <= 0) return null;
   if (treeHeadingCount(snapshot) > 0 || snapshot.headings.length > 0) return null;
-  if (hasSevereMixedStructuralDebt(analysis)) return null;
-
   const candidate = selectTaggedVisibleHeadingAnchorCandidate(analysis, snapshot);
-  if (!candidate || candidate.page !== 0 || candidate.source === 'paragraph_candidate') return null;
+  if (!candidate || candidate.page !== 0) return null;
+
+  if (candidate.source === 'paragraph_candidate') {
+    if (!candidate.targetRef) return null;
+    const titleText = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
+    if (!titleText) return null;
+    if (isWeakVisibleHeadingAnchorText(titleText, analysis.filename)) return null;
+    if (looksLikeBylineOrFooter(titleText)) return null;
+    if (strongAlphaTokens(titleText).length < 4) return null;
+    return {
+      ...candidate,
+      text: titleText,
+      score: Math.max(candidate.score, HEADING_BOOTSTRAP_MIN_SCORE + 8),
+      reasons: [...candidate.reasons, 'paragraph_anchor_fallback_to_visible_title'],
+    };
+  }
+
   if (typeof candidate.mcid !== 'number' && (!Array.isArray(candidate.mcids) || candidate.mcids.length <= 0)) return null;
   if (candidate.score < HEADING_BOOTSTRAP_MIN_SCORE + 8) return null;
   if (isWeakVisibleHeadingAnchorText(candidate.text, analysis.filename)) return null;
@@ -172,7 +187,8 @@ export function classifyStage187HeadingReadingTail(
     return withReason('no_safe_heading_anchor', ['ocr_shell_without_safe_title_owner', ...page1.reasons]);
   }
 
-  if (hasSevereMixedStructuralDebt(analysis) && heading > 0) {
+  const topup = selectStage187TaggedHeadingTopupCandidate(analysis, snapshot);
+  if (hasSevereMixedStructuralDebt(analysis) && heading > 0 && topup === null) {
     return withReason('mixed_alt_table_not_heading_first', ['severe_alt_table_form_or_pdfua_debt_blocks_heading_first']);
   }
 
@@ -202,7 +218,6 @@ export function classifyStage187HeadingReadingTail(
     );
   }
 
-  const topup = selectStage187TaggedHeadingTopupCandidate(analysis, snapshot);
   if (topup) {
     return withReason(
       'native_partial_heading_reachability_candidate',

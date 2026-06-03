@@ -192,6 +192,47 @@ describe('Stage 187 heading/reading tail classifier', () => {
     });
   });
 
+  it('allows paragraph bootstrap candidates to top up tagged heading recovery', () => {
+    const filename = 'arizona-judicial-branch-annual-report-fiscal-year-2020.pdf';
+    const categories = {
+      heading_structure: 45,
+      reading_order: 45,
+      alt_text: 20,
+      table_markup: 10,
+      pdf_ua_compliance: 57,
+    };
+    const snap = snapshot({
+      textByPage: ['ARIZONA JUDICIAL ANNUAL REPORT FISCAL YEAR 2020\nBody text starts here.'],
+      paragraphStructElems: [{
+        page: 0,
+        structRef: 'p1',
+        tag: 'P',
+        text: 'TERMINATED',
+      }],
+    });
+    const disposition = classifyStage187HeadingReadingTail(
+      analysis({ filename, score: 79, grade: 'C' }, categories),
+      snap,
+    );
+    expect(disposition).toMatchObject({
+      classification: 'native_partial_heading_reachability_candidate',
+      implementable: true,
+      toolName: 'create_heading_from_tagged_visible_anchor',
+    });
+
+    const toolParams = buildDefaultParams('create_heading_from_tagged_visible_anchor',
+      analysis({ filename, score: 79, grade: 'C' }, categories),
+      snap,
+    );
+    expect(toolParams).toMatchObject({
+      page: 0,
+      targetRef: 'p1',
+      level: 1,
+      stage187HeadingTopup: true,
+      text: 'ARIZONA JUDICIAL ANNUAL REPORT FISCAL YEAR 2020 Body text starts here.',
+    });
+  });
+
   it('parks mixed table/alt debt and known volatile rows instead of forcing heading recovery', () => {
     expect(classifyStage187HeadingReadingTail(
       analysis({}, { heading_structure: 45, reading_order: 45, alt_text: 20, table_markup: 10, pdf_ua_compliance: 57 }),
