@@ -39,6 +39,8 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'set_pdfua_identification',
   'bootstrap_struct_tree',
   'repair_structure_conformance',
+  'synthesize_basic_structure_from_layout',
+  'normalize_heading_hierarchy',
 ]);
 
 /**

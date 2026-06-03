@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { writeFile, unlink } from 'node:fs/promises';
+import { writeFile, unlink, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PDFDocument } from 'pdf-lib';
@@ -28,6 +28,40 @@ describe('playbook fast path (remediatePdf)', () => {
     initSchema(db);
     playbookStore = createPlaybookStore(db);
     toolOutcomeStore = createToolOutcomeStore(db);
+  });
+
+  it('learns and replays structural synthesis and heading normalization tools', async () => {
+    const publicPath = '/home/hendo420/pdfaf-public-cycles/set03/input/15-AnnualReport2007.pdf';
+    const analyzed = await analyzePdf(publicPath, '15-AnnualReport2007.pdf', { bypassCache: true });
+    const { result, snapshot } = analyzed;
+    const sig = buildFailureSignature(result, snapshot);
+    const applied = [
+      { toolName: 'set_document_language' as const, stage: 1, round: 1, scoreBefore: result.score, scoreAfter: result.score + 20, delta: 20, outcome: 'applied' as const },
+      { toolName: 'set_document_title' as const, stage: 1, round: 1, scoreBefore: result.score, scoreAfter: result.score + 20, delta: 20, outcome: 'applied' as const },
+      { toolName: 'bootstrap_struct_tree' as const, stage: 2, round: 1, scoreBefore: result.score, scoreAfter: result.score + 20, delta: 20, outcome: 'applied' as const },
+      { toolName: 'synthesize_basic_structure_from_layout' as const, stage: 2, round: 1, scoreBefore: result.score, scoreAfter: result.score + 20, delta: 20, outcome: 'applied' as const },
+      { toolName: 'normalize_heading_hierarchy' as const, stage: 4, round: 1, scoreBefore: result.score, scoreAfter: result.score + 20, delta: 20, outcome: 'applied' as const },
+    ];
+    playbookStore.learnFromSuccess(result, snapshot, applied, 20);
+    playbookStore.learnFromSuccess(result, snapshot, applied, 20);
+    playbookStore.learnFromSuccess(result, snapshot, applied, 20);
+    const learned = playbookStore.findActive(sig);
+    expect(learned).not.toBeNull();
+    expect(learned?.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'bootstrap_struct_tree',
+      'synthesize_basic_structure_from_layout',
+      'normalize_heading_hierarchy',
+    ]);
+
+    const pdf = await readFile(publicPath);
+    const out = await remediatePdf(pdf, '15-AnnualReport2007.pdf', result, snapshot, {
+      playbookStore,
+      toolOutcomeStore,
+      maxRounds: 1,
+    });
+    expect(out.remediation.rounds[0]?.source).toBe('playbook');
   });
 
   it('replays an active playbook and tags the round as playbook', async () => {
