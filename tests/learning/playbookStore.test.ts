@@ -673,6 +673,7 @@ describe('playbookStore', () => {
       'synthesize_basic_structure_from_layout',
       'repair_alt_text_structure',
       'set_pdfua_identification',
+      'post_pass_bookmarks',
     ]);
   });
 

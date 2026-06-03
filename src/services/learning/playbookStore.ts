@@ -40,6 +40,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'normalize_pdfua_catalog_settings',
   'repair_alt_text_structure',
   'fill_form_field_tooltips',
+  'post_pass_bookmarks',
   'bootstrap_struct_tree',
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
