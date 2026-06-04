@@ -1233,6 +1233,110 @@ function appliedArtifactFurniturePath(): AppliedRemediationTool[] {
 }
 
 
+function appliedOcrTextRecoveryPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 16,
+      scoreAfter: 44,
+      delta: 28,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 44,
+      scoreAfter: 44,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 44,
+      scoreAfter: 44,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'bootstrap_struct_tree',
+      stage: 2,
+      round: 1,
+      scoreBefore: 44,
+      scoreAfter: 92,
+      delta: 48,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_structure_conformance',
+      stage: 2,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 92,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'add_page_outline_bookmarks',
+      stage: 5,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 92,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'ocr_scanned_pdf',
+      stage: 7,
+      round: 1,
+      scoreBefore: 92,
+      scoreAfter: 55,
+      delta: -37,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'tag_ocr_text_blocks',
+      stage: 8,
+      round: 2,
+      scoreBefore: 55,
+      scoreAfter: 88,
+      delta: 33,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 4,
+      round: 3,
+      scoreBefore: 88,
+      scoreAfter: 94,
+      delta: 6,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: 4,
+      scoreBefore: 94,
+      scoreAfter: 94,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 10,
+      round: 4,
+      scoreBefore: 94,
+      scoreAfter: 96,
+      delta: 2,
+      outcome: 'applied',
+    },
+  ];
+}
+
 function appliedCanonicalizeFigureAltOwnershipPath(): AppliedRemediationTool[] {
   return [
     {
@@ -1826,6 +1930,29 @@ describe('playbookStore', () => {
       'mark_untagged_content_as_artifact',
       'set_pdfua_identification',
       'remap_orphan_mcids_as_artifacts',
+    ]);
+  });
+
+  it('learnFromSuccess persists the scanned-PDF OCR recovery path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedOcrTextRecoveryPath(), 80);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'set_pdfua_identification',
+      'bootstrap_struct_tree',
+      'repair_structure_conformance',
+      'add_page_outline_bookmarks',
+      'ocr_scanned_pdf',
+      'tag_ocr_text_blocks',
+      'normalize_annotation_tab_order',
+      'repair_alt_text_structure',
+      'set_pdfua_identification',
     ]);
   });
 

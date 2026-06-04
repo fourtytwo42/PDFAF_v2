@@ -45,6 +45,8 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'repair_list_li_wrong_parent',
   'remap_orphan_mcids_as_artifacts',
   'set_figure_alt_text',
+  'ocr_scanned_pdf',
+  'tag_ocr_text_blocks',
   'bootstrap_struct_tree',
   'create_structure_from_degenerate_native_anchor',
   'repair_structure_conformance',
