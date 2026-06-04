@@ -3959,6 +3959,40 @@ describe('planForRemediation', () => {
     })).toBe('not_stage43_table_target');
   });
 
+  it('does not reliability-filter the 4438 stage-3 table and link repairs when missing headers are the live debt', async () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const toolName of ['normalize_table_structure', 'repair_native_table_headers', 'repair_native_link_structure']) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName,
+          pdfClass: 'native_tagged',
+          outcome: 'no_effect',
+          scoreBefore: 59,
+          scoreAfter: 59,
+        });
+      }
+    }
+
+    const path = '/home/hendo420/PDFAF_v2/Input/experiment-corpus/30-structure-reading-order/4438-Inventorying Employment Restrictions Task Force Final Report.pdf';
+    const file = path.split('/').pop()!;
+    const { result, snapshot } = await analyzePdf(path, file, { bypassCache: true });
+    const plan = planForRemediation(result, snapshot, [], store);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).toContain('normalize_table_structure');
+    expect(names).toContain('repair_native_table_headers');
+    expect(names).toContain('repair_native_link_structure');
+    expect(names).toContain('set_table_header_cells');
+  });
+
   it('keeps native table repair active for structurally broken tables even when headers already exist', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

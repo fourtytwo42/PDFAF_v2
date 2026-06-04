@@ -1511,6 +1511,7 @@ export function planForRemediation(
     analysis.failureProfile?.deterministicIssues.includes('heading_structure') === true ||
     analysis.failureProfile?.manualOnlyIssues.includes('heading_structure') === true;
   const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
+  const stage43TableFailure = classifyStage43TableFailure(snapshot, analysis);
   const structureConfidenceHigh = analysis.structuralClassification?.confidence === 'high';
   const structurePrimary =
     analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
@@ -2486,11 +2487,22 @@ export function planForRemediation(
     }
   }
 
-  const reliabilityExemptTools = protectedZeroHeadingConvergence
-    ? new Set(['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'])
-    : failureDisposition.headingMalformedExistingTree
-      ? new Set(['normalize_heading_hierarchy'])
-      : new Set<string>();
+  const reliabilityExemptTools = new Set<string>();
+  if (protectedZeroHeadingConvergence) {
+    ['create_heading_from_candidate', 'normalize_heading_hierarchy', 'repair_structure_conformance'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  } else if (failureDisposition.headingMalformedExistingTree) {
+    reliabilityExemptTools.add('normalize_heading_hierarchy');
+  }
+  if (stage43TableFailure === 'missing_headers_only') {
+    ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
+  if (
+    categoryFailing('link_quality') ||
+    (snapshot.detectionProfile?.readingOrderSignals.annotationStructParentRiskCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructParent ?? 0) > 0
+  ) {
+    ['repair_native_link_structure', 'set_link_annotation_contents'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,
     analysis.pdfClass,

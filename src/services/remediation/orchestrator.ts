@@ -8655,15 +8655,28 @@ export async function remediatePdf(
       { signal: options?.signal },
     );
     recordToolOutcomes(toolOutcomeStore, before.pdfClass, pb.remediation.appliedTools);
-      if (pb.remediation.improved) {
+    if (pb.remediation.improved) {
       playbookStore.recordResult(
         activePlaybook.id,
         true,
         pb.remediation.after.score - before.score,
       );
-      return pb;
+      if (pb.remediation.after.score >= targetScore && !hasExternalReadinessDebt(pb.remediation.after, pb.snapshot)) {
+        return pb;
+      }
+      currentBuffer = pb.buffer;
+      currentAnalysis = pb.remediation.after;
+      currentSnapshot = pb.snapshot;
+      appliedTools.push(...pb.remediation.appliedTools);
+      rounds.push({
+        round: 0,
+        scoreAfter: currentAnalysis.score,
+        improved: true,
+        source: 'playbook',
+      });
+    } else {
+      playbookStore.recordResult(activePlaybook.id, false, 0);
     }
-    playbookStore.recordResult(activePlaybook.id, false, 0);
   }
 
   for (let round = 1; round <= maxRounds; round++) {
