@@ -570,6 +570,110 @@ function appliedFigureAltPath(): AppliedRemediationTool[] {
 }
 
 
+function appliedNativeLinkRepairPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'normalize_pdfua_catalog_settings',
+      stage: 1,
+      round: 1,
+      scoreBefore: 64,
+      scoreAfter: 69,
+      delta: 5,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 64,
+      scoreAfter: 69,
+      delta: 5,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 64,
+      scoreAfter: 69,
+      delta: 5,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'bootstrap_struct_tree',
+      stage: 2,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'synthesize_basic_structure_from_layout',
+      stage: 2,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_link_annotation_contents',
+      stage: 3,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 4,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 78,
+      delta: 9,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_native_reading_order',
+      stage: 4,
+      round: 1,
+      scoreBefore: 78,
+      scoreAfter: 89,
+      delta: 11,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_native_link_structure',
+      stage: 3,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 95,
+      delta: 6,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 95,
+      delta: 6,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 10,
+      round: 2,
+      scoreBefore: 95,
+      scoreAfter: 95,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
 function appliedPageOutlineBookmarksPath(): AppliedRemediationTool[] {
   return [
     {
@@ -1446,6 +1550,29 @@ describe('playbookStore', () => {
       'mark_untagged_content_as_artifact',
       'normalize_heading_hierarchy',
       'repair_alt_text_structure',
+    ]);
+  });
+
+  it('learnFromSuccess persists repair_native_link_structure from the active public 4214 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedNativeLinkRepairPath(), 31);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'normalize_pdfua_catalog_settings',
+      'set_document_language',
+      'set_document_title',
+      'bootstrap_struct_tree',
+      'synthesize_basic_structure_from_layout',
+      'set_link_annotation_contents',
+      'normalize_annotation_tab_order',
+      'repair_native_reading_order',
+      'repair_native_link_structure',
+      'repair_alt_text_structure',
+      'remap_orphan_mcids_as_artifacts',
     ]);
   });
 
