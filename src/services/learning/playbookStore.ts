@@ -59,6 +59,8 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'ensure_accessibility_tagging',
   'canonicalize_figure_alt_ownership',
   'artifact_repeating_page_furniture',
+  'repair_native_table_headers',
+  'replace_bookmarks_from_headings',
 ]);
 
 /**

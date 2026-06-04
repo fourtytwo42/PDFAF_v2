@@ -570,6 +570,219 @@ function appliedFigureAltPath(): AppliedRemediationTool[] {
 }
 
 
+function appliedTableHeaderPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 76,
+      delta: 17,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 76,
+      delta: 17,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 76,
+      delta: 17,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 2,
+      round: 1,
+      scoreBefore: 76,
+      scoreAfter: 77,
+      delta: 1,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_structure_conformance',
+      stage: 2,
+      round: 1,
+      scoreBefore: 76,
+      scoreAfter: 77,
+      delta: 1,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'artifact_repeating_page_furniture',
+      stage: 3,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 77,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'repair_native_link_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 77,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'set_link_annotation_contents',
+      stage: 3,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 77,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'tag_unowned_annotations',
+      stage: 3,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 77,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'create_heading_from_candidate',
+      stage: 4,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 88,
+      delta: 11,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 4,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 88,
+      delta: 11,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_heading_hierarchy',
+      stage: 4,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 88,
+      delta: 11,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'repair_native_table_headers',
+      stage: 4,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 88,
+      delta: 11,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'replace_bookmarks_from_headings',
+      stage: 4,
+      round: 1,
+      scoreBefore: 77,
+      scoreAfter: 88,
+      delta: 11,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'add_page_outline_bookmarks',
+      stage: 6,
+      round: 1,
+      scoreBefore: 88,
+      scoreAfter: 88,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'set_table_header_cells',
+      stage: 6,
+      round: 1,
+      scoreBefore: 88,
+      scoreAfter: 88,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 9,
+      round: 1,
+      scoreBefore: 88,
+      scoreAfter: 88,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 2,
+      round: 2,
+      scoreBefore: 88,
+      scoreAfter: 89,
+      delta: 1,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'artifact_repeating_page_furniture',
+      stage: 3,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 89,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'create_heading_from_candidate',
+      stage: 4,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 89,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_heading_hierarchy',
+      stage: 4,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 89,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'wrap_singleton_orphan_mcid',
+      stage: 2,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 89,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: 2,
+      scoreBefore: 89,
+      scoreAfter: 93,
+      delta: 4,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedArtifactFurniturePath(): AppliedRemediationTool[] {
   return [
     {
@@ -1120,6 +1333,31 @@ describe('playbookStore', () => {
       'normalize_annotation_tab_order',
       'repair_list_li_wrong_parent',
       'set_figure_alt_text',
+      'repair_alt_text_structure',
+    ]);
+  });
+
+  it('learnFromSuccess persists repair_native_table_headers from the active public 4438 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedTableHeaderPath(), 30);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'set_pdfua_identification',
+      'remap_orphan_mcids_as_artifacts',
+      'repair_structure_conformance',
+      'set_link_annotation_contents',
+      'create_heading_from_candidate',
+      'normalize_annotation_tab_order',
+      'repair_native_table_headers',
+      'replace_bookmarks_from_headings',
+      'mark_untagged_content_as_artifact',
+      'normalize_heading_hierarchy',
       'repair_alt_text_structure',
     ]);
   });
