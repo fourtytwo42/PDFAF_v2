@@ -3897,6 +3897,10 @@ describe('planForRemediation', () => {
     expect(names).toContain('normalize_table_structure');
     expect(names).toContain('repair_native_table_headers');
     expect(names).toContain('set_table_header_cells');
+ const repairNativeTableStage = plan.stages.find(stage => stage.tools.some(tool => tool.toolName === 'repair_native_table_headers'));
+ const setTableHeaderStage = plan.stages.find(stage => stage.tools.some(tool => tool.toolName === 'set_table_header_cells'));
+ expect(repairNativeTableStage?.stageNumber).toBe(3);
+ expect(setTableHeaderStage?.stageNumber).toBe(3);
   });
 
   it('classifies Stage 43 table failure buckets', () => {
