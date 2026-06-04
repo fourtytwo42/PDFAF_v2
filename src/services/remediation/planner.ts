@@ -1510,6 +1510,7 @@ export function planForRemediation(
     categoryFailing('heading_structure') ||
     analysis.failureProfile?.deterministicIssues.includes('heading_structure') === true ||
     analysis.failureProfile?.manualOnlyIssues.includes('heading_structure') === true;
+  const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
   const structureConfidenceHigh = analysis.structuralClassification?.confidence === 'high';
   const structurePrimary =
     analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
@@ -1729,7 +1730,8 @@ export function planForRemediation(
         analysis.score < REMEDIATION_TARGET_SCORE &&
         analysis.pdfClass === 'native_tagged' &&
         snapshot.structureTree !== null &&
-        hasStrictParentLinkCap(analysis)
+        hasStrictParentLinkCap(analysis) &&
+        treeHeadingCount !== 1
       )
     ) {
       return { allowed: false, reason: 'missing_precondition' };
@@ -1958,6 +1960,7 @@ export function planForRemediation(
     analysis.pdfClass === 'native_tagged' &&
     snapshot.structureTree !== null &&
     hasStrictParentLinkCap(analysis) &&
+    treeHeadingCount !== 1 &&
     !shouldSkipAfterSuccessfulApply('repair_top_level_parent_links', alreadyApplied, analysis, snapshot) &&
     noEffectCountForTool(alreadyApplied, 'repair_top_level_parent_links') < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
   ) {
@@ -2029,6 +2032,7 @@ export function planForRemediation(
 
   if (
     reportLayoutHeadingRecovery.kind === REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL &&
+    treeHeadingCount === 0 &&
     !toolSet.has('create_heading_from_candidate') &&
     !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied, analysis, snapshot) &&
     noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < Math.max(

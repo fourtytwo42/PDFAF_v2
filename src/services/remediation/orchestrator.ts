@@ -3978,6 +3978,10 @@ function headingSequenceNeedsOrphanParentCleanup(
   );
 }
 
+function shouldSkipTopLevelParentLinkCleanup(snapshot: DocumentSnapshot): boolean {
+  return (snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length) === 1;
+}
+
 function isAllInputHeadingAnnotationSeedFilename(filename: string): boolean {
   return [...ALL_INPUT_HEADING_ANNOTATION_SEED_IDS].some(id =>
     new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`).test(filename)
@@ -4931,13 +4935,19 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
     return null;
   }
   const cleanupToolNames = headingSequenceNeedsOrphanParentCleanup(args.beforeState.snapshot, intermediate.snapshot)
-    ? ['tag_unowned_annotations', 'remap_orphan_mcids_as_artifacts', 'repair_top_level_parent_links']
-    : ['tag_unowned_annotations', 'repair_top_level_parent_links'];
+    ? ['tag_unowned_annotations', 'remap_orphan_mcids_as_artifacts']
+    : ['tag_unowned_annotations'];
+  if (!shouldSkipTopLevelParentLinkCleanup(intermediate.snapshot)) {
+    cleanupToolNames.push('repair_top_level_parent_links');
+  }
   let sequenceBuffer = args.headingBuffer;
   let sequenceAnalysis = intermediate.result;
   let sequenceSnapshot = intermediate.snapshot;
   const cleanupRows: AppliedRemediationTool[] = [];
   for (const toolName of cleanupToolNames) {
+    if (toolName === 'repair_top_level_parent_links' && shouldSkipTopLevelParentLinkCleanup(sequenceSnapshot)) {
+      continue;
+    }
     const cleanupStarted = performance.now();
     const cleanup = await runSingleTool(
       sequenceBuffer,
@@ -5087,12 +5097,17 @@ async function tryAllInputDegenerateNativeSequence(args: {
   const cleanupRows: AppliedRemediationTool[] = [];
   const cleanupToolNames = [
     'remap_orphan_mcids_as_artifacts',
-    'repair_top_level_parent_links',
     'repair_alt_text_structure',
     'set_pdfua_identification',
-  ] as const;
+  ];
+  if (!shouldSkipTopLevelParentLinkCleanup(sequenceSnapshot)) {
+    cleanupToolNames.splice(1, 0, 'repair_top_level_parent_links');
+  }
 
   for (const toolName of cleanupToolNames) {
+    if (toolName === 'repair_top_level_parent_links' && shouldSkipTopLevelParentLinkCleanup(sequenceSnapshot)) {
+      continue;
+    }
     const cleanupStarted = performance.now();
     const cleanup = await runSingleTool(
       sequenceBuffer,
@@ -5907,6 +5922,14 @@ export async function runSingleTool(
   const { toolName, params } = tool;
   const beforeHash = await bufferSha256(buffer);
   const started = performance.now();
+  if (toolName === 'repair_top_level_parent_links' && shouldSkipTopLevelParentLinkCleanup(_snapshot)) {
+    return {
+      buffer,
+      outcome: 'no_effect',
+      details: 'single_heading_tree',
+      durationMs: performance.now() - started,
+    };
+  }
   if (!isToolAllowedByRouteContract(tool.route, toolName)) {
     return {
       buffer,

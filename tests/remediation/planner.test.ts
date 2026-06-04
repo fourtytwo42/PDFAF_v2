@@ -351,8 +351,21 @@ describe('planForRemediation', () => {
       metadata: { title: 'Program Report', language: 'en-US', author: '', subject: '' },
       lang: 'en-US',
       pdfUaVersion: '1',
-      structureTree: { type: 'Document', children: [{ type: 'H1', children: [] }, { type: 'P', children: [] }] },
-      headings: [{ level: 1, text: 'Program Report', page: 0 }],
+      structureTree: {
+        type: 'Document',
+        children: [
+          { type: 'H1', children: [] },
+          { type: 'H2', children: [] },
+          { type: 'H3', children: [] },
+          { type: 'H4', children: [] },
+        ],
+      },
+      headings: [
+        { level: 1, text: 'Program Report', page: 0 },
+        { level: 2, text: 'Section 1', page: 0 },
+        { level: 3, text: 'Section 2', page: 1 },
+        { level: 4, text: 'Section 3', page: 2 },
+      ],
     };
     const cap = {
       category: 'reading_order' as const,
@@ -379,7 +392,7 @@ describe('planForRemediation', () => {
     expect(names).toContain('repair_top_level_parent_links');
   });
 
-  it('does not plan top-level parent-link repair for low-quality rows with the same cap', () => {
+  it('does not plan top-level parent-link repair for single-heading rows capped by strict PAC parent-link evidence', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
       isTagged: true,
