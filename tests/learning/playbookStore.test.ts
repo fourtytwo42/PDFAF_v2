@@ -570,6 +570,83 @@ function appliedFigureAltPath(): AppliedRemediationTool[] {
 }
 
 
+function appliedDegenerateNativeAnchorStructurePath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 32,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'bootstrap_struct_tree',
+      stage: 2,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 32,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'create_structure_from_degenerate_native_anchor',
+      stage: 2,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 32,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'remap_orphan_mcids_as_artifacts',
+      stage: 2,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 32,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_native_reading_order',
+      stage: 4,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 9,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 10,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'post_pass_bookmarks',
+      stage: 11,
+      round: 1,
+      scoreBefore: 47,
+      scoreAfter: 79,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
 function appliedTaggedVisibleHeadingAnchorPath(): AppliedRemediationTool[] {
   return [
     {
@@ -1645,6 +1722,26 @@ describe('playbookStore', () => {
       'mark_untagged_content_as_artifact',
       'normalize_heading_hierarchy',
       'repair_alt_text_structure',
+    ]);
+  });
+
+  it('learnFromSuccess persists create_structure_from_degenerate_native_anchor from the active public 4609 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedDegenerateNativeAnchorStructurePath(), 32);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'bootstrap_struct_tree',
+      'create_structure_from_degenerate_native_anchor',
+      'remap_orphan_mcids_as_artifacts',
+      'repair_native_reading_order',
+      'mark_untagged_content_as_artifact',
+      'set_pdfua_identification',
+      'post_pass_bookmarks',
     ]);
   });
 

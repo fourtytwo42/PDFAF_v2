@@ -46,6 +46,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'remap_orphan_mcids_as_artifacts',
   'set_figure_alt_text',
   'bootstrap_struct_tree',
+  'create_structure_from_degenerate_native_anchor',
   'repair_structure_conformance',
   'synthesize_basic_structure_from_layout',
   'create_heading_from_tagged_visible_anchor',
