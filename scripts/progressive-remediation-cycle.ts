@@ -521,7 +521,7 @@ function toReportMd(run: BatchReport): string {
   return lines.join('\n') + '\n';
 }
 
-async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, llmReady: boolean): Promise<{
+async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, llmReady: boolean, batchNumber: number): Promise<{
   beforeMean: number;
   afterMean: number;
   worstCategoryRegression: number;
@@ -556,7 +556,7 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
     const rows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
     let failedCount = 0;
     for (const file of files) {
-      const out = await runPipelineOnFile(file, cfg, false, llmReady, resolveWorkerDbPath('protected', opts.workRoot, state.batchCount + 1));
+      const out = await runPipelineOnFile(file, cfg, false, llmReady, resolveWorkerDbPath('protected', opts.workRoot, batchNumber));
       if (out.status === 'ok') {
         rows.push({ before: out.before, after: out.after });
       } else {
@@ -706,7 +706,7 @@ async function main(): Promise<void> {
     };
 
     if (opts.checkProtected && opts.protectedDir) {
-      const protectedSummary = await evaluateProtectedCorpus(opts, cfg, llmReady);
+      const protectedSummary = await evaluateProtectedCorpus(opts, cfg, llmReady, state.batchCount + 1);
       report.protectedDir = opts.protectedDir;
       report.protectedBeforeMean = protectedSummary.beforeMean;
       report.protectedAfterMean = protectedSummary.afterMean;
