@@ -47,6 +47,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'set_figure_alt_text',
   'ocr_scanned_pdf',
   'tag_ocr_text_blocks',
+  'embed_urw_type1_substitutes',
   'bootstrap_struct_tree',
   'create_structure_from_degenerate_native_anchor',
   'repair_structure_conformance',

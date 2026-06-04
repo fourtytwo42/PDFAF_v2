@@ -1337,6 +1337,101 @@ function appliedOcrTextRecoveryPath(): AppliedRemediationTool[] {
   ];
 }
 
+function appliedUrwType1SubstitutionPath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 31,
+      scoreAfter: 59,
+      delta: 28,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 31,
+      scoreAfter: 59,
+      delta: 28,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 31,
+      scoreAfter: 59,
+      delta: 28,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'bootstrap_struct_tree',
+      stage: 2,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 90,
+      delta: 31,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_structure_conformance',
+      stage: 2,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 90,
+      delta: 31,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'add_page_outline_bookmarks',
+      stage: 5,
+      round: 1,
+      scoreBefore: 90,
+      scoreAfter: 90,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 9,
+      round: 1,
+      scoreBefore: 90,
+      scoreAfter: 92,
+      delta: 2,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 4,
+      round: 2,
+      scoreBefore: 92,
+      scoreAfter: 98,
+      delta: 6,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: 2,
+      scoreBefore: 98,
+      scoreAfter: 98,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'embed_urw_type1_substitutes',
+      stage: 11,
+      round: 2,
+      scoreBefore: 98,
+      scoreAfter: 98,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
 function appliedCanonicalizeFigureAltOwnershipPath(): AppliedRemediationTool[] {
   return [
     {
@@ -1690,6 +1785,28 @@ describe('playbookStore', () => {
       'normalize_annotation_tab_order',
       'repair_native_reading_order',
       'set_pdfua_identification',
+    ]);
+  });
+
+  it('learnFromSuccess persists embed_urw_type1_substitutes from the public 4194 font route', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedUrwType1SubstitutionPath(), 67);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'set_pdfua_identification',
+      'bootstrap_struct_tree',
+      'repair_structure_conformance',
+      'add_page_outline_bookmarks',
+      'mark_untagged_content_as_artifact',
+      'normalize_annotation_tab_order',
+      'repair_alt_text_structure',
+      'embed_urw_type1_substitutes',
     ]);
   });
 
