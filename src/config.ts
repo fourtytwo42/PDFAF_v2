@@ -469,7 +469,7 @@ export const REMEDIATION_TOOL_STAGE_ORDER: Record<string, number> = {
   repair_native_link_structure:        3,
   tag_unowned_annotations:             3,
   normalize_annotation_tab_order:      4,
-  normalize_table_structure:           4,
+  normalize_table_structure:           3,
   repair_native_table_headers: 3,
   repair_list_li_wrong_parent:         4,
   repair_native_reading_order:         4,
