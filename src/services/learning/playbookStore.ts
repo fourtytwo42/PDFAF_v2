@@ -61,6 +61,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'artifact_repeating_page_furniture',
   'repair_native_table_headers',
   'replace_bookmarks_from_headings',
+  'add_page_outline_bookmarks',
 ]);
 
 /**
