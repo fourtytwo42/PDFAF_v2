@@ -570,6 +570,93 @@ function appliedFigureAltPath(): AppliedRemediationTool[] {
 }
 
 
+function appliedArtifactFurniturePath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 43,
+      scoreAfter: 51,
+      delta: 8,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 43,
+      scoreAfter: 51,
+      delta: 8,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'artifact_repeating_page_furniture',
+      stage: 3,
+      round: 1,
+      scoreBefore: 51,
+      scoreAfter: 59,
+      delta: 8,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_native_link_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'no_effect',
+    },
+    {
+      toolName: 'set_link_annotation_contents',
+      stage: 3,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'normalize_annotation_tab_order',
+      stage: 4,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_list_li_wrong_parent',
+      stage: 4,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 59,
+      scoreAfter: 59,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'repair_alt_text_structure',
+      stage: 9,
+      round: 2,
+      scoreBefore: 59,
+      scoreAfter: 92,
+      delta: 33,
+      outcome: 'applied',
+    },
+  ];
+}
+
+
 function appliedCanonicalizeFigureAltOwnershipPath(): AppliedRemediationTool[] {
   return [
     {
@@ -1013,6 +1100,26 @@ describe('playbookStore', () => {
       'repair_structure_conformance',
       'canonicalize_figure_alt_ownership',
       'mark_untagged_content_as_artifact',
+      'repair_alt_text_structure',
+    ]);
+  });
+
+  it('learnFromSuccess persists artifact_repeating_page_furniture from the active public 4516 path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedArtifactFurniturePath(), 26);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'artifact_repeating_page_furniture',
+      'set_link_annotation_contents',
+      'normalize_annotation_tab_order',
+      'repair_list_li_wrong_parent',
+      'set_figure_alt_text',
       'repair_alt_text_structure',
     ]);
   });
