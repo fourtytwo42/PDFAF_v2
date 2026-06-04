@@ -3155,6 +3155,127 @@ describe('planForRemediation', () => {
     expect(names).toContain('normalize_heading_hierarchy');
   });
 
+  it('does not cut off annotation tab order retries when annotation debt remains live', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (let i = 0; i < 10; i++) {
+      store.record({
+        toolName: 'normalize_annotation_tab_order',
+        pdfClass: 'native_tagged',
+        outcome: 'no_effect',
+        scoreBefore: 69,
+        scoreAfter: 69,
+      });
+    }
+
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 34,
+      textByPage: Array.from({ length: 34 }, () => 'body text'),
+      textCharCount: 76344,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      metadata: { title: 'Annual Report', language: 'en', author: '', subject: '' },
+      headings: [{ level: 1, text: 'Annual Report', page: 0, structRef: '1_0' }],
+      detectionProfile: {
+        headingSignals: {
+          extractedHeadingCount: 1,
+          treeHeadingCount: 1,
+          headingTreeDepth: 9,
+          extractedHeadingsMissingFromTree: false,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 31,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 10,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 34,
+          pagesAnnotationOrderDiffers: 31,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 64,
+          suspectedPathPaintOutsideMc: 130,
+          taggedAnnotationRiskCount: 0,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      },
+      failureProfile: {
+        primaryFailureFamily: 'structure_reading_order_heavy',
+        secondaryFailureFamilies: ['mixed_structural'],
+        deterministicIssues: ['annotation_order', 'link_quality', 'reading_order'],
+        semanticIssues: [],
+        manualOnlyIssues: ['link_quality', 'reading_order'],
+        routingHints: ['prefer_annotation_normalization'],
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      title_language: 50,
+      heading_structure: 95,
+      alt_text: 20,
+      pdf_ua_compliance: 57,
+      link_quality: 79,
+      reading_order: 0,
+    });
+
+    const applied: AppliedRemediationTool[] = Array.from({ length: 10 }, (_, round) => ({
+      toolName: 'normalize_annotation_tab_order',
+      stage: 4,
+      round: round + 1,
+      scoreBefore: 69,
+      scoreAfter: 69,
+      delta: 0,
+      outcome: 'no_effect',
+      details: JSON.stringify({
+        outcome: 'no_effect',
+        note: 'no_structural_change',
+        invariants: {
+          targetReachable: false,
+        },
+      }),
+    }));
+
+    const plan = planForRemediation(analysis, snap, applied, store);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('normalize_annotation_tab_order');
+  });
+
+
   it('keeps Stage 146 figure alt continuation at the protected cap on 55/79 public-shaped rows', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

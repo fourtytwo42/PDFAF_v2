@@ -887,6 +887,23 @@ function shouldRetryAnnotationRepairAfterDebtAppears(
   return applied.some(row => zeroDebtAnnotationNoEffect(row, toolName));
 }
 
+function shouldRetryAnnotationTabOrderAfterDebtAppears(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  const annotationOrderDebt =
+    (snapshot.detectionProfile?.annotationSignals.pagesMissingTabsS ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.pagesAnnotationOrderDiffers ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.annotationOrderRiskCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.annotationStructParentRiskCount ?? 0) > 0;
+  if (!annotationOrderDebt) return false;
+  return (
+    (categoryScore(analysis, 'reading_order') ?? 100) < 95 ||
+    (categoryScore(analysis, 'link_quality') ?? 100) < 95 ||
+    (categoryScore(analysis, 'pdf_ua_compliance') ?? 100) < 95
+  );
+}
+
 function routeFailureProof(
   route: RemediationRoute,
   alreadyApplied: AppliedRemediationTool[],
@@ -1932,16 +1949,17 @@ export function planForRemediation(
         continue;
       }
       const annotationDebtRetry = shouldRetryAnnotationRepairAfterDebtAppears(alreadyApplied, toolName, analysis, snapshot);
+      const annotationTabOrderRetry = toolName === 'normalize_annotation_tab_order' && shouldRetryAnnotationTabOrderAfterDebtAppears(analysis, snapshot);
       const noEffectLimit = toolName === 'create_heading_from_candidate'
         ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
         : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
-      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry) {
+      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (toolSet.has(toolName)) continue;
       const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
-      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry) {
+      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
@@ -2499,9 +2517,11 @@ export function planForRemediation(
   if (
     categoryFailing('link_quality') ||
     (snapshot.detectionProfile?.readingOrderSignals.annotationStructParentRiskCount ?? 0) > 0 ||
-    (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructParent ?? 0) > 0
+    (snapshot.detectionProfile?.annotationSignals.linkAnnotationsMissingStructParent ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.annotationOrderRiskCount ?? 0) > 0 ||
+    (snapshot.detectionProfile?.annotationSignals.pagesAnnotationOrderDiffers ?? 0) > 0
   ) {
-    ['repair_native_link_structure', 'set_link_annotation_contents'].forEach(toolName => reliabilityExemptTools.add(toolName));
+    ['normalize_annotation_tab_order', 'repair_native_link_structure', 'set_link_annotation_contents'].forEach(toolName => reliabilityExemptTools.add(toolName));
   }
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,
