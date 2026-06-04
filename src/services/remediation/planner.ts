@@ -1643,6 +1643,7 @@ export function planForRemediation(
         !protectedZeroHeadingTimedOut &&
         headingCreateRecoveryActive &&
         headingNeedsRepair
+        && (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) === 0
         && snapshot.structureTree !== null
         && (snapshot.paragraphStructElems?.length ?? 0) > 0
         && (

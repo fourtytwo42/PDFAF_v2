@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createToolOutcomeStore } from '../../src/services/learning/toolOutcomes.js';
+import { analyzePdf } from "../../src/services/pdfAnalyzer.js";
 import {
   buildDefaultParams,
   classifyStage43TableFailure,
@@ -4982,6 +4983,17 @@ describe('planForRemediation', () => {
       preferPage0TitleSynthesis: true,
     });
     expect(headingTool?.params).not.toHaveProperty('targetRef');
+  });
+
+  it("does not schedule heading bootstrap on a document that already has a substantial heading tree", async () => {
+    const path = "/home/hendo420/PDFAF_v2/Input/experiment-corpus/50-long-report-mixed/4683-Illinois Higher Education in Prison Task Force 2022 Report.pdf";
+    const file = path.split("/").pop()!;
+    const { result, snapshot } = await analyzePdf(path, file, { bypassCache: true });
+    const plan = planForRemediation(result, snapshot, []);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).not.toContain("create_heading_from_candidate");
+    expect(names).toContain("repair_structure_conformance");
   });
 
   it('does not add strict target mode to generic heading candidate params', () => {
