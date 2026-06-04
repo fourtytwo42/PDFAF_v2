@@ -13,7 +13,8 @@ export type ReportLayoutHeadingRecoveryKind =
 export type ReportLayoutHeadingTargetType =
   | 'paragraph_struct_elem'
   | 'mcid_text_span'
-  | 'native_title_bt';
+  | 'native_title_bt'
+  | 'layout_text';
 
 export interface ReportLayoutHeadingTargetMatch {
   type: ReportLayoutHeadingTargetType;
@@ -41,7 +42,7 @@ export interface ReportLayoutHeadingRecoveryDisposition {
 }
 
 const MIN_LAYOUT_HEADING_CANDIDATES = 60;
-const MIN_REPEATED_HEADER_FOOTER_PAGES = 20;
+const MIN_REPEATED_HEADER_FOOTER_PAGES = 2;
 const MIN_LAYOUT_HEADING_DENSITY = 2.0;
 const MIN_EXISTING_TARGET_MATCHES = 2;
 
@@ -93,11 +94,16 @@ function looksLikeTableLine(text: string): boolean {
   return /\t|\s{4,}|\|/.test(text);
 }
 
+function looksLikeTableOfContentsLine(text: string): boolean {
+  const normalized = normalizeText(text);
+  return /\.{3,}/.test(normalized) && /\b\d+\s*$/.test(normalized);
+}
+
 function isExcludedLayoutHeadingCandidate(
   candidate: { text: string; page: number; bbox: [number, number, number, number] },
   layout: NativeLayoutAudit,
 ): boolean {
-  if (CAPTION_RE.test(candidate.text) || looksLikeTableLine(candidate.text)) return true;
+  if (CAPTION_RE.test(candidate.text) || looksLikeTableLine(candidate.text) || looksLikeTableOfContentsLine(candidate.text)) return true;
   if (layout.headerFooterBandTexts.some(band => band.page === candidate.page && strongTextMatch(band.text, candidate.text))) {
     return true;
   }
@@ -167,7 +173,15 @@ function buildMatches(
         text: candidate.text,
         page: candidate.page,
       });
+      continue;
     }
+
+    matches.push({
+      type: 'layout_text',
+      targetId: `layout:${candidate.page}:${fingerprint(candidate.text).slice(0, 48) || 'candidate'}`,
+      text: candidate.text,
+      page: candidate.page,
+    });
   }
   return uniqueMatches(matches);
 }
@@ -225,8 +239,7 @@ export function classifyReportLayoutHeadingRecovery(
     layoutHeadingCandidateCount >= MIN_LAYOUT_HEADING_CANDIDATES &&
     repeatedHeaderFooterPageCount >= MIN_REPEATED_HEADER_FOOTER_PAGES &&
     layoutHeadingDensity >= MIN_LAYOUT_HEADING_DENSITY &&
-    matches.length >= MIN_EXISTING_TARGET_MATCHES &&
-    paragraphCandidatesWithLayoutMatch.length >= 1;
+    matches.length >= MIN_EXISTING_TARGET_MATCHES;
 
   return {
     kind: canRecover ? REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL : 'no_report_layout_heading_recovery',

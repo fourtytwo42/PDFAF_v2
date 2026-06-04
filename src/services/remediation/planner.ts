@@ -2037,21 +2037,41 @@ export function planForRemediation(
   ) {
     const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
     const zeroExportedHeadings = snapshot.headings.length === 0;
-    const reportLayoutCandidate = reportLayoutHeadingRecovery.paragraphCandidates.find(candidate =>
+    const reportLayoutParagraphCandidate = reportLayoutHeadingRecovery.paragraphCandidates.find(candidate =>
       !hasPriorHeadingCandidateNoEffectTarget(alreadyApplied, candidate.structRef),
     );
-    const reportLayoutParams = reportLayoutCandidate
-      ? {
-        targetRef: reportLayoutCandidate.structRef,
-        level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
-        text: reportLayoutCandidate.text.slice(0, 200),
-        admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
-        strictTargetRef: true,
-      }
+    const reportLayoutMatch = reportLayoutParagraphCandidate ?? (
+      reportLayoutHeadingRecovery.paragraphCandidates.length === 0
+        ? reportLayoutHeadingRecovery.matches.find(match => {
+          const params = {
+            targetRef: match.targetId,
+            level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+            text: match.text.slice(0, 200),
+            admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+            strictTargetRef: 'structRef' in match,
+          };
+          return !hasPriorNoEffectSignature(alreadyApplied, 'create_heading_from_candidate', params);
+        })
+        : undefined
+    );
+    const reportLayoutParams = reportLayoutMatch
+      ? ('structRef' in reportLayoutMatch
+        ? {
+          targetRef: reportLayoutMatch.structRef,
+          level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+          text: reportLayoutMatch.text.slice(0, 200),
+          admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+          strictTargetRef: true,
+        }
+        : {
+          level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+          text: reportLayoutMatch.text.slice(0, 200),
+          admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+          preferPage0TitleSynthesis: reportLayoutMatch.page === 0,
+        })
       : {};
     if (
-      typeof reportLayoutParams['targetRef'] === 'string' &&
-      reportLayoutParams['targetRef'].length > 0 &&
+      ((typeof reportLayoutParams['targetRef'] === 'string' && reportLayoutParams['targetRef'].length > 0) || typeof reportLayoutParams['text'] === 'string') &&
       !hasPriorNoEffectSignature(alreadyApplied, 'create_heading_from_candidate', reportLayoutParams) &&
       toolApplicableToPdfClass('create_heading_from_candidate', analysis.pdfClass, snapshot)
     ) {
@@ -2059,7 +2079,7 @@ export function planForRemediation(
         toolName: 'create_heading_from_candidate',
         params: reportLayoutParams,
         rationale: [
-          'Report-scale layout heading recovery from an existing paragraph structure target.',
+          'Report-scale layout heading recovery from layout evidence.',
           `layoutHeadingCandidates=${reportLayoutHeadingRecovery.layoutHeadingCandidateCount}`,
           `repeatedHeaderFooterPages=${reportLayoutHeadingRecovery.repeatedHeaderFooterPageCount}`,
           `existingTargetMatches=${reportLayoutHeadingRecovery.existingTargetMatchCount}`,

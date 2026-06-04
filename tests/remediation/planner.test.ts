@@ -4948,6 +4948,42 @@ describe('planForRemediation', () => {
     expect(plan.planningSummary?.triggeringSignals).toContain(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
   });
 
+  it('falls back to text-only layout heading synthesis when paragraph matches are absent', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      layoutAudit: reportLayoutAudit({
+        repeatedHeaderFooterPageCount: 2,
+        layoutHeadingCandidateCount: 66,
+        layoutHeadingCandidates: [
+          { text: 'Contents .................................. 1', page: 1, bbox: [50, 690, 260, 712] },
+          { text: 'Arizona Judiciary Annual Report', page: 0, bbox: [50, 700, 260, 725] },
+          { text: 'Fiscal Year 2018 Caseload Highlights Compared with FY 2017', page: 2, bbox: [75, 676, 535, 694] },
+        ],
+      }),
+      paragraphStructElems: [
+        { tag: 'P', text: 'Body copy paragraph', page: 4, structRef: '99_0', bbox: [50, 500, 260, 525] },
+      ],
+      textByPage: Array.from({ length: 25 }, (_, index) => index === 0 ? 'Arizona Judiciary Annual Report' : 'Body copy paragraph'),
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const tools = plan.stages.flatMap(stage => stage.tools);
+    const headingTool = tools.find(tool => tool.toolName === 'create_heading_from_candidate');
+
+    expect(headingTool).toBeDefined();
+    expect(headingTool?.params).toMatchObject({
+      level: 1,
+      text: 'Arizona Judiciary Annual Report',
+      admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+      preferPage0TitleSynthesis: true,
+    });
+    expect(headingTool?.params).not.toHaveProperty('targetRef');
+  });
+
   it('does not add strict target mode to generic heading candidate params', () => {
     const snap = reportLayoutPlanningSnapshot({
       layoutAudit: undefined,
