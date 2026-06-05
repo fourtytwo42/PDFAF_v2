@@ -3276,6 +3276,138 @@ describe('planForRemediation', () => {
   });
 
 
+  it('does not cut off structure-conformance retries when structure debt remains live', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const toolName of ['repair_structure_conformance', 'artifact_repeating_page_furniture']) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName,
+          pdfClass: 'native_tagged',
+          outcome: 'no_effect',
+          scoreBefore: 59,
+          scoreAfter: 59,
+        });
+      }
+    }
+
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 34,
+      textByPage: Array.from({ length: 34 }, () => 'body text'),
+      textCharCount: 76344,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [{ type: 'Sect', children: [] }] },
+      metadata: { title: 'Annual Report', language: 'en', author: '', subject: '' },
+      headings: [],
+      failureProfile: {
+        primaryFailureFamily: 'structure_reading_order_heavy',
+        secondaryFailureFamilies: ['font_extractability_heavy'],
+        deterministicIssues: ['empty_lists', 'heading_structure', 'pdf_ua_compliance', 'reading_order', 'tagged_content_orphans'],
+        semanticIssues: [],
+        manualOnlyIssues: ['pdf_ua_compliance', 'reading_order'],
+        routingHints: ['manual_review_likely_after_fix', 'prefer_structure_bootstrap', 'semantic_not_primary'],
+      },
+      detectionProfile: {
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 4,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          geometryOrderRiskPages: 9,
+          suspiciousPageCount: 2,
+        },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        pdfUaSignals: {
+          orphanMcidCount: 64,
+          suspectedPathPaintOutsideMc: 130,
+          taggedAnnotationRiskCount: 0,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        listSignals: {
+          listItemMisplacedCount: 0,
+          lblBodyMisplacedCount: 0,
+          listsWithoutItems: 0,
+        },
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      title_language: 100,
+      heading_structure: 0,
+      alt_text: 100,
+      pdf_ua_compliance: 71,
+      link_quality: 100,
+      reading_order: 79,
+    });
+    Object.assign(analysis, {
+      failureProfile: snap.failureProfile,
+      detectionProfile: snap.detectionProfile,
+    });
+
+    const applied: AppliedRemediationTool[] = [];
+    for (const toolName of ['repair_structure_conformance', 'artifact_repeating_page_furniture']) {
+      for (let round = 0; round < 10; round++) {
+        applied.push({
+          toolName,
+          stage: toolName === 'repair_structure_conformance' ? 2 : 3,
+          round: round + 1,
+          scoreBefore: 59,
+          scoreAfter: 59,
+          delta: 0,
+          outcome: 'no_effect',
+          details: JSON.stringify({
+            outcome: 'no_effect',
+            note: 'no_structural_change',
+            invariants: { targetReachable: false },
+          }),
+        });
+      }
+    }
+
+    const plan = planForRemediation(analysis, snap, applied, store);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(names).toContain('repair_structure_conformance');
+    expect(names).toContain('artifact_repeating_page_furniture');
+  });
+
+
   it('keeps Stage 146 figure alt continuation at the protected cap on 55/79 public-shaped rows', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

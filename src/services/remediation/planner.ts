@@ -904,6 +904,37 @@ function shouldRetryAnnotationTabOrderAfterDebtAppears(
   );
 }
 
+function shouldRetryStructureConformanceAfterDebtAppears(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  if (snapshot.structureTree === null) return false;
+  const structuralDebt =
+    analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
+    analysis.failureProfile?.primaryFailureFamily === 'mixed_structural' ||
+    analysis.failureProfile?.secondaryFailureFamilies.includes('structure_reading_order_heavy') === true ||
+    analysis.failureProfile?.secondaryFailureFamilies.includes('mixed_structural') === true;
+  if (!structuralDebt) return false;
+  return (
+    (categoryScore(analysis, 'heading_structure') ?? 100) < 95 ||
+    (categoryScore(analysis, 'reading_order') ?? 100) < 95 ||
+    (categoryScore(analysis, 'pdf_ua_compliance') ?? 100) < 95
+  );
+}
+
+function shouldRetryArtifactFurnitureAfterDebtAppears(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+): boolean {
+  if (!shouldRetryStructureConformanceAfterDebtAppears(analysis, snapshot)) return false;
+  return (
+    (snapshot.detectionProfile?.readingOrderSignals.geometryOrderRiskPages ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.multiColumnOrderRiskPages ?? 0) > 0 ||
+    (snapshot.detectionProfile?.readingOrderSignals.sampledStructurePageOrderDriftCount ?? 0) > 0 ||
+    snapshot.detectionProfile?.readingOrderSignals.headerFooterPollutionRisk === true
+  );
+}
+
 function routeFailureProof(
   route: RemediationRoute,
   alreadyApplied: AppliedRemediationTool[],
@@ -917,12 +948,24 @@ function routeFailureProof(
     route === 'annotation_link_normalization' &&
     snapshot != null &&
     analysis != null;
+  const structureConformanceRetryActive = snapshot != null && analysis != null && shouldRetryStructureConformanceAfterDebtAppears(analysis, snapshot);
+  const artifactFurnitureRetryActive = snapshot != null && analysis != null && shouldRetryArtifactFurnitureAfterDebtAppears(analysis, snapshot);
   const routeRows = alreadyApplied.filter(row => {
     if (!contract.failureTools!.includes(row.toolName)) return false;
     if (
       annotationDebtRetryActive &&
       zeroDebtAnnotationNoEffect(row, row.toolName) &&
       shouldRetryAnnotationRepairAfterDebtAppears(alreadyApplied, row.toolName, analysis!, snapshot!)
+    ) return false;
+    if (
+      structureConformanceRetryActive &&
+      row.toolName === 'repair_structure_conformance' &&
+      row.outcome === 'no_effect'
+    ) return false;
+    if (
+      artifactFurnitureRetryActive &&
+      row.toolName === 'artifact_repeating_page_furniture' &&
+      row.outcome === 'no_effect'
     ) return false;
     return true;
   });
@@ -1950,16 +1993,18 @@ export function planForRemediation(
       }
       const annotationDebtRetry = shouldRetryAnnotationRepairAfterDebtAppears(alreadyApplied, toolName, analysis, snapshot);
       const annotationTabOrderRetry = toolName === 'normalize_annotation_tab_order' && shouldRetryAnnotationTabOrderAfterDebtAppears(analysis, snapshot);
+      const structureConformanceRetry = toolName === 'repair_structure_conformance' && shouldRetryStructureConformanceAfterDebtAppears(analysis, snapshot);
+      const artifactFurnitureRetry = toolName === 'artifact_repeating_page_furniture' && shouldRetryArtifactFurnitureAfterDebtAppears(analysis, snapshot);
       const noEffectLimit = toolName === 'create_heading_from_candidate'
         ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
         : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
-      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry) {
+      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (toolSet.has(toolName)) continue;
       const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
-      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry) {
+      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
@@ -2522,6 +2567,9 @@ export function planForRemediation(
     (snapshot.detectionProfile?.annotationSignals.pagesAnnotationOrderDiffers ?? 0) > 0
   ) {
     ['normalize_annotation_tab_order', 'repair_native_link_structure', 'set_link_annotation_contents'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
+  if (shouldRetryStructureConformanceAfterDebtAppears(analysis, snapshot)) {
+    ['repair_structure_conformance', 'artifact_repeating_page_furniture'].forEach(toolName => reliabilityExemptTools.add(toolName));
   }
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,
