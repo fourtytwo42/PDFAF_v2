@@ -1520,6 +1520,75 @@ function appliedCanonicalizeFigureAltOwnershipPath(): AppliedRemediationTool[] {
 }
 
 
+
+function appliedRetagFigurePath(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'set_document_language',
+      stage: 1,
+      round: 1,
+      scoreBefore: 61,
+      scoreAfter: 61,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_document_title',
+      stage: 1,
+      round: 1,
+      scoreBefore: 61,
+      scoreAfter: 61,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'canonicalize_figure_alt_ownership',
+      stage: 5,
+      round: 1,
+      scoreBefore: 61,
+      scoreAfter: 79,
+      delta: 18,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'retag_as_figure',
+      stage: 5,
+      round: 1,
+      scoreBefore: 79,
+      scoreAfter: 79,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_figure_alt_text',
+      stage: 6,
+      round: 1,
+      scoreBefore: 79,
+      scoreAfter: 93,
+      delta: 14,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'mark_untagged_content_as_artifact',
+      stage: 9,
+      round: 1,
+      scoreBefore: 93,
+      scoreAfter: 93,
+      delta: 0,
+      outcome: 'applied',
+    },
+    {
+      toolName: 'set_pdfua_identification',
+      stage: 1,
+      round: 1,
+      scoreBefore: 93,
+      scoreAfter: 93,
+      delta: 0,
+      outcome: 'applied',
+    },
+  ];
+}
+
 function appliedOrphanMcidRemapPath(): AppliedRemediationTool[] {
   return [
     {
@@ -1898,6 +1967,25 @@ describe('playbookStore', () => {
       'canonicalize_figure_alt_ownership',
       'mark_untagged_content_as_artifact',
       'repair_alt_text_structure',
+    ]);
+  });
+
+  it('learnFromSuccess persists retag_as_figure from the live public figure-alt cleanup path', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedRetagFigurePath(), 18);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual([
+      'set_document_language',
+      'set_document_title',
+      'canonicalize_figure_alt_ownership',
+      'retag_as_figure',
+      'set_figure_alt_text',
+      'mark_untagged_content_as_artifact',
+      'set_pdfua_identification',
     ]);
   });
 

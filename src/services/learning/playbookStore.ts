@@ -63,6 +63,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'repair_degenerate_native_reading_order_shell',
   'ensure_accessibility_tagging',
   'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
   'artifact_repeating_page_furniture',
   'repair_native_table_headers',
   'repair_native_link_structure',
