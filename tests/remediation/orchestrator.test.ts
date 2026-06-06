@@ -49,6 +49,7 @@ import {
   shouldTryAllInputDegenerateNativeSequence,
   shouldTryDegenerateNativeReadingOrderPostPass,
   shouldTryParentLinksAfterDegenerateReadingOrderPostPass,
+  shouldTryLateParentLinksReadingOrderPostPass,
   shouldTryAllInputProposalBufferSequence,
   shouldTryAllInputTableStructureHeaderSequence,
   shouldSoftStopForCumulativeReanalysis,
@@ -525,6 +526,46 @@ describe('degenerate native reading-order post-pass admission', () => {
       analysis,
       snapshot,
       appliedTools: [makePostPassTool({ toolName: 'repair_degenerate_native_reading_order_shell' })],
+    })).toBe(false);
+  });
+
+  it('admits late finalization parent-link cleanup for near-pass parent-link caps', () => {
+    const snapshot = makeSnapshot({ depth: 3 });
+    snapshot.taggedContentAudit = {
+      orphanMcidCount: 0,
+      mcidTextSpanCount: 64,
+      suspectedPathPaintOutsideMc: 117,
+    };
+    const capped = makeAnalysis({
+      score: 92,
+      categories: {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 95,
+        pdf_ua_compliance: 83,
+        reading_order: 79,
+        alt_text: 100,
+        table_markup: 100,
+        link_quality: 100,
+      },
+      scoreCapsApplied: [{
+        category: 'reading_order',
+        cap: 79,
+        rawScore: 96,
+        finalScore: 79,
+        reason: 'PAC rule failure: pdfua.structure.parent_links_valid',
+      }],
+    });
+
+    expect(shouldTryLateParentLinksReadingOrderPostPass({ analysis: capped, snapshot })).toBe(true);
+    expect(shouldTryLateParentLinksReadingOrderPostPass({
+      analysis: capped,
+      snapshot,
+      appliedTools: [makePostPassTool({ toolName: 'repair_top_level_parent_links' })],
+    })).toBe(false);
+    expect(shouldTryLateParentLinksReadingOrderPostPass({
+      analysis: capped,
+      snapshot: { ...snapshot, taggedContentAudit: { ...snapshot.taggedContentAudit!, orphanMcidCount: 1 } },
     })).toBe(false);
   });
 
