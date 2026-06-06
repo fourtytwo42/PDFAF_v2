@@ -138,6 +138,7 @@ export async function runSingleTool(
       case 'set_link_annotation_contents':
       case 'repair_native_link_structure':
       case 'normalize_annotation_tab_order':
+      case 'repair_native_reading_order':
       case 'normalize_heading_hierarchy':
       case 'repair_annotation_alt_text':
       case 'set_figure_alt_text':

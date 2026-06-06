@@ -3245,6 +3245,187 @@ def _mut_normalize_annotation_tab_order(pdf: pikepdf.Pdf) -> bool:
     return changed
 
 
+def _collect_struct_k_children(node) -> list:
+    out: list = []
+    try:
+        k = node.get("/K")
+    except Exception:
+        return out
+    if k is None:
+        return out
+    if isinstance(k, pikepdf.Array):
+        for ch in k:
+            out.append(ch)
+    else:
+        out.append(k)
+    return out
+
+
+def _struct_child_reading_order_page(
+    child,
+    page_map: dict,
+    mcid_page_map: dict[int, int],
+) -> int | None:
+    if isinstance(child, _PDF_INT_TYPES):
+        return mcid_page_map.get(int(child))
+    if not isinstance(child, pikepdf.Dictionary):
+        return None
+
+    try:
+        pg = child.get("/Pg")
+    except Exception:
+        pg = None
+    if pg is not None:
+        try:
+            return page_map.get(pg.objgen[0])
+        except Exception:
+            pass
+
+    try:
+        t = child.get("/Type")
+    except Exception:
+        t = None
+    if t == pikepdf.Name("/MCR"):
+        try:
+            mcid = child.get("/MCID")
+        except Exception:
+            mcid = None
+        if mcid is not None:
+            try:
+                return mcid_page_map.get(int(mcid))
+            except Exception:
+                pass
+    return None
+
+
+def _struct_child_sort_key_for_reading_order(
+    child,
+    child_index: int,
+    page_map: dict,
+    mcid_page_map: dict[int, int],
+) -> tuple:
+    page = _struct_child_reading_order_page(child, page_map, mcid_page_map)
+    has_page = page is not None
+
+    try:
+        bbox = try_struct_elem_bbox(child) if isinstance(child, pikepdf.Dictionary) else None
+    except Exception:
+        bbox = None
+    has_bbox = isinstance(bbox, list) and len(bbox) >= 4
+    top = 0.0
+    left = 0.0
+    if has_bbox:
+        try:
+            x0, y0, x1, y1 = [float(v) for v in bbox[:4]]
+            top = max(y0, y1)
+            left = min(x0, x1)
+        except Exception:
+            has_bbox = False
+            top = 0.0
+            left = 0.0
+
+    return (
+        0 if has_page else 1,
+        page if has_page else 999_999,
+        0 if has_bbox else 1,
+        -top if has_bbox else 0.0,
+        left if has_bbox else 0.0,
+        child_index,
+    )
+
+
+def _collect_mcid_to_page_map(pdf: pikepdf.Pdf) -> dict[int, int]:
+    out: dict[int, int] = {}
+    max_pages = min(len(pdf.pages), _mcid_max_pages())
+    for page_idx in range(max_pages):
+        try:
+            raw = _read_page_contents_raw(pdf.pages[page_idx])
+        except Exception:
+            continue
+        if not isinstance(raw, bytes):
+            continue
+        for m in MCID_OP_RE.finditer(raw):
+            try:
+                mcid = int(m.group(1))
+            except Exception:
+                continue
+            out.setdefault(mcid, page_idx)
+    return out
+
+
+def _mut_repair_native_reading_order(pdf: pikepdf.Pdf) -> bool:
+    try:
+        root = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(root, pikepdf.Dictionary):
+        return False
+
+    page_map = build_page_map(pdf)
+    mcid_page_map = _collect_mcid_to_page_map(pdf)
+    q = deque([root])
+    visited = set()
+    changed = False
+    it = 0
+
+    while q and it < MAX_ITEMS * 4:
+        it += 1
+        try:
+            node = q.popleft()
+        except Exception:
+            break
+        if not isinstance(node, pikepdf.Dictionary):
+            continue
+
+        try:
+            oid = id(node)
+        except Exception:
+            oid = None
+        if oid is not None and oid in visited:
+            continue
+        if oid is not None:
+            visited.add(oid)
+
+        children = _collect_struct_k_children(node)
+        if len(children) > 1:
+            original = list(children)
+            has_sort_hint = False
+            key_pairs: list = []
+            for idx, child in enumerate(children):
+                try:
+                    page = _struct_child_reading_order_page(child, page_map, mcid_page_map)
+                except Exception:
+                    page = None
+                has_bbox = False
+                if isinstance(child, pikepdf.Dictionary):
+                    try:
+                        bb = try_struct_elem_bbox(child)
+                        has_bbox = isinstance(bb, list) and len(bb) >= 4
+                    except Exception:
+                        has_bbox = False
+                if page is not None or has_bbox:
+                    has_sort_hint = True
+                key_pairs.append((_struct_child_sort_key_for_reading_order(
+                    child,
+                    idx,
+                    page_map,
+                    mcid_page_map,
+                ), child))
+            if has_sort_hint:
+                key_pairs.sort(key=lambda row: row[0])
+                ordered = [ch for _, ch in key_pairs]
+                if ordered != original:
+                    node["/K"] = pikepdf.Array(ordered)
+                    changed = True
+
+        try:
+            _enqueue_children(q, node.get("/K"))
+        except Exception:
+            pass
+
+    return changed
+
+
 def _mut_repair_annotation_alt_text(pdf: pikepdf.Pdf) -> bool:
     subtype_labels = {
         "/Stamp": "Stamp",
@@ -3449,6 +3630,10 @@ def _op_repair_native_link_structure(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
 def _op_normalize_annotation_tab_order(pdf: pikepdf.Pdf, _params: dict) -> bool:
     return _mut_normalize_annotation_tab_order(pdf)
+
+
+def _op_repair_native_reading_order(pdf: pikepdf.Pdf, _params: dict) -> bool:
+    return _mut_repair_native_reading_order(pdf)
 
 
 def _op_repair_annotation_alt_text(pdf: pikepdf.Pdf, _params: dict) -> bool:
@@ -4862,6 +5047,7 @@ MUTATORS = {
     "set_link_annotation_contents": _op_set_link_annotation_contents,
     "repair_native_link_structure": _op_repair_native_link_structure,
     "normalize_annotation_tab_order": _op_normalize_annotation_tab_order,
+    "repair_native_reading_order": _op_repair_native_reading_order,
     "repair_annotation_alt_text": _op_repair_annotation_alt_text,
     "embed_urw_type1_substitutes": _op_embed_urw_type1_substitutes,
     "fill_form_field_tooltips": _op_fill_form_field_tooltips,

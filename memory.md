@@ -24,6 +24,18 @@
   - public mean >= target score, and
   - if enabled, protected check succeeds with no protected-analysis failures and bounded category/overall regression.
 
+- 2026-06-06:
+  - Added the first implementation for the `repair_native_reading_order` remediation stage in `python/pdf_analysis_helper.py` and wired it end-to-end through:
+    - `src/config.ts` (`REMEDIATION_IMPLEMENTED_TOOLS`, stage mapping already listed),
+    - `src/services/remediation/orchestrator.ts` (Python mutation dispatch path).
+  - Evidence:
+    - `python -c "compile(open('python/pdf_analysis_helper.py', 'r', encoding='utf-8').read(), 'python/pdf_analysis_helper.py', 'exec')` (succeeded)
+    - `node .\\node_modules\\typescript\\bin\\tsc --pretty false -p tsconfig.json --noEmit` (succeeded)
+  - Attempted local test run: `node .\\node_modules\\vitest\\...` path not present in this workspace for direct invocation.
+  - Remote validation blocked in this session:
+    - `ssh pdfaf-work` host lookup unavailable.
+    - direct IP `192.168.50.118` reached only with password/public-key auth prompt (`Permission denied (publickey,password)`).
+
 ## Durable Findings
 - Each batch writes:
   - `batch-XXX/report.json`

@@ -364,6 +364,7 @@ export const REMEDIATION_IMPLEMENTED_TOOLS: readonly string[] = [
   'repair_native_link_structure',
   'tag_unowned_annotations',
   'normalize_annotation_tab_order',
+  'repair_native_reading_order',
   'normalize_heading_hierarchy',
   'repair_annotation_alt_text',
   'set_figure_alt_text',
