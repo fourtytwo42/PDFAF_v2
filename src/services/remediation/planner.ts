@@ -412,11 +412,123 @@ function isFigureRole(role: string | undefined): boolean {
   return (role ?? '').replace(/^\//, '').toLowerCase() === 'figure';
 }
 
+function normalizedRoleName(role: string | undefined | null): string {
+  return (role ?? '').replace(/^\//, '').trim().toLowerCase();
+}
+
+function isChartRole(role: string | undefined | null): boolean {
+  return normalizedRoleName(role) === 'chart';
+}
+
 function deterministicFigureAltPlaceholder(target: { page?: number | null }): string {
   const page = typeof target.page === 'number' && Number.isFinite(target.page)
     ? Math.max(1, Math.floor(target.page) + 1)
     : 1;
   return `Illustration (page ${page})`;
+}
+
+function normalizeFigureCaptionText(value: string): string {
+  return value
+    .replace(/\bF\s+igure\b/gi, 'Figure')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,:;])/g, '$1')
+    .replace(/\bFY\s*(\d)\s*(\d{3})\b/gi, 'FY$1$2')
+    .replace(/\b(20)\s+(\d{2})\b/g, '$1$2')
+    .replace(/\s*-\s*/g, '-')
+    .trim();
+}
+
+function extractFigureCaptionsFromText(value: string): string[] {
+  const text = normalizeFigureCaptionText(value);
+  if (!text) return [];
+  const starts: number[] = [];
+  const re = /\bFigure\s+\d+[A-Za-z]?\s*[.:]?/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    starts.push(match.index);
+  }
+  const captions: string[] = [];
+  for (let i = 0; i < starts.length; i += 1) {
+    const start = starts[i]!;
+    const nextStart = starts[i + 1] ?? text.length;
+    const rawSegment = text.slice(start, nextStart);
+    const bulletAt = rawSegment.search(/\u2022/);
+    const segment = normalizeFigureCaptionText(
+      rawSegment.slice(0, bulletAt >= 0 ? bulletAt : rawSegment.length),
+    );
+    const words = segment.split(/\s+/).filter(Boolean);
+    if (words.length < 4) continue;
+    if (!/[A-Za-z]{4,}/.test(segment.replace(/^Figure\s+\d+[A-Za-z]?\s*[.:]?\s*/i, ''))) continue;
+    captions.push(words.slice(0, 24).join(' ').slice(0, 180));
+  }
+  return captions;
+}
+
+function figureCaptionsForPage(snapshot: DocumentSnapshot, page: number): string[] {
+  const seen = new Set<string>();
+  const captions: string[] = [];
+  const add = (caption: string): void => {
+    const normalized = normalizeFigureCaptionText(caption);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    captions.push(normalized);
+  };
+  for (const row of snapshot.layoutAudit?.captionCandidates ?? []) {
+    if (row.page !== page) continue;
+    for (const caption of extractFigureCaptionsFromText(row.text)) add(caption);
+  }
+  for (const caption of extractFigureCaptionsFromText(snapshot.textByPage[page] ?? '')) add(caption);
+  return captions;
+}
+
+function roleMappedChartPageOrderTargets(
+  snapshot: DocumentSnapshot,
+  target: DocumentSnapshot['figures'][number],
+  attemptedRetagRefs: Set<string>,
+): DocumentSnapshot['figures'] {
+  return sortFigureTargets(
+    snapshot.figures.filter(figure =>
+      figure.page === target.page &&
+      typeof figure.structRef === 'string' &&
+      figure.structRef.length > 0 &&
+      !figure.isArtifact &&
+      figure.reachable === true &&
+      isFigureRole(figure.role) &&
+      (isChartRole(figure.rawRole) || attemptedRetagRefs.has(figure.structRef)) &&
+      (figure.directContent === true || (figure.subtreeMcidCount ?? 0) > 0)
+    ),
+  );
+}
+
+function chartCaptionAltForTarget(
+  snapshot: DocumentSnapshot,
+  target: DocumentSnapshot['figures'][number],
+  alreadyApplied: AppliedRemediationTool[] = [],
+): string | null {
+  if (!isChartRole(target.rawRole)) return null;
+  if (!target.structRef) return null;
+  const attemptedRetagRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  const pageTargets = roleMappedChartPageOrderTargets(snapshot, target, attemptedRetagRefs);
+  const index = pageTargets.findIndex(row => row.structRef === target.structRef);
+  if (index < 0) return null;
+  const caption = figureCaptionsForPage(snapshot, target.page)[index];
+  if (!caption) return null;
+  return `Chart: ${caption}`.slice(0, 200);
+}
+
+function deterministicFigureAltText(
+  snapshot: DocumentSnapshot,
+  target: { page?: number | null; rawRole?: string; structRef?: string },
+  alreadyApplied: AppliedRemediationTool[] = [],
+): string {
+  const figure = target.structRef
+    ? snapshot.figures.find(row => row.structRef === target.structRef)
+    : undefined;
+  const chartAlt = figure
+    ? chartCaptionAltForTarget(snapshot, figure, alreadyApplied)
+    : null;
+  return chartAlt ?? deterministicFigureAltPlaceholder(target);
 }
 
 function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
@@ -627,11 +739,31 @@ export function shouldAllowStage146RoleMapRetagContinuation(
   return safeRoleMapRetagTargets(snapshot, attemptedRefs).length > 0;
 }
 
-function maxRetagAsFigureTargetsForRun(
+function shouldAllowCaptionedChartRetagContinuation(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+): boolean {
+  if (analysis.score >= 90) return false;
+  if ((analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) < 55) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) < 79) return false;
+  if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
+  const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  return safeRoleMapRetagTargets(snapshot, attemptedRefs).some(target =>
+    chartCaptionAltForTarget(snapshot, target, alreadyApplied) !== null
+  );
+}
+
+export function maxRetagAsFigureTargetsForRun(
   analysis?: AnalysisResult,
   snapshot?: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[] = [],
 ): number {
+  if (analysis && snapshot && shouldAllowCaptionedChartRetagContinuation(analysis, snapshot, alreadyApplied)) {
+    return STAGE194_CHART_RETAG_TARGETS_PER_RUN;
+  }
   if (analysis && snapshot && shouldAllowStage146RoleMapRetagContinuation(analysis, snapshot, alreadyApplied)) {
     return STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
   }
@@ -1132,6 +1264,7 @@ const DEFAULT_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_M
 export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 5);
 const DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN = 2;
 const STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN = 3;
+const STAGE194_CHART_RETAG_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 16);
 
 function normalizeFallbackTitleCandidate(value: string | null | undefined): string | null {
   const raw = (value ?? '').replace(/\s+/g, ' ').trim();
@@ -2698,7 +2831,7 @@ export function buildDefaultParams(
           snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && !attemptedRefs.has(f.structRef) && isFigureRole(f.role)),
         );
       const target = checkerCandidates[0] ?? fallbackCandidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltText(snapshot, target, alreadyApplied) } : {};
     }
     case 'create_heading_from_candidate': {
       const candidate = stage24ZeroHeadingBootstrapEnabled()
@@ -2882,13 +3015,17 @@ export function buildDefaultParams(
           && (f.directContent === true || (f.subtreeMcidCount ?? 0) > 0)
         ),
       ).sort((a, b) =>
-        Number(b.directContent) - Number(a.directContent)
+        Number(chartCaptionAltForTarget(snapshot, b, alreadyApplied) !== null) - Number(chartCaptionAltForTarget(snapshot, a, alreadyApplied) !== null)
+        || Number(b.directContent) - Number(a.directContent)
         || (b.subtreeMcidCount ?? 0) - (a.subtreeMcidCount ?? 0)
         || a.page - b.page
         || (a.structRef ?? '').localeCompare(b.structRef ?? '')
       );
-      const target = candidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
+      const normalRetagBudgetSpent = successfulApplyCount(alreadyApplied, 'retag_as_figure') >= STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
+      const target = candidates.find(candidate =>
+        !normalRetagBudgetSpent || chartCaptionAltForTarget(snapshot, candidate, alreadyApplied) !== null
+      );
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltText(snapshot, target, alreadyApplied) } : {};
     }
     case 'canonicalize_figure_alt_ownership':
     case 'normalize_nested_figure_containers': {
