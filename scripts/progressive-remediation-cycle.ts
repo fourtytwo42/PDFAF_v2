@@ -13,7 +13,16 @@
 import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
 import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
-import { dirname, extname, join, basename, resolve } from 'node:path';
+import {
+  dirname,
+  extname,
+  join,
+  basename,
+  resolve,
+  relative,
+  isAbsolute,
+  sep,
+} from 'node:path';
 import type { AnalysisResult, CategoryKey } from '../src/types.js';
 
 type RemediationConfig = {
@@ -93,6 +102,7 @@ Usage:
 Options:
   --public-dir <dir>                   Required. Directory containing public PDFs to process.
   --protected-dir <dir>                Corpus used as regression guard (e.g. fixed 50 originals).
+                                       Must not overlap with --public-dir.
   --batch-size <20>                    Files per batch (default: 20)
   --target-score <93>                  Required mean score threshold (default: 93)
   --protected-target-score <93>         Regression target for protected corpus mean (default: target-score)
@@ -213,6 +223,22 @@ function parseArgs(argv: string[]): RawArgs {
   }
 
   const publicDir = resolve(opts.publicDir);
+  if (opts.checkProtected && opts.protectedDir) {
+    const protectedDir = resolve(opts.protectedDir);
+    if (isSameOrNestedPath(publicDir, protectedDir)) {
+      console.error('Invalid argument: --protected-dir overlaps --public-dir.');
+      console.log('Use distinct public and protected directories.');
+      console.log(usage());
+      process.exit(2);
+    }
+    if (isSameOrNestedPath(protectedDir, publicDir)) {
+      console.error('Invalid argument: --public-dir overlaps --protected-dir.');
+      console.log('Use distinct public and protected directories.');
+      console.log(usage());
+      process.exit(2);
+    }
+  }
+
   const workRoot = resolve(opts.workRoot);
   const statePath = resolve(opts.statePath ?? join(workRoot, 'state.json'));
   const protectedTargetScore = opts.protectedTargetScore ?? opts.targetScore!;
@@ -235,6 +261,13 @@ function parseArgs(argv: string[]): RawArgs {
 function mean(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((acc, v) => acc + v, 0) / values.length;
+}
+
+function isSameOrNestedPath(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  if (rel === '') return true;
+  if (isAbsolute(rel)) return false;
+  return rel !== '..' && !rel.startsWith(`..${sep}`);
 }
 
 function weakestCategory(result: AnalysisResult): string {
