@@ -40,16 +40,44 @@ function makeTempPath(filename: string): string {
   return join(tmpdir(), `pdfaf-progressive-${Date.now()}-${randomUUID()}-${filename}`);
 }
 
+function traceWorkerEvent(kind: string, payload: Record<string, unknown>): void {
+  if (process.env['PROGRESSIVE_WORKER_TRACE'] !== '1') return;
+  process.stderr.write(JSON.stringify({ kind, ...payload }) + '\n');
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
   const start = Date.now();
   const filename = basename(args.targetPath);
 
+  traceWorkerEvent('worker_start', {
+    filename,
+    maxRounds: args.maxRounds,
+    allowSemantic: args.allowSemantic,
+    llmReady: args.llmReady,
+    safeMode: args.safeMode,
+  });
   const source = await readFile(args.targetPath);
   const { result: before, snapshot } = await analyzePdf(args.targetPath, filename, { bypassCache: true });
+  traceWorkerEvent('worker_before_analyzed', {
+    elapsedMs: Date.now() - start,
+    score: before.score,
+    grade: before.grade,
+  });
 
   const run = await remediatePdf(source, filename, before, snapshot, {
     maxRounds: args.maxRounds,
+    onProgress: update => traceWorkerEvent('progress', {
+      elapsedMs: Date.now() - start,
+      ...update,
+    }),
+    onRuntimeTrace: event => traceWorkerEvent('runtime', event as unknown as Record<string, unknown>),
+  });
+  traceWorkerEvent('worker_remediated', {
+    elapsedMs: Date.now() - start,
+    score: run.remediation.after.score,
+    grade: run.remediation.after.grade,
+    appliedToolCount: run.remediation.appliedTools.length,
   });
 
   let outBuf = run.buffer;

@@ -1576,6 +1576,17 @@ export function planForRemediation(
   const structurePrimary =
     analysis.failureProfile?.primaryFailureFamily === 'structure_reading_order_heavy' ||
     analysis.failureProfile?.primaryFailureFamily === 'mixed_structural';
+  const tableDominantNativeTaggedAlreadyStructured =
+    analysis.pdfClass === 'native_tagged' &&
+    snapshot.structureTree !== null &&
+    categoryFailing('table_markup') &&
+    stage43TableFailure !== 'not_stage43_table_target' &&
+    !headingNeedsRepair &&
+    !categoryFailing('reading_order') &&
+    (categoryScore(analysis, 'heading_structure') ?? 0) >= 95 &&
+    (categoryScore(analysis, 'reading_order') ?? 0) >= 95 &&
+    (treeHeadingCount > 0 || snapshot.headings.length > 0) &&
+    hasTableSignals;
   const fontTailCandidate =
     categoryFailing('text_extractability')
     && snapshot.textCharCount > 0
@@ -1778,6 +1789,16 @@ export function planForRemediation(
     if (
       protectedZeroHeadingTimedOut
       && (toolName === 'normalize_heading_hierarchy' || toolName === 'repair_structure_conformance')
+    ) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (toolName === 'repair_structure_conformance' && tableDominantNativeTaggedAlreadyStructured) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
+    if (
+      tableDominantNativeTaggedAlreadyStructured &&
+      !hasAnnotationSignals &&
+      (toolName === 'repair_native_link_structure' || toolName === 'normalize_annotation_tab_order')
     ) {
       return { allowed: false, reason: 'missing_precondition' };
     }

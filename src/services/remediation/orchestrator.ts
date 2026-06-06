@@ -6751,6 +6751,10 @@ async function applyTaggedCleanupPostPasses(args: {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'score_moving_pdfua_topup_orphan_drain_postpass_guard');
     return { buffer, analysis, snapshot };
   }
+  if (hasPriorNonImprovingTableNormalize(appliedTools) && (categoryScore(analysis, 'table_markup') ?? 100) < 80) {
+    if (runtimeSummary) noteEarlyExit(runtimeSummary, 'no_gain_table_skip_tagged_orphan_drain_postpass');
+    return { buffer, analysis, snapshot };
+  }
 
   for (let pass = 0; pass < 8; pass++) {
     const orphanN = snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
@@ -6882,9 +6886,13 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   appliedTools: AppliedRemediationTool[];
   runtimeSummary?: RemediationRuntimeSummary;
   protectedBaseline?: ProtectedBaselineFloor;
+  tracePhase?: <T>(phase: string, run: () => Promise<T>) => Promise<T>;
 }): Promise<RemediationState> {
-  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline, tracePhase } = args;
+  const traced = <T>(phase: string, run: () => Promise<T>): Promise<T> =>
+    tracePhase ? tracePhase(phase, run) : run();
   let { buffer, analysis, snapshot } = args.state;
+  if (hasPriorNonImprovingTableNormalize(appliedTools)) return args.state;
   const decision = classifyStage180MixedTablePdfUa({ analysis, snapshot, appliedTools });
   const repeatedTemplateEvidenceForDecision = stage180RepeatedTemplateEvidence(snapshot);
   const repeatedTemplateCandidate = shouldTryStage180RepeatedTemplateFinalization({
@@ -6894,7 +6902,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   });
   if (!decision.shouldAttempt && !repeatedTemplateCandidate) return args.state;
 
-  const headerRegularity = await applyStage180HeaderRegularitySequence({
+  const headerRegularity = await traced('header_regularization', () => applyStage180HeaderRegularitySequence({
     filename,
     signal,
     round,
@@ -6902,7 +6910,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     appliedTools,
     runtimeSummary,
     protectedBaseline,
-  });
+  }));
   buffer = headerRegularity.buffer;
   analysis = headerRegularity.analysis;
   snapshot = headerRegularity.snapshot;
@@ -6910,7 +6918,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     return { buffer, analysis, snapshot };
   }
 
-  const largeRegularity = await applyStage180LargeObjectBackedTableBatch({
+  const largeRegularity = await traced('large_object_backed_table_batch', () => applyStage180LargeObjectBackedTableBatch({
     filename,
     signal,
     round,
@@ -6918,7 +6926,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     appliedTools,
     runtimeSummary,
     protectedBaseline,
-  });
+  }));
   buffer = largeRegularity.buffer;
   analysis = largeRegularity.analysis;
   snapshot = largeRegularity.snapshot;
@@ -6926,7 +6934,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     return { buffer, analysis, snapshot };
   }
 
-  const repeatedTemplate = await applyStage180RepeatedTemplateFinalization({
+  const repeatedTemplate = await traced('repeated_template_finalization', () => applyStage180RepeatedTemplateFinalization({
     filename,
     signal,
     round,
@@ -6934,7 +6942,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     appliedTools,
     runtimeSummary,
     protectedBaseline,
-  });
+  }));
   buffer = repeatedTemplate.buffer;
   analysis = repeatedTemplate.analysis;
   snapshot = repeatedTemplate.snapshot;
@@ -6953,11 +6961,12 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
       maxSyntheticCells: 80,
       stage: 'stage180_mixed_table_pdfua',
     };
-    const { buffer: nextBuffer, result } = await runPythonMutationBatch(
-      buffer,
-      [{ op: 'normalize_table_structure', params }],
-      { signal },
-    );
+    const { buffer: nextBuffer, result } = await traced(`explicit_table_continuation:${target.structRef}`, () =>
+      runPythonMutationBatch(
+        buffer,
+        [{ op: 'normalize_table_structure', params }],
+        { signal },
+      ));
     if (!result.success || !result.applied.includes('normalize_table_structure')) continue;
     const details = JSON.stringify({
       outcome: 'applied',
@@ -6988,7 +6997,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   }
 
   if (shouldTryStage180LinkRepairAfterTable({ analysis, snapshot })) {
-    const repaired = await applyLinkParentTreeRepairPostPass({
+    const repaired = await traced('link_repair_after_table', () => applyLinkParentTreeRepairPostPass({
       filename,
       signal,
       round,
@@ -6996,7 +7005,7 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
       appliedTools,
       runtimeSummary,
       protectedBaseline,
-    });
+    }));
     buffer = repaired.buffer;
     analysis = repaired.analysis;
     snapshot = repaired.snapshot;
@@ -7008,11 +7017,12 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
     (categoryScore(analysis, 'table_markup') ?? 0) >= 80 &&
     (categoryScore(analysis, 'pdf_ua_compliance') ?? 100) < 100
   ) {
-    const { buffer: nextBuffer, result } = await runPythonMutationBatch(
-      buffer,
-      [{ op: 'remap_orphan_mcids_as_artifacts', params: { stage: 'stage180_mixed_table_pdfua' } }],
-      { signal },
-    );
+    const { buffer: nextBuffer, result } = await traced('orphan_drain_after_table', () =>
+      runPythonMutationBatch(
+        buffer,
+        [{ op: 'remap_orphan_mcids_as_artifacts', params: { stage: 'stage180_mixed_table_pdfua' } }],
+        { signal },
+      ));
     if (result.success && result.applied.includes('remap_orphan_mcids_as_artifacts')) {
       const accepted = await applyGuardedPostPass({
         filename,
@@ -7289,6 +7299,19 @@ async function applyStage180LargeObjectBackedTableBatch(args: {
   };
 }
 
+const STAGE180_HEADER_REGULARIZATION_MAX_REFS = 12;
+const STAGE180_HEADER_REGULARIZATION_PASSES = 1;
+
+function hasPriorNonImprovingTableNormalize(appliedTools: readonly AppliedRemediationTool[]): boolean {
+  return appliedTools.some(row =>
+    row.toolName === 'normalize_table_structure' &&
+    (
+      row.outcome === 'no_effect' ||
+      (row.outcome === 'applied' && row.delta <= 0)
+    )
+  );
+}
+
 function stage180HeaderAssociationRefs(snapshot: DocumentSnapshot): string[] {
   return snapshot.tables
     .filter(isRealRootReachableTableTarget)
@@ -7307,7 +7330,7 @@ function stage180HeaderAssociationRefs(snapshot: DocumentSnapshot): string[] {
       (a.structRef ?? '').localeCompare(b.structRef ?? '')
     )
     .map(table => table.structRef!)
-    .slice(0, 32);
+    .slice(0, STAGE180_HEADER_REGULARIZATION_MAX_REFS);
 }
 
 function shouldTryStage180HeaderRegularitySequence(input: {
@@ -7352,6 +7375,9 @@ async function applyStage180HeaderRegularitySequence(args: {
 }): Promise<RemediationState & { accepted: boolean }> {
   const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
   const { buffer, analysis, snapshot } = args.state;
+  if (hasPriorNonImprovingTableNormalize(appliedTools)) {
+    return { ...args.state, accepted: false };
+  }
   if (!shouldTryStage180HeaderRegularitySequence({ analysis, snapshot })) {
     return { ...args.state, accepted: false };
   }
@@ -7363,7 +7389,7 @@ async function applyStage180HeaderRegularitySequence(args: {
     stage: 'stage180_header_regularization',
   };
   const mutations: PythonMutation[] = [];
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < STAGE180_HEADER_REGULARIZATION_PASSES; pass++) {
     mutations.push({ op: 'set_table_header_cells', params: associationParams });
     mutations.push({
       op: 'normalize_table_structure',
@@ -10021,27 +10047,35 @@ export async function remediatePdf(
   }
 
   if (!verifiedCheckpointReturned) {
-    const postPassTrace = await startPostPassTrace(
-      'stage180_mixed_table_pdfua_post_pass',
-      rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-    );
-    await reportProgress(85, 'Running mixed table/PDF-UA cleanup');
-    const state = await applyStage180MixedTablePdfUaPostPass({
-      filename,
-      signal: options?.signal,
-      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-      state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
-      appliedTools,
-      runtimeSummary,
-      protectedBaseline: options?.protectedBaseline,
-    });
-    currentBuffer = state.buffer;
-    currentAnalysis = state.analysis;
-    currentSnapshot = state.snapshot;
-    await finishPostPassTrace(postPassTrace);
-    await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
-    await rememberVerifiedTimeoutCheckpoint('stage180_mixed_table_pdfua_post_pass');
-    await returnVerifiedTimeoutCheckpoint('before_stage181_post_pass', { beforeRiskyWork: true });
+    if (
+      currentAnalysis.score <= before.score &&
+      shouldReturnVerifiedCheckpointBeforeRiskyWork({ startedAtMs: started })
+    ) {
+      noteEarlyExit(runtimeSummary, 'no_gain_skip_stage180_before_risky_deadline');
+    } else {
+      const postPassTrace = await startPostPassTrace(
+        'stage180_mixed_table_pdfua_post_pass',
+        rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      );
+      await reportProgress(85, 'Running mixed table/PDF-UA cleanup');
+      const state = await applyStage180MixedTablePdfUaPostPass({
+        filename,
+        signal: options?.signal,
+        round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+        state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+        appliedTools,
+        runtimeSummary,
+        protectedBaseline: options?.protectedBaseline,
+        tracePhase: (phase, run) => tracePostPassPhase(`stage180_mixed_table_pdfua_post_pass:${phase}`, postPassTrace.round, run),
+      });
+      currentBuffer = state.buffer;
+      currentAnalysis = state.analysis;
+      currentSnapshot = state.snapshot;
+      await finishPostPassTrace(postPassTrace);
+      await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
+      await rememberVerifiedTimeoutCheckpoint('stage180_mixed_table_pdfua_post_pass');
+      await returnVerifiedTimeoutCheckpoint('before_stage181_post_pass', { beforeRiskyWork: true });
+    }
   }
 
   if (!verifiedCheckpointReturned) {
