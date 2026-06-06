@@ -359,6 +359,19 @@ async function loadState(path: string): Promise<ProgressState> {
   };
 }
 
+async function validateProtectedDir(protectedDir: string): Promise<void> {
+  try {
+    const files = await listPdfs(protectedDir);
+    if (files.length === 0) {
+      console.error(`Invalid --protected-dir: no PDF files found in "${protectedDir}".`);
+      process.exit(2);
+    }
+  } catch (error) {
+    console.error(`Invalid --protected-dir: unable to read PDF files from "${protectedDir}". ${(error as Error).message}`);
+    process.exit(2);
+  }
+}
+
 async function probeOpenAiCompatServer(): Promise<boolean> {
   const baseRaw = (process.env['OPENAI_COMPAT_BASE_URL'] ?? '').trim().replace(/\/$/, '');
   if (!baseRaw) return false;
@@ -742,9 +755,17 @@ async function main(): Promise<void> {
   const hasAnyPending = allPublic.some(p =>
     opts.includeFailed ? state.processed[p]?.status !== 'ok' : state.processed[p] === undefined,
   );
+  if (opts.checkProtected && !opts.protectedDir) {
+    console.error('Invalid configuration: --check-protected enabled but --protected-dir was not provided.');
+    process.exit(2);
+  }
   if (!hasAnyPending) {
     console.log('No pending public PDFs left according to state:', statePath);
     process.exit(0);
+  }
+
+  if (opts.checkProtected && opts.protectedDir) {
+    await validateProtectedDir(opts.protectedDir);
   }
 
   for (let iter = 0; iter < opts.iterations; iter++) {
