@@ -35,6 +35,13 @@
   - Remote validation blocked in this session:
     - `ssh pdfaf-work` host lookup unavailable.
     - direct IP `192.168.50.118` reached only with password/public-key auth prompt (`Permission denied (publickey,password)`).
+- 2026-06-06 (continued):
+  - Follow-up validation attempt: remote keyless batch mode access remains blocked.
+    - `ssh -o BatchMode=yes -o StrictHostKeyChecking=no 192.168.50.118 "echo ok"` returns `Permission denied (publickey,password)` immediately.
+    - `ssh -vvv` confirms this environment authenticates as `codexsandboxoffline` locally and presents only pubkey/password methods; no private keys are present under `C:\\Users\\CodexSandboxOffline\\.ssh` by default.
+  - Additional local checks since this continuation:
+    - `python -c "from python import pdf_analysis_helper as p; print('repair_native_reading_order' in p.MUTATORS); print(p.MUTATORS['repair_native_reading_order'].__name__)"` -> `True`, `_op_repair_native_reading_order`.
+    - `python -c "import pikepdf; from python import pdf_analysis_helper as p; pdf=pikepdf.Pdf.new(); print(p._mut_repair_native_reading_order(pdf))"` -> `False` (expected no-op for untagged PDF).
 
 ## Durable Findings
 - Each batch writes:
