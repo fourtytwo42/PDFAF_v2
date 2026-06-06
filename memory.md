@@ -18,6 +18,22 @@
 - Add `--no-delete` to keep source files during review.
 - Add `--include-failed` to revisit files previously marked failed.
 
+### Remote Resume Checklist
+- Validate SSH access before running:
+  - `ssh -o BatchMode=yes -o StrictHostKeyChecking=no 192.168.50.118 "hostname"`
+- After SSH works, pull latest branch and launch one protected-guarded batch:
+  - `cd /home/hendo420/PDFAF-v2`
+  - `git pull`
+  - `git checkout codex/windows-app`
+  - `git fetch`
+  - `git reset --hard origin/codex/windows-app`
+  - `pnpm install`
+  - `pnpm exec tsx scripts/progressive-remediation-cycle.ts --public-dir /home/hendo420/pdfaf-public-cycles/setXX/input --protected-dir <protected-orig-corpus-path> --batch-size 20 --iterations 1 --max-rounds 10 --target-score 93 --work-root /home/hendo420/it-goal-resume --no-delete`
+- If this fails protected, inspect:
+  - `cat /home/hendo420/it-goal-resume/batch-001/report.json`
+  - `cat /home/hendo420/it-goal-resume/batch-001/report.md`
+  - The new report now includes `protectedRows` and a `Protected category regressions` section.
+
 ### Current Cycle Behavior
 - Batch pass requires:
   - all files processed successfully,
@@ -48,6 +64,10 @@
   - `batch-XXX/report.json`
   - `batch-XXX/report.md`
 - Copy durable findings (failure signatures, regressions, and mitigation decisions) here before major commits.
+- Additional local artifact scan evidence (current session):
+  - Across local `tmp-goal-20-cycle-*`, only two public-file failures occurred in history: both rows were `2103.00020.pdf` with `status=failed` and `before=44`/`after=0`.
+  - Protected-check failures remain concentrated in `worstCategory=17` on runs using `public-batch-20x` + `protected-orig-corpus`.
+  - One run (`tmp-cycle-protected-check`) used a malformed protected path (`PDFAF-Work\\`), produced `protectedWorstOverallRegression=-28.05`, and should be treated as a false-positive configuration case.
 
 ## Evidence Updates
 - Added protected-corpus regression diagnostics to `scripts/progressive-remediation-cycle.ts` report payloads:
