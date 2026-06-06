@@ -47,6 +47,21 @@ type FileRecord = {
   error?: string;
 };
 
+type ProtectedFileRecord = {
+  file: string;
+  beforeScore: number;
+  afterScore: number;
+  delta: number;
+  status: 'ok' | 'failed';
+  error?: string;
+  drops: Array<{
+    key: CategoryKey;
+    before: number;
+    after: number;
+    drop: number;
+  }>;
+};
+
 type BatchReport = {
   batch: number;
   startedAt: string;
@@ -65,6 +80,7 @@ type BatchReport = {
   protectedWorstOverallRegression?: number;
   protectedCheckAttempts?: number;
   protectedRecoveredWithRetry?: boolean;
+  protectedRows?: ProtectedFileRecord[];
   passed: boolean;
   files: FileRecord[];
 };
@@ -541,6 +557,32 @@ function toReportMd(run: BatchReport): string {
       `| ${basename(r.file)} | ${r.beforeScore}/${r.beforeGrade} | ${r.afterScore}/${r.afterGrade} | ${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(2)} | ${r.weakestBefore ?? ''} | ${r.weakestAfter ?? ''} | ${r.status} | ${note} |`,
     );
   }
+  if (run.protectedRows?.length) {
+    const regressed = run.protectedRows.filter(r => r.status === 'ok' && r.drops.length > 0);
+    if (regressed.length > 0) {
+      lines.push('');
+      lines.push('### Protected category regressions');
+      lines.push('');
+      lines.push('| file | before | after | overall-delta | category | before | after | drop |');
+      lines.push('| --- | --- | --- | ---: | --- | --- | --- | ---: |');
+      for (const row of regressed.sort((a, b) => {
+        const aMax = a.drops[0]?.drop ?? 0;
+        const bMax = b.drops[0]?.drop ?? 0;
+        return bMax - aMax || a.file.localeCompare(b.file);
+      })) {
+        const [first, ...rest] = row.drops;
+        if (!first) continue;
+        lines.push(
+          `| ${basename(row.file)} | ${row.beforeScore.toFixed(2)} | ${row.afterScore.toFixed(2)} | ${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(2)} | ${first.key} | ${first.before} | ${first.after} | ${first.drop.toFixed(2)} |`,
+        );
+        for (const drop of rest) {
+          lines.push(
+            `| ${basename(row.file)} |  |  |  | ${drop.key} | ${drop.before} | ${drop.after} | ${drop.drop.toFixed(2)} |`,
+          );
+        }
+      }
+    }
+  }
   return lines.join('\n') + '\n';
 }
 
@@ -553,6 +595,7 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
   failedCount: number;
   attempts: number;
   recoveredWithRetry: boolean;
+  rows: ProtectedFileRecord[];
 }> {
   const files = opts.protectedDir ? (await listPdfs(opts.protectedDir)).sort() : [];
   if (!opts.protectedDir || files.length === 0) {
@@ -565,6 +608,7 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
       failedCount: 0,
       attempts: 1,
       recoveredWithRetry: false,
+      rows: [],
     };
   }
 
@@ -575,15 +619,42 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
     worstOverallRegression: number;
     analyzedCount: number;
     failedCount: number;
+    rows: ProtectedFileRecord[];
   }> => {
     const rows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
+    const protectedRows: ProtectedFileRecord[] = [];
     let failedCount = 0;
     for (const file of files) {
       const out = await runPipelineOnFile(file, cfg, false, llmReady);
       if (out.status === 'ok') {
+        const drops = categoryRegression(out.before, out.after)
+          .sort((a, b) => b.drop - a.drop)
+          .map(reg => ({
+            key: reg.key,
+            before: out.before.categories.find(x => x.key === reg.key)?.score ?? 0,
+            after: out.after.categories.find(x => x.key === reg.key)?.score ?? 0,
+            drop: reg.drop,
+          }));
+        protectedRows.push({
+          file,
+          beforeScore: out.before.score,
+          afterScore: out.after.score,
+          delta: out.after.score - out.before.score,
+          status: 'ok',
+          drops,
+        });
         rows.push({ before: out.before, after: out.after });
       } else {
         failedCount += 1;
+        protectedRows.push({
+          file,
+          beforeScore: out.before.score,
+          afterScore: out.after.score,
+          delta: out.after.score - out.before.score,
+          status: 'failed',
+          error: out.error,
+          drops: [],
+        });
       }
     }
 
@@ -603,6 +674,7 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
       worstOverallRegression,
       analyzedCount: rows.length,
       failedCount,
+      rows: protectedRows,
     };
   };
 
@@ -621,6 +693,7 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
     worstOverallRegression: 0,
     analyzedCount: 0,
     failedCount: 0,
+    rows: [],
   };
   for (let attempt = 0; attempt <= opts.protectedRerunsOnFailure; attempt += 1) {
     attempts += 1;
@@ -736,6 +809,7 @@ async function main(): Promise<void> {
       report.protectedWorstOverallRegression = protectedSummary.worstOverallRegression;
       report.protectedCheckAttempts = protectedSummary.attempts;
       report.protectedRecoveredWithRetry = protectedSummary.recoveredWithRetry;
+      report.protectedRows = protectedSummary.rows;
     }
 
     if (

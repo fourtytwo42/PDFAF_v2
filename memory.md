@@ -49,6 +49,12 @@
   - `batch-XXX/report.md`
 - Copy durable findings (failure signatures, regressions, and mitigation decisions) here before major commits.
 
+## Evidence Updates
+- Added protected-corpus regression diagnostics to `scripts/progressive-remediation-cycle.ts` report payloads:
+  - `BatchReport` now includes `protectedRows` with per-file before/after scores and per-category regressions.
+  - `report.md` now emits a `Protected category regressions` section when protected entries regress.
+- This supports objective-driven diagnosis of recurring protected regressions (e.g., repeated `worst category regression = 17` in `tmp-goal-20-cycle-*`) before applying remediation/grader changes.
+
 - 2026-06-02:
   - `scripts/progressive-remediation-cycle.ts` now enforces score-gated acceptance in `runPipelineOnFile`:
     - a worker result is only accepted when `parsed.ok` **and** `parsed.after.score >= targetScore`.
