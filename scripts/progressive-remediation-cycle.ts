@@ -20,6 +20,8 @@ import type { AnalysisResult, CategoryKey } from '../src/types.js';
 type RemediationConfig = {
   targetScore: number;
   maxRounds: number;
+  workerTimeoutMs: number;
+  safeOnly: boolean;
   semanticFigurePasses: number;
   semanticPromotePasses: number;
   semanticTimeoutMs: number;
@@ -33,6 +35,19 @@ type FileRecord = {
   afterGrade: string;
   delta: number;
   durationMs: number;
+  weakestBefore?: string;
+  weakestAfter?: string;
+  status: 'ok' | 'failed';
+  error?: string;
+};
+
+type ProtectedFileRecord = {
+  file: string;
+  beforeScore: number;
+  beforeGrade: string;
+  afterScore: number;
+  afterGrade: string;
+  delta: number;
   weakestBefore?: string;
   weakestAfter?: string;
   status: 'ok' | 'failed';
@@ -55,6 +70,7 @@ type BatchReport = {
   protectedFailedCount?: number;
   protectedWorstCategoryRegression?: number;
   protectedWorstOverallRegression?: number;
+  protectedRows?: ProtectedFileRecord[];
   protectedCheckAttempts?: number;
   protectedRecoveredWithRetry?: boolean;
   passed: boolean;
@@ -83,6 +99,8 @@ type RawArgs = {
   checkProtected: boolean;
   includeFailed: boolean;
   maxRounds: number;
+  workerTimeoutMs: number;
+  safeOnly: boolean;
   protectedRerunsOnFailure: number;
 };
 
@@ -107,6 +125,8 @@ Options:
   --include-failed                      Reprocess files that were previously marked failed.
   --work-root <path>                    Working folder for reports and state (default: ./tmp/progressive-remediation)
   --state-path <path>                   Override default state path.
+  --worker-timeout-ms <360000>          Timeout for each worker attempt before marking it failed.
+  --safe-only                           Skip full-mode worker attempts; useful for bounded diagnostics.
   --help                                Show this help text
   `;
 }
@@ -124,6 +144,8 @@ function parseArgs(argv: string[]): RawArgs {
     checkProtected: true,
     includeFailed: false,
     maxRounds: 10,
+    workerTimeoutMs: 360_000,
+    safeOnly: false,
     protectedRerunsOnFailure: 1,
   };
 
@@ -177,11 +199,18 @@ function parseArgs(argv: string[]): RawArgs {
         opts.maxRounds = parseInt(next(i), 10);
         i += 1;
         break;
+      case '--worker-timeout-ms':
+        opts.workerTimeoutMs = parseInt(next(i), 10);
+        i += 1;
+        break;
       case '--no-delete':
         opts.keepSources = true;
         break;
       case '--no-protected-check':
         opts.checkProtected = false;
+        break;
+      case '--safe-only':
+        opts.safeOnly = true;
         break;
       case '--include-failed':
         opts.includeFailed = true;
@@ -229,6 +258,8 @@ function parseArgs(argv: string[]): RawArgs {
     protectedOverallRegressionTolerance: Math.max(0, opts.protectedOverallRegressionTolerance!),
     protectedCategoryRegressionTolerance: Math.max(0, opts.protectedCategoryRegressionTolerance!),
     maxRounds: Math.max(1, opts.maxRounds!),
+    workerTimeoutMs: Math.max(1_000, opts.workerTimeoutMs!),
+    safeOnly: opts.safeOnly!,
     protectedRerunsOnFailure: Math.max(0, opts.protectedRerunsOnFailure!),
   } as RawArgs;
 }
@@ -298,6 +329,11 @@ async function saveState(path: string, state: ProgressState): Promise<void> {
   await writeFile(path, JSON.stringify(state, null, 2), 'utf8');
 }
 
+async function saveProgress(path: string, payload: unknown): Promise<void> {
+  await ensureDir(dirname(path));
+  await writeFile(path, JSON.stringify(payload, null, 2), 'utf8');
+}
+
 async function loadState(path: string): Promise<ProgressState> {
   const previous = await loadJsonIfExists<ProgressState>(path);
   if (!previous) {
@@ -354,12 +390,26 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
   const tsxCli = resolve(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
   const worker = resolve(process.cwd(), 'scripts', 'progressive-remediation-worker.ts');
 
-  const attempts = [
-    { label: 'safe-10', maxRounds: cfg.maxRounds, safeMode: '1', retries: 2 },
-    { label: 'safe-1', maxRounds: 1, safeMode: '1', retries: 3 },
-    { label: 'full-10', maxRounds: cfg.maxRounds, safeMode: '0', retries: 1 },
-    { label: 'full-1', maxRounds: 1, safeMode: '0', retries: 1 },
-  ] as const;
+  const attempts = cfg.safeOnly
+    ? cfg.maxRounds <= 1
+      ? [
+          { label: 'safe-1', maxRounds: 1, safeMode: '1', retries: 1 },
+        ] as const
+      : [
+          { label: 'safe-10', maxRounds: cfg.maxRounds, safeMode: '1', retries: 2 },
+          { label: 'safe-1', maxRounds: 1, safeMode: '1', retries: 1 },
+        ] as const
+    : cfg.maxRounds <= 1
+      ? [
+          { label: 'safe-1', maxRounds: 1, safeMode: '1', retries: 1 },
+          { label: 'full-1', maxRounds: 1, safeMode: '0', retries: 1 },
+      ] as const
+    : [
+        { label: 'safe-10', maxRounds: cfg.maxRounds, safeMode: '1', retries: 2 },
+        { label: 'safe-1', maxRounds: 1, safeMode: '1', retries: 3 },
+        { label: 'full-10', maxRounds: cfg.maxRounds, safeMode: '0', retries: 1 },
+        { label: 'full-1', maxRounds: 1, safeMode: '0', retries: 1 },
+      ] as const;
   let lastError = `worker failed without output for ${filename}`;
   let lastStderr = '';
 
@@ -378,7 +428,7 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
       ], {
         stdio: ['ignore', 'pipe', 'pipe'],
         encoding: 'utf8',
-        timeout: 360_000,
+        timeout: cfg.workerTimeoutMs,
         maxBuffer: 32 * 1024 * 1024,
         env: {
           ...process.env,
@@ -410,6 +460,12 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
           lastError = `worker parse failure for ${filename} (${suffix}): ${(error as Error).message}`;
         }
         continue;
+      }
+
+      const timedOut = workerResult.signal === 'SIGTERM' || (workerResult.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+      if (timedOut) {
+        lastError = `worker timed out after ${cfg.workerTimeoutMs}ms in ${suffix}`;
+        break;
       }
 
       if (!workerResult.status) {
@@ -508,6 +564,18 @@ function toReportMd(run: BatchReport): string {
     if (run.protectedRecoveredWithRetry) {
       lines.push('- Protected regression failed first pass, but recovered on retry.');
     }
+    if (run.protectedRows && run.protectedRows.length > 0) {
+      lines.push('');
+      lines.push('## Protected files');
+      lines.push('| file | before | after | delta | weak-before | weak-after | status | note |');
+      lines.push('| --- | --- | --- | ---: | --- | --- | --- | --- |');
+      for (const r of run.protectedRows) {
+        const note = r.error ? r.error.replace(/\|/g, '/') : '';
+        lines.push(
+          `| ${basename(r.file)} | ${r.beforeScore}/${r.beforeGrade} | ${r.afterScore}/${r.afterGrade} | ${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(2)} | ${r.weakestBefore ?? ''} | ${r.weakestAfter ?? ''} | ${r.status} | ${note} |`,
+        );
+      }
+    }
   }
   lines.push('');
   lines.push('| file | before | after | delta | weak-before | weak-after | status | note |');
@@ -528,6 +596,7 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
   worstOverallRegression: number;
   analyzedCount: number;
   failedCount: number;
+  rows: ProtectedFileRecord[];
   attempts: number;
   recoveredWithRetry: boolean;
 }> {
@@ -540,35 +609,69 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
       worstOverallRegression: 0,
       analyzedCount: 0,
       failedCount: 0,
+      rows: [],
       attempts: 1,
       recoveredWithRetry: false,
     };
   }
 
-  const runOnce = async (): Promise<{
+  const runOnce = async (attemptNumber: number): Promise<{
     beforeMean: number;
     afterMean: number;
     worstCategoryRegression: number;
     worstOverallRegression: number;
     analyzedCount: number;
     failedCount: number;
+    rows: ProtectedFileRecord[];
   }> => {
-    const rows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
+    const rows: ProtectedFileRecord[] = [];
+    const analyzedRows: Array<{ before: AnalysisResult; after: AnalysisResult }> = [];
     let failedCount = 0;
-    for (const file of files) {
+    const batchDir = join(opts.workRoot, `batch-${String(batchNumber).padStart(3, '0')}`);
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]!;
+      console.log(`START protected attempt=${attemptNumber} ${index + 1}/${files.length}: ${basename(file)}`);
       const out = await runPipelineOnFile(file, cfg, false, llmReady, resolveWorkerDbPath('protected', opts.workRoot, batchNumber));
+      const row = {
+        file,
+        beforeScore: out.before.score,
+        beforeGrade: out.before.grade,
+        afterScore: out.after.score,
+        afterGrade: out.after.grade,
+        delta: out.after.score - out.before.score,
+        weakestBefore: weakestCategory(out.before),
+        weakestAfter: weakestCategory(out.after),
+        status: out.status,
+        ...(out.error ? { error: out.error } : {}),
+      } satisfies ProtectedFileRecord;
+      rows.push(row);
+      console.log(
+        `DONE protected attempt=${attemptNumber} ${index + 1}/${files.length}: ${basename(file)} status=${row.status} before=${row.beforeScore.toFixed(
+          2,
+        )} after=${row.afterScore.toFixed(2)} delta=${row.delta.toFixed(2)}${row.error ? ` note=${row.error}` : ''}`,
+      );
       if (out.status === 'ok') {
-        rows.push({ before: out.before, after: out.after });
+        analyzedRows.push({ before: out.before, after: out.after });
       } else {
         failedCount += 1;
       }
+      await saveProgress(join(batchDir, `protected-progress-attempt-${attemptNumber}.json`), {
+        phase: 'protected',
+        batch: batchNumber,
+        attempt: attemptNumber,
+        protectedDir: opts.protectedDir,
+        completedRows: rows.length,
+        totalRows: files.length,
+        rows,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
-    const beforeMean = mean(rows.map(r => r.before.score));
-    const afterMean = mean(rows.map(r => r.after.score));
+    const beforeMean = mean(analyzedRows.map(r => r.before.score));
+    const afterMean = mean(analyzedRows.map(r => r.after.score));
     const worstOverallRegression = beforeMean - afterMean;
     let worstCategoryRegression = 0;
-    for (const entry of rows) {
+    for (const entry of analyzedRows) {
       for (const reg of categoryRegression(entry.before, entry.after)) {
         if (reg.drop > worstCategoryRegression) worstCategoryRegression = reg.drop;
       }
@@ -578,8 +681,9 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
       afterMean,
       worstCategoryRegression,
       worstOverallRegression,
-      analyzedCount: rows.length,
+      analyzedCount: analyzedRows.length,
       failedCount,
+      rows,
     };
   };
 
@@ -598,10 +702,11 @@ async function evaluateProtectedCorpus(opts: RawArgs, cfg: RemediationConfig, ll
     worstOverallRegression: 0,
     analyzedCount: 0,
     failedCount: 0,
+    rows: [] as ProtectedFileRecord[],
   };
   for (let attempt = 0; attempt <= opts.protectedRerunsOnFailure; attempt += 1) {
     attempts += 1;
-    const summary = await runOnce();
+    const summary = await runOnce(attempts);
     lastSummary = summary;
     if (isPass(summary)) {
       return {
@@ -636,6 +741,8 @@ async function main(): Promise<void> {
   const cfg: RemediationConfig = {
     targetScore: opts.targetScore,
     maxRounds: opts.maxRounds,
+    workerTimeoutMs: opts.workerTimeoutMs,
+    safeOnly: opts.safeOnly,
     semanticFigurePasses: 1,
     semanticPromotePasses: 1,
     semanticTimeoutMs: 600_000,
@@ -666,9 +773,11 @@ async function main(): Promise<void> {
     const start = Date.now();
     const rows: FileRecord[] = [];
 
-    for (const pdfPath of batch) {
+    for (let index = 0; index < batch.length; index += 1) {
+      const pdfPath = batch[index]!;
+      console.log(`START public ${index + 1}/${batch.length}: ${basename(pdfPath)}`);
       const out = await runPipelineOnFile(pdfPath, cfg, allowSemantic, llmReady, batchDbPath);
-      rows.push({
+      const row = {
         file: pdfPath,
         beforeScore: out.before.score,
         beforeGrade: out.before.grade,
@@ -680,17 +789,37 @@ async function main(): Promise<void> {
         weakestAfter: weakestCategory(out.after),
         status: out.status,
         error: out.error,
-      });
+      } satisfies FileRecord;
+      rows.push(row);
+      console.log(
+        `DONE public ${index + 1}/${batch.length}: ${basename(pdfPath)} status=${row.status} before=${row.beforeScore.toFixed(
+          2,
+        )} after=${row.afterScore.toFixed(2)} delta=${row.delta.toFixed(2)} durationMs=${row.durationMs}${
+          row.error ? ` note=${row.error}` : ''
+        }`,
+      );
       state.processed[pdfPath] = {
         status: out.status,
         batch: state.batchCount + 1,
         ...(out.error ? { error: out.error } : {}),
       };
+      await saveProgress(join(batchDir, 'progress.json'), {
+        phase: 'public',
+        batch: state.batchCount + 1,
+        publicDir: opts.publicDir,
+        targetScore: cfg.targetScore,
+        maxRounds: cfg.maxRounds,
+        workerTimeoutMs: cfg.workerTimeoutMs,
+        safeOnly: cfg.safeOnly,
+        completedRows: rows.length,
+        totalRows: batch.length,
+        files: rows,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
-    const okRows = rows.filter(r => r.status === 'ok');
-    const beforeMean = mean(okRows.map(r => r.beforeScore));
-    const afterMean = mean(okRows.map(r => r.afterScore));
+    const beforeMean = mean(rows.map(r => r.beforeScore));
+    const afterMean = mean(rows.map(r => r.afterScore));
     const hasFailures = rows.some(r => r.status !== 'ok');
     const report: BatchReport = {
       batch: state.batchCount + 1,
@@ -712,6 +841,7 @@ async function main(): Promise<void> {
       report.protectedAfterMean = protectedSummary.afterMean;
       report.protectedAnalyzedCount = protectedSummary.analyzedCount;
       report.protectedFailedCount = protectedSummary.failedCount;
+      report.protectedRows = protectedSummary.rows;
       report.protectedWorstCategoryRegression = protectedSummary.worstCategoryRegression;
       report.protectedWorstOverallRegression = protectedSummary.worstOverallRegression;
       report.protectedCheckAttempts = protectedSummary.attempts;
