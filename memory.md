@@ -29,10 +29,26 @@
   - `git reset --hard origin/codex/windows-app`
   - `pnpm install`
   - `pnpm exec tsx scripts/progressive-remediation-cycle.ts --public-dir /home/hendo420/pdfaf-public-cycles/setXX/input --protected-dir <protected-orig-corpus-path> --batch-size 20 --iterations 1 --max-rounds 10 --target-score 93 --work-root /home/hendo420/it-goal-resume --no-delete`
-- If this fails protected, inspect:
+  - If this fails protected, inspect:
   - `cat /home/hendo420/it-goal-resume/batch-001/report.json`
   - `cat /home/hendo420/it-goal-resume/batch-001/report.md`
   - The new report now includes `protectedRows` and a `Protected category regressions` section.
+
+### Remote Access Bootstrap
+- If BatchMode authentication stays blocked, perform one-time key setup from this machine:
+  - Generate or use an existing local key and add the public half to remote:
+    - Local key (from this machine): `%USERPROFILE%\.ssh\pdfaf_work_ed25519`
+    - Remote add:
+      - `mkdir -p ~/.ssh`
+      - `cat >> ~/.ssh/authorized_keys` and paste the local `.pub` key contents
+  - Then test key auth:
+    - `ssh -i %USERPROFILE%\\.ssh\\pdfaf_work_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no hendo420@192.168.50.118 "hostname"`
+  - For CLI convenience, add `%USERPROFILE%\\.ssh\\config`:
+    - `Host pdfaf-work`
+    - `  HostName 192.168.50.118`
+    - `  User hendo420`
+    - `  IdentityFile ~/.ssh/pdfaf_work_ed25519`
+    - `  IdentitiesOnly yes`
 
 ### Current Cycle Behavior
 - Batch pass requires:
