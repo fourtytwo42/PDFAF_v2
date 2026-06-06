@@ -57,6 +57,7 @@ import {
   isProtectedZeroHeadingConvergence,
   isToolAllowedByRouteContract,
   maxFigureAltTargetsForRun,
+  maxRetagAsFigureTargetsForRun,
   planForRemediation,
 } from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
@@ -2842,6 +2843,10 @@ function fontEvidenceImproved(input: {
 
 function figureAltMutationAttemptCount(rows: AppliedRemediationTool[]): number {
   return rows.filter(row => row.toolName === 'set_figure_alt_text').length;
+}
+
+function retagAsFigureMutationAttemptCount(rows: AppliedRemediationTool[]): number {
+  return rows.filter(row => row.toolName === 'retag_as_figure').length;
 }
 
 function figureAltLiveAnalysisHasScoreOrPacVisibleGain(before: AnalysisResult, after: AnalysisResult): boolean {
@@ -9315,6 +9320,112 @@ export async function remediatePdf(
           noGainAttempts: sameStateNoGainRuntimeAttempts,
         })) {
           noteEarlyExit(runtimeSummary, `same_state_no_gain_runtime_cap:${liveTool.toolName}`);
+          continue;
+        }
+        if (liveTool.toolName === 'retag_as_figure') {
+          let activeRetagTool: PlannedRemediationTool | null = liveTool;
+          const attemptedRefs = new Set<string>();
+          while (
+            activeRetagTool &&
+            retagAsFigureMutationAttemptCount([...appliedTools, ...stageApplied]) < maxRetagAsFigureTargetsForRun(
+              workingAnalysis,
+              workingSnapshot,
+              [...appliedTools, ...stageApplied],
+            )
+          ) {
+            if (await returnVerifiedTimeoutCheckpoint('before_retag_as_figure_target', { beforeRiskyWork: true })) break;
+            const activeRef = typeof activeRetagTool.params['structRef'] === 'string'
+              ? activeRetagTool.params['structRef']
+              : null;
+            if (!activeRef) break;
+            if (attemptedRefs.has(activeRef)) {
+              noteEarlyExit(runtimeSummary, 'retag_as_figure_repeated_target');
+              break;
+            }
+            attemptedRefs.add(activeRef);
+
+            const beforeRetagAnalysis = workingAnalysis;
+            const activeRetagStateSignature = buildCurrentReplayStateSignature({
+              analysis: workingAnalysis,
+              snapshot: workingSnapshot,
+              params: activeRetagTool.params,
+            });
+            await reportRuntimeTrace({
+              kind: 'tool_start',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: activeRetagTool.toolName,
+              stateSignatureBefore: activeRetagStateSignature,
+              elapsedMs: Date.now() - started,
+            });
+            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeRetagTool, workingSnapshot, {
+              signal: options?.signal,
+            });
+            const effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
+            await reportRuntimeTrace({
+              kind: 'tool_finish',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: activeRetagTool.toolName,
+              outcome: effectiveOutcome,
+              durationMs,
+              stateSignatureBefore: activeRetagStateSignature,
+              ...(details ? { details } : {}),
+              elapsedMs: Date.now() - started,
+            });
+            buf = next;
+            stageApplied.push({
+              toolName: activeRetagTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              scoreBefore: stageStartScore,
+              scoreAfter: stageStartScore,
+              delta: 0,
+              outcome: effectiveOutcome,
+              details,
+              durationMs,
+              source: 'planner',
+            });
+            runtimeSummary.toolTimings.push({
+              toolName: activeRetagTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              source: 'planner',
+              durationMs,
+              outcome: effectiveOutcome,
+            });
+
+            if (effectiveOutcome !== 'applied') {
+              activeRetagTool = null;
+              break;
+            }
+
+            lastStageAnalysis = await runPlannerLiveAnalysis({
+              round,
+              stageNumber: stage.stageNumber,
+              context: 'figure_ownership_refresh',
+              toolName: activeRetagTool.toolName,
+              targetRef: activeRef,
+              scoreBefore: beforeRetagAnalysis.score,
+              run: () => reanalyzeBufferForMutation(buf, filename, 'pdfaf-rolemap-figure-retag', {
+                signal: options?.signal,
+              }),
+            });
+            lastAnalyzedBuffer = buf;
+            workingAnalysis = lastStageAnalysis.result;
+            workingSnapshot = lastStageAnalysis.snapshot;
+
+            const nextParams = buildDefaultParams(
+              'retag_as_figure',
+              workingAnalysis,
+              workingSnapshot,
+              [...appliedTools, ...stageApplied],
+            );
+            activeRetagTool = typeof nextParams['structRef'] === 'string' && nextParams['structRef'].length > 0
+              ? { ...activeRetagTool, params: nextParams }
+              : null;
+          }
+          if (verifiedCheckpointReturned) break;
           continue;
         }
         if (liveTool.toolName === 'set_figure_alt_text') {
