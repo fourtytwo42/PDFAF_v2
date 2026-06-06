@@ -75,6 +75,7 @@ import {
   shouldTryOcrPageShellHeadingRecovery,
   shouldTryOcrPageShellReadingOrderRecovery,
 } from './ocrPageShellHeading.js';
+import { shouldTryNativeReadingOrderTopup } from './nativeReadingOrderTopup.js';
 import {
   shouldTryStage165LinkParentTreeRepair,
   stage165LinkParentTreeBenefit,
@@ -2819,6 +2820,87 @@ async function reanalyzeBufferForMutation(
 
 function categoryScore(analysis: AnalysisResult, key: string): number | null {
   return analysis.categories.find(category => category.key === key)?.score ?? null;
+}
+
+function hasHighStableNonReadingResidualScores(analysis: AnalysisResult): boolean {
+  return (categoryScore(analysis, 'text_extractability') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'heading_structure') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'title_language') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'pdf_ua_compliance') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'alt_text') ?? 100) >= 90 &&
+    (categoryScore(analysis, 'table_markup') ?? 100) >= 90 &&
+    (categoryScore(analysis, 'link_quality') ?? 100) >= 90;
+}
+
+function hasReadingOrderParentLinksCap(analysis: AnalysisResult): boolean {
+  return (analysis.scoreCapsApplied ?? []).some(cap =>
+    cap.category === 'reading_order' &&
+    cap.rawScore >= 90 &&
+    cap.finalScore <= 79 &&
+    cap.reason.includes('pdfua.structure.parent_links_valid')
+  );
+}
+
+function hasStableParentLinkResidualScores(analysis: AnalysisResult): boolean {
+  return (categoryScore(analysis, 'text_extractability') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'heading_structure') ?? 0) >= 75 &&
+    (categoryScore(analysis, 'title_language') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'pdf_ua_compliance') ?? 0) >= 90 &&
+    (categoryScore(analysis, 'alt_text') ?? 100) >= 90 &&
+    (categoryScore(analysis, 'table_markup') ?? 100) >= 90 &&
+    (categoryScore(analysis, 'link_quality') ?? 100) >= 90;
+}
+
+function hasAcceptedDegenerateReadingOrderShellPostPass(
+  appliedTools?: Array<Pick<AppliedRemediationTool, 'toolName' | 'outcome' | 'details'>>,
+): boolean {
+  return appliedTools?.some(tool =>
+    tool.toolName === 'repair_degenerate_native_reading_order_shell' &&
+    tool.outcome === 'applied' &&
+    (tool.details?.includes('post_pass_degenerate_native_reading_order_shell') ?? false)
+  ) ?? false;
+}
+
+export function shouldTryDegenerateNativeReadingOrderPostPass(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  appliedTools?: Array<Pick<AppliedRemediationTool, 'toolName' | 'outcome'>>;
+}): boolean {
+  const { analysis, snapshot } = input;
+  if (analysis.score < 60 || analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  if (input.appliedTools?.some(tool =>
+    tool.toolName === 'repair_degenerate_native_reading_order_shell' && tool.outcome === 'applied'
+  )) {
+    return false;
+  }
+  if (!shouldTryNativeReadingOrderTopup(analysis, snapshot)) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) > 35) return false;
+  if (!hasHighStableNonReadingResidualScores(analysis)) return false;
+  if ((snapshot.taggedContentAudit?.orphanMcidCount ?? 0) > 0) return false;
+  if ((snapshot.detectionProfile?.pdfUaSignals?.orphanMcidCount ?? 0) > 0) return false;
+  return true;
+}
+
+export function shouldTryParentLinksAfterDegenerateReadingOrderPostPass(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  appliedTools?: Array<Pick<AppliedRemediationTool, 'toolName' | 'outcome' | 'details'>>;
+}): boolean {
+  const { analysis, snapshot } = input;
+  if (analysis.score < 85 || analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  if (!hasStableParentLinkResidualScores(analysis)) return false;
+  if (!hasReadingOrderParentLinksCap(analysis)) return false;
+  if ((snapshot.taggedContentAudit?.orphanMcidCount ?? 0) > 0) return false;
+  if ((snapshot.detectionProfile?.pdfUaSignals?.orphanMcidCount ?? 0) > 0) return false;
+  if ((snapshot.detectionProfile?.readingOrderSignals?.degenerateStructureTree ?? true) !== false) return false;
+  if ((snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? 0) < 4) return false;
+  if (!hasAcceptedDegenerateReadingOrderShellPostPass(input.appliedTools)) return false;
+  if (input.appliedTools?.some(tool =>
+    tool.toolName === 'repair_top_level_parent_links' && tool.outcome === 'applied'
+  )) {
+    return false;
+  }
+  return true;
 }
 
 function fontEvidenceImproved(input: {
@@ -6426,6 +6508,166 @@ async function applyOcrPageShellReadingOrderPostPass(args: {
   };
 }
 
+async function applyDegenerateNativeReadingOrderPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
+  const { filename, signal, round, protectedBaseline } = args;
+  const toolName = 'repair_degenerate_native_reading_order_shell';
+  if (!shouldTryDegenerateNativeReadingOrderPostPass({ analysis: currentAnalysis, snapshot: currentSnapshot, appliedTools })) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const params = buildDefaultParams(toolName, currentAnalysis, currentSnapshot, appliedTools);
+  const stageStarted = performance.now();
+  const { buffer: next, result } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: toolName, params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes(toolName)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const mutationDetails = pythonMutationDetails(result, toolName);
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'post_pass_degenerate_native_reading_order_shell',
+    mutation: parseMutationDetails(mutationDetails) ?? mutationDetails ?? null,
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName,
+    stage: 10,
+    round,
+    details,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer: next,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-native-reading',
+    protectedBaseline,
+  });
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 10,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: accepted.analysis.runtimeSummary?.totalMs ?? accepted.analysis.analysisDurationMs,
+    });
+  }
+  currentBuffer = accepted.buffer;
+  currentAnalysis = accepted.analysis;
+  currentSnapshot = accepted.snapshot;
+  return {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    accepted: accepted.accepted,
+  };
+}
+
+async function applyParentLinksAfterDegenerateReadingOrderPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
+  const { filename, signal, round, protectedBaseline } = args;
+  const toolName = 'repair_top_level_parent_links';
+  if (!shouldTryParentLinksAfterDegenerateReadingOrderPostPass({ analysis: currentAnalysis, snapshot: currentSnapshot, appliedTools })) {
+    if (!hasAcceptedDegenerateReadingOrderShellPostPass(appliedTools)) {
+      return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+    }
+    const confirmed = await reanalyzeBufferForMutation(
+      currentBuffer,
+      filename,
+      'pdfaf-native-reading-parent-link-admission',
+      { signal },
+    );
+    if (!shouldTryParentLinksAfterDegenerateReadingOrderPostPass({
+      analysis: confirmed.result,
+      snapshot: confirmed.snapshot,
+      appliedTools,
+    })) {
+      return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+    }
+    currentAnalysis = confirmed.result;
+    currentSnapshot = confirmed.snapshot;
+  }
+  const params = {
+    ...buildDefaultParams(toolName, currentAnalysis, currentSnapshot, appliedTools),
+    stage: 'post_pass_after_degenerate_native_reading_order_shell',
+  };
+  const stageStarted = performance.now();
+  const { buffer: next, result } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: toolName, params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes(toolName)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const mutationDetails = pythonMutationDetails(result, toolName);
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'post_pass_parent_links_after_degenerate_native_reading_order_shell',
+    mutation: parseMutationDetails(mutationDetails) ?? mutationDetails ?? null,
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName,
+    stage: 10,
+    round,
+    details,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer: next,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-native-reading-parent-links',
+    protectedBaseline,
+  });
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 10,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: accepted.analysis.runtimeSummary?.totalMs ?? accepted.analysis.analysisDurationMs,
+    });
+  }
+  currentBuffer = accepted.buffer;
+  currentAnalysis = accepted.analysis;
+  currentSnapshot = accepted.snapshot;
+  return {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    accepted: accepted.accepted,
+  };
+}
+
 type PostPassTracePhaseRunner = <T>(phase: string, run: () => Promise<T>) => Promise<T>;
 
 /** Metadata, bookmarks, optional font embed — shared by main remediate and playbook replay. */
@@ -6820,6 +7062,40 @@ async function applyTaggedCleanupPostPasses(args: {
     });
     if (shouldBreak) break;
   }
+
+  await tracePhase('degenerate_native_reading_order_shell', async () => {
+    const repaired = await applyDegenerateNativeReadingOrderPostPass({
+      filename,
+      signal,
+      round,
+      currentBuffer: buffer,
+      currentAnalysis: analysis,
+      currentSnapshot: snapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline,
+    });
+    buffer = repaired.buffer;
+    analysis = repaired.analysis;
+    snapshot = repaired.snapshot;
+  });
+
+  await tracePhase('parent_links_after_degenerate_native_reading_order_shell', async () => {
+    const repaired = await applyParentLinksAfterDegenerateReadingOrderPostPass({
+      filename,
+      signal,
+      round,
+      currentBuffer: buffer,
+      currentAnalysis: analysis,
+      currentSnapshot: snapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline,
+    });
+    buffer = repaired.buffer;
+    analysis = repaired.analysis;
+    snapshot = repaired.snapshot;
+  });
 
   return { buffer, analysis, snapshot };
 }

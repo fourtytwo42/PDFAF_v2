@@ -47,6 +47,8 @@ import {
   shouldConfirmMetadataOnlyStructuralVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
   shouldTryAllInputDegenerateNativeSequence,
+  shouldTryDegenerateNativeReadingOrderPostPass,
+  shouldTryParentLinksAfterDegenerateReadingOrderPostPass,
   shouldTryAllInputProposalBufferSequence,
   shouldTryAllInputTableStructureHeaderSequence,
   shouldSoftStopForCumulativeReanalysis,
@@ -445,6 +447,132 @@ describe('all-input heading annotation sequence trigger', () => {
       filename: '4646-youth-development-an-overview.pdf',
       toolName: 'create_heading_from_candidate',
       outcome: 'rejected',
+    })).toBe(false);
+  });
+});
+
+describe('degenerate native reading-order post-pass admission', () => {
+  function row06LikeResidual(): { analysis: AnalysisResult; snapshot: DocumentSnapshot } {
+    const snapshot = makeSnapshot({ depth: 2 });
+    snapshot.detectionProfile = {
+      ...snapshot.detectionProfile!,
+      readingOrderSignals: {
+        ...snapshot.detectionProfile!.readingOrderSignals,
+        structureTreeDepth: 2,
+        degenerateStructureTree: true,
+      },
+    };
+    snapshot.taggedContentAudit = {
+      orphanMcidCount: 0,
+      mcidTextSpanCount: 16,
+      suspectedPathPaintOutsideMc: 0,
+    };
+    snapshot.paragraphStructElems = [{ tag: 'P', text: 'Readable body text', page: 0, structRef: '11 0 R' }];
+    const analysis = makeAnalysis({
+      score: 69,
+      categories: {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 95,
+        pdf_ua_compliance: 100,
+        reading_order: 35,
+        alt_text: 100,
+        table_markup: 100,
+        link_quality: 100,
+      },
+    });
+    return { analysis, snapshot };
+  }
+
+  it('admits high-confidence residual shallow native shells', () => {
+    const { analysis, snapshot } = row06LikeResidual();
+
+    expect(shouldTryDegenerateNativeReadingOrderPostPass({ analysis, snapshot })).toBe(true);
+  });
+
+  it('blocks low-score, non-reading residuals and already-applied shell repairs', () => {
+    const { analysis, snapshot } = row06LikeResidual();
+    const tableDebt = makeAnalysis({
+      score: 69,
+      categories: {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 95,
+        pdf_ua_compliance: 100,
+        reading_order: 35,
+        alt_text: 100,
+        table_markup: 80,
+        link_quality: 100,
+      },
+    });
+    const lowScore = makeAnalysis({
+      score: 59,
+      categories: {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 95,
+        pdf_ua_compliance: 100,
+        reading_order: 35,
+        alt_text: 100,
+        table_markup: 100,
+        link_quality: 100,
+      },
+    });
+
+    expect(shouldTryDegenerateNativeReadingOrderPostPass({ analysis: tableDebt, snapshot })).toBe(false);
+    expect(shouldTryDegenerateNativeReadingOrderPostPass({ analysis: lowScore, snapshot })).toBe(false);
+    expect(shouldTryDegenerateNativeReadingOrderPostPass({
+      analysis,
+      snapshot,
+      appliedTools: [makePostPassTool({ toolName: 'repair_degenerate_native_reading_order_shell' })],
+    })).toBe(false);
+  });
+
+  it('admits parent-link cleanup only after the shell post-pass leaves a parent-link cap', () => {
+    const { snapshot } = row06LikeResidual();
+    snapshot.detectionProfile = {
+      ...snapshot.detectionProfile!,
+      readingOrderSignals: {
+        ...snapshot.detectionProfile!.readingOrderSignals,
+        structureTreeDepth: 4,
+        degenerateStructureTree: false,
+      },
+    };
+    const capped = makeAnalysis({
+      score: 87,
+      categories: {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 78,
+        pdf_ua_compliance: 100,
+        reading_order: 79,
+        alt_text: 100,
+        table_markup: 100,
+        link_quality: 100,
+      },
+      scoreCapsApplied: [{
+        category: 'reading_order',
+        cap: 79,
+        rawScore: 96,
+        finalScore: 79,
+        reason: 'PAC rule failure: pdfua.structure.parent_links_valid',
+      }],
+    });
+    const shellTool = makePostPassTool({
+      toolName: 'repair_degenerate_native_reading_order_shell',
+      details: 'post_pass_degenerate_native_reading_order_shell',
+    });
+
+    expect(shouldTryParentLinksAfterDegenerateReadingOrderPostPass({
+      analysis: capped,
+      snapshot,
+      appliedTools: [shellTool],
+    })).toBe(true);
+    expect(shouldTryParentLinksAfterDegenerateReadingOrderPostPass({ analysis: capped, snapshot })).toBe(false);
+    expect(shouldTryParentLinksAfterDegenerateReadingOrderPostPass({
+      analysis: capped,
+      snapshot,
+      appliedTools: [shellTool, makePostPassTool({ toolName: 'repair_top_level_parent_links' })],
     })).toBe(false);
   });
 });
