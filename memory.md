@@ -190,3 +190,26 @@
 
 ## Last Known Goal State (2026-05-31)
 - Current active system goal is to continue iterative public corpus remediation with a 93 mean target and regression safeguards before larger merges.
+
+## 2026-06-06 (continued)
+- Root-cause analysis from local cycle artifacts:
+  - Multiple failed protected gates were tied to one regression vector:
+    - `pdf_ua_compliance` dropped from `96` to `83` on variants of `2203.08518.pdf` and on `pd-regr-1780243604961-762d8ff37b0a8.pdf`.
+  - This maps to finalization mutations and was visible in historical reports:
+    - `tmp-cycle-protected-check/batch-001`
+    - `tmp-cycle-20x/batch-001`
+    - `tmp-cycle-iterative-1/batch-001`
+    - `tmp-goal-20-cycle-14/batch-001`
+    - `tmp-goal-20-cycle-test/batch-001`
+- Implemented in this session:
+  - `src/services/remediation/orchestrator.ts`: added score regression gating for post-pass finalization steps (`set_document_title`, bookmark finalization, `embed_urw_type1_substitutes`, `embed_fonts_ghostscript`, and `set_pdfua_identification`) so a mutation is kept only when local score does not decrease.
+  - Added shared `analyzePdfBuffer` and `acceptIfNoRegression` helpers.
+  - Added `scripts/summarize-progressive-cycles.ts` + `progressive:cycles:summary` to normalize quick review of report artifacts.
+- Validation status:
+  - Local type-check remains clean (`npm.cmd run lint`).
+  - Local vitest execution remains blocked in this environment due config-load/permission errors (`Access is denied` on `../../../..`), so remediation efficacy is still pending remote protected/public re-run.
+- Next required step (remote):
+  - Re-run a protected-guarded `--public-dir` batch (`20` files) and confirm:
+    - `protectedWorstCategoryRegression` <= configured tolerance,
+    - `protectedWorstOverallRegression` <= `0`.
+  - This will close the evidence gap from this code-path fix and allow commit/push handoff.

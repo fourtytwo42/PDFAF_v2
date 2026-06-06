@@ -42,6 +42,7 @@
     "icjia:aggregate-findings": "tsx scripts/icjia-aggregate-findings.ts",
     "openapi:validate": "swagger-cli validate openapi.yaml",
     "progressive:cycle": "tsx scripts/progressive-remediation-cycle.ts",
+    "progressive:cycles:summary": "tsx scripts/summarize-progressive-cycles.ts",
     "docker:up": "docker compose up --build",
     "docker:llm": "docker compose up llm -d --build"
   },

@@ -204,6 +204,76 @@ function recordToolOutcomes(
   }
 }
 
+async function analyzePdfBuffer(
+  filename: string,
+  buf: Buffer,
+): Promise<Awaited<ReturnType<typeof analyzePdf>>> {
+  const tmpPath = join(tmpdir(), `pdfaf-analyze-${randomUUID()}.pdf`);
+  await writeFile(tmpPath, buf);
+  try {
+    return await analyzePdf(tmpPath, filename);
+  } finally {
+    await unlink(tmpPath).catch(() => {});
+  }
+}
+
+async function acceptIfNoRegression(args: {
+  filename: string;
+  currentScore: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  candidateBuffer: Buffer;
+  appliedTools: AppliedRemediationTool[];
+  toolName: AppliedRemediationTool['toolName'];
+  stage: number;
+  round: number;
+  details: string;
+}): Promise<{
+  accepted: boolean;
+  buffer: Buffer;
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+}> {
+  if (args.candidateBuffer.equals(args.currentBuffer)) {
+    return {
+      accepted: false,
+      buffer: args.currentBuffer,
+      analysis: args.currentAnalysis,
+      snapshot: args.currentSnapshot,
+    };
+  }
+
+  const analysis = await analyzePdfBuffer(args.filename, args.candidateBuffer);
+  if (analysis.result.score < args.currentScore) {
+    return {
+      accepted: false,
+      buffer: args.currentBuffer,
+      analysis: args.currentAnalysis,
+      snapshot: args.currentSnapshot,
+    };
+  }
+
+  const scoreAfter = analysis.result.score;
+  args.appliedTools.push({
+    toolName: args.toolName,
+    stage: args.stage,
+    round: args.round,
+    scoreBefore: args.currentScore,
+    scoreAfter,
+    delta: scoreAfter - args.currentScore,
+    outcome: 'applied',
+    details: args.details,
+  });
+
+  return {
+    accepted: true,
+    buffer: args.candidateBuffer,
+    analysis: analysis.result,
+    snapshot: analysis.snapshot,
+  };
+}
+
 /** StructTreeRoot + native/OCR text MCID tagging — run before alt repair and PAC-style checks. */
 async function applyAccessibilityStructureEnsure(args: {
   filename: string;
@@ -275,35 +345,27 @@ async function applyIcjiaDocumentFinalization(args: {
   let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools } = args;
   const { filename, signal, round } = args;
 
-  const reanalyzeFinal = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
-    const tmpPath = join(tmpdir(), `pdfaf-fin-${randomUUID()}.pdf`);
-    await writeFile(tmpPath, buf);
-    try {
-      return await analyzePdf(tmpPath, filename);
-    } finally {
-      await unlink(tmpPath).catch(() => {});
-    }
-  };
-
   if (!currentSnapshot.metadata.title?.trim()) {
     const title = filename.replace(/\.pdf$/i, '').slice(0, 500);
     const scoreBeforeT = currentAnalysis.score;
     const next = await metadataTools.setDocumentTitle(currentBuffer, title);
-    if (!next.equals(currentBuffer)) {
-      currentBuffer = next;
-      const an = await reanalyzeFinal(currentBuffer);
-      currentAnalysis = an.result;
-      currentSnapshot = an.snapshot;
-      appliedTools.push({
-        toolName: 'set_document_title',
-        stage: 11,
-        round,
-        scoreBefore: scoreBeforeT,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeT,
-        outcome: 'applied',
-        details: 'post_pass_missing_metadata_title',
-      });
+    const titleCandidate = await acceptIfNoRegression({
+      filename,
+      currentScore: scoreBeforeT,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      candidateBuffer: next,
+      appliedTools,
+      toolName: 'set_document_title',
+      stage: 11,
+      round,
+      details: 'post_pass_missing_metadata_title',
+    });
+    if (titleCandidate.accepted) {
+      currentBuffer = titleCandidate.buffer;
+      currentAnalysis = titleCandidate.analysis;
+      currentSnapshot = titleCandidate.snapshot;
     }
   }
 
@@ -335,20 +397,24 @@ async function applyIcjiaDocumentFinalization(args: {
       }
     }
     if (bmApplied) {
-      currentBuffer = bmBuf;
-      const an = await reanalyzeFinal(currentBuffer);
-      currentAnalysis = an.result;
-      currentSnapshot = an.snapshot;
-      appliedTools.push({
+      const bookmarkCandidate = await acceptIfNoRegression({
+        filename,
+        currentScore: scoreBeforeBm,
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        candidateBuffer: bmBuf,
+        appliedTools,
         toolName: 'post_pass_bookmarks',
         stage: 11,
         round,
-        scoreBefore: scoreBeforeBm,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeBm,
-        outcome: 'applied',
         details: 'outline_or_headings_bookmarks',
       });
+      if (bookmarkCandidate.accepted) {
+        currentBuffer = bookmarkCandidate.buffer;
+        currentAnalysis = bookmarkCandidate.analysis;
+        currentSnapshot = bookmarkCandidate.snapshot;
+      }
     }
   }
 
@@ -360,40 +426,48 @@ async function applyIcjiaDocumentFinalization(args: {
       { signal },
     );
     if (urw.result.success && urw.result.applied.includes('embed_urw_type1_substitutes')) {
-      currentBuffer = urw.buffer;
-      const an = await reanalyzeFinal(currentBuffer);
-      currentAnalysis = an.result;
-      currentSnapshot = an.snapshot;
-      appliedTools.push({
+      const urwCandidate = await acceptIfNoRegression({
+        filename,
+        currentScore: scoreBeforeUrw,
+        currentBuffer,
+        currentAnalysis,
+        currentSnapshot,
+        candidateBuffer: urw.buffer,
+        appliedTools,
         toolName: 'embed_urw_type1_substitutes',
         stage: 11,
         round,
-        scoreBefore: scoreBeforeUrw,
-        scoreAfter: currentAnalysis.score,
-        delta: currentAnalysis.score - scoreBeforeUrw,
-        outcome: 'applied',
         details: 'urw_base35_embed_legacy_type1',
       });
+      if (urwCandidate.accepted) {
+        currentBuffer = urwCandidate.buffer;
+        currentAnalysis = urwCandidate.analysis;
+        currentSnapshot = urwCandidate.snapshot;
+      }
     }
   }
 
   const gsBuf = await embedFontsWithGhostscript(currentBuffer, currentSnapshot);
   if (gsBuf && !gsBuf.equals(currentBuffer)) {
     const scoreBeforeGs = currentAnalysis.score;
-    currentBuffer = gsBuf;
-    const an = await reanalyzeFinal(currentBuffer);
-    currentAnalysis = an.result;
-    currentSnapshot = an.snapshot;
-    appliedTools.push({
+    const gsCandidate = await acceptIfNoRegression({
+      filename,
+      currentScore: scoreBeforeGs,
+      currentBuffer,
+      currentAnalysis,
+      currentSnapshot,
+      candidateBuffer: gsBuf,
+      appliedTools,
       toolName: 'embed_fonts_ghostscript',
       stage: 12,
       round,
-      scoreBefore: scoreBeforeGs,
-      scoreAfter: currentAnalysis.score,
-      delta: currentAnalysis.score - scoreBeforeGs,
-      outcome: 'applied',
       details: 'optional_gs_font_embed',
     });
+    if (gsCandidate.accepted) {
+      currentBuffer = gsCandidate.buffer;
+      currentAnalysis = gsCandidate.analysis;
+      currentSnapshot = gsCandidate.snapshot;
+    }
   }
 
   return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot };
@@ -840,16 +914,6 @@ export async function remediatePdf(
   // other tools; drain orphan MCIDs beyond the first successful remap in the planner loop.
   if (currentSnapshot.isTagged) {
     await reportProgress(84, 'Running final cleanup');
-    const reanalyzeAfterBuffer = async (buf: Buffer): Promise<Awaited<ReturnType<typeof analyzePdf>>> => {
-      const tmpPath = join(tmpdir(), `pdfaf-post-${randomUUID()}.pdf`);
-      await writeFile(tmpPath, buf);
-      try {
-        return await analyzePdf(tmpPath, filename);
-      } finally {
-        await unlink(tmpPath).catch(() => {});
-      }
-    };
-
     // OCRmyPDF often preserves PDF/UA XMP but strips /ViewerPreferences; Acrobat then fails DocTitle.
     // Re-run identification whenever UA metadata is missing *or* OCR rewrote the file.
     const ocrRewrotePdf = appliedTools.some(
@@ -866,20 +930,25 @@ export async function remediatePdf(
       );
       if (uaRes.success && uaRes.applied.includes('set_pdfua_identification')) {
         const scoreBeforeUa = currentAnalysis.score;
-        currentBuffer = stamped;
-        const uaAn = await reanalyzeAfterBuffer(currentBuffer);
-        currentAnalysis = uaAn.result;
-        currentSnapshot = uaAn.snapshot;
-        appliedTools.push({
+        const roundForUa = rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1;
+        const uaCandidate = await acceptIfNoRegression({
+          filename,
+          currentScore: scoreBeforeUa,
+          currentBuffer,
+          currentAnalysis,
+          currentSnapshot,
+          candidateBuffer: stamped,
+          appliedTools,
           toolName: 'set_pdfua_identification',
           stage: 10,
-          round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
-          scoreBefore: scoreBeforeUa,
-          scoreAfter: currentAnalysis.score,
-          delta: currentAnalysis.score - scoreBeforeUa,
-          outcome: 'applied',
+          round: roundForUa,
           details: 'post_pass_pdfua_xmp',
         });
+        if (uaCandidate.accepted) {
+          currentBuffer = uaCandidate.buffer;
+          currentAnalysis = uaCandidate.analysis;
+          currentSnapshot = uaCandidate.snapshot;
+        }
       }
     }
 
@@ -897,7 +966,7 @@ export async function remediatePdf(
       if (!drRes.success || !drRes.applied.includes('remap_orphan_mcids_as_artifacts')) break;
       const scoreBeforeDr = currentAnalysis.score;
       currentBuffer = drained;
-      const drAn = await reanalyzeAfterBuffer(currentBuffer);
+      const drAn = await analyzePdfBuffer(filename, currentBuffer);
       const orphanAfter = drAn.snapshot.taggedContentAudit?.orphanMcidCount ?? 0;
       if (drAn.result.score < scoreBeforeDr || orphanAfter >= orphanN) {
         currentBuffer = prePassBuffer;
