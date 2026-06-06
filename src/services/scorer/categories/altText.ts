@@ -6,11 +6,46 @@ import {
   CATEGORY_BASE_WEIGHTS,
 } from '../../../config.js';
 import { isWeakFigureAlt } from '../altTextHeuristics.js';
-import { treeFigureMissingRequiresAltCap } from '../figureAltCoverage.js';
+import {
+  checkerVisibleFigureTargets,
+  treeFigureMissingRequiresAltCap,
+} from '../figureAltCoverage.js';
+
+type AltTextFigureCandidate = DocumentSnapshot['figures'][number];
+
+function informativeAltFigureCandidates(snap: DocumentSnapshot): AltTextFigureCandidate[] {
+  const out: AltTextFigureCandidate[] = [];
+  const seenStructRefs = new Set<string>();
+  const addCandidate = (candidate: AltTextFigureCandidate): void => {
+    if (candidate.isArtifact) return;
+    const structRef = candidate.structRef?.trim();
+    if (structRef) {
+      if (seenStructRefs.has(structRef)) return;
+      seenStructRefs.add(structRef);
+    }
+    out.push(candidate);
+  };
+
+  for (const figure of snap.figures) addCandidate(figure);
+  for (const target of checkerVisibleFigureTargets(snap)) {
+    addCandidate({
+      hasAlt: target.hasAlt,
+      altText: target.altText,
+      isArtifact: target.isArtifact,
+      page: target.page,
+      role: target.resolvedRole ?? target.role,
+      structRef: target.structRef,
+      reachable: target.reachable,
+      directContent: target.directContent,
+      subtreeMcids: target.subtreeMcids,
+      parentPath: target.parentPath,
+    });
+  }
+  return out;
+}
 
 export function scoreAltText(snap: DocumentSnapshot): ScoredCategory {
-  const allFigures = snap.figures;
-  const informativeFigures = allFigures.filter(f => !f.isArtifact);
+  const informativeFigures = informativeAltFigureCandidates(snap);
   const otherMissing = snap.annotationAccessibility?.nonLinkAnnotationsMissingContents ?? 0;
   const risks = snap.acrobatStyleAltRisks;
   const figureSignals = snap.detectionProfile?.figureSignals;

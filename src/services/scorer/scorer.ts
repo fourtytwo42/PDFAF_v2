@@ -28,6 +28,7 @@ import { scoreFormAccessibility }  from './categories/formAccessibility.js';
 import { finalizeScoringEvidence } from './finalizeEvidence.js';
 import {
   hasCheckerVisibleFigureAltDebt,
+  checkerVisibleFigureTargets,
   treeFigureMissingRequiresAltCap,
 } from './figureAltCoverage.js';
 
@@ -169,7 +170,10 @@ function buildLegalPdfStrictProfile(
     applyCap(59, 'critical', 'no_real_headings');
   }
 
-  const informativeFigureCount = snap.figures.filter(figure => !figure.isArtifact).length;
+  const extractedInformativeFigureCount = snap.figures.filter(figure => !figure.isArtifact).length;
+  const informativeFigureCount = extractedInformativeFigureCount > 0
+    ? extractedInformativeFigureCount
+    : checkerVisibleFigureTargets(snap).length;
   const altText = byKey.get('alt_text');
   const hasCheckerFigureOwnershipDebt =
     hasCheckerVisibleFigureAltDebt(snap) ||

@@ -140,6 +140,31 @@ describe('Stage 40 legal_pdf_strict_v2 policy', () => {
     expect(result.scoreProfile.criticalBlockers).toContain('no_real_headings');
   });
 
+  it('scores checker-visible figure targets when extracted figures are missing', () => {
+    const result = score(makeSnap({
+      figures: [],
+      checkerFigureTargets: [
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 1,
+          role: 'Figure',
+          resolvedRole: 'Figure',
+          structRef: '10_0',
+          reachable: true,
+          directContent: true,
+          parentPath: ['Document'],
+        },
+      ],
+    }), META);
+    const alt = result.categories.find(c => c.key === 'alt_text')!;
+    expect(alt.applicable).toBe(true);
+    expect(alt.score).toBe(0);
+    expect(alt.findings.some(f => f.message.includes('lack alternative text'))).toBe(true);
+    expect(result.score).toBeLessThanOrEqual(59);
+    expect(result.scoreProfile.criticalBlockers).toContain('no_checker_visible_alt_on_informative_figures');
+  });
+
   it('does not fail single-page body text solely for missing headings', () => {
     const result = score(makeSnap({
       pageCount: 1,
