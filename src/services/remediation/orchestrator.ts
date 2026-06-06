@@ -39,6 +39,7 @@ import { embedFontsWithGhostscript, shouldTryUrwType1Embed } from './fontEmbed.j
 export { applyPostRemediationAltRepair } from './altStructureRepair.js';
 
 const implemented = new Set<string>(REMEDIATION_IMPLEMENTED_TOOLS);
+const POST_PASS_MAX_CATEGORY_REGRESSION = 1;
 
 function filterPlan(plan: RemediationPlan): RemediationPlan {
   return {
@@ -79,6 +80,21 @@ function buildOcrPipelineSummary(tools: AppliedRemediationTool[]): OcrPipelineSu
 
 async function bufferSha256(buf: Buffer): Promise<string> {
   return createHash('sha256').update(buf).digest('hex');
+}
+
+function maxCategoryRegression(before: AnalysisResult, after: AnalysisResult): number {
+  const beforeByKey = new Map(before.categories.map(c => [c.key, c.score]));
+  let worst = 0;
+  for (const afterCategory of after.categories) {
+    if (!afterCategory.applicable) continue;
+    const previous = beforeByKey.get(afterCategory.key);
+    if (previous === undefined) continue;
+    const drop = previous - afterCategory.score;
+    if (drop > worst) {
+      worst = drop;
+    }
+  }
+  return Number.isFinite(worst) ? worst : 0;
 }
 
 export async function runSingleTool(
@@ -220,6 +236,7 @@ async function analyzePdfBuffer(
 async function acceptIfNoRegression(args: {
   filename: string;
   currentScore: number;
+  maxCategoryRegression?: number;
   currentBuffer: Buffer;
   currentAnalysis: AnalysisResult;
   currentSnapshot: DocumentSnapshot;
@@ -245,6 +262,17 @@ async function acceptIfNoRegression(args: {
   }
 
   const analysis = await analyzePdfBuffer(args.filename, args.candidateBuffer);
+  const maxCategoryDrop = maxCategoryRegression(args.currentAnalysis, analysis.result);
+  const allowedCategoryDrop = args.maxCategoryRegression ?? POST_PASS_MAX_CATEGORY_REGRESSION;
+  if (maxCategoryDrop > allowedCategoryDrop) {
+    return {
+      accepted: false,
+      buffer: args.currentBuffer,
+      analysis: args.currentAnalysis,
+      snapshot: args.currentSnapshot,
+    };
+  }
+
   if (analysis.result.score < args.currentScore) {
     return {
       accepted: false,

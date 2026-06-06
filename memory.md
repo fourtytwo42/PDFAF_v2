@@ -213,3 +213,13 @@
     - `protectedWorstCategoryRegression` <= configured tolerance,
     - `protectedWorstOverallRegression` <= `0`.
   - This will close the evidence gap from this code-path fix and allow commit/push handoff.
+
+## 2026-06-06 (category regression hardening)
+- Added an additional local regression guard in `acceptIfNoRegression`:
+  - In post-pass gating, candidate mutations are now rejected if any applicable category drops by more than `1` point, even when overall score is unchanged or improved.
+  - This specifically targets the historical `pdf_ua_compliance` deep drops seen in protected runs while avoiding regressions masked by unrelated score gains.
+- File changed:
+  - [src/services/remediation/orchestrator.ts](/C:/Users/hendo420/OneDrive/Documents/GitHub/PDFAF_v2/src/services/remediation/orchestrator.ts): added `POST_PASS_MAX_CATEGORY_REGRESSION` and `maxCategoryRegression` checks inside `acceptIfNoRegression`.
+- Validation status:
+  - Type check pass: `tsc -p tsconfig.json --noEmit`.
+  - Remote guarded 20-file public/protected cycle still blocked by SSH key/host-context access in this environment.
