@@ -50,6 +50,7 @@ import {
   shouldTryDegenerateNativeReadingOrderPostPass,
   shouldTryParentLinksAfterDegenerateReadingOrderPostPass,
   shouldTryLateParentLinksReadingOrderPostPass,
+  shouldTryParentLinksBeforeOrphanDrainPostPass,
   shouldTryAllInputProposalBufferSequence,
   shouldTryAllInputTableStructureHeaderSequence,
   shouldSoftStopForCumulativeReanalysis,
@@ -566,6 +567,106 @@ describe('degenerate native reading-order post-pass admission', () => {
     expect(shouldTryLateParentLinksReadingOrderPostPass({
       analysis: capped,
       snapshot: { ...snapshot, taggedContentAudit: { ...snapshot.taggedContentAudit!, orphanMcidCount: 1 } },
+    })).toBe(false);
+  });
+
+  it('admits parent-link cleanup before orphan drain for near-pass parent-link and orphan residuals', () => {
+    const snapshot = makeSnapshot({ depth: 4 });
+    snapshot.taggedContentAudit = {
+      orphanMcidCount: 64,
+      mcidTextSpanCount: 128,
+      suspectedPathPaintOutsideMc: 0,
+    };
+    snapshot.detectionProfile!.pdfUaSignals = {
+      ...snapshot.detectionProfile!.pdfUaSignals,
+      orphanMcidCount: 64,
+    };
+    const capped = makeAnalysis({
+      score: 92,
+      categories: {
+        text_extractability: 96,
+        title_language: 100,
+        heading_structure: 95,
+        pdf_ua_compliance: 67,
+        reading_order: 79,
+        alt_text: 100,
+        table_markup: 100,
+        link_quality: 100,
+      },
+      scoreCapsApplied: [{
+        category: 'reading_order',
+        cap: 79,
+        rawScore: 96,
+        finalScore: 79,
+        reason: 'PAC rule failure: pdfua.structure.parent_links_valid',
+      }],
+    });
+
+    expect(shouldTryParentLinksBeforeOrphanDrainPostPass({ analysis: capped, snapshot })).toBe(true);
+    expect(shouldTryParentLinksBeforeOrphanDrainPostPass({
+      analysis: capped,
+      snapshot,
+      appliedTools: [makePostPassTool({ toolName: 'repair_top_level_parent_links' })],
+    })).toBe(false);
+    expect(shouldTryParentLinksBeforeOrphanDrainPostPass({
+      analysis: capped,
+      snapshot: {
+        ...snapshot,
+        taggedContentAudit: { ...snapshot.taggedContentAudit!, orphanMcidCount: 0 },
+        detectionProfile: {
+          ...snapshot.detectionProfile!,
+          pdfUaSignals: { ...snapshot.detectionProfile!.pdfUaSignals, orphanMcidCount: 0 },
+        },
+      },
+    })).toBe(false);
+    expect(shouldTryParentLinksBeforeOrphanDrainPostPass({
+      analysis: makeAnalysis({
+        ...capped,
+        score: 87,
+        categories: {
+          text_extractability: 96,
+          title_language: 100,
+          heading_structure: 78,
+          pdf_ua_compliance: 67,
+          reading_order: 79,
+          alt_text: 100,
+          table_markup: 100,
+          link_quality: 100,
+        },
+        scoreCapsApplied: capped.scoreCapsApplied,
+      }),
+      snapshot,
+    })).toBe(false);
+    expect(shouldTryParentLinksBeforeOrphanDrainPostPass({
+      analysis: makeAnalysis({
+        ...capped,
+        score: 88,
+        categories: {
+          text_extractability: 96,
+          title_language: 100,
+          heading_structure: 95,
+          pdf_ua_compliance: 57,
+          reading_order: 79,
+          alt_text: 100,
+          table_markup: 100,
+          link_quality: 100,
+        },
+        scoreCapsApplied: capped.scoreCapsApplied,
+      }),
+      snapshot,
+    })).toBe(false);
+    expect(shouldTryParentLinksBeforeOrphanDrainPostPass({
+      analysis: capped,
+      snapshot: {
+        ...snapshot,
+        detectionProfile: {
+          ...snapshot.detectionProfile!,
+          readingOrderSignals: {
+            ...snapshot.detectionProfile!.readingOrderSignals,
+            annotationStructParentRiskCount: 1,
+          },
+        },
+      },
     })).toBe(false);
   });
 

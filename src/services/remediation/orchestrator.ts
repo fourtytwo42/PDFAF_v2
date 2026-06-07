@@ -2932,6 +2932,38 @@ export function shouldTryLateParentLinksReadingOrderPostPass(input: {
   return true;
 }
 
+export function shouldTryParentLinksBeforeOrphanDrainPostPass(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  appliedTools?: Array<Pick<AppliedRemediationTool, 'toolName' | 'outcome'>>;
+}): boolean {
+  const { analysis, snapshot } = input;
+  if (analysis.score < 90 || analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  if ((categoryScore(analysis, 'text_extractability') ?? 0) < 90) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 0) < 90) return false;
+  if ((categoryScore(analysis, 'title_language') ?? 0) < 90) return false;
+  if ((categoryScore(analysis, 'pdf_ua_compliance') ?? 0) < 67) return false;
+  if ((categoryScore(analysis, 'alt_text') ?? 100) < 90) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) < 90) return false;
+  if ((categoryScore(analysis, 'link_quality') ?? 100) < 90) return false;
+  if (!hasReadingOrderParentLinksCap(analysis)) return false;
+  const orphanMcidCount = Math.max(
+    snapshot.taggedContentAudit?.orphanMcidCount ?? 0,
+    snapshot.detectionProfile?.pdfUaSignals?.orphanMcidCount ?? 0,
+  );
+  if (orphanMcidCount <= 0) return false;
+  if ((snapshot.detectionProfile?.readingOrderSignals?.annotationOrderRiskCount ?? 0) > 0) return false;
+  if ((snapshot.detectionProfile?.readingOrderSignals?.annotationStructParentRiskCount ?? 0) > 0) return false;
+  if ((snapshot.detectionProfile?.annotationSignals?.linkAnnotationsMissingStructParent ?? 0) > 0) return false;
+  if ((snapshot.detectionProfile?.annotationSignals?.nonLinkAnnotationsMissingStructParent ?? 0) > 0) return false;
+  if (input.appliedTools?.some(tool =>
+    tool.toolName === 'repair_top_level_parent_links' && tool.outcome === 'applied'
+  )) {
+    return false;
+  }
+  return true;
+}
+
 function fontEvidenceImproved(input: {
   beforeAnalysis: AnalysisResult;
   afterAnalysis: AnalysisResult;
@@ -6697,6 +6729,79 @@ async function applyParentLinksAfterDegenerateReadingOrderPostPass(args: {
   };
 }
 
+async function applyParentLinksBeforeOrphanDrainPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  currentBuffer: Buffer;
+  currentAnalysis: AnalysisResult;
+  currentSnapshot: DocumentSnapshot;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<{ buffer: Buffer; analysis: AnalysisResult; snapshot: DocumentSnapshot; accepted: boolean }> {
+  let { currentBuffer, currentAnalysis, currentSnapshot, appliedTools, runtimeSummary } = args;
+  const { filename, signal, round, protectedBaseline } = args;
+  const toolName = 'repair_top_level_parent_links';
+  if (!shouldTryParentLinksBeforeOrphanDrainPostPass({ analysis: currentAnalysis, snapshot: currentSnapshot, appliedTools })) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const params = {
+    ...buildDefaultParams(toolName, currentAnalysis, currentSnapshot, appliedTools),
+    stage: 'pre_orphan_drain_parent_link_topup',
+  };
+  const stageStarted = performance.now();
+  const { buffer: next, result } = await runPythonMutationBatch(
+    currentBuffer,
+    [{ op: toolName, params }],
+    { signal },
+  );
+  if (!result.success || !result.applied.includes(toolName)) {
+    return { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot, accepted: false };
+  }
+  const mutationDetails = pythonMutationDetails(result, toolName);
+  const details = JSON.stringify({
+    outcome: 'applied',
+    note: 'pre_orphan_drain_parent_link_topup',
+    mutation: parseMutationDetails(mutationDetails) ?? mutationDetails ?? null,
+  });
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName,
+    stage: 10,
+    round,
+    details,
+    currentBuffer,
+    currentAnalysis,
+    currentSnapshot,
+    nextBuffer: next,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-pre-orphan-parent-links',
+    protectedBaseline,
+  });
+  if (runtimeSummary) {
+    pushStageTiming(runtimeSummary, {
+      stageNumber: 10,
+      round,
+      source: 'post_pass',
+      toolCount: 1,
+      totalMs: performance.now() - stageStarted,
+      reanalyzeMs: accepted.analysis.runtimeSummary?.totalMs ?? accepted.analysis.analysisDurationMs,
+    });
+  }
+  currentBuffer = accepted.buffer;
+  currentAnalysis = accepted.analysis;
+  currentSnapshot = accepted.snapshot;
+  return {
+    buffer: currentBuffer,
+    analysis: currentAnalysis,
+    snapshot: currentSnapshot,
+    accepted: accepted.accepted,
+  };
+}
+
 async function applyLateParentLinksReadingOrderPostPass(args: {
   filename: string;
   signal?: AbortSignal;
@@ -7113,6 +7218,23 @@ async function applyTaggedCleanupPostPasses(args: {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'figure4702_sequence_postpass_guard');
     return { buffer, analysis, snapshot };
   }
+
+  await tracePhase('parent_links_before_orphan_drain', async () => {
+    const repaired = await applyParentLinksBeforeOrphanDrainPostPass({
+      filename,
+      signal,
+      round,
+      currentBuffer: buffer,
+      currentAnalysis: analysis,
+      currentSnapshot: snapshot,
+      appliedTools,
+      runtimeSummary,
+      protectedBaseline,
+    });
+    buffer = repaired.buffer;
+    analysis = repaired.analysis;
+    snapshot = repaired.snapshot;
+  });
   if (shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard({ analysis, appliedTools })) {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'score_moving_pdfua_topup_orphan_drain_postpass_guard');
     return { buffer, analysis, snapshot };

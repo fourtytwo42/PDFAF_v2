@@ -3926,6 +3926,8 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
     struct_tree_json = None
     root_reachable_heading_count = 0
     root_reachable_depth = 0
+    heading_visit_keys = set()
+    root_reachable_heading_keys = set()
 
     try:
         root = pdf.Root
@@ -4037,9 +4039,9 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                 elem = queue.popleft()
                 _trace_inc(trace, "queuePops")
 
-                # Avoid infinite loops on circular refs. The default identity
-                # mode preserves production behavior; stable mode is used only
-                # by explicit diagnostics to investigate pikepdf wrapper reuse.
+                # Avoid infinite loops on circular refs. The broad collector keeps
+                # legacy identity traversal; root-reachable headings are stabilized
+                # below with object-reference keys to avoid pikepdf wrapper reuse.
                 try:
                     visit_key = _struct_elem_visit_key(elem) if visit_key_mode == "stable" else id(elem)
                     if visit_key in visited:
@@ -4078,8 +4080,17 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
                 phase = "heading_collector"
                 level = normalize_heading_level(tag)
                 if level is not None:
+                    try:
+                        heading_key = _struct_elem_visit_key(elem)
+                        heading_visit_keys.add(heading_key)
+                    except Exception:
+                        heading_key = None
                     if _root_reachable(elem):
-                        root_reachable_heading_count += 1
+                        if heading_key is not None:
+                            root_reachable_heading_keys.add(heading_key)
+                            root_reachable_heading_count = len(root_reachable_heading_keys)
+                        else:
+                            root_reachable_heading_count += 1
                     if len(headings) >= MAX_ITEMS:
                         _trace_cap(trace, "headings")
                     else:
@@ -4215,6 +4226,37 @@ def traverse_struct_tree(pdf: pikepdf.Pdf, page_map: dict, trace: dict | None = 
 
         if item_count >= MAX_ITEMS * 4:
             _trace_cap(trace, "traversalItems")
+
+        # Identity traversal can miss later structure elements when pikepdf reuses
+        # Python wrapper ids. Stabilize only root-reachable heading evidence here;
+        # keep broader figure/table extraction unchanged until separately validated.
+        try:
+            for elem in _iter_root_reachable_struct_elems(str_root):
+                level = normalize_heading_level(_resolved_tag(elem))
+                if level is None:
+                    continue
+                try:
+                    heading_key = _struct_elem_visit_key(elem)
+                except Exception:
+                    heading_key = None
+                if heading_key is not None:
+                    root_reachable_heading_keys.add(heading_key)
+                    if heading_key in heading_visit_keys:
+                        continue
+                    heading_visit_keys.add(heading_key)
+                if len(headings) >= MAX_ITEMS:
+                    _trace_cap(trace, "headings")
+                    continue
+                page = get_page_number(elem, page_map)
+                text = _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup)
+                ref = object_ref_str(elem)
+                row = {"level": level, "text": text, "page": page}
+                if ref:
+                    row["structRef"] = ref
+                headings.append(row)
+            root_reachable_heading_count = max(root_reachable_heading_count, len(root_reachable_heading_keys))
+        except Exception as e:
+            _trace_exception(trace, "root_reachable_heading_stabilization", e)
 
         try:
             seen_checker_targets = set()
