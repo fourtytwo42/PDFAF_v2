@@ -57,6 +57,7 @@ import {
   isProtectedZeroHeadingConvergence,
   isToolAllowedByRouteContract,
   maxFigureAltTargetsForRun,
+  maxRetagAsFigureTargetsForRun,
   planForRemediation,
 } from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
@@ -2137,7 +2138,7 @@ function priorNoMovementToolAttempt(toolName: string, appliedTools: readonly App
     (
       row.outcome === 'no_effect' ||
       row.outcome === 'rejected' ||
-      (row.outcome === 'applied' && row.delta <= 0)
+      (row.outcome === 'applied' && row.delta < 0)
     )
   );
 }
@@ -2842,6 +2843,10 @@ function fontEvidenceImproved(input: {
 
 function figureAltMutationAttemptCount(rows: AppliedRemediationTool[]): number {
   return rows.filter(row => row.toolName === 'set_figure_alt_text').length;
+}
+
+function retagAsFigureMutationAttemptCount(rows: AppliedRemediationTool[]): number {
+  return rows.filter(row => row.toolName === 'retag_as_figure').length;
 }
 
 function figureAltLiveAnalysisHasScoreOrPacVisibleGain(before: AnalysisResult, after: AnalysisResult): boolean {
@@ -4125,27 +4130,40 @@ export function shouldTryAllInputTableStructureHeaderSequence(input: {
   stageApplied: AppliedRemediationTool[];
   rejectionDecision: { reject: boolean; reason: string | null };
 }): boolean {
-  if (!input.rejectionDecision.reject || input.rejectionDecision.reason !== 'pac_rule_regressed(pdfua.table.header_association_present)') {
-    return false;
-  }
   if (!input.stageApplied.some(row => row.toolName === 'normalize_table_structure' && row.outcome === 'applied')) return false;
   const beforeTable = categoryScore(input.before, 'table_markup');
   const intermediateTable = categoryScore(input.intermediate, 'table_markup');
   if (
-    input.intermediate.score <= input.before.score ||
     beforeTable == null ||
     intermediateTable == null ||
-    intermediateTable <= beforeTable ||
     !pageTextTagEvidenceStillPreserved(input.beforeSnapshot, input.intermediateSnapshot)
   ) {
     return false;
   }
+
   const regressions = pacRuleAcceptanceRegressions({
     beforeSnapshot: input.beforeSnapshot,
     afterSnapshot: input.intermediateSnapshot,
     toolNames: input.stageApplied.map(row => row.toolName),
   });
-  return regressions.length > 0 && regressions.every(row => row.ruleId === 'pdfua.table.header_association_present');
+  if (input.rejectionDecision.reject) {
+    if (input.rejectionDecision.reason !== 'pac_rule_regressed(pdfua.table.header_association_present)') {
+      return false;
+    }
+    return regressions.length > 0 && regressions.every(row => row.ruleId === 'pdfua.table.header_association_present');
+  }
+
+  const beforeHeaderDebt = pacTableHeaderDebt(input.beforeSnapshot);
+  const intermediateHeaderDebt = pacTableHeaderDebt(input.intermediateSnapshot);
+  const hasTableMarkupImprovement = intermediateTable > beforeTable;
+  const hasHeaderDebtImprovement = intermediateHeaderDebt < beforeHeaderDebt;
+  if (!hasTableMarkupImprovement && !hasHeaderDebtImprovement) {
+    return false;
+  }
+  if (!hasHeaderDebtImprovement && input.intermediate.score < input.before.score + REMEDIATION_MIN_ROUND_IMPROVEMENT) {
+    return false;
+  }
+  return regressions.length === 0;
 }
 
 function shouldAllowAllInputDegenerateNativeSeed(input: {
@@ -4864,7 +4882,7 @@ async function tryAllInputTableStructureHeaderSequence(args: {
     sequenceAnalysis.score <= args.stateBeforeStage.analysis.score ||
     beforeTable == null ||
     finalTable == null ||
-    finalTable <= beforeTable ||
+    finalTable < beforeTable ||
     finalHeaderDebt >= beforeHeaderDebt ||
     tableRegularityDebt(sequenceSnapshot) >= tableRegularityDebt(args.stateBeforeStage.snapshot) ||
     !pageTextTagEvidenceStillPreserved(args.stateBeforeStage.snapshot, sequenceSnapshot)
@@ -5004,6 +5022,10 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
     result: sequenceAnalysis,
     snapshot: sequenceSnapshot,
   };
+  // Mixed-debt PDFs can need later table/alt stages after heading recovery.
+  // Accept this sequence when it safely clears the transient annotation PAC
+  // regression and moves the score forward, rather than requiring a near-pass.
+  const sequenceTargetScore = Math.min(80, args.beforeState.analysis.score + 1);
   const recovery = pacRuleStructureAnnotationSequenceRecovery({
     beforeSnapshot: args.beforeState.snapshot,
     intermediateSnapshot: intermediate.snapshot,
@@ -5015,7 +5037,7 @@ async function tryAllInput4646HeadingAnnotationSequence(args: {
     beforeHeadingScore: beforeHeading,
     intermediateHeadingScore: intermediateHeading,
     finalHeadingScore: categoryScore(final.result, 'heading_structure'),
-    targetScore: 90,
+    targetScore: sequenceTargetScore,
   });
   if (!recovery.recover) return null;
 
@@ -5403,6 +5425,29 @@ async function finalizeAnalyzedStage(args: {
   }
 
   const headingConverged = headingCreationConverged(analyzedState.snapshot);
+  const allInputTableSequenceRecoveredNoReject = await tryAllInputTableStructureHeaderSequence({
+    filename,
+    stateBeforeStage,
+    analyzedState,
+    stage,
+    stageApplied,
+    stageStartScore,
+    rejectionDecision,
+    signal,
+  });
+  if (allInputTableSequenceRecoveredNoReject) {
+    for (const row of stageApplied) {
+      row.scoreAfter = allInputTableSequenceRecoveredNoReject.analysis.score;
+      row.delta = allInputTableSequenceRecoveredNoReject.analysis.score - stageStartScore;
+      enrichRowDetailsWithReplayState(row, {
+        beforeAnalysis: stateBeforeStage.analysis,
+        beforeSnapshot: stateBeforeStage.snapshot,
+        afterAnalysis: allInputTableSequenceRecoveredNoReject.analysis,
+        afterSnapshot: allInputTableSequenceRecoveredNoReject.snapshot,
+      });
+    }
+    return allInputTableSequenceRecoveredNoReject;
+  }
   for (const row of stageApplied) {
     if (
       row.toolName === 'create_heading_from_candidate' &&
@@ -6442,7 +6487,7 @@ async function applyIcjiaDocumentFinalization(args: {
   const stageStarted = performance.now();
 
   const existingTitle = currentSnapshot.metadata.title?.trim();
-  if (isFilenameLikeTitle(existingTitle)) {
+  if (!existingTitle || isFilenameLikeTitle(existingTitle)) {
     await tracePhase('set_document_title', async () => {
       const title = deriveFallbackDocumentTitle(currentSnapshot, filename);
       const next = await metadataTools.setDocumentTitle(currentBuffer, title);
@@ -6682,6 +6727,60 @@ async function applyAltCleanupPostPass(args: {
     appliedTools,
     runtimeSummary,
     tempPrefix: 'pdfaf-alt',
+    protectedBaseline,
+  });
+  return {
+    buffer: accepted.buffer,
+    analysis: accepted.analysis,
+    snapshot: accepted.snapshot,
+  };
+}
+
+async function applyPostAltHeadingNormalizationPostPass(args: {
+  filename: string;
+  signal?: AbortSignal;
+  round: number;
+  targetScore: number;
+  state: RemediationState;
+  appliedTools: AppliedRemediationTool[];
+  runtimeSummary?: RemediationRuntimeSummary;
+  protectedBaseline?: ProtectedBaselineFloor;
+}): Promise<RemediationState> {
+  const { filename, signal, round, targetScore, appliedTools, runtimeSummary, protectedBaseline } = args;
+  const { buffer, analysis, snapshot } = args.state;
+  const headingScore = categoryScore(analysis, 'heading_structure') ?? 100;
+  if (analysis.score >= targetScore || headingScore >= 90 || !(snapshot.isTagged || snapshot.structureTree !== null)) {
+    return args.state;
+  }
+
+  const tool: PlannedRemediationTool = {
+    toolName: 'normalize_heading_hierarchy',
+    params: {},
+    rationale: 'Post-alt cleanup heading normalization.',
+    route: 'post_bootstrap_heading_convergence',
+  };
+  const mutation = await runSingleTool(buffer, tool, snapshot, {
+    signal,
+    timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
+  });
+  if (mutation.outcome !== 'applied') {
+    return args.state;
+  }
+
+  const accepted = await applyGuardedPostPass({
+    filename,
+    signal,
+    toolName: 'normalize_heading_hierarchy',
+    stage: 10,
+    round,
+    details: mutation.details ?? 'post_alt_heading_normalization',
+    currentBuffer: buffer,
+    currentAnalysis: analysis,
+    currentSnapshot: snapshot,
+    nextBuffer: mutation.buffer,
+    appliedTools,
+    runtimeSummary,
+    tempPrefix: 'pdfaf-post-alt-heading',
     protectedBaseline,
   });
   return {
@@ -8205,6 +8304,141 @@ export async function executePlaybook(
   return { remediation, buffer: currentBuffer, snapshot: currentSnapshot };
 }
 
+const TABLE_NORMALIZATION_PLAYBOOK_TOOLS = new Set([
+  'normalize_table_structure',
+  'repair_native_table_headers',
+  'set_table_header_cells',
+]);
+
+const FIGURE_ALT_PLAYBOOK_TOOLS = new Set([
+  'normalize_nested_figure_containers',
+  'canonicalize_figure_alt_ownership',
+  'retag_as_figure',
+  'set_figure_alt_text',
+  'mark_figure_decorative',
+  'repair_alt_text_structure',
+]);
+
+const HEADING_CREATION_PLAYBOOK_TOOLS = new Set([
+  'bootstrap_struct_tree',
+  'synthesize_basic_structure_from_layout',
+  'create_structure_from_degenerate_native_anchor',
+  'create_heading_from_visible_text_anchor',
+  'create_heading_from_tagged_visible_anchor',
+  'bridge_native_title_text_owner',
+  'create_heading_from_ocr_page_shell_anchor',
+  'create_heading_from_ocr_collection_title_anchor',
+  'create_heading_from_candidate',
+]);
+
+export function playbookHasTableNormalizationStep(playbook: Playbook): boolean {
+  return playbook.toolSequence.some(step => TABLE_NORMALIZATION_PLAYBOOK_TOOLS.has(step.toolName));
+}
+
+export function playbookHasFigureAltStep(playbook: Playbook): boolean {
+  return playbook.toolSequence.some(step => FIGURE_ALT_PLAYBOOK_TOOLS.has(step.toolName));
+}
+
+export function playbookHasHeadingCreationStep(playbook: Playbook): boolean {
+  return playbook.toolSequence.some(step => HEADING_CREATION_PLAYBOOK_TOOLS.has(step.toolName));
+}
+
+export function shouldSkipPlaybookForStrongTableUndersegmentation(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  playbook: Playbook;
+}): boolean {
+  if (playbookHasTableNormalizationStep(input.playbook)) return false;
+  const tableScore = categoryScore(input.analysis, 'table_markup') ?? 100;
+  if (tableScore >= 50) return false;
+  if ((categoryScore(input.analysis, 'heading_structure') ?? 0) < 90) return false;
+  if ((categoryScore(input.analysis, 'alt_text') ?? 0) < 90) return false;
+  if ((categoryScore(input.analysis, 'reading_order') ?? 0) < 95) return false;
+  if ((input.snapshot.pageCount ?? input.analysis.pageCount ?? 0) < 20) return false;
+
+  const tableHeaderAudit = input.snapshot.tableHeaderAudit;
+  if (!tableHeaderAudit || tableHeaderAudit.tablesChecked > 60) return false;
+
+  const strongTableCount = (input.snapshot.tables ?? []).filter(table =>
+    (table.irregularRows ?? 0) > 0 &&
+    (table.rowCellCounts?.length ?? 0) >= 2 &&
+    (table.dominantColumnCount ?? 0) >= 2
+  ).length;
+  const nativeStrongSignalCount = input.snapshot.detectionProfile?.tableSignals?.stronglyIrregularTableCount ?? 0;
+  return (
+    strongTableCount >= 4 &&
+    nativeStrongSignalCount >= 4 &&
+    (tableHeaderAudit.dataCellsWithoutHeaderCount ?? 0) >= 80 &&
+    (tableHeaderAudit.headerAssociationMissingCount ?? 0) >= 4
+  );
+}
+
+function zeroHeadingFigureAltDebtSnapshotEvidence(snapshot: DocumentSnapshot): {
+  visibleFigureTargetCount: number;
+  missingAltFigureTargetCount: number;
+  treeHeadingCount: number;
+  hasRoleMapFigureDebt: boolean;
+} {
+  const checkerVisible = (snapshot.checkerFigureTargets ?? []).filter(figure =>
+    figure.reachable &&
+    !figure.isArtifact
+  );
+  const extractedVisible = (snapshot.figures ?? []).filter(figure =>
+    figure.reachable !== false &&
+    !figure.isArtifact
+  );
+  const figureSignals = snapshot.detectionProfile?.figureSignals;
+  const headingSignals = snapshot.detectionProfile?.headingSignals;
+  const visibleFigureTargetCount = Math.max(
+    checkerVisible.length,
+    extractedVisible.length,
+    figureSignals?.extractedFigureCount ?? 0,
+    figureSignals?.treeFigureCount ?? 0,
+  );
+  const missingAltFigureTargetCount = Math.max(
+    checkerVisible.filter(figure => !figure.hasAlt).length,
+    extractedVisible.filter(figure => !figure.hasAlt).length,
+  );
+  return {
+    visibleFigureTargetCount,
+    missingAltFigureTargetCount,
+    treeHeadingCount: headingSignals?.treeHeadingCount ?? snapshot.headings.length,
+    hasRoleMapFigureDebt: (
+      (figureSignals?.nonFigureRoleCount ?? 0) > 0 ||
+      (figureSignals?.treeFigureMissingForExtractedFigures ?? false) ||
+      ((figureSignals?.extractedFigureCount ?? 0) > 0 &&
+        (figureSignals?.treeFigureCount ?? 0) < (figureSignals?.extractedFigureCount ?? 0))
+    ),
+  };
+}
+
+export function shouldSkipPlaybookForZeroHeadingFigureAltDebt(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  playbook: Playbook;
+}): boolean {
+  if (playbookHasFigureAltStep(input.playbook) && playbookHasHeadingCreationStep(input.playbook)) return false;
+  if (input.analysis.pdfClass === 'scanned' || input.snapshot.pdfClass === 'scanned') return false;
+  if (!input.snapshot.isTagged && input.snapshot.structureTree === null) return false;
+  if ((input.snapshot.textCharCount ?? 0) < 1000) return false;
+  if ((input.snapshot.pageCount ?? input.analysis.pageCount ?? 0) < 4) return false;
+
+  const headingScore = categoryScore(input.analysis, 'heading_structure') ?? 100;
+  if (headingScore > 20) return false;
+  const altScore = categoryScore(input.analysis, 'alt_text') ?? 100;
+  if (altScore >= 80) return false;
+
+  const evidence = zeroHeadingFigureAltDebtSnapshotEvidence(input.snapshot);
+  if (evidence.treeHeadingCount > 1) return false;
+  if (evidence.visibleFigureTargetCount < 3) return false;
+
+  return (
+    evidence.missingAltFigureTargetCount >= 3 ||
+    (altScore <= 40 && evidence.visibleFigureTargetCount >= 3) ||
+    (altScore < 80 && evidence.hasRoleMapFigureDebt)
+  );
+}
+
 export interface RemediatePdfOptions {
   targetScore?: number;
   maxRounds?: number;
@@ -8535,7 +8769,33 @@ export async function remediatePdf(
     }
     protectedRunBestState.current = candidate;
   };
+  const confirmCurrentStateForTargetCheckpoint = async (reason: string): Promise<void> => {
+    if (currentAnalysis.score < targetScore) return;
+    const scoreBefore = currentAnalysis.score;
+    const safeReason = reason.replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 80) || 'checkpoint';
+    const confirmed = await reanalyzeBufferForMutation(
+      currentBuffer,
+      filename,
+      `pdfaf-target-checkpoint-${safeReason}`,
+      { signal: options?.signal, bypassCache: true },
+    );
+    currentAnalysis = confirmed.result;
+    currentSnapshot = confirmed.snapshot;
+    await reportRuntimeTrace({
+      kind: 'verified_checkpoint',
+      reason: `confirm:${reason}:${scoreBefore}->${currentAnalysis.score}`,
+      score: currentAnalysis.score,
+      grade: currentAnalysis.grade,
+      appliedToolCount: appliedTools.length,
+      eligible: currentAnalysis.score >= targetScore,
+      eligibilityReason: currentAnalysis.score >= targetScore
+        ? 'target_reanalysis_confirmed'
+        : 'target_reanalysis_below_target',
+      elapsedMs: Date.now() - started,
+    });
+  };
   const rememberVerifiedTimeoutCheckpoint = async (reason: string): Promise<void> => {
+    await confirmCurrentStateForTargetCheckpoint(reason);
     const sequence = ++verifiedTimeoutCheckpoint.sequence;
     const candidate = {
       buffer: Buffer.from(currentBuffer),
@@ -8607,8 +8867,12 @@ export async function remediatePdf(
       requiredRemainingMs?: number;
       runtimeGuardTriggered?: boolean;
       lowScoreReturnReason?: string;
+      deferWhenBelowTarget?: boolean;
     },
   ): Promise<boolean> => {
+    if (options?.deferWhenBelowTarget === true && currentAnalysis.score < targetScore) {
+      return false;
+    }
     const nearWallBudget = options?.runtimeGuardTriggered === true
       ? true
       : options?.beforeRiskyWork === true
@@ -8631,7 +8895,11 @@ export async function remediatePdf(
     let checkpoint = verifiedTimeoutCheckpoint.current;
     let returnReason = 'verified_checkpoint_timeout_return';
     let traceEligibilityReason = eligibility.reason;
+    const allowLowScoreFallback = options?.lowScoreOnly === true ||
+      options?.runtimeGuardTriggered === true ||
+      currentAnalysis.score >= targetScore;
     if (options?.lowScoreOnly === true || !checkpoint || !eligibility.eligible) {
+      if (!allowLowScoreFallback) return false;
       const lowScoreEligibility = verifiedLowScoreTimeoutCheckpointEligibility({
         filename,
         beforeAnalysis: before,
@@ -8670,7 +8938,19 @@ export async function remediatePdf(
   const signature = buildFailureSignature(initialAnalysis, initialSnapshot);
   const activePlaybook = playbookStore.findActive(signature);
   options?.signal?.throwIfAborted();
-  if (activePlaybook) {
+  if (
+    activePlaybook &&
+    !shouldSkipPlaybookForStrongTableUndersegmentation({
+      analysis: initialAnalysis,
+      snapshot: initialSnapshot,
+      playbook: activePlaybook,
+    }) &&
+    !shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: initialAnalysis,
+      snapshot: initialSnapshot,
+      playbook: activePlaybook,
+    })
+  ) {
     await reportProgress(24, 'Using a known fix plan', activePlaybook.id);
     const pb = await executePlaybook(
       buffer,
@@ -8744,11 +9024,12 @@ export async function remediatePdf(
       });
       if (
         !allowNativeTextTaggingNearDeadline &&
-        await returnVerifiedTimeoutCheckpoint('before_stage', { beforeRiskyWork: true })
+        await returnVerifiedTimeoutCheckpoint('before_stage', { beforeRiskyWork: true, deferWhenBelowTarget: true })
       ) break;
       if (
         appliedTools.length > 0 &&
         currentAnalysis.score >= before.score &&
+        shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) &&
         shouldReturnVerifiedCheckpointBeforeRiskyWork({ startedAtMs: started }) &&
         !allowNativeTextTaggingNearDeadline
       ) {
@@ -8803,7 +9084,7 @@ export async function remediatePdf(
 
       let buf = currentBuffer;
       for (let toolIndex = 0; toolIndex < stage.tools.length; toolIndex++) {
-        if (await returnVerifiedTimeoutCheckpoint('before_tool', { beforeRiskyWork: true })) break;
+        if (await returnVerifiedTimeoutCheckpoint('before_tool', { beforeRiskyWork: true, deferWhenBelowTarget: true })) break;
         const tool = stage.tools[toolIndex]!;
         if (handledInProtectedBundle.has(tool.toolName)) continue;
         if (protectedZeroHeading && tool.toolName === 'artifact_repeating_page_furniture') {
@@ -9317,6 +9598,112 @@ export async function remediatePdf(
           noteEarlyExit(runtimeSummary, `same_state_no_gain_runtime_cap:${liveTool.toolName}`);
           continue;
         }
+        if (liveTool.toolName === 'retag_as_figure') {
+          let activeRetagTool: PlannedRemediationTool | null = liveTool;
+          const attemptedRefs = new Set<string>();
+          while (
+            activeRetagTool &&
+            retagAsFigureMutationAttemptCount([...appliedTools, ...stageApplied]) < maxRetagAsFigureTargetsForRun(
+              workingAnalysis,
+              workingSnapshot,
+              [...appliedTools, ...stageApplied],
+            )
+          ) {
+            if (await returnVerifiedTimeoutCheckpoint('before_retag_as_figure_target', { beforeRiskyWork: true })) break;
+            const activeRef = typeof activeRetagTool.params['structRef'] === 'string'
+              ? activeRetagTool.params['structRef']
+              : null;
+            if (!activeRef) break;
+            if (attemptedRefs.has(activeRef)) {
+              noteEarlyExit(runtimeSummary, 'retag_as_figure_repeated_target');
+              break;
+            }
+            attemptedRefs.add(activeRef);
+
+            const beforeRetagAnalysis = workingAnalysis;
+            const activeRetagStateSignature = buildCurrentReplayStateSignature({
+              analysis: workingAnalysis,
+              snapshot: workingSnapshot,
+              params: activeRetagTool.params,
+            });
+            await reportRuntimeTrace({
+              kind: 'tool_start',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: activeRetagTool.toolName,
+              stateSignatureBefore: activeRetagStateSignature,
+              elapsedMs: Date.now() - started,
+            });
+            const { buffer: next, outcome, details, durationMs } = await runSingleTool(buf, activeRetagTool, workingSnapshot, {
+              signal: options?.signal,
+            });
+            const effectiveOutcome = normalizeRecordedOutcomeForMutationTruth(outcome, details);
+            await reportRuntimeTrace({
+              kind: 'tool_finish',
+              round,
+              stageNumber: stage.stageNumber,
+              toolName: activeRetagTool.toolName,
+              outcome: effectiveOutcome,
+              durationMs,
+              stateSignatureBefore: activeRetagStateSignature,
+              ...(details ? { details } : {}),
+              elapsedMs: Date.now() - started,
+            });
+            buf = next;
+            stageApplied.push({
+              toolName: activeRetagTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              scoreBefore: stageStartScore,
+              scoreAfter: stageStartScore,
+              delta: 0,
+              outcome: effectiveOutcome,
+              details,
+              durationMs,
+              source: 'planner',
+            });
+            runtimeSummary.toolTimings.push({
+              toolName: activeRetagTool.toolName,
+              stage: stage.stageNumber,
+              round,
+              source: 'planner',
+              durationMs,
+              outcome: effectiveOutcome,
+            });
+
+            if (effectiveOutcome !== 'applied') {
+              activeRetagTool = null;
+              break;
+            }
+
+            lastStageAnalysis = await runPlannerLiveAnalysis({
+              round,
+              stageNumber: stage.stageNumber,
+              context: 'figure_ownership_refresh',
+              toolName: activeRetagTool.toolName,
+              targetRef: activeRef,
+              scoreBefore: beforeRetagAnalysis.score,
+              run: () => reanalyzeBufferForMutation(buf, filename, 'pdfaf-rolemap-figure-retag', {
+                signal: options?.signal,
+              }),
+            });
+            lastAnalyzedBuffer = buf;
+            workingAnalysis = lastStageAnalysis.result;
+            workingSnapshot = lastStageAnalysis.snapshot;
+
+            const nextParams = buildDefaultParams(
+              'retag_as_figure',
+              workingAnalysis,
+              workingSnapshot,
+              [...appliedTools, ...stageApplied],
+            );
+            activeRetagTool = typeof nextParams['structRef'] === 'string' && nextParams['structRef'].length > 0
+              ? { ...activeRetagTool, params: nextParams }
+              : null;
+          }
+          if (verifiedCheckpointReturned) break;
+          continue;
+        }
         if (liveTool.toolName === 'set_figure_alt_text') {
           let activeFigureTool: PlannedRemediationTool | null = liveTool;
           const attemptedRefs = new Set<string>();
@@ -9712,7 +10099,7 @@ export async function remediatePdf(
       let analyzed: Awaited<ReturnType<typeof analyzePdf>>;
       if (verifiedCheckpointReturned) break;
       if (stageHadEffect) {
-        if (await returnVerifiedTimeoutCheckpoint('before_stage_reanalysis', { beforeRiskyWork: true })) break;
+        if (await returnVerifiedTimeoutCheckpoint('before_stage_reanalysis', { beforeRiskyWork: true, deferWhenBelowTarget: true })) break;
         if (shouldGuardStageReanalysisAdmission({
           stageApplied,
           currentScore: stageStartAnalysis.score,
@@ -9905,7 +10292,11 @@ export async function remediatePdf(
     }
   }
 
-  await returnVerifiedTimeoutCheckpoint('before_post_pass', { beforeRiskyWork: true });
+  const postPassCheckpointOptions = {
+    beforeRiskyWork: true,
+    deferWhenBelowTarget: true,
+  } as const;
+  await returnVerifiedTimeoutCheckpoint('before_post_pass', postPassCheckpointOptions);
 
   const postPassesAllowedByRuntime = !verifiedCheckpointReturned && !ocrRuntimeBudgetExhausted && (
     !shouldKeepCurrentStateForRuntimeSoftStop({ analysis: currentAnalysis, targetScore }) ||
@@ -9990,7 +10381,7 @@ export async function remediatePdf(
     await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('ensure_accessibility_tagging');
     await rememberVerifiedTimeoutCheckpoint('ensure_accessibility_tagging');
-    await returnVerifiedTimeoutCheckpoint('before_alt_cleanup_post_pass', { beforeRiskyWork: true });
+    await returnVerifiedTimeoutCheckpoint('before_alt_cleanup_post_pass', postPassCheckpointOptions);
   }
 
   // Always run alt/annotation repair for tagged PDFs regardless of score — our internal scorer
@@ -10016,7 +10407,35 @@ export async function remediatePdf(
     await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('alt_cleanup_post_pass');
     await rememberVerifiedTimeoutCheckpoint('alt_cleanup_post_pass');
-    await returnVerifiedTimeoutCheckpoint('before_tagged_cleanup_post_pass', { beforeRiskyWork: true });
+
+    if (!verifiedCheckpointReturned) {
+      const headingScore = categoryScore(currentAnalysis, 'heading_structure') ?? 100;
+      if (currentAnalysis.score < targetScore && headingScore < 90) {
+        const headingTrace = await startPostPassTrace(
+          'post_alt_heading_normalization',
+          rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+        );
+        await reportProgress(80, 'Normalizing heading structure');
+        const headingState = await applyPostAltHeadingNormalizationPostPass({
+          filename,
+          signal: options?.signal,
+          round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+          targetScore,
+          state: { buffer: currentBuffer, analysis: currentAnalysis, snapshot: currentSnapshot },
+          appliedTools,
+          runtimeSummary,
+          protectedBaseline: options?.protectedBaseline,
+        });
+        currentBuffer = headingState.buffer;
+        currentAnalysis = headingState.analysis;
+        currentSnapshot = headingState.snapshot;
+        await finishPostPassTrace(headingTrace);
+        await rememberProtectedRunBestState('post_alt_heading_normalization');
+        await rememberVerifiedTimeoutCheckpoint('post_alt_heading_normalization');
+      }
+    }
+
+    await returnVerifiedTimeoutCheckpoint('before_tagged_cleanup_post_pass', postPassCheckpointOptions);
   }
 
   // Post-passes: stage-1 regression checks can reject `set_pdfua_identification` when bundled with
@@ -10043,7 +10462,7 @@ export async function remediatePdf(
     await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('tagged_cleanup_post_pass');
     await rememberVerifiedTimeoutCheckpoint('tagged_cleanup_post_pass');
-    await returnVerifiedTimeoutCheckpoint('before_stage180_post_pass', { beforeRiskyWork: true });
+    await returnVerifiedTimeoutCheckpoint('before_stage180_post_pass', postPassCheckpointOptions);
   }
 
   if (!verifiedCheckpointReturned) {
@@ -10074,7 +10493,7 @@ export async function remediatePdf(
       await finishPostPassTrace(postPassTrace);
       await rememberProtectedRunBestState('stage180_mixed_table_pdfua_post_pass');
       await rememberVerifiedTimeoutCheckpoint('stage180_mixed_table_pdfua_post_pass');
-      await returnVerifiedTimeoutCheckpoint('before_stage181_post_pass', { beforeRiskyWork: true });
+      await returnVerifiedTimeoutCheckpoint('before_stage181_post_pass', postPassCheckpointOptions);
     }
   }
 
@@ -10099,7 +10518,7 @@ export async function remediatePdf(
     await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('stage181_hidden_alt_post_pass');
     await rememberVerifiedTimeoutCheckpoint('stage181_hidden_alt_post_pass');
-    await returnVerifiedTimeoutCheckpoint('before_link_parenttree_post_pass', { beforeRiskyWork: true });
+    await returnVerifiedTimeoutCheckpoint('before_link_parenttree_post_pass', postPassCheckpointOptions);
   }
 
   if (!verifiedCheckpointReturned && shouldTryStage165LinkParentTreeRepair({
@@ -10127,7 +10546,7 @@ export async function remediatePdf(
     await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('link_parenttree_post_pass');
     await rememberVerifiedTimeoutCheckpoint('link_parenttree_post_pass');
-    await returnVerifiedTimeoutCheckpoint('before_document_finalization', { beforeRiskyWork: true });
+    await returnVerifiedTimeoutCheckpoint('before_document_finalization', postPassCheckpointOptions);
   }
 
   if (!verifiedCheckpointReturned) {
@@ -10155,7 +10574,7 @@ export async function remediatePdf(
     await finishPostPassTrace(postPassTrace);
     await rememberProtectedRunBestState('document_finalization');
     await rememberVerifiedTimeoutCheckpoint('document_finalization');
-    await returnVerifiedTimeoutCheckpoint('before_protected_recovery_post_pass', { beforeRiskyWork: true });
+    await returnVerifiedTimeoutCheckpoint('before_protected_recovery_post_pass', postPassCheckpointOptions);
   }
 
   if (!verifiedCheckpointReturned && protectedBaselineRecoveryActive(options?.protectedBaseline, currentAnalysis)) {

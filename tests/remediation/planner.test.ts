@@ -10,11 +10,13 @@ import {
   deriveFailureDisposition,
   isToolAllowedByRouteContract,
   maxFigureAltTargetsForRun,
+  maxRetagAsFigureTargetsForRun,
   planForRemediation,
   routeContractFor,
   shouldAllowStage146FigureAltContinuation,
   shouldAllowStage146RoleMapRetagContinuation,
   shouldAllowStage178ProtectedFigureAltContinuation,
+  STAGE146_FIGURE_ALT_TARGETS_PER_RUN,
 } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { classifyZeroHeadingRecovery } from '../../src/services/remediation/headingRecovery.js';
@@ -291,6 +293,22 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_document_title');
     expect(names).toContain('set_document_language');
     expect(names).not.toContain('set_pdfua_identification');
+  });
+
+
+  it('keeps descriptive metadata title when title_language fails because language is missing', () => {
+    const base = bareSnapshot();
+    const snap: DocumentSnapshot = {
+      ...base,
+      metadata: { ...base.metadata, title: 'Appendix H: Data tables section', language: '' },
+      lang: null,
+      structTitle: 'Appendix H: Data tables section',
+    };
+    const analysis = withCategoryScores(score(snap, META), { title_language: 50 });
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('set_document_title');
+    expect(names).toContain('set_document_language');
   });
 
   it('plans PAC catalog settings normalization when only POC-exposed catalog evidence fails', () => {
@@ -3102,7 +3120,7 @@ describe('planForRemediation', () => {
     }));
 
     expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(true);
-    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(5);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(STAGE146_FIGURE_ALT_TARGETS_PER_RUN);
     expect(buildDefaultParams('set_figure_alt_text', analysis, snap, applied)).toEqual({
       structRef: '4_0',
       altText: 'Illustration (page 4)',
@@ -3521,7 +3539,7 @@ describe('planForRemediation', () => {
     }));
 
     expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(true);
-    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(5);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(STAGE146_FIGURE_ALT_TARGETS_PER_RUN);
   });
 
   it('keeps Stage 146 figure alt continuation at the default cap when heading remains a severe blocker', () => {
@@ -3616,7 +3634,7 @@ describe('planForRemediation', () => {
     expect(maxFigureAltTargetsForRun(analysis, snap, applied, {
       protectedBaselineActive: true,
       protectedBaseline: { score: 59, categories: { alt_text: 12 } },
-    })).toBe(5);
+    })).toBe(STAGE146_FIGURE_ALT_TARGETS_PER_RUN);
   });
 
   it('keeps Stage 178 protected continuation off high-alt and mixed-blocked protected rows', () => {
@@ -3749,6 +3767,149 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, applied);
     const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
     expect(names).toContain('retag_as_figure');
+  });
+
+  it('uses page-local chart captions for role-mapped chart retag alt text', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1000,
+      textByPage: [
+        'Figure 1. Case filings and terminations FY2016-FY2020 • Filings decreased during the period.',
+      ],
+      layoutAudit: reportLayoutAudit({
+        captionCandidateCount: 1,
+        captionCandidates: [{
+          text: 'Figure 1. Case filings and terminations FY2016-FY2020',
+          page: 0,
+          bbox: [72, 500, 420, 520],
+        }],
+      }),
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        structRef: '10_0',
+        role: 'Figure',
+        rawRole: 'Chart',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 12,
+      }],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 100,
+      reading_order: 100,
+      table_markup: 79,
+    });
+
+    expect(maxRetagAsFigureTargetsForRun(analysis, snap, [])).toBeGreaterThan(3);
+    expect(buildDefaultParams('retag_as_figure', analysis, snap)).toEqual({
+      structRef: '10_0',
+      altText: 'Chart: Figure 1. Case filings and terminations FY2016-FY2020',
+    });
+  });
+
+  it('maps multiple same-page chart captions by stable struct order across retag attempts', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1000,
+      textByPage: [
+        'Figure 12. Revenue generated by court level FY2020 Figure 13. Distribution of revenue by level of government FY2020',
+      ],
+      figures: [
+        {
+          hasAlt: true,
+          altText: 'Chart: Figure 12. Revenue generated by court level FY2020',
+          isArtifact: false,
+          page: 0,
+          structRef: '958_0',
+          role: 'Figure',
+          rawRole: 'Figure',
+          reachable: true,
+          directContent: true,
+          subtreeMcidCount: 10,
+        },
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 0,
+          structRef: '967_0',
+          role: 'Figure',
+          rawRole: 'Chart',
+          reachable: true,
+          directContent: true,
+          subtreeMcidCount: 8,
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 100,
+      reading_order: 100,
+      table_markup: 79,
+    });
+    const applied: AppliedRemediationTool[] = [{
+      toolName: 'retag_as_figure',
+      stage: 6,
+      round: 1,
+      scoreBefore: 81,
+      scoreAfter: 81,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: '958_0' } }),
+    }];
+
+    expect(buildDefaultParams('retag_as_figure', analysis, snap, applied)).toEqual({
+      structRef: '967_0',
+      altText: 'Chart: Figure 13. Distribution of revenue by level of government FY2020',
+    });
+  });
+
+  it('does not exceed the normal role-map retag budget without caption-backed charts', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1000,
+      figures: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        rawRole: 'InlineShape',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 1,
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 100,
+      reading_order: 100,
+      table_markup: 100,
+    });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'retag_as_figure',
+      stage: 6,
+      round: 1,
+      scoreBefore: 81,
+      scoreAfter: 81,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(maxRetagAsFigureTargetsForRun(analysis, snap, applied)).toBe(3);
+    expect(buildDefaultParams('retag_as_figure', analysis, snap, applied)).toEqual({});
   });
 
   it('does not schedule canonicalize_figure_alt_ownership without checker-visible ownership debt', () => {
@@ -4244,6 +4405,85 @@ describe('planForRemediation', () => {
     expect(names).toContain('repair_native_table_headers');
     expect(names).toContain('repair_native_link_structure');
     expect(names).toContain('set_table_header_cells');
+  });
+
+  it('keeps table normalization eligible after two successes when strong irregular table debt remains', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 1,
+          totalCells: 6,
+          page: 0,
+          rowCount: 4,
+          cellsMisplacedCount: 0,
+          irregularRows: 2,
+          rowCellCounts: [1, 2, 1, 2],
+          dominantColumnCount: 1,
+          structRef: '2245_0',
+          reachable: true,
+        },
+      ],
+      detectionProfile: {
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 1,
+          stronglyIrregularTableCount: 1,
+          directCellUnderTableCount: 0,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 1, treeHeadingCount: 1, headingTreeDepth: 2, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { pagesMissingTabsS: 0, pagesAnnotationOrderDiffers: 0, linkAnnotationsMissingStructure: 0, nonLinkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0, nonLinkAnnotationsMissingStructParent: 0 },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 0,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 0,
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      table_markup: 72,
+      heading_structure: 96,
+      alt_text: 100,
+      reading_order: 100,
+    });
+    const applied = ['600_0', '1580_0'].map((targetRef): AppliedRemediationTool => ({
+      toolName: 'normalize_table_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 70,
+      scoreAfter: 82,
+      delta: 12,
+      outcome: 'applied',
+      details: JSON.stringify({ outcome: 'applied', invariants: { targetRef } }),
+    }));
+
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    const tableTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'normalize_table_structure');
+    expect(names).toContain('normalize_table_structure');
+    expect(tableTool?.params).toMatchObject({ tableFailureClass: 'single_column_variance_template', dominantColumnCount: 2 });
   });
 
   it('keeps native table repair active for structurally broken tables even when headers already exist', () => {
@@ -4835,6 +5075,64 @@ describe('planForRemediation', () => {
       tables,
     };
     const analysis = withCategoryScores(score(snap, META), { table_markup: 0 });
+
+    expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({
+      dominantColumnCount: 0,
+      maxTablesPerRun: 24,
+      maxSyntheticCells: 480,
+      tableFailureClass: 'strongly_irregular_rows',
+      largeObjectBackedTableBatch: true,
+    });
+  });
+
+  it('uses a larger bounded table batch for medium-scale undersegmented report tables', () => {
+    const tables = Array.from({ length: 5 }, (_, index) => ({
+      hasHeaders: true,
+      headerCount: 4,
+      totalCells: 80,
+      page: index,
+      structRef: `${200 + index}_0`,
+      rawRole: 'Table',
+      resolvedRole: 'Table',
+      reachable: true,
+      rowCount: 12,
+      cellsMisplacedCount: 0,
+      irregularRows: 4,
+      dominantColumnCount: 8,
+      rowCellCounts: [8, 8, 16, 16],
+    }));
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 47,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      detectionProfile: {
+        readingOrderSignals: {},
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 9,
+          stronglyIrregularTableCount: 5,
+        },
+      },
+      tableHeaderAudit: {
+        tablesChecked: 26,
+        headerAssociationMissingCount: 9,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 94,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables,
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      table_markup: 0,
+      heading_structure: 100,
+      alt_text: 100,
+      reading_order: 100,
+    });
 
     expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({
       dominantColumnCount: 0,
@@ -5734,4 +6032,32 @@ describe('planForRemediation', () => {
     );
     expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).not.toContain('set_figure_alt_text');
   });
+
+  it('schedules report-layout heading creation for native_untagged rows with no structure tree and MCID-only evidence', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      pdfClass: 'native_untagged',
+      structureTree: null,
+      paragraphStructElems: [],
+      mcidTextSpans: [
+        { page: 0, mcid: 10, snippet: '/P << /MCID 10 >>', resolvedText: 'Executive Summary' },
+        { page: 1, mcid: 11, snippet: '/P << /MCID 11 >>', resolvedText: 'Key Findings' },
+      ],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const headingTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_candidate');
+
+    expect(headingTool).toBeDefined();
+    expect(headingTool?.params).toMatchObject({
+      text: 'Executive Summary',
+      admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+    });
+    expect(headingTool?.params).toHaveProperty('preferPage0TitleSynthesis');
+  });
+
 });

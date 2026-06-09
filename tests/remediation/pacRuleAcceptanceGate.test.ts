@@ -721,6 +721,25 @@ describe('pacRuleAcceptanceGate', () => {
     });
   });
 
+  it('allows heading annotation cleanup as incremental mixed-debt recovery when caller lowers the target', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(28, 64),
+      finalSnapshot: annotationDebtSnapshot(0, 64),
+      toolNames: ['create_heading_from_candidate', 'tag_unowned_annotations'],
+      beforeScore: 34,
+      intermediateScore: 50,
+      finalScore: 50,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 35,
+    })).toMatchObject({
+      recover: true,
+      reason: 'structure_annotation_sequence_recovered',
+    });
+  });
+
   it('does not recover structure-annotation sequence if annotation debt remains unreduced', () => {
     expect(pacRuleStructureAnnotationSequenceRecovery({
       beforeSnapshot: annotationDebtSnapshot(0, 0),

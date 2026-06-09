@@ -65,6 +65,10 @@ function appliedAlt(ref: string): AppliedRemediationTool {
 }
 
 describe('stage146 figure-alt continuation', () => {
+  it('keeps enough continuation budget for annual-report scale missing-alt debt', () => {
+    expect(STAGE146_FIGURE_ALT_TARGETS_PER_RUN).toBeGreaterThanOrEqual(36);
+  });
+
   it('keeps the extended alt target cap when non-alt structure is stable', () => {
     const current = analysis({
       categories: {

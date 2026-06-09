@@ -80,12 +80,29 @@ function looksLikeFurnitureOrBoilerplate(text: string): boolean {
 function looksLikeRawPdfOperatorNoise(text: string): boolean {
   const normalized = normalizeText(text);
   if (!normalized) return false;
-  const operatorMatches = normalized.match(/\b(?:BT|ET|BDC|EMC|MCID|Tf|Tm|TJ|Tj|Td|TD|T\*|cm|re|Do|gs|q|Q|BI|ID|EI)\b/g) ?? [];
+  const operatorMatches = normalized.match(/\b(?:BT|ET|BDC|EMC|TJ|Tj|Tf|Tm|Td|TD|T\*|cm|re|Do|gs|q|Q|BI|ID|EI|scn|cs)\b/g) ?? [];
   if (operatorMatches.length < 2) return false;
+
   const structuralMarkers = (normalized.match(/\/[A-Za-z][A-Za-z0-9_]*/g) ?? []).length + (normalized.match(/<<|>>/g) ?? []).length;
   const numericTokens = normalized.match(/\b-?\d+(?:\.\d+)?\b/g)?.length ?? 0;
+  const mcidTokens = normalized.match(/\bMCID\b/g)?.length ?? 0;
+  const glyphOperators = normalized.match(/(?:\]TJ|\]Tj|\)TJ|\)Tj)\b/g)?.length ?? 0;
   const alphaWords = normalized.match(/[A-Za-z]{2,}/g)?.length ?? 0;
-  return structuralMarkers >= 2 && numericTokens >= 3 && alphaWords <= 8;
+  const hasContentStreamMarkup = /\[[^\]]*\]\s*(?:TJ|Tj)\b/.test(normalized);
+
+  if (operatorMatches.length >= 2 && structuralMarkers >= 2 && numericTokens >= 3 && alphaWords <= 8) {
+    return true;
+  }
+  if (operatorMatches.length >= 2 && (mcidTokens > 0 || glyphOperators > 0)) {
+    return true;
+  }
+  if (operatorMatches.length >= 2 && structuralMarkers >= 1 && hasContentStreamMarkup) {
+    return true;
+  }
+  if (structuralMarkers >= 1 && normalized.includes('/Span') && operatorMatches.length >= 1) {
+    return true;
+  }
+  return false;
 }
 
 function looksLikeRepeatingHeaderOrFooter(candidate: HeadingBootstrapCandidate, pagesByFingerprint: Map<string, Set<number>>): boolean {

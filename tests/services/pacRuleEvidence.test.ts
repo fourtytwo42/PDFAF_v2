@@ -415,6 +415,28 @@ describe('buildPacRuleEvidence', () => {
     expect(byId(rows, 'pdfua.table.strong_regular_structure').status).toBe('fail');
   });
 
+
+  it('does not fail table headers for one-row two-cell layout shells', () => {
+    const rows = buildPacRuleEvidence(makeSnap({
+      tables: [{
+        hasHeaders: false,
+        headerCount: 0,
+        totalCells: 2,
+        page: 0,
+        rowCount: 1,
+        cellsMisplacedCount: 0,
+        irregularRows: 0,
+        rowCellCounts: [2],
+      }],
+    }));
+
+    expect(byId(rows, 'pdfua.table.headers_present')).toMatchObject({
+      status: 'warn',
+      confidence: 'heuristic',
+      count: 1,
+    });
+  });
+
   it('fails orphan MCIDs and path-paint audit rules', () => {
     const rows = buildPacRuleEvidence(makeSnap({
       taggedContentAudit: {

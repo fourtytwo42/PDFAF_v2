@@ -66,6 +66,7 @@ const LEARNABLE_TOOL_NAMES = new Set([
   'retag_as_figure',
   'artifact_repeating_page_furniture',
   'repair_native_table_headers',
+  'normalize_table_structure',
   'repair_native_link_structure',
   'replace_bookmarks_from_headings',
   'add_page_outline_bookmarks',

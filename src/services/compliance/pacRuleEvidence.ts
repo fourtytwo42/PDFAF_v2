@@ -542,6 +542,20 @@ function headingStructureRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   ];
 }
 
+function tableRequiresHeaderEvidence(table: DocumentSnapshot['tables'][number]): boolean {
+  if (table.hasHeaders || (table.headerCount ?? 0) > 0) return true;
+  const rowCount = table.rowCount ?? 0;
+  const totalCells = table.totalCells ?? 0;
+  const simpleLayoutShell =
+    rowCount > 0 &&
+    rowCount <= 1 &&
+    totalCells > 0 &&
+    totalCells <= 2 &&
+    (table.irregularRows ?? 0) === 0 &&
+    (table.cellsMisplacedCount ?? 0) === 0;
+  return !simpleLayoutShell;
+}
+
 function tableRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
   if (snapshot.tables.length === 0) {
     return [
@@ -552,17 +566,21 @@ function tableRules(snapshot: DocumentSnapshot): PacRuleEvidence[] {
     ];
   }
 
-  const missingHeaders = snapshot.tables.filter(table => !table.hasHeaders).length;
+  const headerlessTablesRequiringHeaders = snapshot.tables.filter(table => !table.hasHeaders && tableRequiresHeaderEvidence(table)).length;
+  const headerlessLayoutShells = snapshot.tables.filter(table => !table.hasHeaders && !tableRequiresHeaderEvidence(table)).length;
   const signals = normalizedTableSignals(snapshot, snapshot.detectionProfile?.tableSignals);
   return [
     rule({
       ruleId: 'pdfua.table.headers_present',
-      status: missingHeaders > 0 ? 'fail' : 'pass',
+      status: headerlessTablesRequiringHeaders > 0 ? 'fail' : headerlessLayoutShells > 0 ? 'warn' : 'pass',
       category: 'table_markup',
-      message: missingHeaders > 0
-        ? `${missingHeaders} of ${snapshot.tables.length} table(s) lack header cells.`
-        : 'All table evidence includes header cells.',
-      count: missingHeaders,
+      message: headerlessTablesRequiringHeaders > 0
+        ? `${headerlessTablesRequiringHeaders} of ${snapshot.tables.length} table(s) lack header cells.`
+        : headerlessLayoutShells > 0
+          ? `${headerlessLayoutShells} one-row layout table shell(s) lack header cells; treat as advisory/manual-review evidence.`
+          : 'All table evidence includes header cells.',
+      confidence: headerlessTablesRequiringHeaders > 0 ? 'verified' : headerlessLayoutShells > 0 ? 'heuristic' : 'verified',
+      count: headerlessTablesRequiringHeaders > 0 ? headerlessTablesRequiringHeaders : headerlessLayoutShells,
     }),
     rule({
       ruleId: 'pdfua.table.cells_nested_under_rows',

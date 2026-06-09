@@ -54,7 +54,15 @@ function snapWithManyFiguresNoAlt(): DocumentSnapshot {
     hasAlt: false,
     isArtifact: false,
     page: i % 20,
+    rawRole: 'Figure',
+    role: 'Figure',
     structRef: `${200 + i}_0`,
+    reachable: true,
+    directContent: true,
+    subtreeMcidCount: 4,
+    subtreeMcids: [i, i + 100, i + 200, i + 300],
+    parentPath: [`Figure@${200 + i}_0`, 'Document@1_0'],
+    bbox: [20, 500, 180, 620] as [number, number, number, number],
   }));
   return {
     pageCount: 20,
@@ -69,13 +77,30 @@ function snapWithManyFiguresNoAlt(): DocumentSnapshot {
     lang: 'en',
     pdfUaVersion: '1',
     structTitle: 'Doc',
-    headings: [],
+    headings: [
+      { level: 1, text: 'Doc', page: 0, structRef: '10_0' },
+      { level: 2, text: 'Overview', page: 4, structRef: '11_0' },
+      { level: 2, text: 'Findings', page: 9, structRef: '12_0' },
+      { level: 2, text: 'Appendix', page: 14, structRef: '13_0' },
+    ],
     figures,
+    checkerFigureTargets: figures.map(fig => ({
+      hasAlt: false,
+      isArtifact: false,
+      page: fig.page,
+      role: 'Figure',
+      resolvedRole: 'Figure',
+      structRef: fig.structRef,
+      reachable: true,
+      directContent: true,
+      subtreeMcids: fig.subtreeMcids,
+      parentPath: fig.parentPath,
+    })),
     tables: [],
     fonts: [{ name: 'Arial', isEmbedded: true, hasUnicode: true }],
     bookmarks: [],
     formFields: [],
-    structureTree: { type: 'Document', children: [] },
+    structureTree: null,
     pdfClass: 'native_tagged',
     imageToTextRatio: 0,
   };
@@ -108,6 +133,9 @@ describe('POST /v1/remediate with configured LLM', () => {
     const improvedAnalysis: AnalysisResult = {
       ...initialAnalysis,
       score: Math.min(100, initialAnalysis.score + 5),
+      categories: initialAnalysis.categories.map(category =>
+        category.key === 'alt_text' ? { ...category, score: 60 } : category,
+      ),
     };
     const pdf = await barePdfBuffer();
     const mutated = Buffer.from('%PDF-mutated');
@@ -169,7 +197,7 @@ describe('POST /v1/remediate with configured LLM', () => {
 
     const res = await request(app)
       .post('/v1/remediate')
-      .field('options', JSON.stringify({ semantic: true }))
+      .field('options', JSON.stringify({ semantic: true, targetScore: 50 }))
       .attach('file', pdf, { filename: 'fixture-llm.pdf', contentType: 'application/pdf' });
 
     expect(res.status).toBe(200);

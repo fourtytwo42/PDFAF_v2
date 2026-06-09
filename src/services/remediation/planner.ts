@@ -146,6 +146,13 @@ function shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(
     candidate.score >= HEADING_BOOTSTRAP_MIN_SCORE;
 }
 
+function hasReusableMetadataTitle(snapshot: DocumentSnapshot): boolean {
+  const title = snapshot.metadata.title?.trim() ?? '';
+  if (title.length < 4) return false;
+  if ((title.match(/[A-Za-z]/g) ?? []).length < 4) return false;
+  return !isFilenameLikeTitle(title);
+}
+
 const STAGE162_LARGE_ANNOTATION_OWNERSHIP_DEBT = 50;
 
 const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
@@ -412,11 +419,123 @@ function isFigureRole(role: string | undefined): boolean {
   return (role ?? '').replace(/^\//, '').toLowerCase() === 'figure';
 }
 
+function normalizedRoleName(role: string | undefined | null): string {
+  return (role ?? '').replace(/^\//, '').trim().toLowerCase();
+}
+
+function isChartRole(role: string | undefined | null): boolean {
+  return normalizedRoleName(role) === 'chart';
+}
+
 function deterministicFigureAltPlaceholder(target: { page?: number | null }): string {
   const page = typeof target.page === 'number' && Number.isFinite(target.page)
     ? Math.max(1, Math.floor(target.page) + 1)
     : 1;
   return `Illustration (page ${page})`;
+}
+
+function normalizeFigureCaptionText(value: string): string {
+  return value
+    .replace(/\bF\s+igure\b/gi, 'Figure')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,:;])/g, '$1')
+    .replace(/\bFY\s*(\d)\s*(\d{3})\b/gi, 'FY$1$2')
+    .replace(/\b(20)\s+(\d{2})\b/g, '$1$2')
+    .replace(/\s*-\s*/g, '-')
+    .trim();
+}
+
+function extractFigureCaptionsFromText(value: string): string[] {
+  const text = normalizeFigureCaptionText(value);
+  if (!text) return [];
+  const starts: number[] = [];
+  const re = /\bFigure\s+\d+[A-Za-z]?\s*[.:]?/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    starts.push(match.index);
+  }
+  const captions: string[] = [];
+  for (let i = 0; i < starts.length; i += 1) {
+    const start = starts[i]!;
+    const nextStart = starts[i + 1] ?? text.length;
+    const rawSegment = text.slice(start, nextStart);
+    const bulletAt = rawSegment.search(/[•\u2022]/);
+    const segment = normalizeFigureCaptionText(
+      rawSegment.slice(0, bulletAt >= 0 ? bulletAt : rawSegment.length),
+    );
+    const words = segment.split(/\s+/).filter(Boolean);
+    if (words.length < 4) continue;
+    if (!/[A-Za-z]{4,}/.test(segment.replace(/^Figure\s+\d+[A-Za-z]?\s*[.:]?\s*/i, ''))) continue;
+    captions.push(words.slice(0, 24).join(' ').slice(0, 180));
+  }
+  return captions;
+}
+
+function figureCaptionsForPage(snapshot: DocumentSnapshot, page: number): string[] {
+  const seen = new Set<string>();
+  const captions: string[] = [];
+  const add = (caption: string): void => {
+    const normalized = normalizeFigureCaptionText(caption);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    captions.push(normalized);
+  };
+  for (const row of snapshot.layoutAudit?.captionCandidates ?? []) {
+    if (row.page !== page) continue;
+    for (const caption of extractFigureCaptionsFromText(row.text)) add(caption);
+  }
+  for (const caption of extractFigureCaptionsFromText(snapshot.textByPage[page] ?? '')) add(caption);
+  return captions;
+}
+
+function roleMappedChartPageOrderTargets(
+  snapshot: DocumentSnapshot,
+  target: DocumentSnapshot['figures'][number],
+  attemptedRetagRefs: Set<string>,
+): DocumentSnapshot['figures'] {
+  return sortFigureTargets(
+    snapshot.figures.filter(figure =>
+      figure.page === target.page &&
+      typeof figure.structRef === 'string' &&
+      figure.structRef.length > 0 &&
+      !figure.isArtifact &&
+      figure.reachable === true &&
+      isFigureRole(figure.role) &&
+      (isChartRole(figure.rawRole) || attemptedRetagRefs.has(figure.structRef)) &&
+      (figure.directContent === true || (figure.subtreeMcidCount ?? 0) > 0)
+    ),
+  );
+}
+
+function chartCaptionAltForTarget(
+  snapshot: DocumentSnapshot,
+  target: DocumentSnapshot['figures'][number],
+  alreadyApplied: AppliedRemediationTool[] = [],
+): string | null {
+  if (!isChartRole(target.rawRole)) return null;
+  if (!target.structRef) return null;
+  const attemptedRetagRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  const pageTargets = roleMappedChartPageOrderTargets(snapshot, target, attemptedRetagRefs);
+  const index = pageTargets.findIndex(row => row.structRef === target.structRef);
+  if (index < 0) return null;
+  const caption = figureCaptionsForPage(snapshot, target.page)[index];
+  if (!caption) return null;
+  return `Chart: ${caption}`.slice(0, 200);
+}
+
+function deterministicFigureAltText(
+  snapshot: DocumentSnapshot,
+  target: { page?: number | null; rawRole?: string; structRef?: string },
+  alreadyApplied: AppliedRemediationTool[] = [],
+): string {
+  const figure = target.structRef
+    ? snapshot.figures.find(row => row.structRef === target.structRef)
+    : undefined;
+  const chartAlt = figure
+    ? chartCaptionAltForTarget(snapshot, figure, alreadyApplied)
+    : null;
+  return chartAlt ?? deterministicFigureAltPlaceholder(target);
 }
 
 function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
@@ -627,11 +746,31 @@ export function shouldAllowStage146RoleMapRetagContinuation(
   return safeRoleMapRetagTargets(snapshot, attemptedRefs).length > 0;
 }
 
-function maxRetagAsFigureTargetsForRun(
+function shouldAllowCaptionedChartRetagContinuation(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+): boolean {
+  if (analysis.score >= 90) return false;
+  if ((analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) < 55) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) < 79) return false;
+  if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
+  const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  return safeRoleMapRetagTargets(snapshot, attemptedRefs).some(target =>
+    chartCaptionAltForTarget(snapshot, target, alreadyApplied) !== null
+  );
+}
+
+export function maxRetagAsFigureTargetsForRun(
   analysis?: AnalysisResult,
   snapshot?: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[] = [],
 ): number {
+  if (analysis && snapshot && shouldAllowCaptionedChartRetagContinuation(analysis, snapshot, alreadyApplied)) {
+    return STAGE194_CHART_RETAG_TARGETS_PER_RUN;
+  }
   if (analysis && snapshot && shouldAllowStage146RoleMapRetagContinuation(analysis, snapshot, alreadyApplied)) {
     return STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
   }
@@ -741,13 +880,25 @@ export type Stage43TableFailureClass =
   | 'rowless_dense_table'
   | 'direct_cells_under_table'
   | 'strongly_irregular_rows'
+  | 'single_column_variance_template'
   | 'missing_headers_only'
   | 'layout_table_candidate'
   | 'not_stage43_table_target';
 
+function isSingleColumnVarianceTable(table: DocumentSnapshot['tables'][number]): boolean {
+  const rowCounts = (table.rowCellCounts ?? []).filter(value => Number.isFinite(value) && value > 0);
+  if (!table.hasHeaders || (table.cellsMisplacedCount ?? 0) > 0) return false;
+  if (rowCounts.length < 3 || rowCounts.length > 20) return false;
+  if ((table.maxRowSpan ?? 1) > 1 || (table.maxColSpan ?? 1) > 1) return false;
+  const max = Math.max(...rowCounts);
+  const min = Math.min(...rowCounts);
+  return max === 2 && min === 1 && rowCounts.filter(value => value === 2).length >= 2 && rowCounts.filter(value => value === 1).length >= 2;
+}
+
 export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis?: AnalysisResult): Stage43TableFailureClass {
   const tableCategory = analysis?.categories.find(category => category.key === 'table_markup');
   const tableFailing = Boolean(tableCategory?.applicable && tableCategory.score < 70);
+  const strongTableResidual = Boolean(tableCategory?.applicable && tableCategory.score < 90);
   const directSignal = snapshot.detectionProfile?.tableSignals.directCellUnderTableCount ?? 0;
   const misplacedSignal = snapshot.detectionProfile?.tableSignals.misplacedCellCount ?? 0;
   const scoredTables = snapshot.tables.filter(table =>
@@ -761,7 +912,7 @@ export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis
     return 'rowless_dense_table';
   }
   if (
-    tableFailing &&
+    strongTableResidual &&
     scoredTables.some(table =>
       table.hasHeaders &&
       (table.cellsMisplacedCount ?? 0) === 0 &&
@@ -771,6 +922,9 @@ export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis
     )
   ) {
     return 'strongly_irregular_rows';
+  }
+  if (strongTableResidual && scoredTables.some(isSingleColumnVarianceTable)) {
+    return 'single_column_variance_template';
   }
   if (scoredTables.some(table => !table.hasHeaders && table.totalCells >= 4)) {
     return 'missing_headers_only';
@@ -1129,9 +1283,12 @@ function sortFigureTargets<T extends { page: number; structRef?: string }>(targe
 }
 
 const DEFAULT_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
-export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 5);
+// Stage 146 only opens after the default pass succeeds and the remaining targets are checker-visible,
+// reachable figures in an otherwise stable native/tagged document. Long annual reports need this fanout.
+export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 40);
 const DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN = 2;
 const STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN = 3;
+const STAGE194_CHART_RETAG_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 16);
 
 function normalizeFallbackTitleCandidate(value: string | null | undefined): string | null {
   const raw = (value ?? '').replace(/\s+/g, ' ').trim();
@@ -1226,8 +1383,19 @@ function shouldSkipAfterSuccessfulApply(
       : DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN;
     return successfulApplyCount(applied, toolName) >= cap;
   }
-  // Stage 43 table tools target one table per call and stay bounded to two table targets.
-  if (toolName === 'normalize_table_structure' || toolName === 'set_table_header_cells') {
+  if (toolName === 'normalize_table_structure') {
+    const tableScore = analysis ? categoryScore(analysis, 'table_markup') : null;
+    const remainingStrongTables = snapshot?.detectionProfile?.tableSignals?.stronglyIrregularTableCount ??
+      snapshot?.tables.filter(table =>
+        (table.irregularRows ?? 0) >= 2 &&
+        (table.cellsMisplacedCount ?? 0) === 0
+      ).length ?? 0;
+    const cap = tableScore != null && tableScore < 90 && remainingStrongTables > 0
+      ? 4
+      : 2;
+    return successfulApplyCount(applied, toolName) >= cap;
+  }
+  if (toolName === 'set_table_header_cells') {
     return successfulApplyCount(applied, toolName) >= 2;
   }
   // Python fixes up to 64 orphans per pass; repeat until converged (matches pikepdf mutator rounds).
@@ -1260,7 +1428,12 @@ function toolApplicableToPdfClass(
   }
   if (toolName === 'create_heading_from_candidate') {
     if (pdfClass === 'scanned') return false;
-    return snapshot.structureTree !== null && (snapshot.paragraphStructElems?.length ?? 0) > 0;
+    if (snapshot.textCharCount <= 0) return false;
+    if ((snapshot.paragraphStructElems?.length ?? 0) > 0) return true;
+    if ((snapshot.layoutAudit?.layoutHeadingCandidateCount ?? 0) > 0) return true;
+    if ((snapshot.mcidTextSpans?.length ?? 0) > 0) return true;
+    if ((snapshot.nativeTitleBtCandidates?.length ?? 0) > 0) return true;
+    return false;
   }
   if (toolName === 'create_heading_from_visible_text_anchor') {
     if (pdfClass === 'scanned') return false;
@@ -1665,6 +1838,9 @@ export function planForRemediation(
     ) {
       return { allowed: false, reason: 'semantic_deferred' };
     }
+    if (toolName === 'set_document_title' && hasReusableMetadataTitle(snapshot)) {
+      return { allowed: false, reason: 'missing_precondition' };
+    }
     if (toolName === 'repair_annotation_alt_text' && !hasAnnotationSignals) {
       return { allowed: false, reason: 'missing_precondition' };
     }
@@ -1878,10 +2054,17 @@ export function planForRemediation(
     }
     if (
       (toolName === 'normalize_table_structure' || toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
-      && !(snapshot.tables.length > 0 && categoryFailing('table_markup') && (structureConfidenceHigh || categoryFailing('table_markup')))
+      && !(
+        snapshot.tables.length > 0 &&
+        (
+          categoryFailing('table_markup') ||
+          (toolName === 'normalize_table_structure' && hasTableSignals && (categoryScore(analysis, 'table_markup') ?? 100) < 90)
+        ) &&
+        (structureConfidenceHigh || categoryFailing('table_markup') || toolName === 'normalize_table_structure')
+      )
     ) {
-      // Stage 43 is intentionally narrow: table tools run only when table_markup is
-      // already failing, avoiding protected-file spillover from advisory table signals.
+      // Stage 43 stays narrow: header tools require failing table markup, while
+      // structure normalization may continue on residual strong irregular evidence.
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (toolName === 'normalize_table_structure' && classifyStage43TableFailure(snapshot, analysis) === 'not_stage43_table_target') {
@@ -2698,7 +2881,7 @@ export function buildDefaultParams(
           snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && !attemptedRefs.has(f.structRef) && isFigureRole(f.role)),
         );
       const target = checkerCandidates[0] ?? fallbackCandidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltText(snapshot, target, alreadyApplied) } : {};
     }
     case 'create_heading_from_candidate': {
       const candidate = stage24ZeroHeadingBootstrapEnabled()
@@ -2882,13 +3065,17 @@ export function buildDefaultParams(
           && (f.directContent === true || (f.subtreeMcidCount ?? 0) > 0)
         ),
       ).sort((a, b) =>
-        Number(b.directContent) - Number(a.directContent)
+        Number(chartCaptionAltForTarget(snapshot, b, alreadyApplied) !== null) - Number(chartCaptionAltForTarget(snapshot, a, alreadyApplied) !== null)
+        || Number(b.directContent) - Number(a.directContent)
         || (b.subtreeMcidCount ?? 0) - (a.subtreeMcidCount ?? 0)
         || a.page - b.page
         || (a.structRef ?? '').localeCompare(b.structRef ?? '')
       );
-      const target = candidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
+      const normalRetagBudgetSpent = successfulApplyCount(alreadyApplied, 'retag_as_figure') >= STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
+      const target = candidates.find(candidate =>
+        !normalRetagBudgetSpent || chartCaptionAltForTarget(snapshot, candidate, alreadyApplied) !== null
+      );
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltText(snapshot, target, alreadyApplied) } : {};
     }
     case 'canonicalize_figure_alt_ownership':
     case 'normalize_nested_figure_containers': {
@@ -2941,6 +3128,7 @@ export function buildDefaultParams(
               && (table.irregularRows ?? 0) >= 2
               && (table.dominantColumnCount ?? 0) >= 2;
           }
+          if (tableClass === 'single_column_variance_template') return isSingleColumnVarianceTable(table);
           if (tableClass === 'missing_headers_only') return !table.hasHeaders && table.totalCells >= 4;
           if (tableClass === 'layout_table_candidate') return table.totalCells <= 2 && !table.hasHeaders;
           return false;
@@ -2952,7 +3140,7 @@ export function buildDefaultParams(
           || a.page - b.page
           || (a.structRef ?? '').localeCompare(b.structRef ?? '')
         )[0];
-      if (tableClass === 'strongly_irregular_rows') {
+      if (tableClass === 'strongly_irregular_rows' || tableClass === 'single_column_variance_template') {
         const strongTableCount = snapshot.tables
           .filter(isRealRootReachableTableTarget)
           .filter(table =>
@@ -2963,21 +3151,46 @@ export function buildDefaultParams(
             (table.dominantColumnCount ?? 0) >= 2
           ).length;
         const nativeStrongSignalCount = snapshot.detectionProfile?.tableSignals?.stronglyIrregularTableCount ?? 0;
+        const tableHeaderAudit = snapshot.tableHeaderAudit;
+        const dataCellsWithoutHeader = tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0;
+        const headerAssociationMissing = tableHeaderAudit?.headerAssociationMissingCount ?? 0;
+        const mediumScaleUndersegmentedRows =
+          (categoryScore(analysis, 'table_markup') ?? 100) < 40 &&
+          (categoryScore(analysis, 'heading_structure') ?? 0) >= 90 &&
+          (categoryScore(analysis, 'alt_text') ?? 0) >= 90 &&
+          (categoryScore(analysis, 'reading_order') ?? 0) >= 95 &&
+          (snapshot.pageCount ?? 0) >= 20 &&
+          (tableHeaderAudit?.tablesChecked ?? 0) <= 60 &&
+          strongTableCount >= 4 &&
+          nativeStrongSignalCount >= 4 &&
+          dataCellsWithoutHeader >= 80 &&
+          headerAssociationMissing >= 4;
         const largeObjectBackedTableBatch =
+          mediumScaleUndersegmentedRows ||
           (
             strongTableCount >= 12 &&
-            ((snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 500 ||
-              (snapshot.tableHeaderAudit?.headerAssociationMissingCount ?? 0) >= 12)
+            (dataCellsWithoutHeader >= 500 ||
+              headerAssociationMissing >= 12)
           ) ||
           (
             strongTableCount >= 4 &&
-            (snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 3000
+            dataCellsWithoutHeader >= 3000
           ) ||
           (
             strongTableCount > 0 &&
             nativeStrongSignalCount >= 12 &&
-            (snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 3000
+            dataCellsWithoutHeader >= 3000
           );
+        if (tableClass === 'single_column_variance_template') {
+          return target?.structRef
+            ? {
+              structRef: target.structRef,
+              dominantColumnCount: 2,
+              maxSyntheticCells: 32,
+              tableFailureClass: tableClass,
+            }
+            : {};
+        }
         return {
           dominantColumnCount: 0,
           maxTablesPerRun: largeObjectBackedTableBatch ? 24 : 4,
