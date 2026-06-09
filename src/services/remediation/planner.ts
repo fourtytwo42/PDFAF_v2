@@ -1662,6 +1662,26 @@ export function isProtectedZeroHeadingConvergence(
     || recovery.kind === 'minimal_or_degenerate_tree';
 }
 
+export function shouldExemptNativeTextTaggingForOcrFallback(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: readonly AppliedRemediationTool[],
+  plannedTools: readonly PlannedRemediationTool[] = [],
+): boolean {
+  if (analysis.pdfClass === 'scanned') return false;
+  if (analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) > 20) return false;
+  if ((snapshot.pageCount ?? analysis.pageCount ?? 0) < 4) return false;
+
+  const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
+  const extractedHeadingCount = snapshot.detectionProfile?.headingSignals?.extractedHeadingCount ?? snapshot.headings.length;
+  if (snapshot.headings.length > 0 || treeHeadingCount > 0 || extractedHeadingCount > 0) return false;
+  if (alreadyApplied.some(row => row.toolName === 'tag_native_text_blocks')) return false;
+
+  return alreadyApplied.some(row => row.toolName === 'ocr_scanned_pdf' && row.outcome === 'failed') ||
+    plannedTools.some(tool => tool.toolName === 'ocr_scanned_pdf');
+}
+
 /**
  * Pure planner: failing categories + snapshot/pdfClass → staged tools.
  * No corpus ids, filenames, or customer-specific rules.
@@ -2774,6 +2794,9 @@ export function planForRemediation(
   }
   if (shouldRetryStructureConformanceAfterDebtAppears(analysis, snapshot)) {
     ['repair_structure_conformance', 'artifact_repeating_page_furniture'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
+  if (shouldExemptNativeTextTaggingForOcrFallback(analysis, snapshot, alreadyApplied, plannedMandatoryRaw)) {
+    reliabilityExemptTools.add('tag_native_text_blocks');
   }
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,

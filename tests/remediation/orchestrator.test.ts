@@ -44,6 +44,7 @@ import {
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard,
   shouldSkipPlaybookForStrongTableUndersegmentation,
+  shouldSkipPlaybookForSevereHeadingDebt,
   shouldSkipPlaybookForZeroHeadingFigureAltDebt,
   shouldConfirmLowScoreMetadataOnlyHeadingVolatility,
   shouldConfirmMetadataOnlyStructuralVolatility,
@@ -243,6 +244,64 @@ function makeZeroHeadingFigureAltDebtSnapshot(input: {
   return snapshot;
 }
 
+function makeSevereHeadingDebtAnalysis(input: {
+  headingScore?: number;
+  pageCount?: number;
+} = {}): AnalysisResult {
+  return {
+    ...makeAnalysis({
+      score: 59,
+      categories: {
+        heading_structure: input.headingScore ?? 0,
+        alt_text: 100,
+        reading_order: 94,
+        table_markup: 100,
+      },
+    }),
+    pageCount: input.pageCount ?? 16,
+    pdfClass: 'native_untagged',
+  } as AnalysisResult;
+}
+
+function makeSevereHeadingDebtSnapshot(input: {
+  pageCount?: number;
+  textCharCount?: number;
+  treeHeadingCount?: number;
+  extractedHeadingCount?: number;
+  extractedHeadingsMissingFromTree?: boolean;
+} = {}): DocumentSnapshot {
+  return {
+    pageCount: input.pageCount ?? 16,
+    textByPage: Array(input.pageCount ?? 16).fill('Readable report text'),
+    textCharCount: input.textCharCount ?? 8000,
+    imageOnlyPageCount: 0,
+    metadata: { title: 'Report', language: 'en-US' },
+    links: [],
+    formFieldsFromPdfjs: [],
+    isTagged: false,
+    markInfo: null,
+    lang: 'en-US',
+    pdfUaVersion: null,
+    headings: [],
+    figures: [],
+    tables: [],
+    fonts: [],
+    bookmarks: [],
+    formFields: [],
+    structureTree: null,
+    pdfClass: 'native_untagged',
+    imageToTextRatio: 0,
+    detectionProfile: {
+      headingSignals: {
+        extractedHeadingCount: input.extractedHeadingCount ?? 0,
+        treeHeadingCount: input.treeHeadingCount ?? 0,
+        headingTreeDepth: 1,
+        extractedHeadingsMissingFromTree: input.extractedHeadingsMissingFromTree ?? true,
+      },
+    },
+  } as DocumentSnapshot;
+}
+
 function makePostPassTool(input: Partial<AppliedRemediationTool> & { toolName: string }): AppliedRemediationTool {
   const scoreBefore = input.scoreBefore ?? 91;
   const scoreAfter = input.scoreAfter ?? scoreBefore;
@@ -412,6 +471,44 @@ describe('playbook zero-heading figure-alt guard', () => {
       analysis: makeZeroHeadingFigureAltDebtAnalysis(),
       snapshot: makeZeroHeadingFigureAltDebtSnapshot({ figures: 2, figuresWithAlt: 0 }),
       playbook: makePlaybook(['repair_structure_conformance']),
+    })).toBe(false);
+  });
+});
+
+describe('playbook severe heading debt guard', () => {
+  it('skips playbook replay for long zero-heading native documents', () => {
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis(),
+      snapshot: makeSevereHeadingDebtSnapshot(),
+      playbook: makePlaybook([
+        'set_document_title',
+        'bootstrap_struct_tree',
+        'repair_structure_conformance',
+        'mark_untagged_content_as_artifact',
+      ]),
+    })).toBe(true);
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis(),
+      snapshot: makeSevereHeadingDebtSnapshot({ textCharCount: 0 }),
+      playbook: makePlaybook(['bootstrap_struct_tree', 'repair_structure_conformance']),
+    })).toBe(true);
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis(),
+      snapshot: makeSevereHeadingDebtSnapshot(),
+      playbook: makePlaybook(['tag_native_text_blocks', 'create_structure_from_degenerate_native_anchor']),
+    })).toBe(true);
+  });
+
+  it('does not skip for non-severe heading debt or small documents', () => {
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis({ headingScore: 60 }),
+      snapshot: makeSevereHeadingDebtSnapshot(),
+      playbook: makePlaybook(['bootstrap_struct_tree']),
+    })).toBe(false);
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis({ pageCount: 2 }),
+      snapshot: makeSevereHeadingDebtSnapshot({ pageCount: 2 }),
+      playbook: makePlaybook(['bootstrap_struct_tree']),
     })).toBe(false);
   });
 });

@@ -8439,6 +8439,27 @@ export function shouldSkipPlaybookForZeroHeadingFigureAltDebt(input: {
   );
 }
 
+export function shouldSkipPlaybookForSevereHeadingDebt(input: {
+  analysis: AnalysisResult;
+  snapshot: DocumentSnapshot;
+  playbook: Playbook;
+}): boolean {
+  void input.playbook;
+  if (input.analysis.pdfClass === 'scanned' || input.snapshot.pdfClass === 'scanned') return false;
+  if ((input.snapshot.pageCount ?? input.analysis.pageCount ?? 0) < 4) return false;
+
+  const headingScore = categoryScore(input.analysis, 'heading_structure') ?? 100;
+  if (headingScore > 20) return false;
+
+  const headingSignals = input.snapshot.detectionProfile?.headingSignals;
+  const treeHeadingCount = headingSignals?.treeHeadingCount ?? input.snapshot.headings.length;
+  const extractedHeadingCount = headingSignals?.extractedHeadingCount ?? input.snapshot.headings.length;
+  const extractedMissingFromTree = headingSignals?.extractedHeadingsMissingFromTree === true;
+
+  if (treeHeadingCount > 1 && !extractedMissingFromTree) return false;
+  return treeHeadingCount === 0 || extractedHeadingCount === 0 || extractedMissingFromTree;
+}
+
 export interface RemediatePdfOptions {
   targetScore?: number;
   maxRounds?: number;
@@ -8946,6 +8967,11 @@ export async function remediatePdf(
       playbook: activePlaybook,
     }) &&
     !shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: initialAnalysis,
+      snapshot: initialSnapshot,
+      playbook: activePlaybook,
+    }) &&
+    !shouldSkipPlaybookForSevereHeadingDebt({
       analysis: initialAnalysis,
       snapshot: initialSnapshot,
       playbook: activePlaybook,

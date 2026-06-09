@@ -16,6 +16,7 @@ import {
   shouldAllowStage146FigureAltContinuation,
   shouldAllowStage146RoleMapRetagContinuation,
   shouldAllowStage178ProtectedFigureAltContinuation,
+  shouldExemptNativeTextTaggingForOcrFallback,
   STAGE146_FIGURE_ALT_TARGETS_PER_RUN,
 } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
@@ -1207,6 +1208,128 @@ describe('planForRemediation', () => {
     ]);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).toContain('tag_native_text_blocks');
+  });
+
+  it('does not reliability-filter native text tagging for OCR fallback zero-heading shells', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const pdfClass of ['native_untagged', 'native_tagged'] as const) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName: 'tag_native_text_blocks',
+          pdfClass,
+          outcome: 'no_effect',
+          scoreBefore: 44,
+          scoreAfter: 44,
+        });
+      }
+    }
+
+    const untaggedSnap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 16,
+      textByPage: Array.from({ length: 16 }, () => ''),
+      textCharCount: 0,
+      pdfClass: 'native_untagged',
+    };
+    const untaggedAnalysis = {
+      ...withCategoryScores(score(untaggedSnap, META), {
+        heading_structure: 0,
+        reading_order: 0,
+        pdf_ua_compliance: 0,
+        text_extractability: 10,
+      }),
+      score: 10,
+    };
+    expect(shouldExemptNativeTextTaggingForOcrFallback(untaggedAnalysis, untaggedSnap, [], [
+      { toolName: 'ocr_scanned_pdf', params: {}, rationale: 'same-pass OCR fallback', route: 'font_ocr_repair' },
+    ])).toBe(true);
+    const untaggedPlan = planForRemediation(untaggedAnalysis, untaggedSnap, [], store);
+    const untaggedNames = untaggedPlan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(untaggedNames).toContain('ocr_scanned_pdf');
+    expect(untaggedNames).toContain('tag_native_text_blocks');
+
+    const taggedSnap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 16,
+      textByPage: Array.from({ length: 16 }, (_, index) => `page ${index + 1} body text`),
+      textCharCount: 4096,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      structureTree: { type: 'Document', children: [] },
+      metadata: { title: 'Recovered shell', language: 'en-US', author: '', subject: '' },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 16,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 1,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    };
+    const taggedAnalysis = {
+      ...withCategoryScores(score(taggedSnap, META), {
+        heading_structure: 0,
+        reading_order: 0,
+        pdf_ua_compliance: 100,
+        text_extractability: 96,
+      }),
+      score: 44,
+    };
+    const applied: AppliedRemediationTool[] = [
+      { toolName: 'ocr_scanned_pdf', stage: 1, round: 1, scoreBefore: 44, scoreAfter: 44, delta: 0, outcome: 'failed' },
+    ];
+
+    expect(shouldExemptNativeTextTaggingForOcrFallback(taggedAnalysis, taggedSnap, applied)).toBe(true);
+    const taggedPlan = planForRemediation(taggedAnalysis, taggedSnap, applied, store);
+    const taggedNames = taggedPlan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(taggedNames).toContain('tag_native_text_blocks');
   });
 
   it('does not include tag_native_text_blocks for non-degenerate native_tagged structure', () => {
