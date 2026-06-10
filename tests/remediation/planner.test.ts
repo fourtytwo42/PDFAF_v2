@@ -805,6 +805,40 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('filters repeated-name and escaped-glyph noise before selecting report statistics headings', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 8,
+      textByPage: ['Cover', 'Copyright', 'Juvenile Court Statistics 2023', 'Body'],
+      textCharCount: 1200,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Eliana Beigel Eliana Beigel Eliana Beigel Eliana Beigel', page: 4, structRef: 'bad_repeat' },
+        { tag: 'P', text: 'Nebraska \\227Nebraska Commission on Nevada', page: 5, structRef: 'bad_glyph' },
+        { tag: 'P', text: 'December 2025', page: 2, structRef: 'bad_date' },
+        { tag: 'P', text: 'Juvenile Court Statistics 2023', page: 2, structRef: 'title_2023' },
+        { tag: 'P', text: 'Chapter 2: National Estimates of Delinquency Cases', page: 6, structRef: 'chapter_2' },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 55,
+    });
+
+    const candidates = buildEligibleHeadingBootstrapCandidates(snap);
+
+    expect(candidates.map(candidate => candidate.structRef)).toEqual(['title_2023', 'chapter_2']);
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap)).toEqual({
+      targetRef: 'title_2023',
+      level: 1,
+      text: 'Juvenile Court Statistics 2023',
+    });
+  });
+
   it('classifies zero-heading recovery buckets without filename or family rules', () => {
     const recoverableSnap: DocumentSnapshot = {
       ...bareSnapshot(),

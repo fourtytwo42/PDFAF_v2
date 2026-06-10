@@ -62,8 +62,10 @@ function looksLikeCaption(text: string): boolean {
 }
 
 function looksLikeDateOrReportId(text: string): boolean {
-  return /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/i.test(text)
-    || /\b(?:report|publication|document|case|file|id|no\.?|number)\s*[:#-]?\s*[A-Z0-9-]{3,}\b/i.test(text);
+  const normalized = normalizeText(text);
+  return /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/i.test(normalized)
+    || /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{4}$/i.test(normalized)
+    || /\b(?:report|publication|document|case|file|id|no\.?|number)\s*[:#-]?\s*[A-Z0-9-]{3,}\b/i.test(normalized);
 }
 
 function looksLikeBylineOrOfficialLine(text: string): boolean {
@@ -103,6 +105,43 @@ function looksLikeRawPdfOperatorNoise(text: string): boolean {
     return true;
   }
   return false;
+}
+
+function looksLikeEscapedGlyphNoise(text: string): boolean {
+  return /\\[0-9]{2,4}/.test(text)
+    || /\\u[0-9A-Fa-f]{4}/.test(text)
+    || text.includes(String.fromCharCode(0xfffd));
+}
+
+function looksLikeRepeatedPhrase(text: string): boolean {
+  const words = normalizeText(text)
+    .split(/\s+/)
+    .map(word => word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''))
+    .filter(Boolean);
+  if (words.length < 4) return false;
+
+  for (let phraseSize = 1; phraseSize <= Math.min(4, Math.floor(words.length / 2)); phraseSize += 1) {
+    if (words.length % phraseSize !== 0) continue;
+    const phrase = words.slice(0, phraseSize).join(' ');
+    if (!phrase) continue;
+    let repeated = true;
+    for (let index = phraseSize; index < words.length; index += phraseSize) {
+      if (words.slice(index, index + phraseSize).join(' ') !== phrase) {
+        repeated = false;
+        break;
+      }
+    }
+    if (repeated && words.length / phraseSize >= 3) return true;
+  }
+
+  return words.length >= 6 && new Set(words).size <= Math.ceil(words.length / 3);
+}
+
+function looksLikeReportTitlePattern(text: string): boolean {
+  const normalized = normalizeText(text);
+  return /\b(?:at a glance|executive summary|annual report|research brief|statistics|statistical|estimates?|findings|summary|overview|introduction|conclusion)\b/i.test(normalized)
+    || /\b(?:juvenile|criminal|civil|family|drug|violent|property|delinquency)\b.*\b(?:statistics|cases?|estimates?|court)\b/i.test(normalized)
+    || /\b(?:statistics|cases?|estimates?|court)\b.*\b(?:juvenile|criminal|civil|family|drug|violent|property|delinquency)\b/i.test(normalized);
 }
 
 function looksLikeRepeatingHeaderOrFooter(candidate: HeadingBootstrapCandidate, pagesByFingerprint: Map<string, Set<number>>): boolean {
@@ -207,6 +246,8 @@ export function scoreHeadingBootstrapCandidate(
   if (looksLikeRawPdfOperatorNoise(text)) return null;
   if (
     looksLikeCaption(text)
+    || looksLikeEscapedGlyphNoise(text)
+    || looksLikeRepeatedPhrase(text)
     || looksLikeTableLine(text)
     || looksLikeBodyParagraph(text)
     || looksLikeBodyLead(text)
@@ -231,6 +272,7 @@ export function scoreHeadingBootstrapCandidate(
   }
 
   const words = wordCount(text);
+  const reportTitlePattern = looksLikeReportTitlePattern(text);
   if (words <= HEADING_BOOTSTRAP_TITLE_MAX_WORDS) {
     score += 22;
     reasons.push('compact_phrase');
@@ -255,7 +297,7 @@ export function scoreHeadingBootstrapCandidate(
     score += 24;
     reasons.push('all_caps');
   }
-  if (/at a glance|executive summary|introduction|overview|findings|conclusion|summary/i.test(text)) {
+  if (reportTitlePattern) {
     score += 18;
     reasons.push('report_title_pattern');
   }
@@ -270,7 +312,7 @@ export function scoreHeadingBootstrapCandidate(
     score += isolated;
     reasons.push('isolated_bbox');
   }
-  if (mostlyProperNames(text)) {
+  if (mostlyProperNames(text) && !reportTitlePattern) {
     score -= 30;
     reasons.push('proper_name_penalty');
   }

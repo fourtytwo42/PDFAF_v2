@@ -484,7 +484,7 @@ export const REMEDIATION_TOOL_STAGE_ORDER: Record<string, number> = {
   create_heading_from_ocr_page_shell_anchor: 8,
   create_heading_from_ocr_collection_title_anchor: 8,
   recover_ocr_text_ownership:        8,
-  create_heading_from_candidate:       4,
+  create_heading_from_candidate:       2,
   normalize_heading_hierarchy:         4,
   replace_bookmarks_from_headings:     4,
   add_page_outline_bookmarks:          5,
