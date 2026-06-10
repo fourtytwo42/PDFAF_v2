@@ -1724,6 +1724,8 @@ export function shouldRejectStageResult(input: {
       afterReadingOrderScore: categoryScore(input.after, 'reading_order'),
       beforePdfUaScore: categoryScore(input.before, 'pdf_ua_compliance'),
       afterPdfUaScore: categoryScore(input.after, 'pdf_ua_compliance'),
+      beforeTableMarkupScore: categoryScore(input.before, 'table_markup'),
+      afterTableMarkupScore: categoryScore(input.after, 'table_markup'),
     });
     return recovery.recover ? { reject: false, reason: null } : decision;
   };
@@ -3832,6 +3834,8 @@ async function applyGuardedPostPass(args: {
       afterReadingOrderScore: categoryScore(analyzed.result, 'reading_order'),
       beforePdfUaScore: categoryScore(currentAnalysis, 'pdf_ua_compliance'),
       afterPdfUaScore: categoryScore(analyzed.result, 'pdf_ua_compliance'),
+      beforeTableMarkupScore: categoryScore(currentAnalysis, 'table_markup'),
+      afterTableMarkupScore: categoryScore(analyzed.result, 'table_markup'),
     });
     if (recovery.recover) {
       acceptedDetails = JSON.stringify({
