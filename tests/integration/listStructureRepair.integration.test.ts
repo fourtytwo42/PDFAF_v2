@@ -30,4 +30,26 @@ describe('repair_list_li_wrong_parent (Python)', () => {
     const after = await runPythonAnalysis(outPath);
     expect(after.listStructureAudit?.listItemMisplacedCount ?? 0).toBe(0);
   });
+  it('wraps list shells with nested structures and direct MCIDs under LI', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-list-shell-'));
+    const pdfPath = join(dir, 'in.pdf');
+    const script = join(process.cwd(), 'tests/fixtures/scripts/write_list_shell_without_li.py');
+    await execFileAsync('python3', [script, pdfPath]);
+
+    const before = await runPythonAnalysis(pdfPath);
+    expect(before.listStructureAudit?.listsWithoutItems ?? 0).toBeGreaterThan(0);
+
+    const buf = await readFile(pdfPath);
+    const { buffer, result } = await runPythonMutationBatch(buf, [
+      { op: 'repair_list_li_wrong_parent', params: {} },
+    ]);
+    expect(result.success).toBe(true);
+    expect(result.applied).toContain('repair_list_li_wrong_parent');
+
+    const outPath = join(dir, 'out.pdf');
+    await writeFile(outPath, buffer);
+    const after = await runPythonAnalysis(outPath);
+    expect(after.listStructureAudit?.listsWithoutItems ?? 0).toBe(0);
+  });
+
 });

@@ -6129,6 +6129,44 @@ def _page_max_mcid(page_obj) -> int:
     return out
 
 
+def _find_parent_tree_array_for_key(node, key: int) -> pikepdf.Array | None:
+    try:
+        target = int(key)
+    except Exception:
+        return None
+    q: deque = deque([node])
+    seen: set = set()
+    while q and len(seen) < MAX_ITEMS * 4:
+        cur = q.popleft()
+        cur_key = _obj_key(cur)
+        if cur_key and cur_key in seen:
+            continue
+        if cur_key:
+            seen.add(cur_key)
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        try:
+            nums = cur.get("/Nums")
+            if isinstance(nums, pikepdf.Array):
+                for idx in range(0, len(nums) - 1, 2):
+                    try:
+                        if int(nums[idx]) == target and isinstance(nums[idx + 1], pikepdf.Array):
+                            return nums[idx + 1]
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        try:
+            kids = cur.get("/Kids")
+            if isinstance(kids, pikepdf.Array):
+                for kid in kids:
+                    if isinstance(kid, pikepdf.Dictionary):
+                        q.append(kid)
+        except Exception:
+            pass
+    return None
+
+
 def _ensure_page_parent_tree_array(
     pdf: pikepdf.Pdf,
     struct_root: pikepdf.Dictionary,
@@ -6279,6 +6317,58 @@ def _repair_parent_tree_mcid_owners(pdf: pikepdf.Pdf) -> bool:
             if arr_changed:
                 changed = True
             if isinstance(arr, pikepdf.Array) and _set_page_parent_tree_mcid(arr, int(ref.get("mcid")), elem):
+                changed = True
+        except Exception:
+            continue
+    return changed
+
+def _repair_existing_parent_tree_mcid_owners(pdf: pikepdf.Pdf) -> bool:
+    """Align existing ParentTree MCID arrays without adding top-level /Nums entries."""
+    changed = False
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(sr, pikepdf.Dictionary):
+        return False
+    try:
+        parent_tree = sr.get("/ParentTree")
+    except Exception:
+        return False
+    if not isinstance(parent_tree, pikepdf.Dictionary):
+        return False
+    page_key_by_ref = {}
+    try:
+        for page in pdf.pages:
+            key = _obj_key(page.obj)
+            struct_parent = page.obj.get("/StructParents")
+            if key and isinstance(struct_parent, int):
+                page_key_by_ref[key] = int(struct_parent)
+    except Exception:
+        return False
+    for elem, ref in list(_iter_struct_content_refs(pdf)):
+        try:
+            if ref.get("type") != "mcid":
+                continue
+            page_key = page_key_by_ref.get(ref.get("pageRef"))
+            if page_key is None:
+                continue
+            arr = _find_parent_tree_array_for_key(parent_tree, page_key)
+            if not isinstance(arr, pikepdf.Array):
+                continue
+            mcid = int(ref.get("mcid"))
+            while len(arr) <= mcid:
+                arr.append(None)
+                changed = True
+            try:
+                prev = arr[mcid]
+            except Exception:
+                prev = None
+            prev_key = _obj_key(prev)
+            elem_key = _obj_key(elem)
+            same_owner = prev_key == elem_key if (prev_key is not None or elem_key is not None) else prev == elem
+            if not same_owner:
+                arr[mcid] = elem
                 changed = True
         except Exception:
             continue
@@ -9596,46 +9686,49 @@ def _wrap_list_shell_children_into_li(list_elem, pdf: pikepdf.Pdf) -> int:
     if k is None:
         return 0
     children = list(k) if isinstance(k, pikepdf.Array) else [k]
-    struct_children = [child for child in children if isinstance(child, pikepdf.Dictionary)]
-    if not struct_children:
-        return 0
-    tags = [(get_name(child) or "").lstrip("/").upper() for child in struct_children]
-    if any(tag == "LI" for tag in tags):
-        return 0
-    if any(tag not in ("LBL", "LBODY", "L") for tag in tags):
+    if not children:
         return 0
 
+    direct_struct_children = [child for child in children if _is_struct_elem_dict(child)]
+    direct_tags = [(get_name(child) or "").lstrip("/").upper() for child in direct_struct_children]
+    if any(tag == "LI" for tag in direct_tags):
+        return 0
+
+    list_page = _page_obj_for_struct_elem(list_elem)
     new_children = pikepdf.Array()
     repairs = 0
     i = 0
     while i < len(children):
         child = children[i]
-        if not isinstance(child, pikepdf.Dictionary):
-            new_children.append(child)
-            i += 1
-            continue
-        tag = (get_name(child) or "").lstrip("/").upper()
-        if tag not in ("LBL", "LBODY", "L"):
-            new_children.append(child)
-            i += 1
-            continue
         li_k = pikepdf.Array([child])
-        if i + 1 < len(children):
-            sib = children[i + 1]
-            if isinstance(sib, pikepdf.Dictionary):
-                sib_tag = (get_name(sib) or "").lstrip("/").upper()
-                if (tag == "LBL" and sib_tag == "LBODY") or (tag == "LBODY" and sib_tag == "LBL"):
-                    li_k.append(sib)
-                    i += 1
-        li = pdf.make_indirect(
-            pikepdf.Dictionary(
-                Type=pikepdf.Name("/StructElem"),
-                S=pikepdf.Name("/LI"),
-                P=list_elem,
-                K=li_k,
-            )
+        li_page = list_page
+        if _is_struct_elem_dict(child):
+            child_page = _page_obj_for_struct_elem(child)
+            if isinstance(child_page, pikepdf.Dictionary):
+                li_page = child_page
+            tag = (get_name(child) or "").lstrip("/").upper()
+            if tag in ("LBL", "LBODY") and i + 1 < len(children):
+                sib = children[i + 1]
+                if _is_struct_elem_dict(sib):
+                    sib_page = _page_obj_for_struct_elem(sib)
+                    if isinstance(sib_page, pikepdf.Dictionary):
+                        li_page = sib_page
+                    sib_tag = (get_name(sib) or "").lstrip("/").upper()
+                    if (tag == "LBL" and sib_tag == "LBODY") or (tag == "LBODY" and sib_tag == "LBL"):
+                        li_k.append(sib)
+                        i += 1
+        li_dict = pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/LI"),
+            P=list_elem,
+            K=li_k,
         )
+        if isinstance(li_page, pikepdf.Dictionary):
+            li_dict["/Pg"] = li_page
+        li = pdf.make_indirect(li_dict)
         for wrapped in list(li_k):
+            if not _is_struct_elem_dict(wrapped):
+                continue
             try:
                 wrapped["/P"] = li
             except Exception:
@@ -9649,11 +9742,11 @@ def _wrap_list_shell_children_into_li(list_elem, pdf: pikepdf.Pdf) -> int:
 
 
 def _op_repair_list_li_wrong_parent(pdf: pikepdf.Pdf, _params: dict) -> bool:
-    """Wrap misplaced /LI (parent is not /L) in a new /L StructElem (bounded)."""
+    """Repair list structure by wrapping misplaced /LI and /L shells without direct /LI (bounded)."""
     try:
-        cap = int(os.environ.get("PDFAF_MAX_LIST_LI_REPAIR_PER_CALL", "32"))
+        cap = int(os.environ.get("PDFAF_MAX_LIST_LI_REPAIR_PER_CALL", "256"))
     except ValueError:
-        cap = 32
+        cap = 256
     cap = max(1, min(cap, 256))
 
     try:
@@ -9702,6 +9795,13 @@ def _op_repair_list_li_wrong_parent(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
         try:
             _enqueue_children(q, elem.get("/K"))
+        except Exception:
+            pass
+
+    if changed:
+        try:
+            if _repair_existing_parent_tree_mcid_owners(pdf):
+                changed = True
         except Exception:
             pass
 
