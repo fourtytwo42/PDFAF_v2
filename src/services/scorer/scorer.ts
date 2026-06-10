@@ -20,7 +20,7 @@ import { scoreHeadingStructure }   from './categories/headingStructure.js';
 import { scoreAltText }            from './categories/altText.js';
 import { scorePdfUaCompliance }    from './categories/pdfUaCompliance.js';
 import { scoreBookmarks }          from './categories/bookmarks.js';
-import { scoreTableMarkup }        from './categories/tableMarkup.js';
+import { scoreTableMarkup, isNonScoredRowlessTable } from './categories/tableMarkup.js';
 import { scoreColorContrast }      from './categories/colorContrast.js';
 import { scoreLinkQuality }        from './categories/linkQuality.js';
 import { scoreReadingOrder }       from './categories/readingOrder.js';
@@ -184,7 +184,11 @@ function buildLegalPdfStrictProfile(
 
   const tableMarkup = byKey.get('table_markup');
   const tableSignals = snap.detectionProfile?.tableSignals;
-  const denseRowlessTables = snap.tables.filter(table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4).length;
+  const denseRowlessTables = snap.tables.filter(table =>
+    !isNonScoredRowlessTable(table) &&
+    (table.rowCount ?? 0) <= 1 &&
+    (table.totalCells ?? 0) >= 4,
+  ).length;
   const malformedTableCells = (tableSignals?.directCellUnderTableCount ?? 0) + (tableSignals?.misplacedCellCount ?? 0);
   if (
     snap.tables.length > 0 &&
