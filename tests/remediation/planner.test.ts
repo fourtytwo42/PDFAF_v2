@@ -4526,6 +4526,50 @@ describe('planForRemediation', () => {
     }, withCategoryScores(score(base, META), { table_markup: 35 }))).toBe('strongly_irregular_rows');
     expect(classifyStage43TableFailure({
       ...base,
+      tables: [{
+        hasHeaders: true,
+        headerCount: 7,
+        totalCells: 12,
+        page: 0,
+        rowCount: 7,
+        cellsMisplacedCount: 0,
+        irregularRows: 5,
+        dominantColumnCount: 2,
+        rowCellCounts: [1, 1, 2, 2, 2, 2, 2],
+        structRef: '2_0',
+      }],
+    }, withCategoryScores(score(base, META), { table_markup: 72 }))).toBe('single_column_variance_template');
+    expect(classifyStage43TableFailure({
+      ...base,
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 2,
+          totalCells: 20,
+          page: 0,
+          rowCount: 5,
+          cellsMisplacedCount: 0,
+          irregularRows: 3,
+          dominantColumnCount: 4,
+          rowCellCounts: [2, 4, 4, 4, 4],
+          structRef: '1_0',
+        },
+        {
+          hasHeaders: true,
+          headerCount: 7,
+          totalCells: 12,
+          page: 0,
+          rowCount: 7,
+          cellsMisplacedCount: 0,
+          irregularRows: 5,
+          dominantColumnCount: 2,
+          rowCellCounts: [1, 1, 2, 2, 2, 2, 2],
+          structRef: '2_0',
+        },
+      ],
+    }, withCategoryScores(score(base, META), { table_markup: 35 }))).toBe('strongly_irregular_rows');
+    expect(classifyStage43TableFailure({
+      ...base,
       tables: [{ hasHeaders: true, headerCount: 1, totalCells: 8, page: 0, rowCount: 2, cellsMisplacedCount: 0, structRef: '1_0' }],
     })).toBe('not_stage43_table_target');
   });

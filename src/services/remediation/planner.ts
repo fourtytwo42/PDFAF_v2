@@ -911,20 +911,23 @@ export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis
   if (scoredTables.some(table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4)) {
     return 'rowless_dense_table';
   }
-  if (
-    strongTableResidual &&
-    scoredTables.some(table =>
+  if (strongTableResidual) {
+    const stronglyIrregularTables = scoredTables.filter(table =>
       table.hasHeaders &&
       (table.cellsMisplacedCount ?? 0) === 0 &&
       (table.rowCount ?? 0) > 1 &&
       (table.irregularRows ?? 0) >= 2 &&
       (table.dominantColumnCount ?? 0) >= 2,
-    )
-  ) {
-    return 'strongly_irregular_rows';
-  }
-  if (strongTableResidual && scoredTables.some(isSingleColumnVarianceTable)) {
-    return 'single_column_variance_template';
+    );
+    if (stronglyIrregularTables.length > 0) {
+      const allStrongTablesAreSingleColumnVariance = stronglyIrregularTables.every(isSingleColumnVarianceTable);
+      return allStrongTablesAreSingleColumnVariance
+        ? 'single_column_variance_template'
+        : 'strongly_irregular_rows';
+    }
+    if (scoredTables.some(isSingleColumnVarianceTable)) {
+      return 'single_column_variance_template';
+    }
   }
   if (scoredTables.some(table => !table.hasHeaders && table.totalCells >= 4)) {
     return 'missing_headers_only';
