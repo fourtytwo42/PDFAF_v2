@@ -4530,6 +4530,94 @@ describe('planForRemediation', () => {
     })).toBe('not_stage43_table_target');
   });
 
+  it('does not reliability-filter high-confidence strongly irregular table repairs', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const toolName of ['normalize_table_structure', 'repair_native_table_headers']) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName,
+          pdfClass: 'native_tagged',
+          outcome: 'no_effect',
+          scoreBefore: 66,
+          scoreAfter: 66,
+        });
+      }
+    }
+
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [{
+        hasHeaders: true,
+        headerCount: 2,
+        totalCells: 20,
+        page: 0,
+        rowCount: 5,
+        cellsMisplacedCount: 0,
+        irregularRows: 3,
+        dominantColumnCount: 4,
+        rowCellCounts: [2, 4, 4, 4, 4],
+        structRef: '1_0',
+        reachable: true,
+      }],
+      detectionProfile: {
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 1,
+          stronglyIrregularTableCount: 1,
+          directCellUnderTableCount: 0,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 1, treeHeadingCount: 1, headingTreeDepth: 2, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { pagesMissingTabsS: 0, pagesAnnotationOrderDiffers: 0, linkAnnotationsMissingStructure: 0, nonLinkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0, nonLinkAnnotationsMissingStructParent: 0 },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(
+      withCategoryScores(score(snap, META), { table_markup: 16 }),
+      { detectionProfile: snap.detectionProfile },
+    );
+
+    expect(classifyStage43TableFailure(snap, analysis)).toBe('strongly_irregular_rows');
+
+    const plan = planForRemediation(analysis, snap, [], store);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).toContain('normalize_table_structure');
+    expect(names).toContain('repair_native_table_headers');
+    expect(names).toContain('set_table_header_cells');
+    expect(plan.planningSummary.skippedTools).not.toContainEqual({
+      toolName: 'normalize_table_structure',
+      reason: 'reliability_filtered',
+    });
+  });
+
   it('does not reliability-filter the 4438 stage-3 table and link repairs when missing headers are the live debt', async () => {
     let db: Database;
     try {

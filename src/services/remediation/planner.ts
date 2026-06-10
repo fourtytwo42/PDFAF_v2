@@ -2780,7 +2780,10 @@ export function planForRemediation(
   } else if (failureDisposition.headingMalformedExistingTree) {
     reliabilityExemptTools.add('normalize_heading_hierarchy');
   }
-  if (stage43TableFailure === 'missing_headers_only') {
+  const reliabilityExemptStage43TableDebt =
+    stage43TableFailure === 'missing_headers_only' ||
+    stage43TableFailure === 'strongly_irregular_rows';
+  if (reliabilityExemptStage43TableDebt) {
     ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'].forEach(toolName => reliabilityExemptTools.add(toolName));
   }
   if (
