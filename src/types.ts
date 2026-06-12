@@ -1020,6 +1020,7 @@ export type ReadabilityAutoRepairReason =
   | 'readability_passed'
   | 'no_budget'
   | 'readability_issue_detected'
+  | 'no_repair_plan'
   | 'no_engine_change'
   | 'score_regression'
   | 'applied'
@@ -1041,6 +1042,24 @@ export interface ReadabilityAutoRepairSummary {
   toolsAdded?: number;
   manualReviewRecommended?: boolean;
   errorMessage?: string;
+  repairPlan?: ReadabilityRepairPlanSummary;
+}
+
+export type ReadabilityRepairSemanticLane =
+  | 'figures'
+  | 'headings'
+  | 'promote_headings'
+  | 'untagged_headings';
+
+export interface ReadabilityRepairPlanSummary {
+  areas: ReadabilityReviewArea[];
+  deterministicToolNames: string[];
+  preferredRoutes: RemediationRoute[];
+  semanticLanes: ReadabilityRepairSemanticLane[];
+  reasons: string[];
+  findingsMapped: number;
+  findingsUnmapped: number;
+  manualReviewOnly: boolean;
 }
 
 export interface ReadabilityReviewSummary {

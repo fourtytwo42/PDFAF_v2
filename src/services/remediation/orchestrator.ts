@@ -59,6 +59,7 @@ import {
   maxFigureAltTargetsForRun,
   maxRetagAsFigureTargetsForRun,
   planForRemediation,
+  type FocusedRemediationPlanOptions,
 } from './planner.js';
 import { buildRemediationOutcomeSummary } from './outcomeSummary.js';
 import { runPythonMutationBatch, type PythonMutation } from '../../python/bridge.js';
@@ -8475,6 +8476,7 @@ export interface RemediatePdfOptions {
   onProgress?: (update: { percent: number; stage: string; detail?: string }) => void | Promise<void>;
   onRuntimeTrace?: (event: RemediationRuntimeTraceEvent) => void | Promise<void>;
   onProtectedDebugState?: (state: ProtectedDebugStateCapture) => void | Promise<void>;
+  focusedPlan?: FocusedRemediationPlanOptions;
 }
 
 export type RemediationRuntimeTraceEvent =
@@ -9029,6 +9031,7 @@ export async function remediatePdf(
       appliedTools,
       toolOutcomeStore,
       options?.includeOptionalRemediation ?? false,
+      options?.focusedPlan,
     );
     planningSummary = mergePlanningSummaries(planningSummary, rawPlan.planningSummary);
     const plan = filterPlan(rawPlan);
@@ -10312,6 +10315,7 @@ export async function remediatePdf(
         appliedTools,
         toolOutcomeStore,
         options?.includeOptionalRemediation ?? false,
+        options?.focusedPlan,
       )).stages.some(candidate =>
         candidate.tools.some(tool => tool.toolName === 'tag_native_text_blocks')
       )) {

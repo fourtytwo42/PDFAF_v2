@@ -253,7 +253,13 @@ components:
         readabilityAutoRepair:
           type: object
           nullable: true
-          description: Summary of bounded readability-triggered follow-up remediation and retest.
+          description: Summary of bounded readability-triggered follow-up remediation and retest. Includes repairPlan when AI findings were mapped to focused engine tools.
+          additionalProperties: true
+          properties:
+            repairPlan:
+              type: object
+              nullable: true
+              description: Focused mapping from AI readability findings to deterministic tools, routes, and semantic lanes.
         planningSummary:
           $ref: '#/components/schemas/PlanningSummary'
         structuralConfidenceGuard:

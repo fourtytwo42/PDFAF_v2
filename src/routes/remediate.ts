@@ -40,6 +40,7 @@ import { applySemanticHeadingRepairs } from '../services/semantic/headingSemanti
 import { applySemanticPromoteHeadingRepairs } from '../services/semantic/promoteHeadingSemantic.js';
 import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untaggedHeadingSemantic.js';
 import { reviewRemediatedReadability, shouldRunReadabilityAutoRepair } from '../services/semantic/readabilityReview.js';
+import { buildReadabilityRepairPlan } from '../services/semantic/readabilityRepairPlan.js';
 import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../services/semantic/semanticPolicy.js';
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
@@ -47,7 +48,7 @@ import { toApiRemediationResult } from '../services/api/serializeAnalysis.js';
 import { initSchema } from '../db/schema.js';
 import { createPlaybookStore } from '../services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../services/learning/toolOutcomes.js';
-import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary, ReadabilityAutoRepairSummary } from '../types.js';
+import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary, ReadabilityAutoRepairSummary, ReadabilityRepairPlanSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
 export function mergeSequentialSemanticSummaries(
@@ -702,6 +703,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     let readabilityReview: ReadabilityReviewSummary | undefined;
     const readabilityReviewAttempts: ReadabilityReviewSummary[] = [];
     let readabilityAutoRepair: ReadabilityAutoRepairSummary | undefined;
+    let readabilityRepairPlan: ReadabilityRepairPlanSummary | undefined;
     const readabilityAutoRepairEnabled = Boolean(parsedOptions.readabilityAutoRepair)
       && (parsedOptions.readabilityAutoRepairMaxAttempts ?? READABILITY_AUTO_REPAIR_MAX_ATTEMPTS) > 0;
     const readabilityAutoRepairTargetScore = Math.max(
@@ -723,6 +725,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         : {}),
       beforeEngineScore: outAfter.scoreProfile.overallScore,
       targetScore: readabilityAutoRepairTargetScore,
+      ...(readabilityRepairPlan ? { repairPlan: readabilityRepairPlan } : {}),
     });
 
     if (parsedOptions.readabilityReview) {
@@ -749,112 +752,131 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       }
 
       if (repairDecision.shouldRun) {
-        const repairStarted = Date.now();
-        const beforeRepairReview = readabilityReview;
-        const beforeRepairEngineScore = outAfter.scoreProfile.overallScore;
-        readabilityAutoRepair = {
-          attempted: true,
-          applied: false,
-          reason: repairDecision.reason,
-          durationMs: 0,
-          beforeStatus: beforeRepairReview.status,
-          beforeReadabilityScore: beforeRepairReview.score,
-          beforeEngineScore: beforeRepairEngineScore,
-          targetScore: readabilityAutoRepairTargetScore,
-        };
-        try {
-          await reportProgress(97.4, 'Auto-fixing readability concerns');
-          const repairStores = createTransientLearningStores(transientLearningDbs);
-          const repair = await remediatePdf(
-            outBuffer,
-            filename,
-            outAfter,
-            outSnapshot,
-            {
-              targetScore: readabilityAutoRepairTargetScore,
-              maxRounds: Math.max(1, Math.min(parsedOptions.maxRounds ?? 2, 2)),
-              includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? true,
-              playbookStore: repairStores.playbookStore,
-              toolOutcomeStore: repairStores.toolOutcomeStore,
-              signal: remediationSignal,
-              onProgress: update => reportProgress(
-                Math.min(97.7, 97.4 + (update.percent / 100) * 0.3),
-                update.stage,
-                update.detail,
-              ),
-            },
-          );
-          deterministicDurationMs += repair.remediation.remediationDurationMs;
-          if (repair.remediation.runtimeSummary) {
-            deterministicRuntimeSummaries.push(repair.remediation.runtimeSummary);
-          }
-          const afterRepairEngineScore = repair.remediation.after.scoreProfile.overallScore;
-          const hasRepairChange = !repair.buffer.equals(outBuffer)
-            || repair.remediation.appliedTools.some(tool => tool.outcome === 'applied');
-          if (afterRepairEngineScore < beforeRepairEngineScore) {
-            readabilityAutoRepair = {
-              ...readabilityAutoRepair,
-              reason: 'score_regression',
-              durationMs: Date.now() - repairStarted,
-              afterEngineScore: afterRepairEngineScore,
-            };
-          } else if (!hasRepairChange) {
-            readabilityAutoRepair = {
-              ...readabilityAutoRepair,
-              reason: 'no_engine_change',
-              durationMs: Date.now() - repairStarted,
-              afterEngineScore: afterRepairEngineScore,
-            };
-          } else {
-            const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
-            const roundsAdded = repair.remediation.rounds.length;
-            const toolsAdded = repair.remediation.appliedTools.length;
-            outBuffer = repair.buffer;
-            outAfter = repair.remediation.after;
-            outSnapshot = repair.snapshot;
-            roundsOut = [
-              ...roundsOut,
-              ...repair.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
-            ];
-            appliedToolsOut = [
-              ...appliedToolsOut,
-              ...repair.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
-            ];
-            verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
-            await runPostRemediationAltPhase('nested_alt_cleanup_post_readability_auto_repair');
-            await reportProgress(97.8, 'Retesting screen-reader readability');
-            readabilityReview = await reviewRemediatedReadability({
-              filename,
-              analysis: outAfter,
-              snapshot: outSnapshot,
-              options: {
-                timeoutMs: parsedOptions.readabilityReviewTimeoutMs,
-                signal: remediationSignal,
-              },
-            });
-            readabilityReviewAttempts.push(readabilityReview);
-            readabilityAutoRepair = {
-              ...readabilityAutoRepair,
-              applied: true,
-              reason: 'applied',
-              durationMs: Date.now() - repairStarted,
-              afterStatus: readabilityReview.status,
-              afterReadabilityScore: readabilityReview.score,
-              afterEngineScore: outAfter.scoreProfile.overallScore,
-              roundsAdded,
-              toolsAdded,
-              manualReviewRecommended: readabilityReview.manualReviewRecommended,
-            };
-          }
-        } catch (error) {
-          if (remediationSignal.aborted) throw error;
-          const message = error instanceof Error ? error.message : 'unknown_error';
+        readabilityRepairPlan = buildReadabilityRepairPlan({
+          review: readabilityReview,
+          analysis: outAfter,
+          snapshot: outSnapshot,
+        });
+        if (readabilityRepairPlan.deterministicToolNames.length === 0) {
           readabilityAutoRepair = {
-            ...readabilityAutoRepair,
-            reason: 'error',
-            durationMs: Date.now() - repairStarted,
-            errorMessage: message.slice(0, 240),
+            ...summarizeReadabilityAutoRepair('no_repair_plan'),
+            repairPlan: readabilityRepairPlan,
           };
+        } else {
+          const repairStarted = Date.now();
+          const beforeRepairReview = readabilityReview;
+          const beforeRepairEngineScore = outAfter.scoreProfile.overallScore;
+          readabilityAutoRepair = {
+            attempted: true,
+            applied: false,
+            reason: repairDecision.reason,
+            durationMs: 0,
+            beforeStatus: beforeRepairReview.status,
+            beforeReadabilityScore: beforeRepairReview.score,
+            beforeEngineScore: beforeRepairEngineScore,
+            targetScore: readabilityAutoRepairTargetScore,
+            repairPlan: readabilityRepairPlan,
+          };
+          try {
+            await reportProgress(97.4, 'Auto-fixing readability concerns');
+            const repairStores = createTransientLearningStores(transientLearningDbs);
+            const repair = await remediatePdf(
+              outBuffer,
+              filename,
+              outAfter,
+              outSnapshot,
+              {
+                targetScore: readabilityAutoRepairTargetScore,
+                maxRounds: Math.max(1, Math.min(parsedOptions.maxRounds ?? 2, 2)),
+                includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? true,
+                focusedPlan: {
+                  focusedToolNames: readabilityRepairPlan.deterministicToolNames,
+                  preferredRoutes: readabilityRepairPlan.preferredRoutes,
+                  focusedOnly: true,
+                  focusedRationale: `Readability auto-repair for ${readabilityRepairPlan.reasons.join(', ') || 'AI readability warning'}.`,
+                },
+                playbookStore: repairStores.playbookStore,
+                toolOutcomeStore: repairStores.toolOutcomeStore,
+                signal: remediationSignal,
+                onProgress: update => reportProgress(
+                  Math.min(97.7, 97.4 + (update.percent / 100) * 0.3),
+                  update.stage,
+                  update.detail,
+                ),
+              },
+            );
+            deterministicDurationMs += repair.remediation.remediationDurationMs;
+            if (repair.remediation.runtimeSummary) {
+              deterministicRuntimeSummaries.push(repair.remediation.runtimeSummary);
+            }
+            const afterRepairEngineScore = repair.remediation.after.scoreProfile.overallScore;
+            const hasRepairChange = !repair.buffer.equals(outBuffer)
+              || repair.remediation.appliedTools.some(tool => tool.outcome === 'applied');
+            if (afterRepairEngineScore < beforeRepairEngineScore) {
+              readabilityAutoRepair = {
+                ...readabilityAutoRepair,
+                reason: 'score_regression',
+                durationMs: Date.now() - repairStarted,
+                afterEngineScore: afterRepairEngineScore,
+              };
+            } else if (!hasRepairChange) {
+              readabilityAutoRepair = {
+                ...readabilityAutoRepair,
+                reason: 'no_engine_change',
+                durationMs: Date.now() - repairStarted,
+                afterEngineScore: afterRepairEngineScore,
+              };
+            } else {
+              const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+              const roundsAdded = repair.remediation.rounds.length;
+              const toolsAdded = repair.remediation.appliedTools.length;
+              outBuffer = repair.buffer;
+              outAfter = repair.remediation.after;
+              outSnapshot = repair.snapshot;
+              roundsOut = [
+                ...roundsOut,
+                ...repair.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+              ];
+              appliedToolsOut = [
+                ...appliedToolsOut,
+                ...repair.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+              ];
+              verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
+              await runPostRemediationAltPhase('nested_alt_cleanup_post_readability_auto_repair');
+              await reportProgress(97.8, 'Retesting screen-reader readability');
+              readabilityReview = await reviewRemediatedReadability({
+                filename,
+                analysis: outAfter,
+                snapshot: outSnapshot,
+                options: {
+                  timeoutMs: parsedOptions.readabilityReviewTimeoutMs,
+                  signal: remediationSignal,
+                },
+              });
+              readabilityReviewAttempts.push(readabilityReview);
+              readabilityAutoRepair = {
+                ...readabilityAutoRepair,
+                applied: true,
+                reason: 'applied',
+                durationMs: Date.now() - repairStarted,
+                afterStatus: readabilityReview.status,
+                afterReadabilityScore: readabilityReview.score,
+                afterEngineScore: outAfter.scoreProfile.overallScore,
+                roundsAdded,
+                toolsAdded,
+                manualReviewRecommended: readabilityReview.manualReviewRecommended,
+              };
+            }
+          } catch (error) {
+            if (remediationSignal.aborted) throw error;
+            const message = error instanceof Error ? error.message : 'unknown_error';
+            readabilityAutoRepair = {
+              ...readabilityAutoRepair,
+              reason: 'error',
+              durationMs: Date.now() - repairStarted,
+              errorMessage: message.slice(0, 240),
+            };
+          }
         }
       }
     } else if (parsedOptions.readabilityAutoRepair) {

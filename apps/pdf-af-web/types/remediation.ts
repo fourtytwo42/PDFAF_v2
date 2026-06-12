@@ -92,6 +92,17 @@ export interface ReadabilityReviewSummary {
   };
 }
 
+export interface ReadabilityRepairPlanSummary {
+  areas: string[];
+  deterministicToolNames: string[];
+  preferredRoutes: string[];
+  semanticLanes: string[];
+  reasons: string[];
+  findingsMapped: number;
+  findingsUnmapped: number;
+  manualReviewOnly: boolean;
+}
+
 export interface ReadabilityAutoRepairSummary {
   attempted: boolean;
   applied: boolean;
@@ -106,6 +117,7 @@ export interface ReadabilityAutoRepairSummary {
   targetScore?: number;
   roundsAdded?: number;
   toolsAdded?: number;
+  repairPlan?: ReadabilityRepairPlanSummary;
   manualReviewRecommended?: boolean;
   errorMessage?: string;
 }

@@ -129,6 +129,10 @@ function readabilityAutoRepairBullets(summary?: ReadabilityAutoRepairSummary | n
   if (summary.beforeEngineScore != null || summary.afterEngineScore != null) {
     lines.push(`<li><strong>Engine score:</strong> ${summary.beforeEngineScore ?? 'n/a'} -&gt; ${summary.afterEngineScore ?? 'n/a'}</li>`);
   }
+  if (summary.repairPlan) {
+    lines.push(`<li><strong>Focused areas:</strong> ${esc(summary.repairPlan.areas.join(' | ') || 'none')}</li>`);
+    lines.push(`<li><strong>Focused tools:</strong> ${esc(summary.repairPlan.deterministicToolNames.join(' | ') || 'none')}</li>`);
+  }
   if (summary.roundsAdded != null || summary.toolsAdded != null) {
     lines.push(`<li><strong>Follow-up work:</strong> ${summary.roundsAdded ?? 0} round(s), ${summary.toolsAdded ?? 0} tool record(s)</li>`);
   }

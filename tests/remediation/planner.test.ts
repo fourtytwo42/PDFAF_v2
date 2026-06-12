@@ -2915,6 +2915,36 @@ describe('planForRemediation', () => {
     expect(plan.stages).toHaveLength(0);
   });
 
+
+  it('plans focused readability tools even when score already meets the normal target', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 1,
+      isTagged: true,
+      structureTree: { type: 'Document', children: [] },
+      metadata: { title: 'Doc', language: '', author: '', subject: '' },
+      markInfo: { Marked: true, Suspects: false },
+      viewerPreferences: { displayDocTitle: true },
+      lang: null,
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+    };
+    const analysis = score(snap, META);
+    const high = {
+      ...analysis,
+      score: 96,
+      categories: analysis.categories.map(c => ({ ...c, score: c.applicable ? 96 : c.score })),
+    };
+    const plan = planForRemediation(high, snap, [], undefined, false, {
+      focusedToolNames: ['set_document_language'],
+      preferredRoutes: ['metadata_foundation'],
+      focusedOnly: true,
+      focusedRationale: 'readability language repair',
+    });
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toEqual(['set_document_language']);
+  });
+
   it('does not return an empty plan at target score when external-readiness debt remains', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),

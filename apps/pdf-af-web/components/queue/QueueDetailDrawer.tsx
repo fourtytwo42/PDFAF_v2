@@ -355,6 +355,12 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
                     Engine {remediation.readabilityAutoRepair.beforeEngineScore ?? 'n/a'} {' -> '}
                     {remediation.readabilityAutoRepair.afterEngineScore ?? 'n/a'}
                   </p>
+                  {remediation.readabilityAutoRepair.repairPlan ? (
+                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                      Focused areas: {remediation.readabilityAutoRepair.repairPlan.areas.join(' | ') || 'none'}
+                      {' - '}Tools: {remediation.readabilityAutoRepair.repairPlan.deterministicToolNames.length}
+                    </p>
+                  ) : null}
                   {remediation.readabilityAutoRepair.afterStatus ? (
                     <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">
                       Retest: {remediation.readabilityAutoRepair.afterStatus}

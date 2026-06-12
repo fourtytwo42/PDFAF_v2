@@ -1685,6 +1685,13 @@ export function shouldExemptNativeTextTaggingForOcrFallback(
     plannedTools.some(tool => tool.toolName === 'ocr_scanned_pdf');
 }
 
+export interface FocusedRemediationPlanOptions {
+  focusedToolNames?: readonly string[];
+  preferredRoutes?: readonly RemediationRoute[];
+  focusedOnly?: boolean;
+  focusedRationale?: string;
+}
+
 /**
  * Pure planner: failing categories + snapshot/pdfClass → staged tools.
  * No corpus ids, filenames, or customer-specific rules.
@@ -1695,10 +1702,13 @@ export function planForRemediation(
   alreadyApplied: AppliedRemediationTool[] = [],
   toolOutcomeStore?: ToolOutcomeStore,
   includeOptionalRemediation = false,
+  focusedOptions?: FocusedRemediationPlanOptions,
 ): RemediationPlan {
+  const focusedToolNames = new Set<string>(focusedOptions?.focusedToolNames ?? []);
+  const focusedPlanRequested = focusedToolNames.size > 0;
   const stage5PacCatalogCandidate = shouldTryStage5PacCatalogSettings(analysis, snapshot)
     && !alreadyApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings' && row.outcome === 'applied');
-  if (analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot) && !stage5PacCatalogCandidate) {
+  if (!focusedPlanRequested && analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot) && !stage5PacCatalogCandidate) {
     return {
       stages: [],
       planningSummary: buildPlanningSummary({
@@ -2181,6 +2191,59 @@ export function planForRemediation(
       return { allowed: false, reason: 'missing_precondition' };
     }
     return { allowed: true };
+  };
+
+  const routeForFocusedTool = (toolName: string): RemediationRoute | null => {
+    const routes: RemediationRoute[] = [
+      ...(focusedOptions?.preferredRoutes ?? []),
+      ...(Object.keys(ROUTE_TOOL_MAP) as RemediationRoute[]),
+    ];
+    for (const route of routes) {
+      if (!(ROUTE_TOOL_MAP[route] ?? []).includes(toolName)) continue;
+      if (!isToolAllowedByRouteContract(route, toolName)) continue;
+      return route;
+    }
+    return null;
+  };
+
+  const addFocusedTool = (toolName: string): void => {
+    if (toolSet.has(toolName)) return;
+    const route = routeForFocusedTool(toolName);
+    if (!route) {
+      addSkipped(toolName, 'route_not_active');
+      return;
+    }
+    const routeGate = toolIsRouteRelevant(toolName);
+    if (!routeGate.allowed) {
+      addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
+      return;
+    }
+    if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
+      addSkipped(toolName, 'not_applicable');
+      return;
+    }
+    if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) {
+      addSkipped(toolName, 'already_succeeded');
+      return;
+    }
+    const noEffectLimit = toolName === 'create_heading_from_candidate'
+      ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
+      : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
+    if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit) {
+      addSkipped(toolName, 'missing_precondition');
+      return;
+    }
+    const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+    if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
+      addSkipped(toolName, 'missing_precondition');
+      return;
+    }
+    toolSet.set(toolName, {
+      toolName,
+      params,
+      rationale: focusedOptions?.focusedRationale ?? `Run readability-focused repair tool ${toolName}.`,
+      route,
+    });
   };
 
   for (const route of activeRoutes) {
@@ -2752,6 +2815,8 @@ export function planForRemediation(
     }
   }
 
+  for (const toolName of focusedToolNames) addFocusedTool(toolName);
+
   for (const route of routing.deferredRoutes) {
     for (const toolName of ROUTE_TOOL_MAP[route] ?? []) {
       if (route === 'figure_semantics' && DETERMINISTIC_FIGURE_TOOLS.has(toolName)) continue;
@@ -2761,7 +2826,9 @@ export function planForRemediation(
     }
   }
 
-  const plannedRaw = Array.from(toolSet.values()).sort((a, b) => {
+  const plannedRaw = Array.from(toolSet.values())
+    .filter(tool => !focusedOptions?.focusedOnly || focusedToolNames.has(tool.toolName))
+    .sort((a, b) => {
     const sa = REMEDIATION_TOOL_STAGE_ORDER[a.toolName] ?? 99;
     const sb = REMEDIATION_TOOL_STAGE_ORDER[b.toolName] ?? 99;
     if (sa !== sb) return sa - sb;
