@@ -9,6 +9,7 @@ import type {
   CategoryKey,
   DocumentSnapshot,
   Grade,
+  ReadabilityAutoRepairReason,
   ReadabilityReviewArea,
   ReadabilityReviewFinding,
   ReadabilityReviewSkippedReason,
@@ -347,6 +348,22 @@ function normalizeReviewPayload(args: Record<string, unknown>, meta: { durationM
     manualReviewReasons,
     proxy: meta.proxy,
   };
+}
+
+export function shouldRunReadabilityAutoRepair(input: {
+  reviewRequested: boolean;
+  autoRepairEnabled: boolean;
+  hasBudget: boolean;
+  review?: ReadabilityReviewSummary;
+}): { shouldRun: boolean; reason: ReadabilityAutoRepairReason } {
+  if (!input.reviewRequested) return { shouldRun: false, reason: 'review_not_requested' };
+  if (!input.autoRepairEnabled) return { shouldRun: false, reason: 'not_requested' };
+  if (!input.review) return { shouldRun: false, reason: 'review_skipped' };
+  if (input.review.status === 'skipped') return { shouldRun: false, reason: 'review_skipped' };
+  if (input.review.status === 'error') return { shouldRun: false, reason: 'review_error' };
+  if (input.review.status === 'passed') return { shouldRun: false, reason: 'readability_passed' };
+  if (!input.hasBudget) return { shouldRun: false, reason: 'no_budget' };
+  return { shouldRun: true, reason: 'readability_issue_detected' };
 }
 
 export async function reviewRemediatedReadability(input: ReadabilityReviewInput): Promise<ReadabilityReviewSummary> {

@@ -130,6 +130,27 @@ describe('POST /v1/remediate', () => {
     expect(res.body.readabilityReview.proxy.pageCount).toBeGreaterThan(0);
   }, 120_000);
 
+
+  it('skips readability auto-repair when the AI review is skipped', async () => {
+    if (process.env['OPENAI_COMPAT_BASE_URL']) {
+      console.log('[integration] OPENAI_COMPAT_BASE_URL set - skipping readability auto-repair no_llm_config assertion');
+      return;
+    }
+    const pdf = await barePdfBuffer();
+    const res = await request(app)
+      .post('/v1/remediate')
+      .field('options', JSON.stringify({ readabilityReview: true, readabilityAutoRepair: true, maxRounds: 1 }))
+      .attach('file', pdf, { filename: 'readability-auto-repair-no-llm.pdf', contentType: 'application/pdf' });
+    if (res.status === 429) return;
+    expect(res.status).toBe(200);
+    expect(res.body.readabilityReview.status).toBe('skipped');
+    expect(res.body.readabilityAutoRepair).toBeDefined();
+    expect(res.body.readabilityAutoRepair.attempted).toBe(false);
+    expect(res.body.readabilityAutoRepair.applied).toBe(false);
+    expect(res.body.readabilityAutoRepair.reason).toBe('review_skipped');
+    expect(res.body.readabilityReviewAttempts).toHaveLength(1);
+  }, 120_000);
+
   it('uses semantic defaults and skips cleanly when no LLM base URL is set', async () => {
     if (process.env['OPENAI_COMPAT_BASE_URL']) {
       console.log('[integration] OPENAI_COMPAT_BASE_URL set — skipping default no_llm_config assertion');

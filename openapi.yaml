@@ -65,7 +65,7 @@ paths:
                   type: string
                   description: |
                     JSON object (strict). Fields include semantic, semanticHeadings, targetScore, maxRounds,
-                    htmlReport, htmlReportIncludeBeforeAfter, htmlReportIncludeFindingsDetail, htmlReportIncludeAppliedTools, readabilityReview, etc.
+                    htmlReport, htmlReportIncludeBeforeAfter, htmlReportIncludeFindingsDetail, htmlReportIncludeAppliedTools, readabilityReview, readabilityAutoRepair, etc.
                   example: '{"targetScore":90,"maxRounds":3,"htmlReport":true}'
       responses:
         '200':
@@ -244,6 +244,16 @@ components:
           type: object
           nullable: true
           description: Optional AI review of likely screen-reader readability after remediation.
+        readabilityReviewAttempts:
+          type: array
+          nullable: true
+          description: Ordered AI readability reviews when readability auto-repair retests.
+          items:
+            type: object
+        readabilityAutoRepair:
+          type: object
+          nullable: true
+          description: Summary of bounded readability-triggered follow-up remediation and retest.
         planningSummary:
           $ref: '#/components/schemas/PlanningSummary'
         structuralConfidenceGuard:

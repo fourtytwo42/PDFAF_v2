@@ -954,6 +954,10 @@ export interface RemediateRequestOptions {
   readabilityReview?: boolean;
   /** Override timeout for AI readability review only (ms). */
   readabilityReviewTimeoutMs?: number;
+  /** When true, rerun a guarded engine pass and retest if AI readability review warns/fails. */
+  readabilityAutoRepair?: boolean;
+  /** Bounded follow-up engine attempts after readability problems are detected. Currently capped at 1. */
+  readabilityAutoRepairMaxAttempts?: number;
   /** When true, run LLM to promote /P struct elems to headings (Phase 3c-a; requires structRef). */
   semanticPromoteHeadings?: boolean;
   /** Timeout for promote-heading pass (ms); falls back to semanticTimeoutMs. */
@@ -1006,6 +1010,37 @@ export interface ReadabilityReviewFinding {
   evidence?: string;
   page?: number;
   recommendation?: string;
+}
+
+export type ReadabilityAutoRepairReason =
+  | 'not_requested'
+  | 'review_not_requested'
+  | 'review_skipped'
+  | 'review_error'
+  | 'readability_passed'
+  | 'no_budget'
+  | 'readability_issue_detected'
+  | 'no_engine_change'
+  | 'score_regression'
+  | 'applied'
+  | 'error';
+
+export interface ReadabilityAutoRepairSummary {
+  attempted: boolean;
+  applied: boolean;
+  reason: ReadabilityAutoRepairReason;
+  durationMs: number;
+  beforeStatus?: ReadabilityReviewStatus;
+  afterStatus?: ReadabilityReviewStatus;
+  beforeReadabilityScore?: number | null;
+  afterReadabilityScore?: number | null;
+  beforeEngineScore?: number;
+  afterEngineScore?: number;
+  targetScore?: number;
+  roundsAdded?: number;
+  toolsAdded?: number;
+  manualReviewRecommended?: boolean;
+  errorMessage?: string;
 }
 
 export interface ReadabilityReviewSummary {
@@ -1203,6 +1238,10 @@ export interface RemediationResult {
   semanticUntaggedHeadings?: SemanticRemediationSummary;
   /** Present when `readabilityReview: true` was requested (even if skipped/error). */
   readabilityReview?: ReadabilityReviewSummary;
+  /** Ordered AI readability reviews, including pre/post auto-repair attempts when used. */
+  readabilityReviewAttempts?: ReadabilityReviewSummary[];
+  /** Summary of the bounded readability-triggered follow-up remediation pass. */
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary;
   /** Present when the deterministic planner was used or when playbook replay fell back to the planner. */
   planningSummary?: PlanningSummary;
   /** Present when Stage 4 structural-confidence safeguards observed or reverted confidence regressions. */

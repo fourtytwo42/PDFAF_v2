@@ -92,6 +92,24 @@ export interface ReadabilityReviewSummary {
   };
 }
 
+export interface ReadabilityAutoRepairSummary {
+  attempted: boolean;
+  applied: boolean;
+  reason: string;
+  durationMs: number;
+  beforeStatus?: ReadabilityReviewSummary['status'];
+  afterStatus?: ReadabilityReviewSummary['status'];
+  beforeReadabilityScore?: number | null;
+  afterReadabilityScore?: number | null;
+  beforeEngineScore?: number;
+  afterEngineScore?: number;
+  targetScore?: number;
+  roundsAdded?: number;
+  toolsAdded?: number;
+  manualReviewRecommended?: boolean;
+  errorMessage?: string;
+}
+
 export interface RemediationRoundSummary {
   round: number;
   scoreAfter: number;
@@ -112,6 +130,8 @@ export interface RemediationSummary {
   semanticPromoteHeadings?: SemanticSummary;
   semanticUntaggedHeadings?: SemanticSummary;
   readabilityReview?: ReadabilityReviewSummary;
+  readabilityReviewAttempts?: ReadabilityReviewSummary[];
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary;
   ocrPipeline?: OcrPipelineSummary;
 }
 
@@ -129,5 +149,7 @@ export interface RawRemediationResponse {
   semanticPromoteHeadings?: SemanticSummary;
   semanticUntaggedHeadings?: SemanticSummary;
   readabilityReview?: ReadabilityReviewSummary;
+  readabilityReviewAttempts?: ReadabilityReviewSummary[];
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary;
   ocrPipeline?: OcrPipelineSummary;
 }

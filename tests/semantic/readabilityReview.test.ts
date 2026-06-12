@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { reviewRemediatedReadability } from '../../src/services/semantic/readabilityReview.js';
+import { reviewRemediatedReadability, shouldRunReadabilityAutoRepair } from '../../src/services/semantic/readabilityReview.js';
 import type { AnalysisResult, DocumentSnapshot } from '../../src/types.js';
 
 function minimalAnalysis(): AnalysisResult {
@@ -124,4 +124,41 @@ describe('reviewRemediatedReadability', () => {
     expect(review.manualReviewRecommended).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('gates auto-repair to warn/failed readability reviews with budget', () => {
+    const review = {
+      status: 'warn',
+      score: 82,
+      grade: 'B',
+      confidence: 'medium',
+      durationMs: 1,
+      summary: 'Review recommended.',
+      strengths: [],
+      findings: [],
+      manualReviewRecommended: true,
+      manualReviewReasons: [],
+    } as const;
+
+    expect(shouldRunReadabilityAutoRepair({
+      reviewRequested: true,
+      autoRepairEnabled: true,
+      hasBudget: true,
+      review,
+    })).toEqual({ shouldRun: true, reason: 'readability_issue_detected' });
+
+    expect(shouldRunReadabilityAutoRepair({
+      reviewRequested: true,
+      autoRepairEnabled: true,
+      hasBudget: true,
+      review: { ...review, status: 'passed', score: 94, grade: 'A' },
+    })).toEqual({ shouldRun: false, reason: 'readability_passed' });
+
+    expect(shouldRunReadabilityAutoRepair({
+      reviewRequested: true,
+      autoRepairEnabled: true,
+      hasBudget: false,
+      review,
+    })).toEqual({ shouldRun: false, reason: 'no_budget' });
+  });
+
 });

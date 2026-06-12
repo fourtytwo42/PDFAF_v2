@@ -6,6 +6,7 @@ import type {
   Finding,
   OcrPipelineSummary,
   PlanningSummary,
+  ReadabilityAutoRepairSummary,
   ReadabilityReviewSummary,
   RemediationOutcomeSummary,
   SemanticRemediationSummary,
@@ -23,6 +24,8 @@ export interface HtmlReportOptions {
   remediationOutcomeSummary?: RemediationOutcomeSummary | null;
   semanticSummaries?: SemanticRemediationSummary[];
   readabilityReview?: ReadabilityReviewSummary | null;
+  readabilityReviewAttempts?: ReadabilityReviewSummary[] | null;
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary | null;
   pacRuleEvidence?: PacRuleEvidence[];
 }
 
@@ -113,6 +116,31 @@ function readabilityReviewBullets(review?: ReadabilityReviewSummary | null): str
   lines.push(`<li><strong>Manual AT review recommended:</strong> ${review.manualReviewRecommended ? 'yes' : 'no'}</li>`);
   if (review.manualReviewReasons.length > 0) lines.push(`<li><strong>Review reasons:</strong> ${esc(review.manualReviewReasons.join(' | '))}</li>`);
   return lines.join('');
+}
+
+function readabilityAutoRepairBullets(summary?: ReadabilityAutoRepairSummary | null): string {
+  if (!summary) return '';
+  const lines: string[] = [];
+  lines.push(`<li><strong>Auto-repair attempted:</strong> ${summary.attempted ? 'yes' : 'no'}</li>`);
+  lines.push(`<li><strong>Auto-repair applied:</strong> ${summary.applied ? 'yes' : 'no'}</li>`);
+  lines.push(`<li><strong>Reason:</strong> ${esc(summary.reason)}</li>`);
+  if (summary.beforeStatus) lines.push(`<li><strong>Before review:</strong> ${esc(summary.beforeStatus)}${summary.beforeReadabilityScore == null ? '' : ` (${summary.beforeReadabilityScore}/100)`}</li>`);
+  if (summary.afterStatus) lines.push(`<li><strong>After review:</strong> ${esc(summary.afterStatus)}${summary.afterReadabilityScore == null ? '' : ` (${summary.afterReadabilityScore}/100)`}</li>`);
+  if (summary.beforeEngineScore != null || summary.afterEngineScore != null) {
+    lines.push(`<li><strong>Engine score:</strong> ${summary.beforeEngineScore ?? 'n/a'} -&gt; ${summary.afterEngineScore ?? 'n/a'}</li>`);
+  }
+  if (summary.roundsAdded != null || summary.toolsAdded != null) {
+    lines.push(`<li><strong>Follow-up work:</strong> ${summary.roundsAdded ?? 0} round(s), ${summary.toolsAdded ?? 0} tool record(s)</li>`);
+  }
+  if (summary.errorMessage) lines.push(`<li><strong>Error:</strong> ${esc(summary.errorMessage)}</li>`);
+  return lines.join('');
+}
+
+function readabilityAttemptsBullets(attempts?: ReadabilityReviewSummary[] | null): string {
+  if (!attempts || attempts.length <= 1) return '';
+  return attempts
+    .map((attempt, index) => `<li><strong>Review ${index + 1}:</strong> ${esc(attempt.status)}${attempt.score == null ? '' : ` ${attempt.score}/100`}</li>`)
+    .join('');
 }
 
 function detectionBullets(after: AnalysisResult): string {
@@ -425,6 +453,8 @@ export function generateHtmlReport(
   <section>
     <h2>AI readability review</h2>
     <ul>${readabilityReviewBullets(options?.readabilityReview) || '<li>No AI readability review present.</li>'}</ul>
+    ${readabilityAutoRepairBullets(options?.readabilityAutoRepair) ? `<ul>${readabilityAutoRepairBullets(options?.readabilityAutoRepair)}</ul>` : ''}
+    ${readabilityAttemptsBullets(options?.readabilityReviewAttempts) ? `<ul>${readabilityAttemptsBullets(options?.readabilityReviewAttempts)}</ul>` : ''}
   </section>
   ${pacRuleEvidenceSection(options?.pacRuleEvidence)}
   <section>

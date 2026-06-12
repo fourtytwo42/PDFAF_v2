@@ -327,6 +327,9 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
                       ? 'Not scored'
                       : `${remediation.readabilityReview.score}/100 (${remediation.readabilityReview.grade ?? 'n/a'})`}
                     {' - '}Confidence {remediation.readabilityReview.confidence}
+                    {remediation.readabilityReviewAttempts && remediation.readabilityReviewAttempts.length > 1
+                      ? ` - Retested ${remediation.readabilityReviewAttempts.length} times`
+                      : ''}
                   </p>
                   <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">
                     {remediation.readabilityReview.summary}
@@ -338,7 +341,31 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
                   ) : null}
                 </article>
               ) : null}
-              {semanticSummaries.length === 0 && !remediation.readabilityReview ? (
+              {remediation.readabilityAutoRepair ? (
+                <article className="rounded-[18px] border border-[color:var(--surface-border)] bg-white px-3 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-[var(--foreground)]">Readability auto-repair</p>
+                    <StatusPill
+                      label={remediation.readabilityAutoRepair.applied ? 'applied' : remediation.readabilityAutoRepair.reason}
+                      tone={remediation.readabilityAutoRepair.applied ? 'success' : 'warning'}
+                    />
+                  </div>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    Attempted {remediation.readabilityAutoRepair.attempted ? 'yes' : 'no'} -
+                    Engine {remediation.readabilityAutoRepair.beforeEngineScore ?? 'n/a'} {' -> '}
+                    {remediation.readabilityAutoRepair.afterEngineScore ?? 'n/a'}
+                  </p>
+                  {remediation.readabilityAutoRepair.afterStatus ? (
+                    <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">
+                      Retest: {remediation.readabilityAutoRepair.afterStatus}
+                      {remediation.readabilityAutoRepair.afterReadabilityScore == null
+                        ? ''
+                        : ` (${remediation.readabilityAutoRepair.afterReadabilityScore}/100)`}
+                    </p>
+                  ) : null}
+                </article>
+              ) : null}
+              {semanticSummaries.length === 0 && !remediation.readabilityReview && !remediation.readabilityAutoRepair ? (
                 <p className="text-sm leading-6 text-[var(--muted)]">No AI notes were returned for this run.</p>
               ) : null}
             </div>

@@ -9,6 +9,8 @@ import {
   getDefaultRemediateSemanticOptions,
   getOpenAiCompatBaseUrl,
   MAX_FILE_SIZE_MB,
+  READABILITY_AUTO_REPAIR_MAX_ATTEMPTS,
+  READABILITY_AUTO_REPAIR_TARGET_SCORE,
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
@@ -37,7 +39,7 @@ import { applySemanticRepairs } from '../services/semantic/semanticService.js';
 import { applySemanticHeadingRepairs } from '../services/semantic/headingSemantic.js';
 import { applySemanticPromoteHeadingRepairs } from '../services/semantic/promoteHeadingSemantic.js';
 import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untaggedHeadingSemantic.js';
-import { reviewRemediatedReadability } from '../services/semantic/readabilityReview.js';
+import { reviewRemediatedReadability, shouldRunReadabilityAutoRepair } from '../services/semantic/readabilityReview.js';
 import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../services/semantic/semanticPolicy.js';
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
@@ -45,7 +47,7 @@ import { toApiRemediationResult } from '../services/api/serializeAnalysis.js';
 import { initSchema } from '../db/schema.js';
 import { createPlaybookStore } from '../services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../services/learning/toolOutcomes.js';
-import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary } from '../types.js';
+import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary, ReadabilityAutoRepairSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
 export function mergeSequentialSemanticSummaries(
@@ -360,6 +362,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         semanticPromoteHeadings: Boolean(parsedOptions.semanticPromoteHeadings),
         semanticUntaggedHeadings: Boolean(parsedOptions.semanticUntaggedHeadings),
         readabilityReview: Boolean(parsedOptions.readabilityReview),
+        readabilityAutoRepair: Boolean(parsedOptions.readabilityAutoRepair),
         targetScore: parsedOptions.targetScore ?? null,
         maxRounds: parsedOptions.maxRounds ?? null,
         llmConfigured: Boolean(getOpenAiCompatBaseUrl()),
@@ -697,6 +700,31 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     }
 
     let readabilityReview: ReadabilityReviewSummary | undefined;
+    const readabilityReviewAttempts: ReadabilityReviewSummary[] = [];
+    let readabilityAutoRepair: ReadabilityAutoRepairSummary | undefined;
+    const readabilityAutoRepairEnabled = Boolean(parsedOptions.readabilityAutoRepair)
+      && (parsedOptions.readabilityAutoRepairMaxAttempts ?? READABILITY_AUTO_REPAIR_MAX_ATTEMPTS) > 0;
+    const readabilityAutoRepairTargetScore = Math.max(
+      remediationTargetScore,
+      READABILITY_AUTO_REPAIR_TARGET_SCORE,
+    );
+    const summarizeReadabilityAutoRepair = (
+      reason: ReadabilityAutoRepairSummary['reason'],
+    ): ReadabilityAutoRepairSummary => ({
+      attempted: false,
+      applied: false,
+      reason,
+      durationMs: 0,
+      ...(readabilityReview
+        ? {
+            beforeStatus: readabilityReview.status,
+            beforeReadabilityScore: readabilityReview.score,
+          }
+        : {}),
+      beforeEngineScore: outAfter.scoreProfile.overallScore,
+      targetScore: readabilityAutoRepairTargetScore,
+    });
+
     if (parsedOptions.readabilityReview) {
       await reportProgress(97.2, 'Reviewing screen-reader readability');
       readabilityReview = await reviewRemediatedReadability({
@@ -708,6 +736,129 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           signal: remediationSignal,
         },
       });
+      readabilityReviewAttempts.push(readabilityReview);
+
+      const repairDecision = shouldRunReadabilityAutoRepair({
+        reviewRequested: true,
+        autoRepairEnabled: readabilityAutoRepairEnabled,
+        hasBudget: hasSecondPassBudget(),
+        review: readabilityReview,
+      });
+      if (parsedOptions.readabilityAutoRepair) {
+        readabilityAutoRepair = summarizeReadabilityAutoRepair(repairDecision.reason);
+      }
+
+      if (repairDecision.shouldRun) {
+        const repairStarted = Date.now();
+        const beforeRepairReview = readabilityReview;
+        const beforeRepairEngineScore = outAfter.scoreProfile.overallScore;
+        readabilityAutoRepair = {
+          attempted: true,
+          applied: false,
+          reason: repairDecision.reason,
+          durationMs: 0,
+          beforeStatus: beforeRepairReview.status,
+          beforeReadabilityScore: beforeRepairReview.score,
+          beforeEngineScore: beforeRepairEngineScore,
+          targetScore: readabilityAutoRepairTargetScore,
+        };
+        try {
+          await reportProgress(97.4, 'Auto-fixing readability concerns');
+          const repairStores = createTransientLearningStores(transientLearningDbs);
+          const repair = await remediatePdf(
+            outBuffer,
+            filename,
+            outAfter,
+            outSnapshot,
+            {
+              targetScore: readabilityAutoRepairTargetScore,
+              maxRounds: Math.max(1, Math.min(parsedOptions.maxRounds ?? 2, 2)),
+              includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? true,
+              playbookStore: repairStores.playbookStore,
+              toolOutcomeStore: repairStores.toolOutcomeStore,
+              signal: remediationSignal,
+              onProgress: update => reportProgress(
+                Math.min(97.7, 97.4 + (update.percent / 100) * 0.3),
+                update.stage,
+                update.detail,
+              ),
+            },
+          );
+          deterministicDurationMs += repair.remediation.remediationDurationMs;
+          if (repair.remediation.runtimeSummary) {
+            deterministicRuntimeSummaries.push(repair.remediation.runtimeSummary);
+          }
+          const afterRepairEngineScore = repair.remediation.after.scoreProfile.overallScore;
+          const hasRepairChange = !repair.buffer.equals(outBuffer)
+            || repair.remediation.appliedTools.some(tool => tool.outcome === 'applied');
+          if (afterRepairEngineScore < beforeRepairEngineScore) {
+            readabilityAutoRepair = {
+              ...readabilityAutoRepair,
+              reason: 'score_regression',
+              durationMs: Date.now() - repairStarted,
+              afterEngineScore: afterRepairEngineScore,
+            };
+          } else if (!hasRepairChange) {
+            readabilityAutoRepair = {
+              ...readabilityAutoRepair,
+              reason: 'no_engine_change',
+              durationMs: Date.now() - repairStarted,
+              afterEngineScore: afterRepairEngineScore,
+            };
+          } else {
+            const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+            const roundsAdded = repair.remediation.rounds.length;
+            const toolsAdded = repair.remediation.appliedTools.length;
+            outBuffer = repair.buffer;
+            outAfter = repair.remediation.after;
+            outSnapshot = repair.snapshot;
+            roundsOut = [
+              ...roundsOut,
+              ...repair.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+            ];
+            appliedToolsOut = [
+              ...appliedToolsOut,
+              ...repair.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+            ];
+            verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
+            await runPostRemediationAltPhase('nested_alt_cleanup_post_readability_auto_repair');
+            await reportProgress(97.8, 'Retesting screen-reader readability');
+            readabilityReview = await reviewRemediatedReadability({
+              filename,
+              analysis: outAfter,
+              snapshot: outSnapshot,
+              options: {
+                timeoutMs: parsedOptions.readabilityReviewTimeoutMs,
+                signal: remediationSignal,
+              },
+            });
+            readabilityReviewAttempts.push(readabilityReview);
+            readabilityAutoRepair = {
+              ...readabilityAutoRepair,
+              applied: true,
+              reason: 'applied',
+              durationMs: Date.now() - repairStarted,
+              afterStatus: readabilityReview.status,
+              afterReadabilityScore: readabilityReview.score,
+              afterEngineScore: outAfter.scoreProfile.overallScore,
+              roundsAdded,
+              toolsAdded,
+              manualReviewRecommended: readabilityReview.manualReviewRecommended,
+            };
+          }
+        } catch (error) {
+          if (remediationSignal.aborted) throw error;
+          const message = error instanceof Error ? error.message : 'unknown_error';
+          readabilityAutoRepair = {
+            ...readabilityAutoRepair,
+            reason: 'error',
+            durationMs: Date.now() - repairStarted,
+            errorMessage: message.slice(0, 240),
+          };
+        }
+      }
+    } else if (parsedOptions.readabilityAutoRepair) {
+      readabilityAutoRepair = summarizeReadabilityAutoRepair('review_not_requested');
     }
 
     const enc = encodePdfBase64(outBuffer);
@@ -718,7 +869,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       (semanticHeadingsSummary?.durationMs ?? 0) +
       (semanticPromoteHeadingsSummary?.durationMs ?? 0) +
       (semanticUntaggedHeadingsSummary?.durationMs ?? 0) +
-      (readabilityReview?.durationMs ?? 0);
+      readabilityReviewAttempts.reduce((sum, review) => sum + review.durationMs, 0);
     const semanticSummaries = [
       semanticSummary,
       semanticHeadingsSummary,
@@ -768,6 +919,12 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         : {}),
       ...(parsedOptions.readabilityReview && readabilityReview
         ? { readabilityReview }
+        : {}),
+      ...(parsedOptions.readabilityReview && readabilityReviewAttempts.length > 0
+        ? { readabilityReviewAttempts }
+        : {}),
+      ...(parsedOptions.readabilityAutoRepair && readabilityAutoRepair
+        ? { readabilityAutoRepair }
         : {}),
     };
 
@@ -820,6 +977,18 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
               confidence: readabilityReview.confidence,
               skippedReason: readabilityReview.skippedReason ?? null,
               findingCount: readabilityReview.findings.length,
+              attempts: readabilityReviewAttempts.length,
+            }
+          : null,
+        readabilityAutoRepair: readabilityAutoRepair
+          ? {
+              attempted: readabilityAutoRepair.attempted,
+              applied: readabilityAutoRepair.applied,
+              reason: readabilityAutoRepair.reason,
+              beforeStatus: readabilityAutoRepair.beforeStatus ?? null,
+              afterStatus: readabilityAutoRepair.afterStatus ?? null,
+              beforeReadabilityScore: readabilityAutoRepair.beforeReadabilityScore ?? null,
+              afterReadabilityScore: readabilityAutoRepair.afterReadabilityScore ?? null,
             }
           : null,
       },
@@ -840,6 +1009,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           remediationOutcomeSummary: body.remediationOutcomeSummary,
           semanticSummaries,
           readabilityReview,
+          readabilityReviewAttempts,
+          readabilityAutoRepair,
           pacRuleEvidence: buildPacRuleEvidence(outSnapshot),
         },
       );
