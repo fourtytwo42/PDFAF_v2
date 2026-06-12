@@ -65,7 +65,7 @@ paths:
                   type: string
                   description: |
                     JSON object (strict). Fields include semantic, semanticHeadings, targetScore, maxRounds,
-                    htmlReport, htmlReportIncludeBeforeAfter, htmlReportIncludeFindingsDetail, htmlReportIncludeAppliedTools, etc.
+                    htmlReport, htmlReportIncludeBeforeAfter, htmlReportIncludeFindingsDetail, htmlReportIncludeAppliedTools, readabilityReview, etc.
                   example: '{"targetScore":90,"maxRounds":3,"htmlReport":true}'
       responses:
         '200':
@@ -240,6 +240,10 @@ components:
           $ref: '#/components/schemas/SemanticRemediationSummary'
         semanticUntaggedHeadings:
           $ref: '#/components/schemas/SemanticRemediationSummary'
+        readabilityReview:
+          type: object
+          nullable: true
+          description: Optional AI review of likely screen-reader readability after remediation.
         planningSummary:
           $ref: '#/components/schemas/PlanningSummary'
         structuralConfidenceGuard:

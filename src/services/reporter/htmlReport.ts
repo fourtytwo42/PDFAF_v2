@@ -6,6 +6,7 @@ import type {
   Finding,
   OcrPipelineSummary,
   PlanningSummary,
+  ReadabilityReviewSummary,
   RemediationOutcomeSummary,
   SemanticRemediationSummary,
   StructuralConfidenceGuardSummary,
@@ -21,6 +22,7 @@ export interface HtmlReportOptions {
   structuralConfidenceGuard?: StructuralConfidenceGuardSummary | null;
   remediationOutcomeSummary?: RemediationOutcomeSummary | null;
   semanticSummaries?: SemanticRemediationSummary[];
+  readabilityReview?: ReadabilityReviewSummary | null;
   pacRuleEvidence?: PacRuleEvidence[];
 }
 
@@ -91,6 +93,25 @@ function classificationBullets(after: AnalysisResult): string {
       )}</li>`,
     );
   }
+  return lines.join('');
+}
+
+function readabilityReviewBullets(review?: ReadabilityReviewSummary | null): string {
+  if (!review) return '';
+  const lines: string[] = [];
+  lines.push(`<li><strong>Status:</strong> ${esc(review.status)}</li>`);
+  lines.push(`<li><strong>Score:</strong> ${review.score == null ? 'not scored' : `${review.score}/100 (${esc(review.grade ?? 'n/a')})`}</li>`);
+  lines.push(`<li><strong>Confidence:</strong> ${esc(review.confidence)}</li>`);
+  if (review.skippedReason) lines.push(`<li><strong>Skipped reason:</strong> ${esc(review.skippedReason)}</li>`);
+  if (review.summary) lines.push(`<li><strong>Summary:</strong> ${esc(review.summary)}</li>`);
+  if (review.strengths.length > 0) lines.push(`<li><strong>Strengths:</strong> ${esc(review.strengths.join(' | '))}</li>`);
+  if (review.findings.length > 0) {
+    lines.push(`<li><strong>AI readability findings:</strong> ${esc(
+      review.findings.map(finding => `${finding.severity} ${finding.area}: ${finding.message}`).join(' | '),
+    )}</li>`);
+  }
+  lines.push(`<li><strong>Manual AT review recommended:</strong> ${review.manualReviewRecommended ? 'yes' : 'no'}</li>`);
+  if (review.manualReviewReasons.length > 0) lines.push(`<li><strong>Review reasons:</strong> ${esc(review.manualReviewReasons.join(' | '))}</li>`);
   return lines.join('');
 }
 
@@ -400,6 +421,10 @@ export function generateHtmlReport(
   <section>
     <h2>Semantic passes</h2>
     <ul>${semanticBullets(options?.semanticSummaries) || '<li>No Stage 6 semantic metadata present.</li>'}</ul>
+  </section>
+  <section>
+    <h2>AI readability review</h2>
+    <ul>${readabilityReviewBullets(options?.readabilityReview) || '<li>No AI readability review present.</li>'}</ul>
   </section>
   ${pacRuleEvidenceSection(options?.pacRuleEvidence)}
   <section>

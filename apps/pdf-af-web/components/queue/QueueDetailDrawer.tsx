@@ -12,7 +12,7 @@ import {
   formatScoreGrade,
 } from '../../lib/format/formatters';
 import { useQueueStore } from '../../stores/queue';
-import type { SemanticSummary } from '../../types/remediation';
+import type { ReadabilityReviewSummary, SemanticSummary } from '../../types/remediation';
 
 type QueueJob = ReturnType<typeof useQueueStore.getState>['jobs'][number];
 
@@ -20,6 +20,13 @@ function getStatusTone(status: string): 'accent' | 'success' | 'danger' {
   if (status === 'done') return 'success';
   if (status === 'failed') return 'danger';
   return 'accent';
+}
+
+function getReadabilityTone(review: ReadabilityReviewSummary): 'neutral' | 'success' | 'warning' | 'danger' | 'accent' {
+  if (review.status === 'passed') return 'success';
+  if (review.status === 'failed' || review.status === 'error') return 'danger';
+  if (review.status === 'warn') return 'warning';
+  return 'neutral';
 }
 
 function getDisplayedResult(job: QueueJob) {
@@ -306,7 +313,32 @@ export function QueueDetailDrawer({ job }: { job: QueueJob }) {
                   ) : null}
                 </article>
               ))}
-              {semanticSummaries.length === 0 ? (
+              {remediation.readabilityReview ? (
+                <article className="rounded-[18px] border border-[color:var(--surface-border)] bg-white px-3 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-[var(--foreground)]">Readability review</p>
+                    <StatusPill
+                      label={remediation.readabilityReview.status}
+                      tone={getReadabilityTone(remediation.readabilityReview)}
+                    />
+                  </div>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    {remediation.readabilityReview.score == null
+                      ? 'Not scored'
+                      : `${remediation.readabilityReview.score}/100 (${remediation.readabilityReview.grade ?? 'n/a'})`}
+                    {' - '}Confidence {remediation.readabilityReview.confidence}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">
+                    {remediation.readabilityReview.summary}
+                  </p>
+                  {remediation.readabilityReview.manualReviewReasons.length > 0 ? (
+                    <p className="mt-2 text-sm leading-6 text-[var(--warning)]">
+                      {remediation.readabilityReview.manualReviewReasons.join(' | ')}
+                    </p>
+                  ) : null}
+                </article>
+              ) : null}
+              {semanticSummaries.length === 0 && !remediation.readabilityReview ? (
                 <p className="text-sm leading-6 text-[var(--muted)]">No AI notes were returned for this run.</p>
               ) : null}
             </div>

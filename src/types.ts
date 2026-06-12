@@ -950,6 +950,10 @@ export interface RemediateRequestOptions {
   semanticTimeoutMs?: number;
   /** Override timeout for heading semantic only (ms); falls back to semanticTimeoutMs. */
   semanticHeadingTimeoutMs?: number;
+  /** When true, run a read-only AI review of final screen-reader readability after remediation. */
+  readabilityReview?: boolean;
+  /** Override timeout for AI readability review only (ms). */
+  readabilityReviewTimeoutMs?: number;
   /** When true, run LLM to promote /P struct elems to headings (Phase 3c-a; requires structRef). */
   semanticPromoteHeadings?: boolean;
   /** Timeout for promote-heading pass (ms); falls back to semanticTimeoutMs. */
@@ -990,6 +994,45 @@ export type SemanticLane =
   | 'headings'
   | 'promote_headings'
   | 'untagged_headings';
+
+export type ReadabilityReviewStatus = 'passed' | 'warn' | 'failed' | 'skipped' | 'error';
+export type ReadabilityReviewSkippedReason = 'disabled' | 'no_llm_config' | 'error';
+export type ReadabilityReviewArea = CategoryKey | 'assistive_technology' | 'overall';
+
+export interface ReadabilityReviewFinding {
+  area: ReadabilityReviewArea;
+  severity: Exclude<Severity, 'pass'>;
+  message: string;
+  evidence?: string;
+  page?: number;
+  recommendation?: string;
+}
+
+export interface ReadabilityReviewSummary {
+  status: ReadabilityReviewStatus;
+  score: number | null;
+  grade: Grade | null;
+  confidence: ClassificationConfidence | 'unknown';
+  durationMs: number;
+  model?: string;
+  endpoint?: 'primary' | 'fallback';
+  skippedReason?: ReadabilityReviewSkippedReason;
+  summary: string;
+  strengths: string[];
+  findings: ReadabilityReviewFinding[];
+  manualReviewRecommended: boolean;
+  manualReviewReasons: string[];
+  proxy?: {
+    pageCount: number;
+    sampledPages: number[];
+    textCharCount: number;
+    headingCount: number;
+    figureCount: number;
+    tableCount: number;
+    linkCount: number;
+    formFieldCount: number;
+  };
+}
 
 export interface SemanticGateSummary {
   passed: boolean;
@@ -1158,6 +1201,8 @@ export interface RemediationResult {
   semanticPromoteHeadings?: SemanticRemediationSummary;
   /** Present when `semanticUntaggedHeadings: true` was requested (even if skipped). */
   semanticUntaggedHeadings?: SemanticRemediationSummary;
+  /** Present when `readabilityReview: true` was requested (even if skipped/error). */
+  readabilityReview?: ReadabilityReviewSummary;
   /** Present when the deterministic planner was used or when playbook replay fell back to the planner. */
   planningSummary?: PlanningSummary;
   /** Present when Stage 4 structural-confidence safeguards observed or reverted confidence regressions. */

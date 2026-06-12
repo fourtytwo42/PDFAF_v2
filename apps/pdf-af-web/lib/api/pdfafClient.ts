@@ -194,6 +194,23 @@ function isOcrPipelineSummary(value: unknown): boolean {
   );
 }
 
+function isReadabilityReviewSummary(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.status === 'string' &&
+    (record.score === null || typeof record.score === 'number') &&
+    (record.grade === null || typeof record.grade === 'string') &&
+    typeof record.confidence === 'string' &&
+    typeof record.durationMs === 'number' &&
+    typeof record.summary === 'string' &&
+    Array.isArray(record.strengths) &&
+    Array.isArray(record.findings) &&
+    typeof record.manualReviewRecommended === 'boolean' &&
+    Array.isArray(record.manualReviewReasons)
+  );
+}
+
 function isRawRemediationResponse(payload: unknown): payload is RawRemediationResponse {
   if (!payload || typeof payload !== 'object') return false;
   const record = payload as Record<string, unknown>;
@@ -211,6 +228,7 @@ function isRawRemediationResponse(payload: unknown): payload is RawRemediationRe
     (record.semanticHeadings === undefined || isSemanticSummary(record.semanticHeadings)) &&
     (record.semanticPromoteHeadings === undefined || isSemanticSummary(record.semanticPromoteHeadings)) &&
     (record.semanticUntaggedHeadings === undefined || isSemanticSummary(record.semanticUntaggedHeadings)) &&
+    (record.readabilityReview === undefined || isReadabilityReviewSummary(record.readabilityReview)) &&
     (record.ocrPipeline === undefined || isOcrPipelineSummary(record.ocrPipeline))
   );
 }
@@ -232,6 +250,7 @@ function normalizeRemediationResponse(payload: RawRemediationResponse): Remediat
     ...(payload.semanticUntaggedHeadings
       ? { semanticUntaggedHeadings: payload.semanticUntaggedHeadings }
       : {}),
+    ...(payload.readabilityReview ? { readabilityReview: payload.readabilityReview } : {}),
     ...(payload.ocrPipeline ? { ocrPipeline: payload.ocrPipeline } : {}),
   };
 }

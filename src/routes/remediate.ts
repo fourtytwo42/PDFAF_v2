@@ -5,6 +5,7 @@ import { unlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import {
+  getDefaultRemediateReadabilityOptions,
   getDefaultRemediateSemanticOptions,
   getOpenAiCompatBaseUrl,
   MAX_FILE_SIZE_MB,
@@ -36,6 +37,7 @@ import { applySemanticRepairs } from '../services/semantic/semanticService.js';
 import { applySemanticHeadingRepairs } from '../services/semantic/headingSemantic.js';
 import { applySemanticPromoteHeadingRepairs } from '../services/semantic/promoteHeadingSemantic.js';
 import { applySemanticUntaggedHeadingRepairs } from '../services/semantic/untaggedHeadingSemantic.js';
+import { reviewRemediatedReadability } from '../services/semantic/readabilityReview.js';
 import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../services/semantic/semanticPolicy.js';
 import { remediateOptionsSchema, type ParsedRemediateOptions } from '../schemas/remediateOptions.js';
 import { generateHtmlReport } from '../services/reporter/htmlReport.js';
@@ -43,7 +45,7 @@ import { toApiRemediationResult } from '../services/api/serializeAnalysis.js';
 import { initSchema } from '../db/schema.js';
 import { createPlaybookStore } from '../services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../services/learning/toolOutcomes.js';
-import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary } from '../types.js';
+import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
 export function mergeSequentialSemanticSummaries(
@@ -329,6 +331,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
 
   parsedOptions = {
     ...getDefaultRemediateSemanticOptions(),
+    ...getDefaultRemediateReadabilityOptions(),
     ...parsedOptions,
   };
 
@@ -356,6 +359,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
         semanticHeadings: Boolean(parsedOptions.semanticHeadings),
         semanticPromoteHeadings: Boolean(parsedOptions.semanticPromoteHeadings),
         semanticUntaggedHeadings: Boolean(parsedOptions.semanticUntaggedHeadings),
+        readabilityReview: Boolean(parsedOptions.readabilityReview),
         targetScore: parsedOptions.targetScore ?? null,
         maxRounds: parsedOptions.maxRounds ?? null,
         llmConfigured: Boolean(getOpenAiCompatBaseUrl()),
@@ -692,6 +696,20 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       if (semanticUntaggedHeadingsSummary?.changeStatus === 'applied') semanticUntaggedHeadingsSummary.trustDowngraded = true;
     }
 
+    let readabilityReview: ReadabilityReviewSummary | undefined;
+    if (parsedOptions.readabilityReview) {
+      await reportProgress(97.2, 'Reviewing screen-reader readability');
+      readabilityReview = await reviewRemediatedReadability({
+        filename,
+        analysis: outAfter,
+        snapshot: outSnapshot,
+        options: {
+          timeoutMs: parsedOptions.readabilityReviewTimeoutMs,
+          signal: remediationSignal,
+        },
+      });
+    }
+
     const enc = encodePdfBase64(outBuffer);
     await reportProgress(98, 'Saving your fixed PDF');
     const totalDuration =
@@ -699,7 +717,8 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       (semanticSummary?.durationMs ?? 0) +
       (semanticHeadingsSummary?.durationMs ?? 0) +
       (semanticPromoteHeadingsSummary?.durationMs ?? 0) +
-      (semanticUntaggedHeadingsSummary?.durationMs ?? 0);
+      (semanticUntaggedHeadingsSummary?.durationMs ?? 0) +
+      (readabilityReview?.durationMs ?? 0);
     const semanticSummaries = [
       semanticSummary,
       semanticHeadingsSummary,
@@ -747,6 +766,9 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       ...(semanticUntaggedHeadingsRequested && semanticUntaggedHeadingsSummary
         ? { semanticUntaggedHeadings: semanticUntaggedHeadingsSummary }
         : {}),
+      ...(parsedOptions.readabilityReview && readabilityReview
+        ? { readabilityReview }
+        : {}),
     };
 
     logInfo({
@@ -791,6 +813,15 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
               batches: semanticUntaggedHeadingsSummary.batches.length,
             }
           : null,
+        readabilityReview: readabilityReview
+          ? {
+              status: readabilityReview.status,
+              score: readabilityReview.score,
+              confidence: readabilityReview.confidence,
+              skippedReason: readabilityReview.skippedReason ?? null,
+              findingCount: readabilityReview.findings.length,
+            }
+          : null,
       },
     });
 
@@ -808,6 +839,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
           structuralConfidenceGuard: remediation.structuralConfidenceGuard,
           remediationOutcomeSummary: body.remediationOutcomeSummary,
           semanticSummaries,
+          readabilityReview,
           pacRuleEvidence: buildPacRuleEvidence(outSnapshot),
         },
       );

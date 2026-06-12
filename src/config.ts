@@ -645,6 +645,30 @@ export const SEMANTIC_REQUEST_TIMEOUT_MS = parseInt(
   10,
 );
 
+/** Per post-remediation AI readability review request (ms). */
+export const READABILITY_REVIEW_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_TIMEOUT_MS'] ?? '45000',
+  10,
+);
+
+/** Max extracted page text characters sent to the AI readability reviewer. */
+export const READABILITY_REVIEW_MAX_TEXT_CHARS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_MAX_TEXT_CHARS'] ?? '12000',
+  10,
+);
+
+/** Max repeated structure items included in the readability review proxy. */
+export const READABILITY_REVIEW_MAX_ITEMS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_MAX_ITEMS'] ?? '24',
+  10,
+);
+
+/** Max AI readability findings returned to clients/reports. */
+export const READABILITY_REVIEW_MAX_FINDINGS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_MAX_FINDINGS'] ?? '10',
+  10,
+);
+
 /** Max parallel LLM requests for figure batches. */
 export const SEMANTIC_REQUEST_CONCURRENCY = parseInt(process.env['SEMANTIC_REQUEST_CONCURRENCY'] ?? '2', 10);
 
@@ -810,6 +834,15 @@ export function getDefaultRemediateSemanticOptions(): {
     semanticPromoteHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_PROMOTE'] === '1',
     semanticUntaggedHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_UNTAGGED'] === '1',
   };
+}
+
+export function getDefaultRemediateReadabilityOptions(): {
+  readabilityReview?: boolean;
+} {
+  if (process.env['PDFAF_REMEDIATE_DEFAULT_READABILITY_REVIEW'] !== '1') {
+    return {};
+  }
+  return { readabilityReview: true };
 }
 
 // ─── Phase 5 — polish / production ───────────────────────────────────────────
