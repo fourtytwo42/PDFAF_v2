@@ -245,7 +245,7 @@ export const REMEDIATION_ANALYSIS_TIMEOUT_MS = parseInt(
 export const REMEDIATION_PDF_TIMEOUT_MS = parseInt(
   process.env['PDFAF_REMEDIATION_PDF_TIMEOUT_MS']
     ?? process.env['REQUEST_TIMEOUT_REMEDIATE_MS']
-    ?? String(5 * 60 * 1000),
+    ?? String(10 * 60 * 1000),
   10,
 );
 
