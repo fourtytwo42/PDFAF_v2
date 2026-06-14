@@ -2961,6 +2961,48 @@ describe('shouldRejectStageResult', () => {
     });
   });
 
+  it('rejects cleanup stages that collapse core readability categories despite score gain', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 88, categories: { heading_structure: 100, reading_order: 96 } }),
+      after: makeAnalysis({ score: 92, categories: { heading_structure: 0, reading_order: 96 } }),
+      stage: makeStage('mark_untagged_content_as_artifact'),
+      stageApplied: makeApplied('mark_untagged_content_as_artifact'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_cleanup_regressed_readability_core(heading_structure:100->0)',
+    });
+  });
+
+  it('rejects no-gain orphan remaps when low alt text receives no core readability improvement', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, categories: { alt_text: 20, heading_structure: 100, reading_order: 80 } }),
+      after: makeAnalysis({ score: 59, categories: { alt_text: 20, heading_structure: 100, reading_order: 80 } }),
+      stage: makeStage('remap_orphan_mcids_as_artifacts'),
+      stageApplied: makeApplied('remap_orphan_mcids_as_artifacts'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_no_gain_orphan_artifact_mutation',
+    });
+  });
+
+  it('rejects no-gain pre-alt cleanup while alt text is still failing', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, categories: { alt_text: 60, reading_order: 79 } }),
+      after: makeAnalysis({ score: 59, categories: { alt_text: 60, reading_order: 79 } }),
+      stage: makeStage('artifact_repeating_page_furniture'),
+      stageApplied: makeApplied('artifact_repeating_page_furniture'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_low_alt_no_gain_pre_alt_cleanup_mutation',
+    });
+  });
+
   it('does not reject score-improving stages that make selected PAC debt newly evaluable', () => {
     const beforeSnapshot = makeSnapshot({ depth: 2 });
     const afterSnapshot: DocumentSnapshot = {

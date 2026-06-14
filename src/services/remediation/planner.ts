@@ -538,6 +538,51 @@ function deterministicFigureAltText(
   return chartAlt ?? deterministicFigureAltPlaceholder(target);
 }
 
+function bboxArea(bbox?: [number, number, number, number]): number | null {
+  if (!bbox) return null;
+  const [x0, y0, x1, y1] = bbox;
+  const width = Math.abs(x1 - x0);
+  const height = Math.abs(y1 - y0);
+  return Number.isFinite(width) && Number.isFinite(height) ? width * height : null;
+}
+
+function hasDecorativeFigureEvidence(snapshot: DocumentSnapshot): boolean {
+  const pathPaint = snapshot.taggedContentAudit?.suspectedPathPaintOutsideMc
+    ?? snapshot.detectionProfile?.pdfUaSignals.suspectedPathPaintOutsideMc
+    ?? 0;
+  return pathPaint > 0;
+}
+
+function safeDecorativeFigureTargets(
+  snapshot: DocumentSnapshot,
+): Array<{ structRef?: string; page: number; directContent?: boolean; subtreeMcidCount?: number; subtreeMcids?: number[]; bbox?: [number, number, number, number] }> {
+  if (!hasDecorativeFigureEvidence(snapshot)) return [];
+  const checkerTargets = (snapshot.checkerFigureTargets ?? []).filter(target =>
+    target.reachable
+    && !target.isArtifact
+    && !target.hasAlt
+    && typeof target.structRef === 'string'
+    && target.structRef.length > 0
+    && isFigureRole(target.resolvedRole ?? target.role)
+    && !target.directContent
+    && (target.subtreeMcids?.length ?? 0) === 0
+  );
+  if (checkerTargets.length > 0) return sortFigureTargets(checkerTargets);
+  return sortFigureTargets(
+    snapshot.figures.filter(figure => {
+      const area = bboxArea(figure.bbox);
+      return !figure.isArtifact
+        && !figure.hasAlt
+        && typeof figure.structRef === 'string'
+        && figure.structRef.length > 0
+        && isFigureRole(figure.role)
+        && !figure.directContent
+        && (figure.subtreeMcidCount ?? 0) <= 0
+        && (area === null || area <= 400);
+    }),
+  );
+}
+
 function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
   if (snapshot.checkerFigureTargets && snapshot.checkerFigureTargets.length > 0) {
     return snapshot.checkerFigureTargets.some(target =>
@@ -1556,9 +1601,14 @@ function toolApplicableToPdfClass(
     return pdfClass === 'native_tagged' || pdfClass === 'native_untagged' || pdfClass === 'mixed';
   }
   if (toolName === 'normalize_heading_hierarchy') {
+    const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount
+      ?? snapshot.headings.length;
+    const hasH1 = snapshot.headings.some(heading => heading.level === 1);
     // Zero-heading convergence can create a new heading earlier in the same stage.
     return snapshot.structureTree !== null && (
-      snapshot.headings.length >= 2 || (snapshot.paragraphStructElems?.length ?? 0) > 0
+      snapshot.headings.length >= 2
+      || (snapshot.paragraphStructElems?.length ?? 0) > 0
+      || (!hasH1 && treeHeadingCount === 1)
     );
   }
   if (toolName === 'tag_ocr_text_blocks') {
@@ -1690,6 +1740,7 @@ export interface FocusedRemediationPlanOptions {
   preferredRoutes?: readonly RemediationRoute[];
   focusedOnly?: boolean;
   focusedRationale?: string;
+  mode?: 'readability';
 }
 
 /**
@@ -1706,6 +1757,7 @@ export function planForRemediation(
 ): RemediationPlan {
   const focusedToolNames = new Set<string>(focusedOptions?.focusedToolNames ?? []);
   const focusedPlanRequested = focusedToolNames.size > 0;
+  const readabilityFocusedPlan = focusedOptions?.mode === 'readability';
   const stage5PacCatalogCandidate = shouldTryStage5PacCatalogSettings(analysis, snapshot)
     && !alreadyApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings' && row.outcome === 'applied');
   if (!focusedPlanRequested && analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot) && !stage5PacCatalogCandidate) {
@@ -1814,6 +1866,15 @@ export function planForRemediation(
   const headingCreateRecoveryActive =
     zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
     zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
+  const headingH1PromotionNeeded =
+    headingNeedsRepair
+    && snapshot.headings.length > 0
+    && !snapshot.headings.some(heading => heading.level === 1)
+    && (
+      (snapshot.detectionProfile?.headingSignals.rootReachableHeadingCount ?? 0) > 0
+      || (snapshot.detectionProfile?.headingSignals.layoutHeadingCandidateCount ?? 0) > 0
+      || (snapshot.paragraphStructElems?.length ?? 0) > 0
+    );
   const protectedZeroHeadingConvergence = isProtectedZeroHeadingConvergence(analysis, snapshot);
   const protectedZeroHeadingTimedOut = alreadyApplied.some(
     tool => tool.toolName === 'repair_structure_conformance' && /timeout\s+\d+ms/i.test(tool.details ?? ''),
@@ -2206,6 +2267,46 @@ export function planForRemediation(
     return null;
   };
 
+  const headingReadabilityFallbackTools = new Set<string>([
+    'create_structure_from_degenerate_native_anchor',
+    'create_heading_from_visible_text_anchor',
+    'create_heading_from_tagged_visible_anchor',
+    'bridge_native_title_text_owner',
+    'create_heading_from_candidate',
+    'create_heading_from_ocr_page_shell_anchor',
+    'create_heading_from_ocr_collection_title_anchor',
+    'recover_ocr_text_ownership',
+    'synthesize_basic_structure_from_layout',
+    'normalize_heading_hierarchy',
+  ]);
+
+  const canBypassHeadingRouteGateInReadabilityMode = (toolName: string): boolean => (
+    readabilityFocusedPlan
+    && headingReadabilityFallbackTools.has(toolName)
+    && (
+      headingCreateRecoveryActive
+      || visibleHeadingAnchorRecoveryActive
+      || ocrPageShellHeadingRecoveryActive
+      || ocrCollectionCoverHeadingRecoveryActive
+      || ocrTextOwnershipRecoveryActive
+      || nativeTaggedNoHeadingSynthesisCandidate
+      || nativeTaggedMcidBackedNoHeadingSynthesisCandidate
+      || shouldDeferTitleUntilZeroHeadingBootstrap()
+      || headingH1PromotionNeeded
+      || (
+        categoryFailing('heading_structure')
+        && snapshot.headings.length === 0
+        && (
+          toolName === 'create_heading_from_candidate'
+          || toolName === 'create_heading_from_visible_text_anchor'
+          || toolName === 'create_heading_from_tagged_visible_anchor'
+          || toolName === 'bridge_native_title_text_owner'
+        )
+      )
+    )
+  );
+
+
   const addFocusedTool = (toolName: string): void => {
     if (toolSet.has(toolName)) return;
     const route = routeForFocusedTool(toolName);
@@ -2214,8 +2315,8 @@ export function planForRemediation(
       return;
     }
     const routeGate = toolIsRouteRelevant(toolName);
-    if (!routeGate.allowed) {
-      addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
+    if (!routeGate.allowed && !canBypassHeadingRouteGateInReadabilityMode(toolName)) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_no_fresh_candidate' : (routeGate.reason ?? 'missing_precondition'));
       return;
     }
     if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
@@ -2223,19 +2324,19 @@ export function planForRemediation(
       return;
     }
     if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) {
-      addSkipped(toolName, 'already_succeeded');
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_no_fresh_candidate' : 'already_succeeded');
       return;
     }
     const noEffectLimit = toolName === 'create_heading_from_candidate'
       ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
       : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
-    if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit) {
-      addSkipped(toolName, 'missing_precondition');
+    if (!readabilityFocusedPlan && noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_no_fresh_candidate' : 'missing_precondition');
       return;
     }
-    const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
-    if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
-      addSkipped(toolName, 'missing_precondition');
+    const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
+    if (!readabilityFocusedPlan && hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_prior_no_effect_reused' : 'missing_precondition');
       return;
     }
     toolSet.set(toolName, {
@@ -2261,7 +2362,7 @@ export function planForRemediation(
         continue;
       }
       const routeGate = toolIsRouteRelevant(toolName);
-      if (!routeGate.allowed) {
+      if (!routeGate.allowed && !canBypassHeadingRouteGateInReadabilityMode(toolName)) {
         addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
         continue;
       }
@@ -2288,13 +2389,13 @@ export function planForRemediation(
       const noEffectLimit = toolName === 'create_heading_from_candidate'
         ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
         : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
-      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
+      if (!readabilityFocusedPlan && noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (toolSet.has(toolName)) continue;
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
-      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
+      if (!readabilityFocusedPlan && hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
@@ -2320,7 +2421,7 @@ export function planForRemediation(
   ) {
     toolSet.set('repair_top_level_parent_links', {
       toolName: 'repair_top_level_parent_links',
-      params: buildDefaultParams('repair_top_level_parent_links', analysis, snapshot, alreadyApplied),
+      params: buildDefaultParams('repair_top_level_parent_links', analysis, snapshot, alreadyApplied, readabilityFocusedPlan),
       rationale: 'Repair strict PAC top-level structure parent-link debt on an otherwise high-quality tagged document.',
       route: 'safe_cleanup',
     });
@@ -2339,14 +2440,14 @@ export function planForRemediation(
   ) {
     toolSet.set('repair_parent_tree_mcid_references', {
       toolName: 'repair_parent_tree_mcid_references',
-      params: buildDefaultParams('repair_parent_tree_mcid_references', analysis, snapshot, alreadyApplied),
+      params: buildDefaultParams('repair_parent_tree_mcid_references', analysis, snapshot, alreadyApplied, readabilityFocusedPlan),
       rationale: 'Repair direct PAC ParentTree MCID reference mismatch debt on an otherwise high-quality tagged document.',
       route: 'safe_cleanup',
     });
   }
 
   if (stage5PacCatalogCandidate && !toolSet.has('normalize_pdfua_catalog_settings')) {
-    const params = buildDefaultParams('normalize_pdfua_catalog_settings', analysis, snapshot, alreadyApplied);
+    const params = buildDefaultParams('normalize_pdfua_catalog_settings', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
     if (!hasPriorNoEffectSignature(alreadyApplied, 'normalize_pdfua_catalog_settings', params)) {
       toolSet.set('normalize_pdfua_catalog_settings', {
         toolName: 'normalize_pdfua_catalog_settings',
@@ -2368,7 +2469,7 @@ export function planForRemediation(
     && !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied)
     && noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
   ) {
-    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied);
+    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
     if (
       typeof fallbackParams['targetRef'] === 'string'
       && fallbackParams['targetRef'].length > 0
@@ -2451,6 +2552,34 @@ export function planForRemediation(
     }
   }
 
+  if (
+    readabilityFocusedPlan
+    && headingH1PromotionNeeded
+    && !toolSet.has('create_heading_from_candidate')
+    && !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied, analysis, snapshot)
+    && noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < Math.max(
+      REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
+      Math.max(snapshot.detectionProfile?.headingSignals.layoutHeadingCandidateCount ?? 0, 1),
+    )
+  ) {
+    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
+    if (
+      (
+        (typeof fallbackParams['targetRef'] === 'string' && fallbackParams['targetRef'].length > 0)
+        || (typeof fallbackParams['text'] === 'string' && fallbackParams['text'].length > 0)
+      )
+      && !hasPriorNoEffectSignature(alreadyApplied, 'create_heading_from_candidate', fallbackParams)
+      && toolApplicableToPdfClass('create_heading_from_candidate', analysis.pdfClass, snapshot)
+    ) {
+      toolSet.set('create_heading_from_candidate', {
+        toolName: 'create_heading_from_candidate',
+        params: fallbackParams,
+        rationale: 'Readability H1 promotion for an existing heading tree without an H1.',
+        route: 'post_bootstrap_heading_convergence',
+      });
+    }
+  }
+
   {
     const toolName = 'create_structure_from_degenerate_native_anchor';
     if (
@@ -2460,7 +2589,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2485,7 +2614,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
         toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
@@ -2509,7 +2638,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2541,7 +2670,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2576,7 +2705,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2603,7 +2732,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
         toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
@@ -2627,7 +2756,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
         toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
@@ -2651,7 +2780,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2678,7 +2807,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2714,7 +2843,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, synToolName, params)) {
         addSkipped(synToolName, 'missing_precondition');
       } else {
@@ -2732,7 +2861,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, synToolName, params)) {
         addSkipped(synToolName, 'missing_precondition');
       } else {
@@ -2780,7 +2909,7 @@ export function planForRemediation(
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
         addSkipped(toolName, 'missing_precondition');
         continue;
@@ -2804,7 +2933,7 @@ export function planForRemediation(
       if (toolSet.has(toolName)) continue;
       if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) continue;
       if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) continue;
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) continue;
       toolSet.set(toolName, {
         toolName,
@@ -2871,6 +3000,12 @@ export function planForRemediation(
   if (shouldExemptNativeTextTaggingForOcrFallback(analysis, snapshot, alreadyApplied, plannedMandatoryRaw)) {
     reliabilityExemptTools.add('tag_native_text_blocks');
   }
+  if (categoryFailing('text_extractability')) {
+    ['substitute_legacy_fonts_in_place', 'finalize_substituted_font_conformance', 'ocr_scanned_pdf', 'tag_ocr_text_blocks', 'recover_ocr_text_ownership'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
+  if (readabilityFocusedPlan) {
+    for (const toolName of focusedToolNames) reliabilityExemptTools.add(toolName);
+  }
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,
     analysis.pdfClass,
@@ -2927,6 +3062,7 @@ export function buildDefaultParams(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[] = [],
+  readabilityFocusedPlan = false,
 ): Record<string, unknown> {
   const meta = snapshot.metadata;
   switch (toolName) {
@@ -2987,27 +3123,49 @@ export function buildDefaultParams(
         )
         : null;
       if (!candidate) {
-        const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
+        const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename)
+          ?? snapshot.textByPage[0]?.split(/\r?\n+/).map(line => line.trim()).find(Boolean)
+          ?? null;
         if (!visibleTitle) return {};
         const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
         const zeroExportedHeadings = snapshot.headings.length === 0;
         return {
-          level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+          level: !hasExistingH1 ? 1 : 2,
           text: visibleTitle.slice(0, 200),
           preferPage0TitleSynthesis: true,
+          ...(readabilityFocusedPlan ? { readabilityFallback: true } : {}),
         };
       }
       const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
       const zeroExportedHeadings = snapshot.headings.length === 0;
       return {
         targetRef: candidate.structRef,
-        level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+        level: !hasExistingH1 ? 1 : 2,
         text: candidate.text.slice(0, 200),
       };
     }
+    case 'normalize_heading_hierarchy': {
+      const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount
+        ?? snapshot.headings.length;
+      const hasH1 = snapshot.headings.some(heading => heading.level === 1);
+      return readabilityFocusedPlan && !hasH1 && treeHeadingCount === 1
+        ? { promoteFirstHeadingShell: true }
+        : {};
+    }
+
     case 'create_heading_from_visible_text_anchor': {
       const candidate = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
-      if (!candidate) return {};
+      if (!candidate) {
+        const visibleTitle = snapshot.textByPage[0]?.split(/\r?\n+/).map(line => line.trim()).find(Boolean) ?? null;
+        if (!visibleTitle || !readabilityFocusedPlan) return {};
+        return {
+          page: 0,
+          level: 1,
+          text: visibleTitle.slice(0, 200),
+          source: 'readability_first_page_text_fallback',
+          confidenceScore: 1,
+        };
+      }
       return {
         page: candidate.page,
         ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
@@ -3125,19 +3283,7 @@ export function buildDefaultParams(
     case 'finalize_substituted_font_conformance':
       return { maxWidthDrift: 0.35 };
     case 'mark_figure_decorative': {
-      const checkerCandidates = sortFigureTargets(
-        (snapshot.checkerFigureTargets ?? []).filter(f =>
-          !f.isArtifact
-          && !f.hasAlt
-          && f.structRef
-          && isFigureRole(f.resolvedRole ?? f.role)
-          && f.reachable,
-        ),
-      ).sort((a, b) => Number(b.directContent) - Number(a.directContent) || a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
-      const fallbackCandidates = sortFigureTargets(
-        snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure'),
-      );
-      const target = checkerCandidates[0] ?? fallbackCandidates[0];
+      const target = safeDecorativeFigureTargets(snapshot)[0];
       return target?.structRef ? { structRef: target.structRef } : {};
     }
     case 'retag_as_figure': {

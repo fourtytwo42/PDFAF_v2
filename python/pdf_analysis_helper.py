@@ -10629,6 +10629,25 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
         toc_scoped_h1 = False
         preexisting_h1 = False
 
+    readability_promote_first_heading_shell = bool(
+        params.get("promoteFirstHeadingShell") or params.get("readabilityFallbackPromoteFirstHeading")
+    )
+    if readability_promote_first_heading_shell and not preexisting_h1 and len(heading_elems) == 1:
+        elem, level, custom_role = heading_elems[0]
+        try:
+            elem["/S"] = pikepdf.Name("/H1")
+            _global_heading_cleanup(pdf)
+            _set_last_mutation_note("readability_single_heading_promoted_to_h1")
+            _set_last_mutation_debug({
+                "structRef": object_ref_str(elem),
+                "originalLevel": level,
+                "customRole": custom_role,
+                "headingCount": len(heading_elems),
+            })
+            return True
+        except Exception:
+            pass
+
     changed = False
     prev_level = 0
     h1_seen = False

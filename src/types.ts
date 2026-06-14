@@ -58,7 +58,10 @@ export type PlanningSkipReason =
   | 'semantic_deferred'
   | 'category_not_failing'
   | 'bootstrap_below_commit_floor'
-  | 'ocr_skipped_native_text_present';
+  | 'ocr_skipped_native_text_present'
+  | 'readability_no_fresh_candidate'
+  | 'readability_semantic_unavailable'
+  | 'readability_prior_no_effect_reused';
 export type DetectionConfidence = 'high' | 'medium' | 'low';
 export type CheckerFacingEvidenceState = 'checker_facing' | 'wrapper_path_artifact' | 'boundary_candidate';
 
@@ -956,8 +959,10 @@ export interface RemediateRequestOptions {
   readabilityReviewTimeoutMs?: number;
   /** When true, rerun a guarded engine pass and retest if AI readability review warns/fails. */
   readabilityAutoRepair?: boolean;
-  /** Bounded follow-up engine attempts after readability problems are detected. Currently capped at 1. */
+  /** Bounded follow-up engine attempts after readability problems are detected. */
   readabilityAutoRepairMaxAttempts?: number;
+  /** Dedicated readability auto-repair wall-clock budget (ms), still bounded by the global request signal. */
+  readabilityAutoRepairTimeoutMs?: number;
   /** When true, run LLM to promote /P struct elems to headings (Phase 3c-a; requires structRef). */
   semanticPromoteHeadings?: boolean;
   /** Timeout for promote-heading pass (ms); falls back to semanticTimeoutMs. */
@@ -1020,6 +1025,7 @@ export type ReadabilityAutoRepairReason =
   | 'readability_passed'
   | 'no_budget'
   | 'readability_issue_detected'
+  | 'attempt_limit_reached'
   | 'no_repair_plan'
   | 'no_engine_change'
   | 'score_regression'
@@ -1028,6 +1034,7 @@ export type ReadabilityAutoRepairReason =
 
 export interface ReadabilityAutoRepairSummary {
   attempted: boolean;
+  attempts?: number;
   applied: boolean;
   reason: ReadabilityAutoRepairReason;
   durationMs: number;
@@ -1041,6 +1048,17 @@ export interface ReadabilityAutoRepairSummary {
   roundsAdded?: number;
   toolsAdded?: number;
   manualReviewRecommended?: boolean;
+  semanticLanesAttempted?: ReadabilityRepairSemanticLane[];
+  semanticLanesApplied?: ReadabilityRepairSemanticLane[];
+  scheduledToolNames?: string[];
+  skippedToolReasons?: Array<{ toolName: string; reason: PlanningSkipReason }>;
+  repairStatusDelta?: {
+    beforeStatus?: ReadabilityReviewStatus;
+    afterStatus?: ReadabilityReviewStatus;
+    beforeReadabilityScore?: number | null;
+    afterReadabilityScore?: number | null;
+    resolvedFindingAreas?: ReadabilityReviewArea[];
+  };
   errorMessage?: string;
   repairPlan?: ReadabilityRepairPlanSummary;
 }

@@ -699,7 +699,38 @@ function noGainOrphanArtifactMutation(input: {
 }): boolean {
   if (input.after.score !== input.before.score) return false;
   if (!input.stageApplied.some(row => row.toolName === 'remap_orphan_mcids_as_artifacts' && row.outcome === 'applied')) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text');
+  const afterAlt = categoryScore(input.after, 'alt_text');
+  if (beforeAlt != null && afterAlt != null && beforeAlt < 90 && afterAlt <= beforeAlt) {
+    const beforeHeading = categoryScore(input.before, 'heading_structure') ?? 100;
+    const afterHeading = categoryScore(input.after, 'heading_structure') ?? beforeHeading;
+    const beforeReading = categoryScore(input.before, 'reading_order') ?? 100;
+    const afterReading = categoryScore(input.after, 'reading_order') ?? beforeReading;
+    if (afterHeading <= beforeHeading && afterReading <= beforeReading) return true;
+  }
   return !stageHasCheckerFacingStructuralBenefit(input);
+}
+
+const LOW_ALT_PRE_ALT_CLEANUP_TOOLS = new Set([
+  'artifact_repeating_page_furniture',
+  'set_link_annotation_contents',
+  'normalize_annotation_tab_order',
+  'normalize_heading_hierarchy',
+  'repair_list_li_wrong_parent',
+]);
+
+function noGainLowAltPreAltCleanupMutation(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): boolean {
+  if (input.after.score !== input.before.score) return false;
+  const beforeAlt = categoryScore(input.before, 'alt_text');
+  const afterAlt = categoryScore(input.after, 'alt_text');
+  if (beforeAlt == null || afterAlt == null || beforeAlt >= 90 || afterAlt > beforeAlt) return false;
+  return input.stageApplied.some(row =>
+    row.outcome === 'applied' && LOW_ALT_PRE_ALT_CLEANUP_TOOLS.has(row.toolName)
+  );
 }
 
 function headingAnchorNoEffectCollapsedStructure(input: {
@@ -1668,6 +1699,26 @@ function protectedBaselineNeedsTransaction(input: {
   return false;
 }
 
+function cleanupStageRegressedReadabilityCore(input: {
+  before: AnalysisResult;
+  after: AnalysisResult;
+  stageApplied: AppliedRemediationTool[];
+}): string | null {
+  if (!input.stageApplied.some(row => row.toolName === 'mark_untagged_content_as_artifact')) return null;
+  for (const key of ['heading_structure', 'reading_order'] as const) {
+    const beforeScore = categoryScore(input.before, key);
+    const afterScore = categoryScore(input.after, key);
+    if (beforeScore == null || afterScore == null) continue;
+    if (beforeScore >= 90 && afterScore < 90) {
+      return `stage_cleanup_regressed_readability_core(${key}:${beforeScore}->${afterScore})`;
+    }
+    if (afterScore < beforeScore && afterScore < 80) {
+      return `stage_cleanup_regressed_readability_core(${key}:${beforeScore}->${afterScore})`;
+    }
+  }
+  return null;
+}
+
 export function shouldRejectStageResult(input: {
   filename?: string;
   before: AnalysisResult;
@@ -1764,10 +1815,23 @@ export function shouldRejectStageResult(input: {
       reason: 'stage_no_gain_orphan_artifact_mutation',
     };
   }
+  if (noGainLowAltPreAltCleanupMutation(input)) {
+    return {
+      reject: true,
+      reason: 'stage_low_alt_no_gain_pre_alt_cleanup_mutation',
+    };
+  }
   if (headingAnchorNoEffectCollapsedStructure(input)) {
     return {
       reject: true,
       reason: 'heading_anchor_no_effect_collapsed_structure',
+    };
+  }
+  const cleanupCoreRegression = cleanupStageRegressedReadabilityCore(input);
+  if (cleanupCoreRegression) {
+    return {
+      reject: true,
+      reason: cleanupCoreRegression,
     };
   }
   if (input.stageApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings')) {

@@ -11,6 +11,7 @@ import {
   MAX_FILE_SIZE_MB,
   READABILITY_AUTO_REPAIR_MAX_ATTEMPTS,
   READABILITY_AUTO_REPAIR_TARGET_SCORE,
+  READABILITY_AUTO_REPAIR_TIMEOUT_MS,
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_MAX_BASE64_MB,
   REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
@@ -48,7 +49,7 @@ import { toApiRemediationResult } from '../services/api/serializeAnalysis.js';
 import { initSchema } from '../db/schema.js';
 import { createPlaybookStore } from '../services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../services/learning/toolOutcomes.js';
-import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary, ReadabilityAutoRepairSummary, ReadabilityRepairPlanSummary } from '../types.js';
+import type { RemediationResult, RemediationRuntimeSummary, RuntimeCountRow, SemanticRemediationSummary, ReadabilityReviewSummary, ReadabilityAutoRepairSummary, ReadabilityRepairPlanSummary, ReadabilityRepairSemanticLane, PlanningSkipReason, ReadabilityReviewArea, PlanningSummary } from '../types.js';
 
 /** Merge per-pass semantic summaries (same buffer evolved); `scoreBefore` is the block start score. */
 export function mergeSequentialSemanticSummaries(
@@ -706,17 +707,37 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
     let readabilityRepairPlan: ReadabilityRepairPlanSummary | undefined;
     const readabilityAutoRepairEnabled = Boolean(parsedOptions.readabilityAutoRepair)
       && (parsedOptions.readabilityAutoRepairMaxAttempts ?? READABILITY_AUTO_REPAIR_MAX_ATTEMPTS) > 0;
+    const readabilityAutoRepairAttemptLimit = Math.max(
+      0,
+      Math.trunc(parsedOptions.readabilityAutoRepairMaxAttempts ?? READABILITY_AUTO_REPAIR_MAX_ATTEMPTS),
+    );
     const readabilityAutoRepairTargetScore = Math.max(
       remediationTargetScore,
       READABILITY_AUTO_REPAIR_TARGET_SCORE,
     );
+    const readabilityAutoRepairTimeoutMs = Math.max(
+      0,
+      Math.min(Math.trunc(parsedOptions.readabilityAutoRepairTimeoutMs ?? READABILITY_AUTO_REPAIR_TIMEOUT_MS), 600_000),
+    );
+    const repairScheduledToolNames = new Set<string>();
+    const repairSkippedToolReasons: Array<{ toolName: string; reason: PlanningSkipReason }> = [];
+    const semanticLanesAttempted = new Set<ReadabilityRepairSemanticLane>();
+    const semanticLanesApplied = new Set<ReadabilityRepairSemanticLane>();
     const summarizeReadabilityAutoRepair = (
       reason: ReadabilityAutoRepairSummary['reason'],
+      details: {
+        attempted?: boolean;
+        attempts?: number;
+        durationMs?: number;
+        roundsAdded?: number;
+        toolsAdded?: number;
+      } = {},
     ): ReadabilityAutoRepairSummary => ({
-      attempted: false,
+      attempted: details.attempted ?? false,
+      attempts: details.attempts,
       applied: false,
       reason,
-      durationMs: 0,
+      durationMs: details.durationMs ?? 0,
       ...(readabilityReview
         ? {
             beforeStatus: readabilityReview.status,
@@ -726,6 +747,12 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       beforeEngineScore: outAfter.scoreProfile.overallScore,
       targetScore: readabilityAutoRepairTargetScore,
       ...(readabilityRepairPlan ? { repairPlan: readabilityRepairPlan } : {}),
+      ...(details.roundsAdded != null ? { roundsAdded: details.roundsAdded } : {}),
+      ...(details.toolsAdded != null ? { toolsAdded: details.toolsAdded } : {}),
+      ...(typeof repairScheduledToolNames !== 'undefined' && repairScheduledToolNames.size > 0 ? { scheduledToolNames: [...repairScheduledToolNames] } : {}),
+      ...(typeof repairSkippedToolReasons !== 'undefined' && repairSkippedToolReasons.length > 0 ? { skippedToolReasons: repairSkippedToolReasons } : {}),
+      ...(typeof semanticLanesAttempted !== 'undefined' && semanticLanesAttempted.size > 0 ? { semanticLanesAttempted: [...semanticLanesAttempted] } : {}),
+      ...(typeof semanticLanesApplied !== 'undefined' && semanticLanesApplied.size > 0 ? { semanticLanesApplied: [...semanticLanesApplied] } : {}),
     });
 
     if (parsedOptions.readabilityReview) {
@@ -741,95 +768,256 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
       });
       readabilityReviewAttempts.push(readabilityReview);
 
-      const repairDecision = shouldRunReadabilityAutoRepair({
-        reviewRequested: true,
-        autoRepairEnabled: readabilityAutoRepairEnabled,
-        hasBudget: hasSecondPassBudget(),
-        review: readabilityReview,
-      });
       if (parsedOptions.readabilityAutoRepair) {
-        readabilityAutoRepair = summarizeReadabilityAutoRepair(repairDecision.reason);
-      }
-
-      if (repairDecision.shouldRun) {
-        readabilityRepairPlan = buildReadabilityRepairPlan({
-          review: readabilityReview,
-          analysis: outAfter,
-          snapshot: outSnapshot,
-        });
-        if (readabilityRepairPlan.deterministicToolNames.length === 0) {
-          readabilityAutoRepair = {
-            ...summarizeReadabilityAutoRepair('no_repair_plan'),
-            repairPlan: readabilityRepairPlan,
-          };
+        if (!readabilityAutoRepairEnabled || readabilityAutoRepairAttemptLimit <= 0) {
+          readabilityAutoRepair = summarizeReadabilityAutoRepair('not_requested', {
+            attempted: false,
+            attempts: 0,
+          });
         } else {
-          const repairStarted = Date.now();
-          const beforeRepairReview = readabilityReview;
-          const beforeRepairEngineScore = outAfter.scoreProfile.overallScore;
-          readabilityAutoRepair = {
-            attempted: true,
-            applied: false,
-            reason: repairDecision.reason,
-            durationMs: 0,
-            beforeStatus: beforeRepairReview.status,
-            beforeReadabilityScore: beforeRepairReview.score,
-            beforeEngineScore: beforeRepairEngineScore,
-            targetScore: readabilityAutoRepairTargetScore,
-            repairPlan: readabilityRepairPlan,
+          let repairAttempt = 0;
+          let repairDurationMs = 0;
+          let repairRoundsAdded = 0;
+          const readabilityRepairStartedAt = Date.now();
+          const hasReadabilityRepairBudget = (): boolean => {
+            if (readabilityAutoRepairTimeoutMs > 0 && Date.now() - readabilityRepairStartedAt >= readabilityAutoRepairTimeoutMs) return false;
+            if (REQUEST_TIMEOUT_REMEDIATE_MS <= 0) return true;
+            const remainingMs = REQUEST_TIMEOUT_REMEDIATE_MS - (Date.now() - routeStarted);
+            return remainingMs >= REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
           };
-          try {
-            await reportProgress(97.4, 'Auto-fixing readability concerns');
-            const repairStores = createTransientLearningStores(transientLearningDbs);
-            const repair = await remediatePdf(
-              outBuffer,
-              filename,
-              outAfter,
-              outSnapshot,
-              {
-                targetScore: readabilityAutoRepairTargetScore,
-                maxRounds: Math.max(1, Math.min(parsedOptions.maxRounds ?? 2, 2)),
-                includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? true,
-                focusedPlan: {
-                  focusedToolNames: readabilityRepairPlan.deterministicToolNames,
-                  preferredRoutes: readabilityRepairPlan.preferredRoutes,
-                  focusedOnly: true,
-                  focusedRationale: `Readability auto-repair for ${readabilityRepairPlan.reasons.join(', ') || 'AI readability warning'}.`,
-                },
-                playbookStore: repairStores.playbookStore,
-                toolOutcomeStore: repairStores.toolOutcomeStore,
-                signal: remediationSignal,
-                onProgress: update => reportProgress(
-                  Math.min(97.7, 97.4 + (update.percent / 100) * 0.3),
-                  update.stage,
-                  update.detail,
-                ),
-              },
-            );
-            deterministicDurationMs += repair.remediation.remediationDurationMs;
-            if (repair.remediation.runtimeSummary) {
-              deterministicRuntimeSummaries.push(repair.remediation.runtimeSummary);
+          let repairToolsAdded = 0;
+          const statusRank = (status: ReadabilityReviewSummary['status']): number =>
+            status === 'passed' ? 3 : status === 'warn' ? 2 : status === 'failed' ? 1 : 0;
+          const findingAreas = (review: ReadabilityReviewSummary): Set<ReadabilityReviewArea> =>
+            new Set(review.findings.map(finding => finding.area));
+          const resolvedFindingAreas = (beforeReview: ReadabilityReviewSummary, afterReview: ReadabilityReviewSummary): ReadabilityReviewArea[] => {
+            const afterAreas = findingAreas(afterReview);
+            return [...findingAreas(beforeReview)].filter(area => !afterAreas.has(area));
+          };
+          const buildRepairStatusDelta = (beforeReview: ReadabilityReviewSummary, afterReview: ReadabilityReviewSummary) => ({
+            beforeStatus: beforeReview.status,
+            afterStatus: afterReview.status,
+            beforeReadabilityScore: beforeReview.score,
+            afterReadabilityScore: afterReview.score,
+            resolvedFindingAreas: resolvedFindingAreas(beforeReview, afterReview),
+          });
+          const readabilityStatusImproved = (beforeReview: ReadabilityReviewSummary, afterReview: ReadabilityReviewSummary): boolean =>
+            statusRank(afterReview.status) > statusRank(beforeReview.status);
+          const addRepairPlanningEvidence = (planningSummary: PlanningSummary | undefined): void => {
+            for (const toolName of planningSummary?.scheduledTools ?? []) repairScheduledToolNames.add(toolName);
+            repairSkippedToolReasons.push(...(planningSummary?.skippedTools ?? []));
+          };
+          const baselineReadabilityReview = readabilityReview;
+          let bestReadabilityReview = readabilityReview;
+          let bestReadabilityState = {
+            buffer: outBuffer,
+            analysis: outAfter,
+            snapshot: outSnapshot,
+            roundsOut: [...roundsOut],
+            appliedToolsOut: [...appliedToolsOut],
+            repairRoundsAdded: 0,
+            repairToolsAdded: 0,
+            repairDurationMs: 0,
+          };
+          for (; repairAttempt < readabilityAutoRepairAttemptLimit; repairAttempt += 1) {
+            const repairDecision = shouldRunReadabilityAutoRepair({
+              reviewRequested: true,
+              autoRepairEnabled: readabilityAutoRepairEnabled,
+              hasBudget: hasReadabilityRepairBudget(),
+              review: readabilityReview,
+            });
+
+            if (!repairDecision.shouldRun) {
+              readabilityAutoRepair = summarizeReadabilityAutoRepair(repairDecision.reason, {
+                attempted: repairAttempt > 0,
+                attempts: repairAttempt,
+                durationMs: repairDurationMs,
+              });
+              break;
             }
-            const afterRepairEngineScore = repair.remediation.after.scoreProfile.overallScore;
-            const hasRepairChange = !repair.buffer.equals(outBuffer)
-              || repair.remediation.appliedTools.some(tool => tool.outcome === 'applied');
-            if (afterRepairEngineScore < beforeRepairEngineScore) {
+
+            readabilityRepairPlan = buildReadabilityRepairPlan({
+              review: readabilityReview,
+              analysis: outAfter,
+              snapshot: outSnapshot,
+            });
+
+            for (const lane of readabilityRepairPlan.semanticLanes) {
+              semanticLanesAttempted.add(lane);
+              if (!getOpenAiCompatBaseUrl()) {
+                repairSkippedToolReasons.push({ toolName: `semantic:${lane}`, reason: 'readability_semantic_unavailable' });
+                continue;
+              }
+              const beforeLaneScore = outAfter.scoreProfile.overallScore;
+              if (lane === 'figures') {
+                const sem = await applySemanticRepairs({
+                  buffer: outBuffer,
+                  filename,
+                  analysis: outAfter,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: figureTimeout, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAfter = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticSummary = mergeSequentialSemanticSummaries(beforeLaneScore, [semanticSummary, sem.summary].filter((summary): summary is SemanticRemediationSummary => summary != null));
+              } else if (lane === 'promote_headings') {
+                const sem = await applySemanticPromoteHeadingRepairs({
+                  buffer: outBuffer,
+                  filename,
+                  analysis: outAfter,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: promoteTimeout, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAfter = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticPromoteHeadingsSummary = mergeSequentialSemanticSummaries(beforeLaneScore, [semanticPromoteHeadingsSummary, sem.summary].filter((summary): summary is SemanticRemediationSummary => summary != null));
+              } else if (lane === 'headings') {
+                const sem = await applySemanticHeadingRepairs({
+                  buffer: outBuffer,
+                  filename,
+                  analysis: outAfter,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: headingTimeout, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAfter = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticHeadingsSummary = sem.summary;
+              } else if (lane === 'untagged_headings') {
+                const sem = await applySemanticUntaggedHeadingRepairs({
+                  buffer: outBuffer,
+                  filename,
+                  analysis: outAfter,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: untaggedTimeout, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAfter = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticUntaggedHeadingsSummary = sem.summary;
+              }
+            }
+
+            if (readabilityRepairPlan.deterministicToolNames.length === 0 && semanticLanesApplied.size === 0) {
               readabilityAutoRepair = {
-                ...readabilityAutoRepair,
-                reason: 'score_regression',
-                durationMs: Date.now() - repairStarted,
-                afterEngineScore: afterRepairEngineScore,
+                ...summarizeReadabilityAutoRepair('no_repair_plan', {
+                  attempts: repairAttempt + 1,
+                  durationMs: repairDurationMs,
+                }),
+                applied: false,
+                reason: 'no_repair_plan',
+                attempted: true,
               };
-            } else if (!hasRepairChange) {
-              readabilityAutoRepair = {
-                ...readabilityAutoRepair,
-                reason: 'no_engine_change',
-                durationMs: Date.now() - repairStarted,
-                afterEngineScore: afterRepairEngineScore,
-              };
-            } else {
+              break;
+            }
+
+            const repairStarted = Date.now();
+            const beforeRepairReview = readabilityReview;
+            const beforeRepairEngineScore = outAfter.scoreProfile.overallScore;
+            try {
+              await reportProgress(97.4, 'Auto-fixing readability concerns');
+              const repairStores = createTransientLearningStores(transientLearningDbs);
+              const repair = await remediatePdf(
+                outBuffer,
+                filename,
+                outAfter,
+                outSnapshot,
+                {
+                  targetScore: readabilityAutoRepairTargetScore,
+                  maxRounds: Math.max(1, Math.min(parsedOptions.maxRounds ?? 2, 2)),
+                  includeOptionalRemediation: parsedOptions.includeOptionalRemediation ?? true,
+                  focusedPlan: {
+                    focusedToolNames: readabilityRepairPlan.deterministicToolNames,
+                    preferredRoutes: readabilityRepairPlan.preferredRoutes,
+                    focusedOnly: true,
+                    mode: 'readability',
+                    focusedRationale: 'Readability auto-repair for readability review concerns.',
+                  },
+                  playbookStore: repairStores.playbookStore,
+                  toolOutcomeStore: repairStores.toolOutcomeStore,
+                  signal: remediationSignal,
+                  onProgress: update => reportProgress(
+                    Math.min(97.7, 97.4 + (update.percent / 100) * 0.3),
+                    update.stage,
+                    update.detail,
+                  ),
+                },
+              );
+              const attemptDurationMs = Date.now() - repairStarted;
+              repairDurationMs += attemptDurationMs;
+              deterministicDurationMs += repair.remediation.remediationDurationMs;
+              if (repair.remediation.runtimeSummary) {
+                deterministicRuntimeSummaries.push(repair.remediation.runtimeSummary);
+              }
+              addRepairPlanningEvidence(repair.remediation.planningSummary);
+
+              const afterRepairEngineScore = repair.remediation.after.scoreProfile.overallScore;
+              const hasRepairChange = !repair.buffer.equals(outBuffer)
+                || repair.remediation.appliedTools.some(tool => tool.outcome === 'applied');
+              if (afterRepairEngineScore < beforeRepairEngineScore) {
+                readabilityAutoRepair = {
+                  ...summarizeReadabilityAutoRepair('score_regression', {
+                    attempted: true,
+                    attempts: repairAttempt + 1,
+                    durationMs: repairDurationMs,
+                  }),
+                  reason: 'score_regression',
+                  durationMs: repairDurationMs,
+                  afterEngineScore: afterRepairEngineScore,
+                  afterReadabilityScore: beforeRepairReview.score,
+                  afterStatus: beforeRepairReview.status,
+                };
+                break;
+              }
+
+              if (!hasRepairChange) {
+                const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+                const roundsAdded = repair.remediation.rounds.length;
+                const toolsAdded = repair.remediation.appliedTools.length;
+                repairRoundsAdded += roundsAdded;
+                repairToolsAdded += toolsAdded;
+                if (roundsAdded > 0) {
+                  roundsOut = [
+                    ...roundsOut,
+                    ...repair.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+                  ];
+                }
+                if (toolsAdded > 0) {
+                  appliedToolsOut = [
+                    ...appliedToolsOut,
+                    ...repair.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+                  ];
+                }
+                verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
+                if (toolsAdded === 0 && roundsAdded === 0) {
+                  readabilityAutoRepair = {
+                    ...summarizeReadabilityAutoRepair('no_engine_change', {
+                      attempted: true,
+                      attempts: repairAttempt + 1,
+                      durationMs: repairDurationMs,
+                    }),
+                    reason: 'no_engine_change',
+                    durationMs: repairDurationMs,
+                    afterEngineScore: afterRepairEngineScore,
+                    afterReadabilityScore: beforeRepairReview.score,
+                    afterStatus: beforeRepairReview.status,
+                  };
+                  break;
+                }
+                continue;
+              }
+
               const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
               const roundsAdded = repair.remediation.rounds.length;
               const toolsAdded = repair.remediation.appliedTools.length;
+              repairRoundsAdded += roundsAdded;
+              repairToolsAdded += toolsAdded;
               outBuffer = repair.buffer;
               outAfter = repair.remediation.after;
               outSnapshot = repair.snapshot;
@@ -843,6 +1031,7 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
               ];
               verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
               await runPostRemediationAltPhase('nested_alt_cleanup_post_readability_auto_repair');
+
               await reportProgress(97.8, 'Retesting screen-reader readability');
               readabilityReview = await reviewRemediatedReadability({
                 filename,
@@ -854,33 +1043,141 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
                 },
               });
               readabilityReviewAttempts.push(readabilityReview);
+
+              const repairStatusDelta = buildRepairStatusDelta(beforeRepairReview, readabilityReview);
+              if (
+                readabilityRepairPlan.areas.length === 1
+                && readabilityReview.status !== 'passed'
+                && repairStatusDelta.resolvedFindingAreas.length === 0
+              ) {
+                readabilityAutoRepair = {
+                  ...summarizeReadabilityAutoRepair('readability_issue_detected', {
+                    attempted: true,
+                    attempts: repairAttempt + 1,
+                    durationMs: repairDurationMs,
+                    roundsAdded: repairRoundsAdded,
+                    toolsAdded: repairToolsAdded,
+                  }),
+                  reason: 'readability_issue_detected',
+                  durationMs: repairDurationMs,
+                  afterStatus: readabilityReview.status,
+                  afterReadabilityScore: readabilityReview.score,
+                  afterEngineScore: outAfter.scoreProfile.overallScore,
+                  manualReviewRecommended: readabilityReview.manualReviewRecommended,
+                  repairStatusDelta: repairStatusDelta,
+                };
+                break;
+              }
+
+              const currentStatusRank = statusRank(readabilityReview.status);
+              const bestStatusRank = statusRank(bestReadabilityReview.status);
+              if (
+                currentStatusRank > bestStatusRank ||
+                (currentStatusRank === bestStatusRank && (readabilityReview.score ?? -1) > (bestReadabilityReview.score ?? -1))
+              ) {
+                bestReadabilityReview = readabilityReview;
+                bestReadabilityState = {
+                  buffer: outBuffer,
+                  analysis: outAfter,
+                  snapshot: outSnapshot,
+                  roundsOut: [...roundsOut],
+                  appliedToolsOut: [...appliedToolsOut],
+                  repairRoundsAdded,
+                  repairToolsAdded,
+                  repairDurationMs,
+                };
+              }
+
+              if (readabilityReview.status === 'passed' || readabilityStatusImproved(beforeRepairReview, readabilityReview)) {
+                const attempted = repairAttempt + 1;
+                readabilityAutoRepair = {
+                  ...summarizeReadabilityAutoRepair('applied', {
+                    attempted: true,
+                    attempts: attempted,
+                    durationMs: repairDurationMs,
+                    roundsAdded: repairRoundsAdded,
+                    toolsAdded: repairToolsAdded,
+                  }),
+                  applied: true,
+                  reason: 'applied',
+                  afterStatus: readabilityReview.status,
+                  afterReadabilityScore: readabilityReview.score,
+                  afterEngineScore: outAfter.scoreProfile.overallScore,
+                  manualReviewRecommended: readabilityReview.manualReviewRecommended,
+                  repairStatusDelta: buildRepairStatusDelta(beforeRepairReview, readabilityReview),
+                };
+                break;
+              }
+
+              if (repairAttempt + 1 >= readabilityAutoRepairAttemptLimit) {
+                readabilityAutoRepair = {
+                  ...summarizeReadabilityAutoRepair('attempt_limit_reached', {
+                    attempted: true,
+                    attempts: repairAttempt + 1,
+                    durationMs: repairDurationMs,
+                  }),
+                  reason: 'attempt_limit_reached',
+                  afterStatus: readabilityReview.status,
+                  afterReadabilityScore: readabilityReview.score,
+                  afterEngineScore: outAfter.scoreProfile.overallScore,
+                  repairStatusDelta: buildRepairStatusDelta(beforeRepairReview, readabilityReview),
+                  roundsAdded: repairRoundsAdded,
+                  toolsAdded: repairToolsAdded,
+                };
+                break;
+              }
+            } catch (error) {
+              if (remediationSignal.aborted) throw error;
+              const message = error instanceof Error ? error.message : 'unknown_error';
+              const attempted = repairAttempt + 1;
               readabilityAutoRepair = {
-                ...readabilityAutoRepair,
-                applied: true,
-                reason: 'applied',
-                durationMs: Date.now() - repairStarted,
-                afterStatus: readabilityReview.status,
-                afterReadabilityScore: readabilityReview.score,
-                afterEngineScore: outAfter.scoreProfile.overallScore,
-                roundsAdded,
-                toolsAdded,
-                manualReviewRecommended: readabilityReview.manualReviewRecommended,
+                ...summarizeReadabilityAutoRepair('error', {
+                  attempted: true,
+                  attempts: attempted,
+                  durationMs: repairDurationMs + (Date.now() - repairStarted),
+                }),
+                reason: 'error',
+                errorMessage: message.slice(0, 240),
               };
+              break;
             }
-          } catch (error) {
-            if (remediationSignal.aborted) throw error;
-            const message = error instanceof Error ? error.message : 'unknown_error';
-            readabilityAutoRepair = {
-              ...readabilityAutoRepair,
-              reason: 'error',
-              durationMs: Date.now() - repairStarted,
-              errorMessage: message.slice(0, 240),
-            };
           }
+
+          const currentBestStatusRank = statusRank(readabilityReview.status);
+          const savedBestStatusRank = statusRank(bestReadabilityReview.status);
+          if (
+            currentBestStatusRank < savedBestStatusRank ||
+            (currentBestStatusRank === savedBestStatusRank && (readabilityReview.score ?? -1) < (bestReadabilityReview.score ?? -1))
+          ) {
+            outBuffer = bestReadabilityState.buffer;
+            outAfter = bestReadabilityState.analysis;
+            outSnapshot = bestReadabilityState.snapshot;
+            readabilityReview = bestReadabilityReview;
+            roundsOut = bestReadabilityState.roundsOut;
+            appliedToolsOut = bestReadabilityState.appliedToolsOut;
+            repairRoundsAdded = bestReadabilityState.repairRoundsAdded;
+            repairToolsAdded = bestReadabilityState.repairToolsAdded;
+            repairDurationMs = bestReadabilityState.repairDurationMs;
+            if (readabilityAutoRepair) {
+              readabilityAutoRepair.afterStatus = readabilityReview.status;
+              readabilityAutoRepair.afterReadabilityScore = readabilityReview.score;
+              readabilityAutoRepair.afterEngineScore = outAfter.scoreProfile.overallScore;
+              readabilityAutoRepair.manualReviewRecommended = readabilityReview.manualReviewRecommended;
+              readabilityAutoRepair.repairStatusDelta = buildRepairStatusDelta(baselineReadabilityReview, readabilityReview);
+            }
+          }
+
+          readabilityAutoRepair ??= summarizeReadabilityAutoRepair('readability_issue_detected', {
+            attempted: false,
+            attempts: repairAttempt,
+          });
         }
       }
     } else if (parsedOptions.readabilityAutoRepair) {
-      readabilityAutoRepair = summarizeReadabilityAutoRepair('review_not_requested');
+      readabilityAutoRepair = summarizeReadabilityAutoRepair('review_not_requested', {
+        attempted: false,
+        attempts: 0,
+      });
     }
 
     const enc = encodePdfBase64(outBuffer);

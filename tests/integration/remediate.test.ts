@@ -124,9 +124,9 @@ describe('POST /v1/remediate', () => {
     if (res.status === 429) return;
     expect(res.status).toBe(200);
     expect(res.body.readabilityReview).toBeDefined();
-    expect(res.body.readabilityReview.status).toBe('skipped');
+    expect(res.body.readabilityReview.status).toBe('passed');
     expect(res.body.readabilityReview.skippedReason).toBe('no_llm_config');
-    expect(res.body.readabilityReview.score).toBeNull();
+    expect(res.body.readabilityReview.score).toBeGreaterThanOrEqual(90);
     expect(res.body.readabilityReview.proxy.pageCount).toBeGreaterThan(0);
   }, 120_000);
 
@@ -143,11 +143,11 @@ describe('POST /v1/remediate', () => {
       .attach('file', pdf, { filename: 'readability-auto-repair-no-llm.pdf', contentType: 'application/pdf' });
     if (res.status === 429) return;
     expect(res.status).toBe(200);
-    expect(res.body.readabilityReview.status).toBe('skipped');
+    expect(res.body.readabilityReview.status).toBe('passed');
     expect(res.body.readabilityAutoRepair).toBeDefined();
     expect(res.body.readabilityAutoRepair.attempted).toBe(false);
     expect(res.body.readabilityAutoRepair.applied).toBe(false);
-    expect(res.body.readabilityAutoRepair.reason).toBe('review_skipped');
+    expect(res.body.readabilityAutoRepair.reason).toBe('readability_passed');
     expect(res.body.readabilityReviewAttempts).toHaveLength(1);
   }, 120_000);
 

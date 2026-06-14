@@ -61,4 +61,28 @@ describe('timeout configuration', () => {
     expect(config.REMEDIATION_REANALYSIS_SOFT_CAP_MS).toBe(180_000);
     expect(config.REMEDIATION_SOFT_DEADLINE_BUFFER_MS).toBe(70_000);
   });
+
+  it('clamps readability auto-repair timeout independently from review timeout', async () => {
+    const config = await loadConfigWithEnv({
+      PDFAF_READABILITY_AUTO_REPAIR_TIMEOUT_MS: '900000',
+      PDFAF_READABILITY_REVIEW_TIMEOUT_MS: '45000',
+    });
+
+    expect(config.READABILITY_REVIEW_TIMEOUT_MS).toBe(45_000);
+    expect(config.READABILITY_AUTO_REPAIR_TIMEOUT_MS).toBe(600_000);
+  });
+
+  it('uses a higher default readability auto-repair timeout for default API options', async () => {
+    const config = await loadConfigWithEnv({
+      PDFAF_REMEDIATE_DEFAULT_READABILITY_AUTO_REPAIR: '1',
+      PDFAF_READABILITY_AUTO_REPAIR_TIMEOUT_MS: undefined,
+    });
+
+    expect(config.READABILITY_AUTO_REPAIR_TIMEOUT_MS).toBe(600_000);
+    expect(config.getDefaultRemediateReadabilityOptions()).toMatchObject({
+      readabilityReview: true,
+      readabilityAutoRepair: true,
+      readabilityAutoRepairTimeoutMs: 600_000,
+    });
+  });
 });

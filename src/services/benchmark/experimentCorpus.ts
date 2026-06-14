@@ -5,6 +5,8 @@ import type { ProtectedReanalysisSelectionSummary } from './protectedReanalysisS
 import type {
   AnalysisResult,
   AppliedRemediationTool,
+  ReadabilityAutoRepairSummary,
+  ReadabilityReviewSummary,
   DetectionProfile,
   FailureProfile,
   OcrPipelineSummary,
@@ -115,6 +117,9 @@ export interface RemediateBenchmarkRow {
   reanalyzedFailureProfile?: FailureProfile | null;
   reanalyzedDetectionProfile?: DetectionProfile | null;
   reanalyzedIcjiaParity?: IcjiaParityResult | null;
+  readabilityReview?: ReadabilityReviewSummary | null;
+  readabilityReviewAttempts?: ReadabilityReviewSummary[] | null;
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary | null;
   protectedReanalysisSelection?: ProtectedReanalysisSelectionSummary;
   protectedDebugStateCaptures?: Array<{
     sequence: number;
@@ -317,6 +322,11 @@ export interface ManifestSnapshot {
   mode: 'analyze' | 'remediate' | 'full';
   semanticEnabled: boolean;
   writePdfs: boolean;
+  readabilityReviewEnabled: boolean;
+  readabilityAutoRepairEnabled: boolean;
+  readabilityReviewTimeoutMs: number;
+  readabilityAutoRepairMaxAttempts: number;
+  readabilityAutoRepairTimeoutMs: number;
   selectedEntries: ExperimentCorpusManifestEntry[];
 }
 
@@ -1190,6 +1200,11 @@ export function makeManifestSnapshot(input: {
   mode: 'analyze' | 'remediate' | 'full';
   semanticEnabled: boolean;
   writePdfs: boolean;
+  readabilityReviewEnabled: boolean;
+  readabilityAutoRepairEnabled: boolean;
+  readabilityReviewTimeoutMs: number;
+  readabilityAutoRepairMaxAttempts: number;
+  readabilityAutoRepairTimeoutMs: number;
   selectedEntries: ExperimentCorpusEntry[];
 }): ManifestSnapshot {
   return {
@@ -1199,6 +1214,11 @@ export function makeManifestSnapshot(input: {
     corpusRoot: input.corpusRoot,
     mode: input.mode,
     semanticEnabled: input.semanticEnabled,
+    readabilityReviewEnabled: input.readabilityReviewEnabled,
+    readabilityAutoRepairEnabled: input.readabilityAutoRepairEnabled,
+    readabilityReviewTimeoutMs: input.readabilityReviewTimeoutMs,
+    readabilityAutoRepairMaxAttempts: input.readabilityAutoRepairMaxAttempts,
+    readabilityAutoRepairTimeoutMs: input.readabilityAutoRepairTimeoutMs,
     writePdfs: input.writePdfs,
     selectedEntries: input.selectedEntries.map(({ absolutePath, filename, ...entry }) => entry),
   };

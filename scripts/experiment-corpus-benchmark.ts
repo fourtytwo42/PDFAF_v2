@@ -9,6 +9,11 @@ import { tmpdir } from 'node:os';
 import {
   REMEDIATION_ANALYSIS_TIMEOUT_MS,
   REMEDIATION_PDF_TIMEOUT_MS,
+  READABILITY_AUTO_REPAIR_MAX_ATTEMPTS,
+  READABILITY_AUTO_REPAIR_TARGET_SCORE,
+  READABILITY_AUTO_REPAIR_TIMEOUT_MS,
+  READABILITY_REVIEW_TIMEOUT_MS,
+  REQUEST_TIMEOUT_REMEDIATE_MS,
   REMEDIATION_SOFT_DEADLINE_BUFFER_MS,
   REMEDIATION_TARGET_SCORE,
   SEMANTIC_REMEDIATE_FIGURE_PASSES,
@@ -24,6 +29,7 @@ import {
   type ProtectedDebugStateCapture,
   type RemediationRuntimeTraceEvent,
 } from '../src/services/remediation/orchestrator.js';
+import { buildReadabilityRepairPlan } from '../src/services/semantic/readabilityRepairPlan.js';
 import { buildRemediationOutcomeSummary } from '../src/services/remediation/outcomeSummary.js';
 import { applySemanticHeadingRepairs } from '../src/services/semantic/headingSemantic.js';
 import { buildSemanticGateSummary, buildSemanticSummary, enforceSemanticTrust } from '../src/services/semantic/semanticPolicy.js';
@@ -57,11 +63,19 @@ import {
 import { createPlaybookStore } from '../src/services/learning/playbookStore.js';
 import { createToolOutcomeStore } from '../src/services/learning/toolOutcomes.js';
 import { analyzePdf } from '../src/services/pdfAnalyzer.js';
+import { reviewRemediatedReadability, shouldRunReadabilityAutoRepair } from '../src/services/semantic/readabilityReview.js';
 import type {
   AnalysisResult,
   DocumentSnapshot,
   RemediationRuntimeSummary,
   RuntimeCountRow,
+  ReadabilityAutoRepairSummary,
+  ReadabilityReviewSummary,
+  ReadabilityRepairPlanSummary,
+  ReadabilityRepairSemanticLane,
+  ReadabilityReviewArea,
+  PlanningSkipReason,
+  PlanningSummary,
   SemanticRemediationSummary,
 } from '../src/types.js';
 
@@ -72,8 +86,14 @@ interface ParsedArgs {
   outDir?: string;
   manifestPath?: string;
   cohorts: string[];
+  sourceTypes: string[];
   fileIds: string[];
   semanticEnabled: boolean;
+  readabilityReviewEnabled: boolean;
+  readabilityAutoRepairEnabled: boolean;
+  readabilityReviewTimeoutMs: number;
+  readabilityAutoRepairMaxAttempts: number;
+  readabilityAutoRepairTimeoutMs: number;
   writePdfs: boolean;
   writeProtectedDebugStates: boolean;
   validateManifestOnly: boolean;
@@ -280,6 +300,34 @@ async function writeRuntimeTimeoutTraceArtifact(
   await writeFile(join(dir, `${trace.rowId}.json`), JSON.stringify(trace, null, 2), 'utf8');
 }
 
+const API_SECOND_PASS_MIN_SCORE = parseInt(process.env['PDFAF_SECOND_PASS_MIN_SCORE'] ?? '93', 10);
+
+function shouldRunSecondDeterministicPass(input: {
+  verifiedCheckpointReturned: boolean;
+  score: number;
+  remediationTargetScore?: number;
+  secondPassMinScore?: number;
+  hasBudget: boolean;
+}): boolean {
+  if (input.verifiedCheckpointReturned) return false;
+  if (!input.hasBudget) return false;
+  const targetScore = input.remediationTargetScore ?? REMEDIATION_TARGET_SCORE;
+  if (input.score >= targetScore) return false;
+  const secondPassMinScore = input.secondPassMinScore ?? API_SECOND_PASS_MIN_SCORE;
+  return input.score < secondPassMinScore;
+}
+
+function hasVerifiedCheckpointTimeoutReturn(result: { runtimeSummary?: RemediationRuntimeSummary }): boolean {
+  const reasons = result.runtimeSummary?.boundedWork?.deterministicEarlyExitReasons;
+  return reasons?.some(
+    row =>
+      (row.key === 'verified_checkpoint_timeout_return' ||
+        row.key === 'verified_low_score_checkpoint_timeout_return' ||
+        row.key === 'verified_low_score_checkpoint_slow_no_gain_figure_alt_return') &&
+      row.count > 0,
+  ) ?? false;
+}
+
 function runtimeCounts(values: string[]): RuntimeCountRow[] {
   const counts = new Map<string, number>();
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
@@ -293,13 +341,100 @@ function addDeterministicEarlyExit(
   reason: string,
 ): void {
   if (!runtimeSummary) return;
-  const reasons = [
-    ...(runtimeSummary.boundedWork.deterministicEarlyExitReasons ?? [])
-      .flatMap(row => Array(row.count).fill(row.key)),
+  runtimeSummary.boundedWork.deterministicEarlyExitReasons = runtimeCounts([
+    ...runtimeSummary.boundedWork.deterministicEarlyExitReasons.flatMap(row => Array(row.count).fill(row.key)),
     reason,
-  ];
-  runtimeSummary.boundedWork.deterministicEarlyExitCount = reasons.length;
-  runtimeSummary.boundedWork.deterministicEarlyExitReasons = runtimeCounts(reasons);
+  ]);
+  runtimeSummary.boundedWork.deterministicEarlyExitCount =
+    runtimeSummary.boundedWork.deterministicEarlyExitReasons.reduce((sum, row) => sum + row.count, 0);
+}
+
+function mergeRuntimeSummary(
+  deterministicSummaries: Array<RemediationRuntimeSummary | undefined>,
+  afterRuntime: AnalysisResult['runtimeSummary'] | undefined,
+  semanticSummaries: SemanticRemediationSummary[],
+): RemediationRuntimeSummary | undefined {
+  const validSummaries = deterministicSummaries.filter((summary): summary is RemediationRuntimeSummary => summary != null);
+  if (validSummaries.length === 0 && semanticSummaries.length === 0 && !afterRuntime) return undefined;
+
+  const deterministicTotalMs = validSummaries.reduce((sum, current) => sum + current.deterministicTotalMs, 0);
+  const stageTimings = validSummaries.flatMap(summary => summary.stageTimings);
+  const toolTimings = validSummaries.flatMap(summary => summary.toolTimings);
+
+  const semanticCandidateCapsHit = validSummaries.reduce(
+    (sum, summary) => sum + summary.boundedWork.semanticCandidateCapsHit,
+    0,
+  );
+  let zeroHeadingLaneActivations = 0;
+  let headingConvergenceAttemptCount = 0;
+  let headingConvergenceSuccessCount = 0;
+  let headingConvergenceFailureCount = 0;
+  let headingConvergenceTimeoutCount = 0;
+  let structureConformanceTimeoutCount = 0;
+
+  for (const summary of validSummaries) {
+    zeroHeadingLaneActivations += summary.boundedWork.zeroHeadingLaneActivations;
+    headingConvergenceAttemptCount += summary.boundedWork.headingConvergenceAttemptCount;
+    headingConvergenceSuccessCount += summary.boundedWork.headingConvergenceSuccessCount;
+    headingConvergenceFailureCount += summary.boundedWork.headingConvergenceFailureCount;
+    headingConvergenceTimeoutCount += summary.boundedWork.headingConvergenceTimeoutCount;
+    structureConformanceTimeoutCount += summary.boundedWork.structureConformanceTimeoutCount;
+  }
+  const deterministicEarlyExitReasons = runtimeCounts(
+    validSummaries.flatMap(summary => summary.boundedWork.deterministicEarlyExitReasons.flatMap(row => Array(row.count).fill(row.key))),
+  );
+  const semanticSkipReasons = runtimeCounts(
+    [
+      ...validSummaries.flatMap(summary =>
+        summary.boundedWork.semanticSkipReasons.flatMap(row => Array(row.count).fill(`semanticSkip:${row.key}`)),
+      ),
+      ...semanticSummaries.flatMap(row => `${row.lane}:${row.skippedReason}`),
+    ],
+  );
+  if (validSummaries.length === 0 && afterRuntime) {
+    return {
+      analysisBefore: null,
+      analysisAfter: afterRuntime,
+      deterministicTotalMs,
+      stageTimings,
+      toolTimings,
+      semanticLaneTimings: semanticSummaries.flatMap(summary => summary.runtime ? [summary.runtime] : []),
+      boundedWork: {
+        semanticCandidateCapsHit,
+        deterministicEarlyExitCount: deterministicEarlyExitReasons.reduce((sum, row) => sum + row.count, 0),
+        deterministicEarlyExitReasons,
+        semanticSkipReasons,
+        zeroHeadingLaneActivations,
+        headingConvergenceAttemptCount,
+        headingConvergenceSuccessCount,
+        headingConvergenceFailureCount,
+        headingConvergenceTimeoutCount,
+        structureConformanceTimeoutCount,
+      },
+    };
+  }
+  return {
+    analysisBefore: validSummaries[0]?.analysisBefore ?? null,
+    analysisAfter: afterRuntime ?? validSummaries[validSummaries.length - 1]?.analysisAfter ?? null,
+    deterministicTotalMs,
+    stageTimings,
+    toolTimings,
+    semanticLaneTimings: validSummaries.flatMap(summary => summary.semanticLaneTimings ?? []).concat(
+      semanticSummaries.flatMap(summary => summary.runtime ? [summary.runtime] : []),
+    ),
+    boundedWork: {
+      semanticCandidateCapsHit,
+      deterministicEarlyExitCount: deterministicEarlyExitReasons.reduce((sum, row) => sum + row.count, 0),
+      deterministicEarlyExitReasons,
+      semanticSkipReasons,
+      zeroHeadingLaneActivations,
+      headingConvergenceAttemptCount,
+      headingConvergenceSuccessCount,
+      headingConvergenceFailureCount,
+      headingConvergenceTimeoutCount,
+      structureConformanceTimeoutCount,
+    },
+  };
 }
 
 function hasDeterministicEarlyExit(
@@ -309,68 +444,32 @@ function hasDeterministicEarlyExit(
   return runtimeSummary?.boundedWork.deterministicEarlyExitReasons?.some(row => row.key === reason && row.count > 0) ?? false;
 }
 
-export function shouldSkipBenchmarkFinalReanalysis(input: {
-  startedAtMs: number;
-  score?: number | null;
-  targetScore?: number;
-  nowMs?: number;
-  wallTimeoutMs?: number;
-  requiredRemainingMs?: number;
-  verifiedCheckpointReturned?: boolean;
-}): boolean {
-  return benchmarkFinalReanalysisDecision(input).skip;
+function shouldKeepPostRemediationAltRepair(
+  before: AnalysisResult,
+  after: AnalysisResult,
+): boolean {
+  // Keep the post-pass repair if it does not regress the final accessibility score.
+  // If the repair hurts score or introduces no change, revert to prior state.
+  return after.score >= before.score;
 }
 
-export function benchmarkFinalReanalysisDecision(input: {
+function benchmarkFinalReanalysisDecision(args: {
   startedAtMs: number;
-  score?: number | null;
-  targetScore?: number;
-  highBScore?: number;
-  nowMs?: number;
-  wallTimeoutMs?: number;
-  requiredRemainingMs?: number;
-  verifiedCheckpointReturned?: boolean;
-}): { skip: boolean; reason: 'soft_deadline_before_final_reanalysis' | 'bounded_final_reanalysis_guard' | 'verified_checkpoint_timeout_return' | null } {
-  if (input.verifiedCheckpointReturned === true) {
+  score: number;
+  verifiedCheckpointReturned: boolean;
+}): { skip: boolean; reason?: string } {
+  if (args.verifiedCheckpointReturned) {
     return { skip: true, reason: 'verified_checkpoint_timeout_return' };
   }
-  const wallTimeoutMs = input.wallTimeoutMs ?? REMEDIATION_PDF_TIMEOUT_MS;
-  if (!(wallTimeoutMs > 0)) return { skip: false, reason: null };
-  const requiredRemainingMs = input.requiredRemainingMs ?? REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
-  const nowMs = input.nowMs ?? performance.now();
-  const elapsedMs = Math.max(0, nowMs - input.startedAtMs);
-  const nearDeadline = Math.max(0, wallTimeoutMs - elapsedMs) < requiredRemainingMs;
-  if (!nearDeadline) return { skip: false, reason: null };
-  const score = input.score ?? 0;
-  if (score >= (input.targetScore ?? REMEDIATION_TARGET_SCORE)) {
-    return { skip: true, reason: 'soft_deadline_before_final_reanalysis' };
-  }
-  if (score >= (input.highBScore ?? 85)) {
-    return { skip: true, reason: 'bounded_final_reanalysis_guard' };
-  }
-  return { skip: false, reason: null };
-}
 
-function mergeRuntimeSummary(
-  deterministic: RemediationRuntimeSummary | undefined,
-  afterRuntime: AnalysisResult['runtimeSummary'] | undefined,
-  semanticSummaries: SemanticRemediationSummary[],
-): RemediationRuntimeSummary | undefined {
-  if (!deterministic && semanticSummaries.length === 0 && !afterRuntime) return undefined;
-  return {
-    analysisBefore: deterministic?.analysisBefore ?? null,
-    analysisAfter: afterRuntime ?? null,
-    deterministicTotalMs: deterministic?.deterministicTotalMs ?? 0,
-    stageTimings: deterministic?.stageTimings ?? [],
-    toolTimings: deterministic?.toolTimings ?? [],
-    semanticLaneTimings: semanticSummaries.flatMap(summary => summary.runtime ? [summary.runtime] : []),
-    boundedWork: {
-      semanticCandidateCapsHit: semanticSummaries.filter(summary => summary.runtime?.candidateCapHit).length,
-      deterministicEarlyExitCount: deterministic?.boundedWork.deterministicEarlyExitCount ?? 0,
-      deterministicEarlyExitReasons: deterministic?.boundedWork.deterministicEarlyExitReasons ?? [],
-      semanticSkipReasons: runtimeCounts(semanticSummaries.map(summary => `${summary.lane}:${summary.skippedReason}`)),
-    },
-  };
+  if (
+    REQUEST_TIMEOUT_REMEDIATE_MS > 0 &&
+    Date.now() - args.startedAtMs >= REQUEST_TIMEOUT_REMEDIATE_MS - REMEDIATION_SOFT_DEADLINE_BUFFER_MS
+  ) {
+    return { skip: true, reason: 'final_reanalysis_soft_stop' };
+  }
+
+  return { skip: false };
 }
 
 function printUsage(): void {
@@ -381,10 +480,16 @@ Options:
   --mode analyze|remediate|full   Benchmark mode (default: full)
   --out <dir>                     Output directory root or explicit run directory
   --manifest <path>               Alternate experiment corpus manifest path
-  --cohort <name>                 Restrict to a cohort (repeatable)
+    --source-type <type>            Restrict to sourceType (fixture|original|remediated_checkpoint), repeatable
   --file <id>                     Restrict to one manifest id (repeatable)
   --semantic                      Enable semantic passes
-  --no-semantic                   Disable semantic passes (default)
+    --readability-review            Enable readability review
+  --no-readability-review         Disable readability review (default)
+  --readability-auto-repair       Enable readability auto-repair using review findings
+  --no-readability-auto-repair    Disable readability auto-repair
+  --readability-review-timeout <ms> Set readability review timeout in ms
+  --readability-auto-repair-max-attempts <n>  Max auto-repair attempts (0-10)
+  --readability-auto-repair-timeout <ms>  Dedicated auto-repair timeout in ms (0-600000)
   --write-pdfs                    Write remediated PDFs into the run directory
   --write-protected-debug-states  Write protected checkpoint PDFs/metadata for diagnostics
   --protected-baseline-run <dir>   Internal benchmark-only protected row floor baseline
@@ -399,8 +504,14 @@ function parseArgs(argv: string[]): ParsedArgs {
   let outDir: string | undefined;
   let manifestPath: string | undefined;
   const cohorts: string[] = [];
+  const sourceTypes: string[] = [];
   const fileIds: string[] = [];
   let semanticEnabled = false;
+  let readabilityReviewEnabled = false;
+  let readabilityAutoRepairEnabled = false;
+  let readabilityReviewTimeoutMs = READABILITY_REVIEW_TIMEOUT_MS;
+  let readabilityAutoRepairMaxAttempts = READABILITY_AUTO_REPAIR_MAX_ATTEMPTS;
+  let readabilityAutoRepairTimeoutMs = READABILITY_AUTO_REPAIR_TIMEOUT_MS;
   let writePdfs = false;
   let writeProtectedDebugStates = false;
   let validateManifestOnly = false;
@@ -438,10 +549,16 @@ function parseArgs(argv: string[]): ParsedArgs {
         cohorts.push(value);
         break;
       }
-      case '--file': {
+  case '--file': {
         const value = argv[++i];
         if (!value) throw new Error('Missing value for --file.');
         fileIds.push(value);
+        break;
+      }
+      case '--source-type': {
+        const value = argv[++i];
+        if (!value) throw new Error('Missing value for --source-type.');
+        sourceTypes.push(value);
         break;
       }
       case '--semantic':
@@ -450,6 +567,46 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--no-semantic':
         semanticEnabled = false;
         break;
+      case '--readability-review':
+        readabilityReviewEnabled = true;
+        break;
+      case '--no-readability-review':
+        readabilityReviewEnabled = false;
+        break;
+      case '--readability-auto-repair':
+        readabilityAutoRepairEnabled = true;
+        break;
+      case '--no-readability-auto-repair':
+        readabilityAutoRepairEnabled = false;
+        break;
+      case '--readability-review-timeout': {
+        const value = argv[++i];
+        if (!value) throw new Error('Missing value for --readability-review-timeout.');
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isNaN(parsed) || parsed < 0) throw new Error('Invalid value for --readability-review-timeout.');
+        readabilityReviewTimeoutMs = parsed;
+        break;
+      }
+      case '--readability-auto-repair-max-attempts': {
+        const value = argv[++i];
+        if (!value) throw new Error('Missing value for --readability-auto-repair-max-attempts.');
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isNaN(parsed) || parsed < 0 || parsed > 10) {
+          throw new Error('Invalid value for --readability-auto-repair-max-attempts. Expected integer 0-10.');
+        }
+        readabilityAutoRepairMaxAttempts = parsed;
+        break;
+      }
+      case '--readability-auto-repair-timeout': {
+        const value = argv[++i];
+        if (!value) throw new Error('Missing value for --readability-auto-repair-timeout.');
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isNaN(parsed) || parsed < 0 || parsed > 600_000) {
+          throw new Error('Invalid value for --readability-auto-repair-timeout. Expected integer 0-600000.');
+        }
+        readabilityAutoRepairTimeoutMs = parsed;
+        break;
+      }
       case '--write-pdfs':
         writePdfs = true;
         break;
@@ -488,8 +645,14 @@ function parseArgs(argv: string[]): ParsedArgs {
     outDir,
     manifestPath,
     cohorts,
+    sourceTypes,
     fileIds,
     semanticEnabled,
+    readabilityReviewEnabled,
+    readabilityAutoRepairEnabled,
+    readabilityReviewTimeoutMs,
+    readabilityAutoRepairMaxAttempts,
+    readabilityAutoRepairTimeoutMs,
     writePdfs,
     writeProtectedDebugStates,
     validateManifestOnly,
@@ -856,9 +1019,14 @@ async function runAnalyzeStep(entry: ExperimentCorpusEntry): Promise<{
 
 async function runRemediationStep(
   entry: ExperimentCorpusEntry,
-  _before: AnalysisResult,
+  before: AnalysisResult,
   _snapshot: DocumentSnapshot,
   semanticEnabled: boolean,
+  readabilityReviewEnabled: boolean,
+  readabilityAutoRepairEnabled: boolean,
+  readabilityReviewTimeoutMs: number,
+  readabilityAutoRepairMaxAttempts: number,
+  readabilityAutoRepairTimeoutMs: number,
   mode: BenchmarkMode,
   writePdfs: boolean,
   writeProtectedDebugStates: boolean,
@@ -869,6 +1037,7 @@ async function runRemediationStep(
   const buffer = await readFile(entry.absolutePath);
   const totalStart = performance.now();
   const remediationStart = performance.now();
+  const routeStarted = Date.now();
   const runtimeTrace = createRuntimeTimeoutTrace(entry, remediationStart);
   const db = new Database(':memory:');
   initSchema(db);
@@ -878,8 +1047,10 @@ async function runRemediationStep(
       REMEDIATION_PDF_TIMEOUT_MS > 0
         ? AbortSignal.timeout(REMEDIATION_PDF_TIMEOUT_MS)
         : undefined;
-    const playbookStore = createPlaybookStore(db);
-    const toolOutcomeStore = createToolOutcomeStore(db);
+    const firstPassStores = {
+      playbookStore: createPlaybookStore(db),
+      toolOutcomeStore: createToolOutcomeStore(db),
+    };
     const protectedDebugStateCaptures: ProtectedDebugStateArtifact[] = [];
     let protectedDebugStateSequence = 0;
     const writeProtectedDebugState = async (state: ProtectedDebugStateCapture): Promise<void> => {
@@ -924,24 +1095,16 @@ async function runRemediationStep(
       });
     };
 
-    runtimeTrace.mark('analysis_before_start');
-    const remediationInput = await analyzePdf(entry.absolutePath, entry.filename, {
-      bypassCache: true,
-      ...(remediationSignal ? { signal: remediationSignal } : {}),
-      timeoutMs: REMEDIATION_ANALYSIS_TIMEOUT_MS,
-    });
-    runtimeTrace.mark('analysis_before_finish');
-
     const { remediation, buffer: detBuffer, snapshot: detSnapshot } = await remediatePdf(
       buffer,
       entry.filename,
-      remediationInput.result,
-      remediationInput.snapshot,
+      before,
+      _snapshot,
       {
         maxRounds: 10,
         ...(remediationSignal ? { signal: remediationSignal } : {}),
-        playbookStore,
-        toolOutcomeStore,
+        playbookStore: firstPassStores.playbookStore,
+        toolOutcomeStore: firstPassStores.toolOutcomeStore,
         onRuntimeTrace: runtimeTrace.event,
         ...(writeProtectedDebugStates && protectedBaseline ? { onProtectedDebugState: writeProtectedDebugState } : {}),
         ...(protectedBaseline
@@ -956,9 +1119,112 @@ async function runRemediationStep(
       },
     );
 
-    let finalBuffer = detBuffer;
-    let finalAnalysis = remediation.after;
-    let finalSnapshot = detSnapshot;
+    let outBuffer = detBuffer;
+    let outAnalysis = remediation.after;
+    let outSnapshot = detSnapshot;
+    let appliedToolsOut = [...remediation.appliedTools];
+    let roundsOut = [...remediation.rounds];
+    const deterministicRuntimeSummaries: Array<RemediationRuntimeSummary | undefined> = [remediation.runtimeSummary];
+    let deterministicDurationMs = remediation.remediationDurationMs;
+    let verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(remediation);
+    const remediationTargetScore = REMEDIATION_TARGET_SCORE;
+    const runPostRemediationAltPhase = async (details: string): Promise<void> => {
+      if (verifiedCheckpointReturned) return;
+      if (!outSnapshot.isTagged) return;
+      if (outAnalysis.score >= remediationTargetScore) return;
+      const scoreBeforeAltFix = outAnalysis.score;
+      const phaseStarted = Date.now();
+      const ar = await applyPostRemediationAltRepair(
+        outBuffer,
+        entry.filename,
+        outAnalysis,
+        outSnapshot,
+        { signal: remediationSignal },
+      );
+      deterministicDurationMs += Date.now() - phaseStarted;
+      if (!ar.buffer.equals(outBuffer) && shouldKeepPostRemediationAltRepair(outAnalysis, ar.analysis)) {
+        outBuffer = ar.buffer;
+        outAnalysis = ar.analysis;
+        outSnapshot = ar.snapshot;
+        appliedToolsOut = [
+          ...appliedToolsOut,
+          {
+            toolName: 'repair_alt_text_structure',
+            stage: 9,
+            round: roundsOut[roundsOut.length - 1]?.round ?? 1,
+            scoreBefore: scoreBeforeAltFix,
+            scoreAfter: outAnalysis.score,
+            delta: outAnalysis.score - scoreBeforeAltFix,
+            outcome: 'applied' as const,
+            details,
+            source: 'post_pass' as const,
+          },
+        ];
+      }
+    };
+    const hasSecondPassBudget = (): boolean => {
+      if (REQUEST_TIMEOUT_REMEDIATE_MS <= 0) return true;
+      const remainingMs = REQUEST_TIMEOUT_REMEDIATE_MS - (Date.now() - routeStarted);
+      return remainingMs >= (REMEDIATION_ANALYSIS_TIMEOUT_MS + REMEDIATION_SOFT_DEADLINE_BUFFER_MS);
+    };
+
+    await runPostRemediationAltPhase('nested_alt_cleanup_post_first_pass');
+
+    if (shouldRunSecondDeterministicPass({
+      verifiedCheckpointReturned,
+      score: outAnalysis.score,
+      remediationTargetScore,
+      hasBudget: hasSecondPassBudget(),
+    })) {
+      const secondPassStores = {
+        playbookStore: createPlaybookStore(db),
+        toolOutcomeStore: createToolOutcomeStore(db),
+      };
+      const r2 = await remediatePdf(
+        outBuffer,
+        entry.filename,
+        outAnalysis,
+        outSnapshot,
+        {
+          maxRounds: 10,
+          ...(remediationSignal ? { signal: remediationSignal } : {}),
+          playbookStore: secondPassStores.playbookStore,
+          toolOutcomeStore: secondPassStores.toolOutcomeStore,
+          onRuntimeTrace: runtimeTrace.event,
+          ...(writeProtectedDebugStates && protectedBaseline ? { onProtectedDebugState: writeProtectedDebugState } : {}),
+          ...(protectedBaseline
+            ? {
+                protectedBaseline: {
+                  score: protectedBaseline.score,
+                  scoreCapsApplied: protectedBaseline.scoreCapsApplied,
+                  categories: protectedBaseline.categories,
+                },
+              }
+            : {}),
+        },
+      );
+      deterministicDurationMs += r2.remediation.remediationDurationMs;
+      if (r2.remediation.runtimeSummary) {
+        deterministicRuntimeSummaries.push(r2.remediation.runtimeSummary);
+      }
+      if (r2.remediation.after.score >= outAnalysis.score) {
+        const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+        outBuffer = r2.buffer;
+        outAnalysis = r2.remediation.after;
+        outSnapshot = r2.snapshot;
+        roundsOut = [
+          ...roundsOut,
+          ...r2.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+        ];
+        appliedToolsOut = [
+          ...appliedToolsOut,
+          ...r2.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+        ];
+        verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(r2.remediation);
+        await runPostRemediationAltPhase('nested_alt_cleanup_post_second_pass');
+      }
+    }
+
     let semantic: SemanticRemediationSummary | undefined;
     let semanticHeadings: SemanticRemediationSummary | undefined;
     let semanticPromoteHeadings: SemanticRemediationSummary | undefined;
@@ -967,18 +1233,487 @@ async function runRemediationStep(
     if (semanticEnabled) {
       const semanticRun = await runSemanticSequence({
         entry,
-        buffer: finalBuffer,
-        analysis: finalAnalysis,
-        snapshot: finalSnapshot,
+        buffer: outBuffer,
+        analysis: outAnalysis,
+        snapshot: outSnapshot,
         ...(remediationSignal ? { signal: remediationSignal } : {}),
       });
-      finalBuffer = semanticRun.buffer;
-      finalAnalysis = semanticRun.analysis;
-      finalSnapshot = semanticRun.snapshot;
+      outBuffer = semanticRun.buffer;
+      outAnalysis = semanticRun.analysis;
+      outSnapshot = semanticRun.snapshot;
       semantic = semanticRun.semantic;
       semanticHeadings = semanticRun.semanticHeadings;
       semanticPromoteHeadings = semanticRun.semanticPromoteHeadings;
       semanticUntaggedHeadings = semanticRun.semanticUntaggedHeadings;
+    }
+
+    if ([
+      semantic,
+      semanticHeadings,
+      semanticPromoteHeadings,
+      semanticUntaggedHeadings,
+    ].some(summary => summary?.changeStatus === 'applied')) {
+      await runPostRemediationAltPhase('nested_alt_cleanup_post_semantic');
+    }
+
+    const trustAdjusted = enforceSemanticTrust({
+      before: remediation.before,
+      after: outAnalysis,
+      summaries: [semantic, semanticHeadings, semanticPromoteHeadings, semanticUntaggedHeadings],
+    });
+    outAnalysis = trustAdjusted.analysis;
+    if (trustAdjusted.trustDowngraded) {
+      if (semantic?.changeStatus === 'applied') semantic.trustDowngraded = true;
+      if (semanticHeadings?.changeStatus === 'applied') semanticHeadings.trustDowngraded = true;
+      if (semanticPromoteHeadings?.changeStatus === 'applied') semanticPromoteHeadings.trustDowngraded = true;
+      if (semanticUntaggedHeadings?.changeStatus === 'applied') semanticUntaggedHeadings.trustDowngraded = true;
+    }
+
+    let readabilityReview: ReadabilityReviewSummary | undefined;
+    const readabilityReviewAttempts: ReadabilityReviewSummary[] = [];
+    let readabilityAutoRepair: ReadabilityAutoRepairSummary | undefined;
+    let readabilityRepairPlan: ReadabilityRepairPlanSummary | undefined;
+    const readabilityAutoRepairAttemptLimit = Math.max(
+      0,
+      Math.trunc(readabilityAutoRepairMaxAttempts),
+    );
+    const readabilityAutoRepairTargetScore = Math.max(
+      remediationTargetScore,
+      READABILITY_AUTO_REPAIR_TARGET_SCORE,
+    );
+    const effectiveReadabilityAutoRepairTimeoutMs = Math.max(
+      0,
+      Math.min(Math.trunc(readabilityAutoRepairTimeoutMs), 600_000),
+    );
+    const repairScheduledToolNames = new Set<string>();
+    const repairSkippedToolReasons: Array<{ toolName: string; reason: PlanningSkipReason }> = [];
+    const semanticLanesAttempted = new Set<ReadabilityRepairSemanticLane>();
+    const semanticLanesApplied = new Set<ReadabilityRepairSemanticLane>();
+
+    const summarizeReadabilityAutoRepair = (
+      reason: ReadabilityAutoRepairSummary['reason'],
+      details: {
+        attempted?: boolean;
+        attempts?: number;
+        durationMs?: number;
+        roundsAdded?: number;
+        toolsAdded?: number;
+      } = {},
+    ): ReadabilityAutoRepairSummary => ({
+      attempted: details.attempted ?? false,
+      attempts: details.attempts,
+      applied: false,
+      reason,
+      durationMs: details.durationMs ?? 0,
+      ...(readabilityReview
+        ? {
+            beforeStatus: readabilityReview.status,
+            beforeReadabilityScore: readabilityReview.score,
+          }
+        : {}),
+      beforeEngineScore: outAnalysis.score,
+      targetScore: readabilityAutoRepairTargetScore,
+      ...(readabilityRepairPlan ? { repairPlan: readabilityRepairPlan } : {}),
+      ...(details.roundsAdded != null ? { roundsAdded: details.roundsAdded } : {}),
+      ...(details.toolsAdded != null ? { toolsAdded: details.toolsAdded } : {}),
+      ...(typeof repairScheduledToolNames !== 'undefined' && repairScheduledToolNames.size > 0 ? { scheduledToolNames: [...repairScheduledToolNames] } : {}),
+      ...(typeof repairSkippedToolReasons !== 'undefined' && repairSkippedToolReasons.length > 0 ? { skippedToolReasons: repairSkippedToolReasons } : {}),
+      ...(typeof semanticLanesAttempted !== 'undefined' && semanticLanesAttempted.size > 0 ? { semanticLanesAttempted: [...semanticLanesAttempted] } : {}),
+      ...(typeof semanticLanesApplied !== 'undefined' && semanticLanesApplied.size > 0 ? { semanticLanesApplied: [...semanticLanesApplied] } : {}),
+    });
+
+    if (readabilityReviewEnabled) {
+      readabilityReview = await reviewRemediatedReadability({
+        filename: entry.filename,
+        analysis: outAnalysis,
+        snapshot: outSnapshot,
+        options: {
+          timeoutMs: readabilityReviewTimeoutMs,
+          signal: remediationSignal,
+        },
+      });
+      readabilityReviewAttempts.push(readabilityReview);
+
+      if (readabilityAutoRepairEnabled) {
+        if (readabilityAutoRepairAttemptLimit <= 0) {
+          readabilityAutoRepair = summarizeReadabilityAutoRepair('not_requested', {
+            attempted: false,
+            attempts: 0,
+          });
+        } else {
+          let repairAttempt = 0;
+          let repairDurationMs = 0;
+          let repairRoundsAdded = 0;
+          const readabilityRepairStartedAt = Date.now();
+          const hasReadabilityRepairBudget = (): boolean => {
+            if (effectiveReadabilityAutoRepairTimeoutMs > 0 && Date.now() - readabilityRepairStartedAt >= effectiveReadabilityAutoRepairTimeoutMs) return false;
+            if (REQUEST_TIMEOUT_REMEDIATE_MS <= 0) return true;
+            const remainingMs = REQUEST_TIMEOUT_REMEDIATE_MS - (Date.now() - routeStarted);
+            return remainingMs >= REMEDIATION_SOFT_DEADLINE_BUFFER_MS;
+          };
+          let repairToolsAdded = 0;
+          const statusRank = (status: ReadabilityReviewSummary['status']): number =>
+            status === 'passed' ? 3 : status === 'warn' ? 2 : status === 'failed' ? 1 : 0;
+          const findingAreas = (review: ReadabilityReviewSummary): Set<ReadabilityReviewArea> =>
+            new Set(review.findings.map(finding => finding.area));
+          const resolvedFindingAreas = (beforeReview: ReadabilityReviewSummary, afterReview: ReadabilityReviewSummary): ReadabilityReviewArea[] => {
+            const afterAreas = findingAreas(afterReview);
+            return [...findingAreas(beforeReview)].filter(area => !afterAreas.has(area));
+          };
+          const buildRepairStatusDelta = (beforeReview: ReadabilityReviewSummary, afterReview: ReadabilityReviewSummary) => ({
+            beforeStatus: beforeReview.status,
+            afterStatus: afterReview.status,
+            beforeReadabilityScore: beforeReview.score,
+            afterReadabilityScore: afterReview.score,
+            resolvedFindingAreas: resolvedFindingAreas(beforeReview, afterReview),
+          });
+          const readabilityStatusImproved = (beforeReview: ReadabilityReviewSummary, afterReview: ReadabilityReviewSummary): boolean =>
+            statusRank(afterReview.status) > statusRank(beforeReview.status);
+          const addRepairPlanningEvidence = (planningSummary: PlanningSummary | undefined): void => {
+            for (const toolName of planningSummary?.scheduledTools ?? []) repairScheduledToolNames.add(toolName);
+            repairSkippedToolReasons.push(...(planningSummary?.skippedTools ?? []));
+          };
+          const baselineReadabilityReview = readabilityReview;
+          let bestReadabilityReview = readabilityReview;
+          let bestReadabilityState = {
+            buffer: outBuffer,
+            analysis: outAnalysis,
+            snapshot: outSnapshot,
+            roundsOut: [...roundsOut],
+            appliedToolsOut: [...appliedToolsOut],
+            repairRoundsAdded: 0,
+            repairToolsAdded: 0,
+            repairDurationMs: 0,
+          };
+          for (; repairAttempt < readabilityAutoRepairAttemptLimit; repairAttempt += 1) {
+            const repairDecision = shouldRunReadabilityAutoRepair({
+              reviewRequested: true,
+              autoRepairEnabled: true,
+              hasBudget: hasReadabilityRepairBudget(),
+              review: readabilityReview,
+            });
+            if (!repairDecision.shouldRun) {
+              readabilityAutoRepair = summarizeReadabilityAutoRepair(repairDecision.reason, {
+                attempted: repairAttempt > 0,
+                attempts: repairAttempt,
+                durationMs: repairDurationMs,
+              });
+              break;
+            }
+
+            readabilityRepairPlan = buildReadabilityRepairPlan({
+              review: readabilityReview,
+              analysis: outAnalysis,
+              snapshot: outSnapshot,
+            });
+            for (const lane of readabilityRepairPlan.semanticLanes) {
+              semanticLanesAttempted.add(lane);
+              if (!getOpenAiCompatBaseUrl()) {
+                repairSkippedToolReasons.push({ toolName: `semantic:${lane}`, reason: 'readability_semantic_unavailable' });
+                continue;
+              }
+              const beforeLaneScore = outAnalysis.score;
+              const semanticTimeoutMs = REMEDIATION_PDF_TIMEOUT_MS > 0 ? REMEDIATION_PDF_TIMEOUT_MS : undefined;
+              if (lane === 'figures') {
+                const sem = await applySemanticRepairs({
+                  buffer: outBuffer,
+                  filename: entry.filename,
+                  analysis: outAnalysis,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: semanticTimeoutMs, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAnalysis = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semantic = mergeSequentialSemanticSummaries(beforeLaneScore, [semantic, sem.summary].filter((summary): summary is SemanticRemediationSummary => summary != null));
+              } else if (lane === 'promote_headings') {
+                const sem = await applySemanticPromoteHeadingRepairs({
+                  buffer: outBuffer,
+                  filename: entry.filename,
+                  analysis: outAnalysis,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: semanticTimeoutMs, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAnalysis = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticPromoteHeadings = mergeSequentialSemanticSummaries(beforeLaneScore, [semanticPromoteHeadings, sem.summary].filter((summary): summary is SemanticRemediationSummary => summary != null));
+              } else if (lane === 'headings') {
+                const sem = await applySemanticHeadingRepairs({
+                  buffer: outBuffer,
+                  filename: entry.filename,
+                  analysis: outAnalysis,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: semanticTimeoutMs, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAnalysis = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticHeadings = sem.summary;
+              } else if (lane === 'untagged_headings') {
+                const sem = await applySemanticUntaggedHeadingRepairs({
+                  buffer: outBuffer,
+                  filename: entry.filename,
+                  analysis: outAnalysis,
+                  snapshot: outSnapshot,
+                  options: { timeoutMs: semanticTimeoutMs, signal: remediationSignal },
+                });
+                outBuffer = sem.buffer;
+                outAnalysis = sem.analysis;
+                outSnapshot = sem.snapshot;
+                if (sem.summary.changeStatus === 'applied') semanticLanesApplied.add(lane);
+                semanticUntaggedHeadings = sem.summary;
+              }
+            }
+
+            if (readabilityRepairPlan.deterministicToolNames.length === 0 && semanticLanesApplied.size === 0) {
+              readabilityAutoRepair = summarizeReadabilityAutoRepair('no_repair_plan', {
+                attempts: repairAttempt + 1,
+                durationMs: repairDurationMs,
+              });
+              break;
+            }
+
+            const repairStarted = Date.now();
+            const beforeRepairReview = readabilityReview;
+            const beforeRepairEngineScore = outAnalysis.score;
+            const repair = await remediatePdf(
+              outBuffer,
+              entry.filename,
+              outAnalysis,
+              outSnapshot,
+              {
+                targetScore: readabilityAutoRepairTargetScore,
+                maxRounds: 2,
+                includeOptionalRemediation: true,
+                focusedPlan: {
+                  focusedToolNames: readabilityRepairPlan.deterministicToolNames,
+                  preferredRoutes: readabilityRepairPlan.preferredRoutes,
+                  focusedOnly: true,
+                  mode: 'readability',
+                  focusedRationale: 'Readability auto-repair for readability review concerns.',
+                },
+                playbookStore: createPlaybookStore(db),
+                toolOutcomeStore: createToolOutcomeStore(db),
+                signal: remediationSignal,
+                onRuntimeTrace: runtimeTrace.event,
+              },
+            );
+            const attemptDurationMs = Date.now() - repairStarted;
+            repairDurationMs += attemptDurationMs;
+            deterministicDurationMs += repair.remediation.remediationDurationMs;
+            if (repair.remediation.runtimeSummary) {
+              deterministicRuntimeSummaries.push(repair.remediation.runtimeSummary);
+            }
+            addRepairPlanningEvidence(repair.remediation.planningSummary);
+
+            const afterRepairEngineScore = repair.remediation.after.score;
+            const hasRepairChange = !repair.buffer.equals(outBuffer)
+              || repair.remediation.appliedTools.some(tool => tool.outcome === 'applied');
+            if (afterRepairEngineScore < beforeRepairEngineScore) {
+              readabilityAutoRepair = {
+                ...summarizeReadabilityAutoRepair('score_regression', {
+                  attempted: true,
+                  attempts: repairAttempt + 1,
+                  durationMs: repairDurationMs,
+                }),
+                reason: 'score_regression',
+                durationMs: repairDurationMs,
+                afterEngineScore: afterRepairEngineScore,
+                afterReadabilityScore: beforeRepairReview.score,
+                afterStatus: beforeRepairReview.status,
+              };
+              break;
+            }
+
+            if (!hasRepairChange) {
+              const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+              const roundsAdded = repair.remediation.rounds.length;
+              const toolsAdded = repair.remediation.appliedTools.length;
+              repairRoundsAdded += roundsAdded;
+              repairToolsAdded += toolsAdded;
+              if (roundsAdded > 0) {
+                roundsOut = [
+                  ...roundsOut,
+                  ...repair.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+                ];
+              }
+              if (toolsAdded > 0) {
+                appliedToolsOut = [
+                  ...appliedToolsOut,
+                  ...repair.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+                ];
+              }
+              verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
+              if (toolsAdded === 0 && roundsAdded === 0) {
+                readabilityAutoRepair = {
+                  ...summarizeReadabilityAutoRepair('no_engine_change', {
+                    attempted: true,
+                    attempts: repairAttempt + 1,
+                    durationMs: repairDurationMs,
+                  }),
+                  reason: 'no_engine_change',
+                  afterEngineScore: afterRepairEngineScore,
+                  afterReadabilityScore: beforeRepairReview.score,
+                  afterStatus: beforeRepairReview.status,
+                };
+                break;
+              }
+              continue;
+            }
+
+            const roundOffset = roundsOut[roundsOut.length - 1]?.round ?? 0;
+            const roundsAdded = repair.remediation.rounds.length;
+            const toolsAdded = repair.remediation.appliedTools.length;
+            repairRoundsAdded += roundsAdded;
+            repairToolsAdded += toolsAdded;
+            outBuffer = repair.buffer;
+            outAnalysis = repair.remediation.after;
+            outSnapshot = repair.snapshot;
+            roundsOut = [
+              ...roundsOut,
+              ...repair.remediation.rounds.map(round => ({ ...round, round: round.round + roundOffset })),
+            ];
+            appliedToolsOut = [
+              ...appliedToolsOut,
+              ...repair.remediation.appliedTools.map(tool => ({ ...tool, round: tool.round + roundOffset })),
+            ];
+            verifiedCheckpointReturned = hasVerifiedCheckpointTimeoutReturn(repair.remediation);
+            await runPostRemediationAltPhase('nested_alt_cleanup_post_readability_auto_repair');
+            readabilityReview = await reviewRemediatedReadability({
+              filename: entry.filename,
+              analysis: outAnalysis,
+              snapshot: outSnapshot,
+              options: {
+                timeoutMs: readabilityReviewTimeoutMs,
+                signal: remediationSignal,
+              },
+            });
+            readabilityReviewAttempts.push(readabilityReview);
+
+            const repairStatusDelta = buildRepairStatusDelta(beforeRepairReview, readabilityReview);
+            if (
+              readabilityRepairPlan.areas.length === 1
+              && readabilityReview.status !== 'passed'
+              && repairStatusDelta.resolvedFindingAreas.length === 0
+            ) {
+              readabilityAutoRepair = {
+                ...summarizeReadabilityAutoRepair('readability_issue_detected', {
+                  attempted: true,
+                  attempts: repairAttempt + 1,
+                  durationMs: repairDurationMs,
+                  roundsAdded: repairRoundsAdded,
+                  toolsAdded: repairToolsAdded,
+                }),
+                reason: 'readability_issue_detected',
+                durationMs: repairDurationMs,
+                afterStatus: readabilityReview.status,
+                afterReadabilityScore: readabilityReview.score,
+                afterEngineScore: outAnalysis.score,
+                manualReviewRecommended: readabilityReview.manualReviewRecommended,
+                repairStatusDelta: repairStatusDelta,
+              };
+              break;
+            }
+
+            const currentStatusRank = statusRank(readabilityReview.status);
+            const bestStatusRank = statusRank(bestReadabilityReview.status);
+            if (
+              currentStatusRank > bestStatusRank ||
+              (currentStatusRank === bestStatusRank && (readabilityReview.score ?? -1) > (bestReadabilityReview.score ?? -1))
+            ) {
+              bestReadabilityReview = readabilityReview;
+              bestReadabilityState = {
+                buffer: outBuffer,
+                analysis: outAnalysis,
+                snapshot: outSnapshot,
+                roundsOut: [...roundsOut],
+                appliedToolsOut: [...appliedToolsOut],
+                repairRoundsAdded,
+                repairToolsAdded,
+                repairDurationMs,
+              };
+            }
+
+            if (readabilityReview.status === 'passed' || readabilityStatusImproved(beforeRepairReview, readabilityReview)) {
+              const attempted = repairAttempt + 1;
+              readabilityAutoRepair = {
+                ...summarizeReadabilityAutoRepair('applied', {
+                  attempted: true,
+                  attempts: attempted,
+                  durationMs: repairDurationMs,
+                  roundsAdded: repairRoundsAdded,
+                  toolsAdded: repairToolsAdded,
+                }),
+                applied: true,
+                reason: 'applied',
+                afterStatus: readabilityReview.status,
+                afterReadabilityScore: readabilityReview.score,
+                afterEngineScore: outAnalysis.score,
+                manualReviewRecommended: readabilityReview.manualReviewRecommended,
+                repairStatusDelta: buildRepairStatusDelta(beforeRepairReview, readabilityReview),
+              };
+              break;
+            }
+
+            if (repairAttempt + 1 >= readabilityAutoRepairAttemptLimit) {
+              const attempts = repairAttempt + 1;
+              readabilityAutoRepair = {
+                ...summarizeReadabilityAutoRepair('attempt_limit_reached', {
+                  attempted: true,
+                  attempts,
+                  durationMs: repairDurationMs,
+                  roundsAdded: repairRoundsAdded,
+                  toolsAdded: repairToolsAdded,
+                }),
+                reason: 'attempt_limit_reached',
+                afterStatus: readabilityReview.status,
+                afterReadabilityScore: readabilityReview.score,
+                afterEngineScore: outAnalysis.score,
+                repairStatusDelta: buildRepairStatusDelta(beforeRepairReview, readabilityReview),
+              };
+              break;
+            }
+          }
+
+          const currentBestStatusRank = statusRank(readabilityReview.status);
+          const savedBestStatusRank = statusRank(bestReadabilityReview.status);
+          if (
+            currentBestStatusRank < savedBestStatusRank ||
+            (currentBestStatusRank === savedBestStatusRank && (readabilityReview.score ?? -1) < (bestReadabilityReview.score ?? -1))
+          ) {
+            outBuffer = bestReadabilityState.buffer;
+            outAnalysis = bestReadabilityState.analysis;
+            outSnapshot = bestReadabilityState.snapshot;
+            readabilityReview = bestReadabilityReview;
+            roundsOut = bestReadabilityState.roundsOut;
+            appliedToolsOut = bestReadabilityState.appliedToolsOut;
+            repairRoundsAdded = bestReadabilityState.repairRoundsAdded;
+            repairToolsAdded = bestReadabilityState.repairToolsAdded;
+            repairDurationMs = bestReadabilityState.repairDurationMs;
+            if (readabilityAutoRepair) {
+              readabilityAutoRepair.afterStatus = readabilityReview.status;
+              readabilityAutoRepair.afterReadabilityScore = readabilityReview.score;
+              readabilityAutoRepair.afterEngineScore = outAnalysis.score;
+              readabilityAutoRepair.manualReviewRecommended = readabilityReview.manualReviewRecommended;
+              readabilityAutoRepair.repairStatusDelta = buildRepairStatusDelta(baselineReadabilityReview, readabilityReview);
+            }
+          }
+
+          readabilityAutoRepair ??= summarizeReadabilityAutoRepair('readability_issue_detected', {
+            attempted: false,
+            attempts: repairAttempt,
+          });
+        }
+      }
+    } else if (readabilityAutoRepairEnabled) {
+      readabilityAutoRepair = summarizeReadabilityAutoRepair('review_not_requested', {
+        attempted: false,
+        attempts: 0,
+      });
     }
 
     let reanalyzed: AnalysisResult | null = null;
@@ -989,9 +1724,9 @@ async function runRemediationStep(
     if (mode === 'full') {
       const finalReanalysisDecision = benchmarkFinalReanalysisDecision({
         startedAtMs: remediationStart,
-        score: finalAnalysis.score,
+        score: outAnalysis.score,
         verifiedCheckpointReturned: hasDeterministicEarlyExit(
-          remediation.runtimeSummary,
+          deterministicRuntimeSummaries[deterministicRuntimeSummaries.length - 1],
           'verified_checkpoint_timeout_return',
         ),
       });
@@ -1001,18 +1736,24 @@ async function runRemediationStep(
           : 'final_reanalysis_soft_stop');
         if (
           finalReanalysisDecision.reason &&
-          !hasDeterministicEarlyExit(remediation.runtimeSummary, finalReanalysisDecision.reason)
+          !hasDeterministicEarlyExit(
+            deterministicRuntimeSummaries[deterministicRuntimeSummaries.length - 1],
+            finalReanalysisDecision.reason,
+          )
         ) {
-          addDeterministicEarlyExit(remediation.runtimeSummary, finalReanalysisDecision.reason);
+          addDeterministicEarlyExit(
+            deterministicRuntimeSummaries[deterministicRuntimeSummaries.length - 1],
+            finalReanalysisDecision.reason,
+          );
         }
-        reanalyzed = finalAnalysis;
-        reanalyzedSnapshot = finalSnapshot;
-        reanalyzedParity = buildIcjiaParity(finalSnapshot);
+        reanalyzed = outAnalysis;
+        reanalyzedSnapshot = outSnapshot;
+        reanalyzedParity = buildIcjiaParity(outSnapshot);
         analysisAfterMs = 0;
       } else {
         runtimeTrace.mark('final_reanalysis_start');
         const finalAnalyze = await selectProtectedFinalReanalysis({
-          buffer: finalBuffer,
+          buffer: outBuffer,
           filename: entry.filename,
           protectedBaseline,
           cache: protectedReanalysisCache,
@@ -1029,16 +1770,16 @@ async function runRemediationStep(
 
     if (writePdfs) {
       await mkdir(join(runDir, 'pdfs'), { recursive: true });
-      await writeFile(join(runDir, 'pdfs', `${entry.id}.pdf`), finalBuffer);
+      await writeFile(join(runDir, 'pdfs', `${entry.id}.pdf`), outBuffer);
     }
 
-    const effectiveAfter = finalAnalysis;
+    const effectiveAfter = outAnalysis;
     const wallRemediateMs = performance.now() - remediationStart;
     const totalPipelineMs = performance.now() - totalStart;
     const remediationOutcomeSummary = buildRemediationOutcomeSummary({
       before: remediation.before,
       after: effectiveAfter,
-      appliedTools: remediation.appliedTools,
+      appliedTools: appliedToolsOut,
       planningSummary: remediation.planningSummary,
     });
     const semanticSummaries = [
@@ -1048,7 +1789,7 @@ async function runRemediationStep(
       semanticUntaggedHeadings,
     ].filter((summary): summary is SemanticRemediationSummary => summary != null);
     const runtimeSummary = mergeRuntimeSummary(
-      remediation.runtimeSummary,
+      deterministicRuntimeSummaries,
       reanalyzed?.runtimeSummary ?? effectiveAfter.runtimeSummary,
       semanticSummaries,
     );
@@ -1071,7 +1812,7 @@ async function runRemediationStep(
       beforeStructuralClassification: remediation.before.structuralClassification ?? null,
       beforeFailureProfile: remediation.before.failureProfile ?? null,
       beforeDetectionProfile: remediation.before.detectionProfile ?? null,
-      beforeIcjiaParity: buildIcjiaParity(remediationInput.snapshot),
+      beforeIcjiaParity: buildIcjiaParity(_snapshot),
       afterScore: effectiveAfter.score,
       afterGrade: effectiveAfter.grade,
       afterPdfClass: effectiveAfter.pdfClass,
@@ -1083,7 +1824,7 @@ async function runRemediationStep(
       afterStructuralClassification: effectiveAfter.structuralClassification ?? null,
       afterFailureProfile: effectiveAfter.failureProfile ?? null,
       afterDetectionProfile: effectiveAfter.detectionProfile ?? null,
-      afterIcjiaParity: buildIcjiaParity(finalSnapshot),
+      afterIcjiaParity: buildIcjiaParity(outSnapshot),
       reanalyzedScore: reanalyzed?.score ?? null,
       reanalyzedGrade: reanalyzed?.grade ?? null,
       reanalyzedPdfClass: reanalyzed?.pdfClass ?? null,
@@ -1098,10 +1839,15 @@ async function runRemediationStep(
       reanalyzedIcjiaParity: reanalyzedSnapshot ? reanalyzedParity : null,
       ...(protectedReanalysisSelection ? { protectedReanalysisSelection } : {}),
       ...(protectedDebugStateCaptures.length > 0 ? { protectedDebugStateCaptures } : {}),
+      ...(readabilityReview && readabilityReviewEnabled ? { readabilityReview } : {}),
+      ...(readabilityReviewEnabled && readabilityReviewAttempts.length > 0
+        ? { readabilityReviewAttempts }
+        : {}),
+      ...(readabilityAutoRepairEnabled && readabilityAutoRepair ? { readabilityAutoRepair } : {}),
       planningSummary: remediation.planningSummary ?? null,
       delta: effectiveAfter.score - remediation.before.score,
-      appliedTools: remediation.appliedTools,
-      rounds: remediation.rounds,
+      appliedTools: appliedToolsOut,
+      rounds: roundsOut,
       ...(remediation.ocrPipeline ? { ocrPipeline: remediation.ocrPipeline } : {}),
       ...(remediation.structuralConfidenceGuard
         ? { structuralConfidenceGuard: remediation.structuralConfidenceGuard }
@@ -1114,11 +1860,12 @@ async function runRemediationStep(
       ...(semanticUntaggedHeadings ? { semanticUntaggedHeadings } : {}),
       analysisBeforeMs: remediation.before.analysisDurationMs,
       remediationDurationMs:
-        remediation.remediationDurationMs +
+        deterministicDurationMs +
         (semantic?.durationMs ?? 0) +
         (semanticHeadings?.durationMs ?? 0) +
         (semanticPromoteHeadings?.durationMs ?? 0) +
-        (semanticUntaggedHeadings?.durationMs ?? 0),
+        (semanticUntaggedHeadings?.durationMs ?? 0) +
+        readabilityReviewAttempts.reduce((sum, review) => sum + review.durationMs, 0),
       wallRemediateMs,
       analysisAfterMs,
       totalPipelineMs,
@@ -1162,12 +1909,15 @@ async function validateRun(runDir: string, validateVisual: boolean): Promise<voi
 function filterEntries(
   entries: ExperimentCorpusEntry[],
   cohorts: string[],
+  sourceTypes: string[],
   fileIds: string[],
 ): ExperimentCorpusEntry[] {
   const cohortSet = new Set(cohorts);
+  const sourceTypeSet = new Set(sourceTypes);
   const fileIdSet = new Set(fileIds);
   return entries.filter(entry => {
     if (cohortSet.size > 0 && !cohortSet.has(entry.cohort)) return false;
+    if (sourceTypeSet.size > 0 && !sourceTypeSet.has(entry.sourceType)) return false;
     if (fileIdSet.size > 0 && !fileIdSet.has(entry.id)) return false;
     return true;
   });
@@ -1189,7 +1939,7 @@ async function main(): Promise<void> {
   }
 
   const entries = await loadExperimentCorpusManifest(manifestPath, { checkFiles: true });
-  const selectedEntries = filterEntries(entries, args.cohorts, args.fileIds);
+  const selectedEntries = filterEntries(entries, args.cohorts, args.sourceTypes, args.fileIds);
   if (selectedEntries.length === 0) {
     throw new Error('No manifest entries matched the requested cohort/file filters.');
   }
@@ -1229,6 +1979,11 @@ async function main(): Promise<void> {
           analyze.result,
           analyze.snapshot,
           args.semanticEnabled,
+          args.readabilityReviewEnabled,
+          args.readabilityAutoRepairEnabled,
+          args.readabilityReviewTimeoutMs,
+          args.readabilityAutoRepairMaxAttempts,
+          args.readabilityAutoRepairTimeoutMs,
           args.mode,
           args.writePdfs,
           args.writeProtectedDebugStates,
@@ -1302,6 +2057,11 @@ async function main(): Promise<void> {
       corpusRoot,
       mode: args.mode,
       semanticEnabled: args.semanticEnabled,
+      readabilityReviewEnabled: args.readabilityReviewEnabled,
+      readabilityAutoRepairEnabled: args.readabilityAutoRepairEnabled,
+      readabilityReviewTimeoutMs: args.readabilityReviewTimeoutMs,
+      readabilityAutoRepairMaxAttempts: args.readabilityAutoRepairMaxAttempts,
+      readabilityAutoRepairTimeoutMs: args.readabilityAutoRepairTimeoutMs,
       writePdfs: args.writePdfs,
       selectedEntries,
     });

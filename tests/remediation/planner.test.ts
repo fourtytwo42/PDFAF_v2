@@ -3181,9 +3181,7 @@ describe('planForRemediation', () => {
       structRef: '3_0',
       altText: 'Illustration (page 1)',
     });
-    expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({
-      structRef: '3_0',
-    });
+    expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({});
   });
 
   it('progresses to a distinct figure alt target after a prior target attempt', () => {
@@ -5864,6 +5862,31 @@ describe('planForRemediation', () => {
     });
     expect(headingTool?.rationale).toContain('Report-scale layout heading recovery');
     expect(plan.planningSummary?.triggeringSignals).toContain(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
+  });
+
+  it('promotes the first readable heading to H1 when the tree has headings but no H1', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      headings: [{ level: 2, text: 'Executive Summary', page: 0, structRef: '10_0' }],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap)).toMatchObject({
+      targetRef: '10_0',
+      level: 1,
+      text: 'Executive Summary',
+    });
+
+    const plan = planForRemediation(analysis, snap, [], undefined, false, { mode: 'readability' });
+    const headingTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_candidate');
+    expect(headingTool?.params).toMatchObject({
+      targetRef: '10_0',
+      level: 1,
+      text: 'Executive Summary',
+    });
   });
 
   it('falls back to text-only layout heading synthesis when paragraph matches are absent', () => {

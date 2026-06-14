@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildReadabilityRepairPlan } from '../../src/services/semantic/readabilityRepairPlan.js';
+import { planForRemediation } from '../../src/services/remediation/planner.js';
 import type { AnalysisResult, DocumentSnapshot, ReadabilityReviewSummary } from '../../src/types.js';
 
 function analysis(overrides: Partial<AnalysisResult> = {}): AnalysisResult {
@@ -48,6 +49,10 @@ function snapshot(overrides: Partial<DocumentSnapshot> = {}): DocumentSnapshot {
     links: [],
     formFields: [],
     formFieldsFromPdfjs: [],
+    fonts: [],
+    links: [],
+    annotations: [],
+    orphanMcids: [],
     ...overrides,
   } as unknown as DocumentSnapshot;
 }
@@ -106,4 +111,185 @@ describe('buildReadabilityRepairPlan', () => {
     expect(plan.deterministicToolNames).toEqual([]);
     expect(plan.findingsUnmapped).toBe(1);
   });
+  it('expands heading residuals to deterministic fallback and semantic lanes', () => {
+    const plan = buildReadabilityRepairPlan({
+      analysis: analysis({
+        categories: analysis().categories.map(category =>
+          category.key === 'heading_structure'
+            ? { ...category, score: 0, severity: 'critical' }
+            : category,
+        ),
+      }),
+      snapshot: snapshot({ headings: [], paragraphStructElems: [{ structRef: 'p1' }] } as Partial<DocumentSnapshot>),
+      review: review({
+        status: 'failed',
+        score: 59,
+        findings: [
+          { area: 'heading_structure', severity: 'critical', message: 'No navigable headings.' },
+        ],
+      }),
+    });
+
+    expect(plan.deterministicToolNames).toContain('synthesize_basic_structure_from_layout');
+    expect(plan.deterministicToolNames).toContain('create_heading_from_ocr_page_shell_anchor');
+    expect(plan.preferredRoutes).toContain('font_ocr_repair');
+    expect(plan.semanticLanes).toEqual(['promote_headings', 'headings', 'untagged_headings']);
+  });
+
+  it('expands first-page title text into heading fallback tools', () => {
+    const plan = buildReadabilityRepairPlan({
+      analysis: analysis({
+        categories: analysis().categories.map(category =>
+          category.key === 'heading_structure'
+            ? { ...category, score: 0, severity: 'critical' }
+            : category,
+        ),
+      }),
+      snapshot: snapshot({ headings: [], paragraphStructElems: [], textByPage: ['Annual Report 2026', 'Supporting body text'] }),
+      review: review({
+        status: 'failed',
+        score: 58,
+        findings: [
+          { area: 'heading_structure', severity: 'critical', message: 'No navigable heading structure.' },
+        ],
+      }),
+    });
+
+    expect(plan.manualReviewOnly).toBe(false);
+    expect(plan.deterministicToolNames).toContain('create_heading_from_visible_text_anchor');
+    expect(plan.deterministicToolNames).toContain('bridge_native_title_text_owner');
+    expect(plan.deterministicToolNames).toContain('normalize_heading_hierarchy');
+    expect(plan.semanticLanes).toEqual(['promote_headings', 'headings', 'untagged_headings']);
+  });
+
+  it('expands annotation debt into link repair fallbacks', () => {
+    const plan = buildReadabilityRepairPlan({
+      analysis: analysis({
+        categories: analysis().categories.map(category =>
+          category.key === 'link_quality'
+            ? { ...category, score: 0, severity: 'critical' }
+            : category,
+        ),
+      }),
+      snapshot: snapshot({
+        links: [],
+        annotationAccessibility: {
+          pagesMissingTabsS: 1,
+          pagesAnnotationOrderDiffers: 1,
+          linkAnnotationsMissingStructure: 1,
+          nonLinkAnnotationsMissingStructure: 1,
+          nonLinkAnnotationsMissingContents: 1,
+          linkAnnotationsMissingStructParent: 1,
+          nonLinkAnnotationsMissingStructParent: 1,
+        },
+      } as Partial<DocumentSnapshot>),
+      review: review({
+        status: 'warn',
+        score: 74,
+        findings: [
+          { area: 'link_quality', severity: 'moderate', message: 'Link structure should be repaired.' },
+        ],
+      }),
+    });
+
+    expect(plan.manualReviewOnly).toBe(false);
+    expect(plan.deterministicToolNames).toContain('repair_native_link_structure');
+    expect(plan.deterministicToolNames).toContain('tag_unowned_annotations');
+    expect(plan.deterministicToolNames).toContain('set_link_annotation_contents');
+    expect(plan.deterministicToolNames).toContain('normalize_annotation_tab_order');
+  });
+
+  it('keeps no-H1 heading residuals on the bounded normalize path when no text seed exists', () => {
+    const plan = buildReadabilityRepairPlan({
+      analysis: analysis({
+        categories: analysis().categories.map(category =>
+          category.key === 'heading_structure'
+            ? { ...category, score: 0, severity: 'critical' }
+            : category,
+        ),
+      }),
+      snapshot: snapshot({
+        headings: [{ level: 2, text: '', page: 0, structRef: '1_0' }],
+        paragraphStructElems: [],
+        textByPage: ['', ''],
+        detectionProfile: {
+          headingSignals: {
+            treeHeadingCount: 1,
+            rootReachableHeadingCount: 1,
+          },
+        } as Partial<DocumentSnapshot>['detectionProfile'],
+      } as Partial<DocumentSnapshot>),
+      review: review({
+        status: 'failed',
+        score: 64,
+        findings: [
+          { area: 'heading_structure', severity: 'critical', message: 'Heading tree lacks an H1.' },
+        ],
+      }),
+    });
+
+    expect(plan.deterministicToolNames).toContain('normalize_heading_hierarchy');
+    expect(plan.deterministicToolNames).toContain('repair_structure_conformance');
+    expect(plan.deterministicToolNames).not.toContain('create_heading_from_visible_text_anchor');
+    expect(plan.deterministicToolNames).not.toContain('create_heading_from_tagged_visible_anchor');
+  });
+
+  it('does not schedule repair for already-passed readability reviews', () => {
+    const plan = buildReadabilityRepairPlan({
+      analysis: analysis(),
+      snapshot: snapshot(),
+      review: review({ status: 'passed', score: 94, findings: [] }),
+    });
+
+    expect(plan.manualReviewOnly).toBe(true);
+    expect(plan.areas).toEqual([]);
+    expect(plan.deterministicToolNames).toEqual([]);
+    expect(plan.semanticLanes).toEqual([]);
+  });
+
+  it('passes readability mode through planner scheduling and skip diagnostics', () => {
+    const titleLangFailing = analysis({
+      score: 88,
+      scoreProfile: { overallScore: 88, grade: 'B' },
+      categories: analysis().categories.map(category =>
+        category.key === 'title_language'
+          ? { ...category, score: 60, severity: 'moderate' }
+          : category,
+      ),
+    });
+
+    const scheduled = planForRemediation(
+      titleLangFailing,
+      snapshot({ metadata: { title: 'Target', language: '' }, lang: '' }),
+      [],
+      undefined,
+      true,
+      {
+        focusedToolNames: ['set_document_language'],
+        preferredRoutes: ['metadata_foundation'],
+        focusedOnly: true,
+        mode: 'readability',
+      },
+    );
+    expect(scheduled.planningSummary?.scheduledTools).toContain('set_document_language');
+
+    const skipped = planForRemediation(
+      analysis(),
+      snapshot({ figures: [] }),
+      [],
+      undefined,
+      true,
+      {
+        focusedToolNames: ['set_figure_alt_text'],
+        preferredRoutes: ['figure_semantics'],
+        focusedOnly: true,
+        mode: 'readability',
+      },
+    );
+    expect(skipped.planningSummary?.skippedTools).toContainEqual({
+      toolName: 'set_figure_alt_text',
+      reason: 'readability_no_fresh_candidate',
+    });
+  });
+
 });

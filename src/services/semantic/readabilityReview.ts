@@ -308,6 +308,68 @@ function buildReadabilityProxy(input: ReadabilityReviewInput): { proxy: Readabil
   };
 }
 
+function buildDeterministicReadabilityReview(
+  input: ReadabilityReviewInput,
+  summary: ReadabilityReviewSummary['proxy'],
+  reason: ReadabilityReviewSkippedReason,
+): ReadabilityReviewSummary {
+  const { analysis } = input;
+  const score = clamp(Math.round(analysis.scoreProfile.overallScore), 0, 100);
+  const status: ReadabilityReviewStatus = score >= 90 ? 'passed' : score >= 70 ? 'warn' : 'failed';
+  const lowCategoryFindings = analysis.categories
+    .filter(
+      (category) => category.applicable && category.countsTowardGrade !== false && typeof category.score === 'number' && category.score < 90,
+    )
+    .sort((a, b) => (a.score ?? 100) - (b.score ?? 100))
+    .slice(0, 8)
+    .map((category) => {
+      const sampleFinding = analysis.findings.find((finding) => finding.category === category.key);
+      const severity: Exclude<Severity, 'pass'> =
+        category.score < 60 || category.severity === 'critical'
+          ? 'critical'
+          : category.score < 78 || category.severity === 'moderate'
+            ? 'moderate'
+            : 'minor';
+      return {
+        area: normalizeArea(category.key),
+        severity,
+        message: String(category.key) + ' score is ' + Math.round(category.score ?? 0) + ' and may reduce screen-reader usability.',
+        ...(category.manualReviewReasons?.[0] ? { evidence: truncate(String(category.manualReviewReasons[0]), 220) } : {}),
+        ...(sampleFinding?.message ? { recommendation: truncate(sampleFinding.message, 220) } : {}),
+        ...(sampleFinding?.page != null && Number.isFinite(sampleFinding.page)
+          ? { page: sampleFinding.page + 1 }
+          : {}),
+      };
+    });
+
+  const findings = normalizeFindings(lowCategoryFindings as unknown);
+  const strengths = analysis.categories
+    .filter(
+      (category) => category.applicable && category.countsTowardGrade !== false && typeof category.score === 'number' && category.score >= 95,
+    )
+    .slice(0, 2)
+    .map((category) => String(category.key) + ' is already strong.');
+
+  const manualReviewReasons = strings(analysis.manualReviewReasons, 6);
+  return {
+    status,
+    score,
+    grade: gradeFor(score),
+    confidence: 'low',
+    durationMs: 0,
+    skippedReason: reason,
+    model: 'heuristic-readability-v1',
+    endpoint: 'fallback',
+    summary: 'Fallback deterministic review used because AI readability review was unavailable.',
+    strengths: (strengths.length > 0 ? strengths : ['No strong deterministic strengths detected.']).slice(0, 6),
+    findings,
+    manualReviewRecommended:
+      status !== 'passed' || manualReviewReasons.length > 0 || lowCategoryFindings.some((finding) => finding.severity === 'critical'),
+    manualReviewReasons,
+    proxy: summary,
+  };
+}
+
 function skippedReview(input: { reason: ReadabilityReviewSkippedReason; durationMs: number; summary: string; manualReviewReasons?: string[]; proxy?: ReadabilityReviewSummary['proxy'] }): ReadabilityReviewSummary {
   return {
     status: input.reason === 'error' ? 'error' : 'skipped',
@@ -371,7 +433,7 @@ export async function reviewRemediatedReadability(input: ReadabilityReviewInput)
   const endpoints = getLlmEndpoints();
   const { proxy, summary } = buildReadabilityProxy(input);
   if (endpoints.length === 0) {
-    return skippedReview({ reason: 'no_llm_config', durationMs: Date.now() - started, summary: 'AI readability review skipped because no OpenAI-compatible endpoint is configured.', proxy: summary });
+    return buildDeterministicReadabilityReview(input, summary, 'no_llm_config');
   }
   const messages = [
     {
