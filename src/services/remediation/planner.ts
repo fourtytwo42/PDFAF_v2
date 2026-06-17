@@ -2205,7 +2205,13 @@ export function planForRemediation(
       if (toolName === 'retag_as_figure' && !hasRoleMappedFigureCandidate(snapshot)) {
         return { allowed: false, reason: 'missing_precondition' };
       }
-      if (toolName === 'repair_alt_text_structure' && hasOfficeFigureRoleMapAltDebt(snapshot)) {
+      if (
+        toolName === 'repair_alt_text_structure'
+        && (
+          hasOfficeFigureRoleMapAltDebt(snapshot)
+          || (readabilityFocusedPlan && categoryFailing('alt_text'))
+        )
+      ) {
         return { allowed: true };
       }
       if (toolName === 'repair_annotation_alt_text' || DETERMINISTIC_FIGURE_TOOLS.has(toolName)) {
@@ -2250,7 +2256,8 @@ export function planForRemediation(
         categoryFailing('alt_text')
         && (
           classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk' ||
-          hasOfficeFigureRoleMapAltDebt(snapshot)
+          hasOfficeFigureRoleMapAltDebt(snapshot) ||
+          (readabilityFocusedPlan && categoryFailing('alt_text'))
         )
       )
     ) {

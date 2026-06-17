@@ -86,6 +86,7 @@ import {
   shouldTryStage180RepeatedTemplateFinalization,
   shouldTryStage180ReportTableProof,
   shouldTryStage180LinkRepairAfterTable,
+  stage180RemainingTableTargets,
   stage180RepeatedTemplateEvidence,
 } from './stage180MixedTablePdfua.js';
 import {
@@ -6919,7 +6920,11 @@ async function applyTaggedCleanupPostPasses(args: {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'score_moving_pdfua_topup_orphan_drain_postpass_guard');
     return { buffer, analysis, snapshot };
   }
-  if (hasPriorNonImprovingTableNormalize(appliedTools) && (categoryScore(analysis, 'table_markup') ?? 100) < 80) {
+  if (
+    hasPriorNonImprovingTableNormalize(appliedTools) &&
+    (categoryScore(analysis, 'table_markup') ?? 100) < 80 &&
+    stage180RemainingTableTargets(snapshot, appliedTools).length === 0
+  ) {
     if (runtimeSummary) noteEarlyExit(runtimeSummary, 'no_gain_table_skip_tagged_orphan_drain_postpass');
     return { buffer, analysis, snapshot };
   }
@@ -7060,7 +7065,10 @@ async function applyStage180MixedTablePdfUaPostPass(args: {
   const traced = <T>(phase: string, run: () => Promise<T>): Promise<T> =>
     tracePhase ? tracePhase(phase, run) : run();
   let { buffer, analysis, snapshot } = args.state;
-  if (hasPriorNonImprovingTableNormalize(appliedTools)) return args.state;
+  if (
+    hasPriorNonImprovingTableNormalize(appliedTools) &&
+    stage180RemainingTableTargets(snapshot, appliedTools).length === 0
+  ) return args.state;
   const decision = classifyStage180MixedTablePdfUa({ analysis, snapshot, appliedTools });
   const repeatedTemplateEvidenceForDecision = stage180RepeatedTemplateEvidence(snapshot);
   const repeatedTemplateCandidate = shouldTryStage180RepeatedTemplateFinalization({
@@ -7543,7 +7551,10 @@ async function applyStage180HeaderRegularitySequence(args: {
 }): Promise<RemediationState & { accepted: boolean }> {
   const { filename, signal, round, appliedTools, runtimeSummary, protectedBaseline } = args;
   const { buffer, analysis, snapshot } = args.state;
-  if (hasPriorNonImprovingTableNormalize(appliedTools)) {
+  if (
+    hasPriorNonImprovingTableNormalize(appliedTools) &&
+    stage180RemainingTableTargets(snapshot, appliedTools).length === 0
+  ) {
     return { ...args.state, accepted: false };
   }
   if (!shouldTryStage180HeaderRegularitySequence({ analysis, snapshot })) {
@@ -8950,6 +8961,64 @@ export async function remediatePdf(
     verifiedTimeoutCheckpoint.current = candidate;
   };
   let verifiedCheckpointReturned = false;
+  const restoreVerifiedCheckpointAfterFinalRegression = async (reason: string): Promise<boolean> => {
+    const checkpoint = verifiedTimeoutCheckpoint.current;
+    if (!checkpoint) return false;
+    if (currentAnalysis.score >= checkpoint.analysis.score) return false;
+    if (checkpoint.analysis.score < targetScore) return false;
+    const eligibility = verifiedTimeoutCheckpointEligibility({
+      filename,
+      beforeAnalysis: before,
+      beforeSnapshot: initialSnapshot,
+      checkpoint,
+      appliedTools,
+      nearWallBudget: true,
+    });
+    if (!eligibility.eligible) return false;
+    const scoreBefore = currentAnalysis.score;
+    const appliedToolCountBefore = appliedTools.length;
+    currentBuffer = Buffer.from(checkpoint.buffer);
+    currentAnalysis = checkpoint.analysis;
+    currentSnapshot = checkpoint.snapshot;
+    appliedTools.splice(checkpoint.appliedToolCount);
+    appliedTools.push({
+      toolName: 'verified_checkpoint_regression_restore',
+      stage: 14,
+      round: rounds.length > 0 ? rounds[rounds.length - 1]!.round : 1,
+      scoreBefore,
+      scoreAfter: checkpoint.analysis.score,
+      delta: checkpoint.analysis.score - scoreBefore,
+      outcome: 'applied',
+      details: enrichDetailsWithReplayState(JSON.stringify({
+        outcome: 'applied',
+        note: 'verified_checkpoint_final_regression_restore',
+        restoredReason: checkpoint.reason,
+        restoredAppliedToolCount: checkpoint.appliedToolCount,
+        discardedAppliedToolCount: Math.max(0, appliedToolCountBefore - checkpoint.appliedToolCount),
+        eligibilityReason: eligibility.reason,
+      }), {
+        beforeAnalysis: before,
+        beforeSnapshot: initialSnapshot,
+        afterAnalysis: checkpoint.analysis,
+        afterSnapshot: checkpoint.snapshot,
+      }),
+      durationMs: 0,
+      source: 'post_pass',
+    });
+    noteEarlyExit(runtimeSummary, 'verified_checkpoint_final_regression_restore');
+    await reportRuntimeTrace({
+      kind: 'verified_checkpoint',
+      reason: `return:${reason}`,
+      score: checkpoint.analysis.score,
+      grade: checkpoint.analysis.grade,
+      appliedToolCount: checkpoint.appliedToolCount,
+      eligible: true,
+      eligibilityReason: eligibility.reason,
+      returned: true,
+      elapsedMs: Date.now() - started,
+    });
+    return true;
+  };
   const returnVerifiedTimeoutCheckpoint = async (
     reason: string,
     options?: {
@@ -10741,6 +10810,10 @@ export async function remediatePdf(
     currentAnalysis = restored.analysis;
     currentSnapshot = restored.snapshot;
     await rememberVerifiedTimeoutCheckpoint('protected_best_state_restore');
+  }
+
+  if (!verifiedCheckpointReturned) {
+    await restoreVerifiedCheckpointAfterFinalRegression('final_regression_restore');
   }
 
   if (!verifiedCheckpointReturned) {

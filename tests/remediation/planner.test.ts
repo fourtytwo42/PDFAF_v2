@@ -4220,6 +4220,113 @@ describe('planForRemediation', () => {
     expect(names).not.toContain('repair_alt_text_structure');
   });
 
+
+  it('schedules repair_alt_text_structure in readability mode for Acrobat alt ownership debt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 141,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+        sampleOwnershipModes: ['other_elements_alt_pattern'],
+      },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 141,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 50 });
+    const plan = planForRemediation(analysis, snap, [], undefined, false, {
+      focusedToolNames: ['repair_alt_text_structure'],
+      preferredRoutes: ['figure_semantics'],
+      focusedOnly: true,
+      mode: 'readability',
+      focusedRationale: 'readability alt ownership repair',
+    });
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('repair_alt_text_structure');
+  });
+
+
+  it('schedules repair_alt_text_structure in readability mode for reachable figures missing alt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, structRef: '1_0', role: 'Figure', reachable: true }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        structRef: '1_0',
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+      }],
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 0,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+        sampleOwnershipModes: [],
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    const plan = planForRemediation(analysis, snap, [], undefined, false, {
+      focusedToolNames: ['repair_alt_text_structure'],
+      preferredRoutes: ['figure_semantics'],
+      focusedOnly: true,
+      mode: 'readability',
+      focusedRationale: 'readability missing alt fallback',
+    });
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('repair_alt_text_structure');
+  });
+
   it('routes Stage 3 survivors into structure and annotation families instead of broad semantic tools', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
