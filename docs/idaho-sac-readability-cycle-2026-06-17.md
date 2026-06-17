@@ -72,6 +72,42 @@ Both warn rows are real accessibility/readability residuals rather than color-co
 
 The current evidence does not justify weakening the table/orphan-MCID guard or forcing heading hierarchy changes. The next safe improvement lane is a targeted diagnostic for table normalization that preserves orphan MCIDs on documents shaped like `idaho-sac-16`, plus protected controls proving no false-positive table/orphan regressions.
 
+
+## Targeted residual repeat
+
+After the broad 20-row run, the two warn rows were repeated together with the same semantics/readability flags:
+
+```bash
+pnpm exec tsx scripts/experiment-corpus-benchmark.ts \
+  --mode remediate \
+  --manifest Output/idaho-sac-readability-cycle-2026-06-17-manifest/manifest.json \
+  --file idaho-sac-14 \
+  --file idaho-sac-16 \
+  --semantic \
+  --readability-review \
+  --readability-auto-repair \
+  --readability-auto-repair-timeout 600000 \
+  --readability-auto-repair-max-attempts 10 \
+  --out Output/idaho-sac-warnrows-readability-repeat-2026-06-17-v1
+```
+
+Run artifact:
+
+`Output/idaho-sac-warnrows-readability-repeat-2026-06-17-v1/run-2026-06-17T13-47-33-347Z`
+
+Validated with `--validate-run`.
+
+Targeted repeat results:
+
+| Row | Broad-run result | Targeted repeat result | Targeted readability | Remaining residual |
+| --- | ---: | ---: | --- | --- |
+| `idaho-sac-14` | 89/B, warn | 92/A | passed, score 92 | heading 79, reading order 86, PDF/UA 71; table markup improved to 92 |
+| `idaho-sac-16` | 89/B, warn | 95/A | passed, score 95 | heading 79, PDF/UA 79; table markup and reading order passed |
+
+This targeted evidence shows the two broad-run warn rows are recoverable by the current deterministic engine without a new table/orphan-MCID rule. It also shows route variance: the broad run stalled after repeated table/orphan-MCID preservation rejections, while the targeted repeat found a non-regressing table sequence.
+
+The correct next engineering move is not to relax `table_orphan_mcids_not_preserved`. A future improvement should make the table route more deterministic, or add a guarded table-plus-orphan cleanup transaction only when it proves final table/readability gain and no final PAC regression on protected controls.
+
 ## Comparison to older deterministic holdout note
 
 The previous deterministic Idaho note reported mean `50.85 -> 92.75`, minimum `69`, and two weak rows. The current semantics/readability-enabled engine path improved this holdout to mean `96.8`, minimum `89`, with no remediation errors and no readability failures.
