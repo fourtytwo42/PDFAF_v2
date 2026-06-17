@@ -1389,7 +1389,11 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
   return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').slice(0, 500);
 }
 
-function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: DocumentSnapshot): Record<string, unknown> {
+function boundedNativeLayoutSynthesisParams(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  readabilityFocusedPlan = false,
+): Record<string, unknown> {
   if (
     analysis.pdfClass === 'native_untagged' &&
     snapshot.structureTree === null &&
@@ -1408,6 +1412,33 @@ function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: 
     (snapshot.contentTaggingAudit?.textOutsideMarkedContentOrArtifact ?? 0) > 0
   ) {
     return { allowExistingMarkedContentText: true };
+  }
+  const headingScore = categoryScore(analysis, 'heading_structure');
+  const readingOrderScore = categoryScore(analysis, 'reading_order');
+  const layoutHeadingCandidateCount = snapshot.detectionProfile?.headingSignals?.layoutHeadingCandidateCount ?? 0;
+  const shallowNativeTaggedShell =
+    analysis.pdfClass === 'native_tagged' &&
+    snapshot.structureTree !== null &&
+    snapshot.headings.length === 0 &&
+    (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) === 0 &&
+    snapshot.textCharCount > 0 &&
+    (
+      snapshot.detectionProfile?.readingOrderSignals?.degenerateStructureTree === true ||
+      (snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? 99) <= FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD ||
+      (readingOrderScore !== null && readingOrderScore < REMEDIATION_CATEGORY_THRESHOLD)
+    );
+  if (
+    readabilityFocusedPlan &&
+    shallowNativeTaggedShell &&
+    headingScore !== null &&
+    headingScore < REMEDIATION_CATEGORY_THRESHOLD &&
+    layoutHeadingCandidateCount >= 12
+  ) {
+    return {
+      allowExistingMarkedContentText: true,
+      reuseExistingMarkedContentText: true,
+      maxPages: Math.min(Math.max(snapshot.pageCount, 1), 80),
+    };
   }
   return {};
 }
@@ -1872,7 +1903,7 @@ export function planForRemediation(
     && !snapshot.headings.some(heading => heading.level === 1)
     && (
       (snapshot.detectionProfile?.headingSignals.rootReachableHeadingCount ?? 0) > 0
-      || (snapshot.detectionProfile?.headingSignals.layoutHeadingCandidateCount ?? 0) > 0
+      || (snapshot.detectionProfile?.headingSignals?.layoutHeadingCandidateCount ?? 0) > 0
       || (snapshot.paragraphStructElems?.length ?? 0) > 0
     );
   const protectedZeroHeadingConvergence = isProtectedZeroHeadingConvergence(analysis, snapshot);
@@ -2559,7 +2590,7 @@ export function planForRemediation(
     && !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied, analysis, snapshot)
     && noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < Math.max(
       REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
-      Math.max(snapshot.detectionProfile?.headingSignals.layoutHeadingCandidateCount ?? 0, 1),
+      Math.max(snapshot.detectionProfile?.headingSignals?.layoutHeadingCandidateCount ?? 0, 1),
     )
   ) {
     const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
@@ -3078,7 +3109,7 @@ export function buildDefaultParams(
         language: (meta.language?.trim() || snapshot.lang?.trim() || 'en-US').slice(0, 32),
       };
     case 'synthesize_basic_structure_from_layout':
-      return boundedNativeLayoutSynthesisParams(analysis, snapshot);
+      return boundedNativeLayoutSynthesisParams(analysis, snapshot, readabilityFocusedPlan);
     case 'normalize_pdfua_catalog_settings':
       return {};
     case 'ocr_scanned_pdf':

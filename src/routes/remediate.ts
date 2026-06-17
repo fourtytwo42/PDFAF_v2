@@ -1167,6 +1167,24 @@ remediateRouter.post('/', upload.single('file'), async (req, res) => {
             }
           }
 
+          if (!readabilityAutoRepair && repairAttempt >= readabilityAutoRepairAttemptLimit) {
+            readabilityAutoRepair = {
+              ...summarizeReadabilityAutoRepair('attempt_limit_reached', {
+                attempted: repairAttempt > 0,
+                attempts: repairAttempt,
+                durationMs: repairDurationMs,
+                roundsAdded: repairRoundsAdded,
+                toolsAdded: repairToolsAdded,
+              }),
+              reason: 'attempt_limit_reached',
+              afterStatus: readabilityReview.status,
+              afterReadabilityScore: readabilityReview.score,
+              afterEngineScore: outAfter.scoreProfile.overallScore,
+              manualReviewRecommended: readabilityReview.manualReviewRecommended,
+              repairStatusDelta: buildRepairStatusDelta(baselineReadabilityReview, readabilityReview),
+            };
+          }
+
           readabilityAutoRepair ??= summarizeReadabilityAutoRepair('readability_issue_detected', {
             attempted: false,
             attempts: repairAttempt,

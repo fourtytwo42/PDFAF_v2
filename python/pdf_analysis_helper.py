@@ -10630,7 +10630,7 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
         preexisting_h1 = False
 
     readability_promote_first_heading_shell = bool(
-        params.get("promoteFirstHeadingShell") or params.get("readabilityFallbackPromoteFirstHeading")
+        (_params or {}).get("promoteFirstHeadingShell") or (_params or {}).get("readabilityFallbackPromoteFirstHeading")
     )
     if readability_promote_first_heading_shell and not preexisting_h1 and len(heading_elems) == 1:
         elem, level, custom_role = heading_elems[0]
@@ -14505,6 +14505,10 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         (_params or {}).get("allowExistingMarkedContentText")
         or (_params or {}).get("allowExistingBdcText")
     )
+    reuse_existing_marked_content_text = bool(
+        (_params or {}).get("reuseExistingMarkedContentText")
+        or (_params or {}).get("reuseExistingBdcText")
+    )
 
     for page_idx, page in enumerate(pdf.pages):
         if page_idx >= max_pages:
@@ -14526,7 +14530,10 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         if page_pt_changed:
             changed = True
 
-        groups = _unowned_bt_et_text_groups(insts) if allow_existing_marked_content_text else _bt_et_text_groups(insts)
+        if reuse_existing_marked_content_text:
+            groups = _bt_et_text_groups(insts)
+        else:
+            groups = _unowned_bt_et_text_groups(insts) if allow_existing_marked_content_text else _bt_et_text_groups(insts)
         segments = [(start, end + 1, text) for start, end, text in groups if text or (end + 1) > start]
         if not segments:
             paint_segments = _outside_paint_segments(insts)
