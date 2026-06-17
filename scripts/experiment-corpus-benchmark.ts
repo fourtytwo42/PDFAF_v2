@@ -1595,6 +1595,29 @@ async function runRemediationStep(
             readabilityReviewAttempts.push(readabilityReview);
 
             const repairStatusDelta = buildRepairStatusDelta(beforeRepairReview, readabilityReview);
+            const repairImprovedReadabilityScore = (readabilityReview.score ?? -1) > (beforeRepairReview.score ?? -1);
+            const repairHadUsefulEffect = afterRepairEngineScore > beforeRepairEngineScore
+              || readabilityStatusImproved(beforeRepairReview, readabilityReview)
+              || repairImprovedReadabilityScore
+              || repairStatusDelta.resolvedFindingAreas.length > 0;
+            if (!repairHadUsefulEffect) {
+              readabilityAutoRepair = {
+                ...summarizeReadabilityAutoRepair('readability_prior_no_effect_reused', {
+                  attempted: true,
+                  attempts: repairAttempt + 1,
+                  durationMs: repairDurationMs,
+                  roundsAdded: repairRoundsAdded,
+                  toolsAdded: repairToolsAdded,
+                }),
+                reason: 'readability_prior_no_effect_reused',
+                afterStatus: readabilityReview.status,
+                afterReadabilityScore: readabilityReview.score,
+                afterEngineScore: outAnalysis.score,
+                manualReviewRecommended: readabilityReview.manualReviewRecommended,
+                repairStatusDelta,
+              };
+              break;
+            }
             if (
               readabilityRepairPlan.areas.length === 1
               && readabilityReview.status !== 'passed'

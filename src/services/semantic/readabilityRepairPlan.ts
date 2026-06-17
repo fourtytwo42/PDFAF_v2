@@ -217,13 +217,17 @@ function hasMissingFigureAltCandidates(snapshot: DocumentSnapshot): boolean {
 }
 
 function hasDecorativeFigureEvidence(snapshot: DocumentSnapshot): boolean {
-  const pathPaint = snapshot.contentTaggingAudit?.suspectedPathPaintOutsideMc ?? snapshot.detectionProfile?.pdfUaSignals?.suspectedPathPaintOutsideMc ?? 0;
+  const pathPaint = Math.max(
+    snapshot.taggedContentAudit?.suspectedPathPaintOutsideMc ?? 0,
+    snapshot.detectionProfile?.pdfUaSignals?.suspectedPathPaintOutsideMc ?? 0,
+    snapshot.contentTaggingAudit?.pathOutsideMarkedContentOrArtifact ?? 0,
+  );
   const hasRoleCandidates = snapshot.figures.some((figure) => {
     const role = (figure.role ?? '').toLowerCase().replace(/^\//, '');
     return figure.isArtifact && (role === 'artifact' || role === 'path' || role === 'figure');
   });
   if (!hasRoleCandidates) return false;
-  return pathPaint > 0 || snapshot.contentTaggingAudit?.pathOutsideMarkedContentOrArtifact !== undefined;
+  return pathPaint > 0;
 }
 
 function checkerFigureTargetsAreDecorative(snapshot: DocumentSnapshot): boolean {

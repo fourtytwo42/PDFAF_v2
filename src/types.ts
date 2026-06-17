@@ -1029,6 +1029,8 @@ export type ReadabilityAutoRepairReason =
   | 'no_repair_plan'
   | 'no_engine_change'
   | 'score_regression'
+  | 'readability_no_fresh_candidate'
+  | 'readability_prior_no_effect_reused'
   | 'applied'
   | 'error';
 
