@@ -57,6 +57,71 @@ export interface OcrPipelineSummary {
   guidance: string;
 }
 
+export interface ReadabilityReviewFinding {
+  area: string;
+  severity: 'critical' | 'moderate' | 'minor';
+  message: string;
+  evidence?: string;
+  page?: number;
+  recommendation?: string;
+}
+
+export interface ReadabilityReviewSummary {
+  status: 'passed' | 'warn' | 'failed' | 'skipped' | 'error';
+  score: number | null;
+  grade: string | null;
+  confidence: 'high' | 'medium' | 'low' | 'unknown';
+  durationMs: number;
+  model?: string;
+  endpoint?: 'primary' | 'fallback';
+  skippedReason?: 'disabled' | 'no_llm_config' | 'error';
+  summary: string;
+  strengths: string[];
+  findings: ReadabilityReviewFinding[];
+  manualReviewRecommended: boolean;
+  manualReviewReasons: string[];
+  proxy?: {
+    pageCount: number;
+    sampledPages: number[];
+    textCharCount: number;
+    headingCount: number;
+    figureCount: number;
+    tableCount: number;
+    linkCount: number;
+    formFieldCount: number;
+  };
+}
+
+export interface ReadabilityRepairPlanSummary {
+  areas: string[];
+  deterministicToolNames: string[];
+  preferredRoutes: string[];
+  semanticLanes: string[];
+  reasons: string[];
+  findingsMapped: number;
+  findingsUnmapped: number;
+  manualReviewOnly: boolean;
+}
+
+export interface ReadabilityAutoRepairSummary {
+  attempted: boolean;
+  applied: boolean;
+  reason: string;
+  durationMs: number;
+  beforeStatus?: ReadabilityReviewSummary['status'];
+  afterStatus?: ReadabilityReviewSummary['status'];
+  beforeReadabilityScore?: number | null;
+  afterReadabilityScore?: number | null;
+  beforeEngineScore?: number;
+  afterEngineScore?: number;
+  targetScore?: number;
+  roundsAdded?: number;
+  toolsAdded?: number;
+  repairPlan?: ReadabilityRepairPlanSummary;
+  manualReviewRecommended?: boolean;
+  errorMessage?: string;
+}
+
 export interface RemediationRoundSummary {
   round: number;
   scoreAfter: number;
@@ -76,6 +141,9 @@ export interface RemediationSummary {
   semanticHeadings?: SemanticSummary;
   semanticPromoteHeadings?: SemanticSummary;
   semanticUntaggedHeadings?: SemanticSummary;
+  readabilityReview?: ReadabilityReviewSummary;
+  readabilityReviewAttempts?: ReadabilityReviewSummary[];
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary;
   ocrPipeline?: OcrPipelineSummary;
 }
 
@@ -92,5 +160,8 @@ export interface RawRemediationResponse {
   semanticHeadings?: SemanticSummary;
   semanticPromoteHeadings?: SemanticSummary;
   semanticUntaggedHeadings?: SemanticSummary;
+  readabilityReview?: ReadabilityReviewSummary;
+  readabilityReviewAttempts?: ReadabilityReviewSummary[];
+  readabilityAutoRepair?: ReadabilityAutoRepairSummary;
   ocrPipeline?: OcrPipelineSummary;
 }

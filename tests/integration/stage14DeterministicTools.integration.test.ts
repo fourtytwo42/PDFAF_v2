@@ -106,6 +106,70 @@ pdf.save(sys.argv[2])
   return readFile(outPath);
 }
 
+async function buildRoleMappedHeadingPdf(options: { hiddenPlaceholderH1?: boolean } = {}): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const page = doc.addPage([612, 792]);
+  page.drawText('Role Mapped Heading Report', { x: 72, y: 720, size: 20, font });
+  page.drawText('Section One', { x: 72, y: 680, size: 16, font });
+  page.drawText('Body copy for a tagged role-map heading regression fixture.', { x: 72, y: 640, size: 12, font });
+
+  const dir = await mkdtemp(join(tmpdir(), 'pdfaf-rolemap-heading-'));
+  const inPath = join(dir, 'in.pdf');
+  const outPath = join(dir, 'out.pdf');
+  await writeFile(inPath, Buffer.from(await doc.save({ useObjectStreams: false })));
+  await execFileAsync('python3', ['-c', `
+import pikepdf
+import sys
+pdf = pikepdf.open(sys.argv[1])
+page = pdf.pages[0].obj
+hidden_placeholder = len(sys.argv) > 3 and sys.argv[3] == '1'
+doc_elem = pdf.make_indirect(pikepdf.Dictionary(
+    Type=pikepdf.Name('/StructElem'),
+    S=pikepdf.Name('/Document'),
+    K=pikepdf.Array([]),
+))
+placeholder_heading = pdf.make_indirect(pikepdf.Dictionary(
+    Type=pikepdf.Name('/StructElem'),
+    S=pikepdf.Name('/H1'),
+    P=doc_elem,
+    ActualText=pikepdf.String('Document title'),
+    K=pikepdf.Array([]),
+)) if hidden_placeholder else None
+first_heading = pdf.make_indirect(pikepdf.Dictionary(
+    Type=pikepdf.Name('/StructElem'),
+    S=pikepdf.Name('/Heading'),
+    P=doc_elem,
+    Pg=page,
+    ActualText=pikepdf.String('Role Mapped Heading Report'),
+    K=pikepdf.Array([]),
+))
+second_heading = pdf.make_indirect(pikepdf.Dictionary(
+    Type=pikepdf.Name('/StructElem'),
+    S=pikepdf.Name('/Heading'),
+    P=doc_elem,
+    Pg=page,
+    ActualText=pikepdf.String('Section One'),
+    K=pikepdf.Array([]),
+))
+children = [first_heading, second_heading]
+if placeholder_heading is not None:
+    children.insert(0, placeholder_heading)
+doc_elem['/K'] = pikepdf.Array(children)
+struct_root = pdf.make_indirect(pikepdf.Dictionary(
+    Type=pikepdf.Name('/StructTreeRoot'),
+    K=pikepdf.Array([doc_elem]),
+    RoleMap=pikepdf.Dictionary({'/Heading': pikepdf.Name('/H2')}),
+    ParentTree=pikepdf.Dictionary(Nums=pikepdf.Array([])),
+))
+doc_elem['/P'] = struct_root
+pdf.Root['/StructTreeRoot'] = struct_root
+pdf.Root['/MarkInfo'] = pikepdf.Dictionary(Marked=True, Suspects=False)
+pdf.save(sys.argv[2])
+`, inPath, outPath, options.hiddenPlaceholderH1 ? '1' : '0']);
+  return readFile(outPath);
+}
+
 describe('Stage 14 deterministic tools', () => {
   it('synthesize_basic_structure_from_layout creates a tagged structure with headings', async () => {
     const buf = await buildUntaggedStructurePdf();
@@ -221,6 +285,69 @@ describe('Stage 14 deterministic tools', () => {
     await writeFile(afterPath, normalized.buffer);
     const after = await runPythonAnalysis(afterPath);
     expect(after.headings.filter(item => item.level === 1).length).toBeLessThanOrEqual(1);
+  });
+
+  it('normalize_heading_hierarchy promotes RoleMap-resolved headings to a single H1', async () => {
+    const buf = await buildRoleMappedHeadingPdf();
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-rolemap-heading-'));
+    const beforePath = join(dir, 'before.pdf');
+    await writeFile(beforePath, buf);
+    const before = await runPythonAnalysis(beforePath);
+    expect(before.headings.length).toBeGreaterThanOrEqual(2);
+    expect(before.headings.filter(item => item.level === 1).length).toBe(0);
+
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let normalized: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    try {
+      normalized = await runPythonMutationBatch(buf, [
+        { op: 'normalize_heading_hierarchy', params: {} },
+      ]);
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
+    expect(normalized.result.success).toBe(true);
+    expect(normalized.result.applied).toContain('normalize_heading_hierarchy');
+    const invariants = normalized.result.opResults?.find(row => row.op === 'normalize_heading_hierarchy')?.invariants;
+    expect(invariants?.globalH1CountBefore).toBe(0);
+    expect(invariants?.globalH1CountAfter).toBe(1);
+
+    const afterPath = join(dir, 'after.pdf');
+    await writeFile(afterPath, normalized.buffer);
+    const after = await runPythonAnalysis(afterPath);
+    expect(after.headings.filter(item => item.level === 1).length).toBe(1);
+    expect(after.headings.filter(item => item.level === 2).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('normalize_heading_hierarchy replaces hidden Document title H1 placeholders', async () => {
+    const buf = await buildRoleMappedHeadingPdf({ hiddenPlaceholderH1: true });
+    const dir = await mkdtemp(join(tmpdir(), 'pdfaf-stage14-hidden-h1-'));
+    const beforePath = join(dir, 'before.pdf');
+    await writeFile(beforePath, buf);
+    const before = await runPythonAnalysis(beforePath);
+    expect(before.headings.filter(item => item.level === 1).length).toBe(1);
+    expect(before.headings.find(item => item.level === 1)?.text).toContain('Document title');
+
+    process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'] = '1';
+    let normalized: Awaited<ReturnType<typeof runPythonMutationBatch>>;
+    try {
+      normalized = await runPythonMutationBatch(buf, [
+        { op: 'normalize_heading_hierarchy', params: {} },
+      ]);
+    } finally {
+      delete process.env['PDFAF_DEBUG_DETERMINISTIC_REMEDIATION'];
+    }
+    expect(normalized.result.success).toBe(true);
+    expect(normalized.result.applied).toContain('normalize_heading_hierarchy');
+    const result = normalized.result.opResults?.find(row => row.op === 'normalize_heading_hierarchy');
+    expect(result?.note).toBe('hidden_placeholder_h1_replaced');
+    expect(result?.invariants?.globalH1CountBefore).toBe(1);
+    expect(result?.invariants?.globalH1CountAfter).toBe(1);
+
+    const afterPath = join(dir, 'after.pdf');
+    await writeFile(afterPath, normalized.buffer);
+    const after = await runPythonAnalysis(afterPath);
+    expect(after.headings.filter(item => item.level === 1).length).toBe(1);
+    expect(after.headings.find(item => item.level === 1)?.text).toContain('Role Mapped Heading Report');
   });
 
   it('set_document_title survives final output with a descriptive metadata title', async () => {

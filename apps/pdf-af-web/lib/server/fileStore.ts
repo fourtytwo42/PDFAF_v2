@@ -258,6 +258,45 @@ function isOcrPipelineSummary(value: unknown): boolean {
   );
 }
 
+function isReadabilityReviewSummary(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.status === 'string' &&
+    (record.score === null || typeof record.score === 'number') &&
+    (record.grade === null || typeof record.grade === 'string') &&
+    typeof record.confidence === 'string' &&
+    typeof record.durationMs === 'number' &&
+    typeof record.summary === 'string' &&
+    Array.isArray(record.strengths) &&
+    Array.isArray(record.findings) &&
+    typeof record.manualReviewRecommended === 'boolean' &&
+    Array.isArray(record.manualReviewReasons)
+  );
+}
+
+function isReadabilityReviewArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isReadabilityReviewSummary);
+}
+
+function isReadabilityAutoRepairSummary(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.attempted === 'boolean' &&
+    typeof record.applied === 'boolean' &&
+    typeof record.reason === 'string' &&
+    typeof record.durationMs === 'number' &&
+    (record.beforeStatus === undefined || typeof record.beforeStatus === 'string') &&
+    (record.afterStatus === undefined || typeof record.afterStatus === 'string') &&
+    (record.beforeReadabilityScore === undefined || record.beforeReadabilityScore === null || typeof record.beforeReadabilityScore === 'number') &&
+    (record.afterReadabilityScore === undefined || record.afterReadabilityScore === null || typeof record.afterReadabilityScore === 'number') &&
+    (record.beforeEngineScore === undefined || typeof record.beforeEngineScore === 'number') &&
+    (record.afterEngineScore === undefined || typeof record.afterEngineScore === 'number') &&
+    (record.errorMessage === undefined || typeof record.errorMessage === 'string')
+  );
+}
+
 function isRawRemediationResponse(payload: unknown): payload is RawRemediationResponse {
   if (!payload || typeof payload !== 'object') return false;
   const record = payload as Record<string, unknown>;
@@ -275,6 +314,9 @@ function isRawRemediationResponse(payload: unknown): payload is RawRemediationRe
     (record.semanticHeadings === undefined || isSemanticSummary(record.semanticHeadings)) &&
     (record.semanticPromoteHeadings === undefined || isSemanticSummary(record.semanticPromoteHeadings)) &&
     (record.semanticUntaggedHeadings === undefined || isSemanticSummary(record.semanticUntaggedHeadings)) &&
+    (record.readabilityReview === undefined || isReadabilityReviewSummary(record.readabilityReview)) &&
+    (record.readabilityReviewAttempts === undefined || isReadabilityReviewArray(record.readabilityReviewAttempts)) &&
+    (record.readabilityAutoRepair === undefined || isReadabilityAutoRepairSummary(record.readabilityAutoRepair)) &&
     (record.ocrPipeline === undefined || isOcrPipelineSummary(record.ocrPipeline))
   );
 }
@@ -296,6 +338,9 @@ function normalizeRemediationResponse(payload: RawRemediationResponse): Remediat
     ...(payload.semanticUntaggedHeadings
       ? { semanticUntaggedHeadings: payload.semanticUntaggedHeadings }
       : {}),
+    ...(payload.readabilityReview ? { readabilityReview: payload.readabilityReview } : {}),
+    ...(payload.readabilityReviewAttempts ? { readabilityReviewAttempts: payload.readabilityReviewAttempts } : {}),
+    ...(payload.readabilityAutoRepair ? { readabilityAutoRepair: payload.readabilityAutoRepair } : {}),
     ...(payload.ocrPipeline ? { ocrPipeline: payload.ocrPipeline } : {}),
   };
 }

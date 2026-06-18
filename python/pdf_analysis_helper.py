@@ -6129,6 +6129,44 @@ def _page_max_mcid(page_obj) -> int:
     return out
 
 
+def _find_parent_tree_array_for_key(node, key: int) -> pikepdf.Array | None:
+    try:
+        target = int(key)
+    except Exception:
+        return None
+    q: deque = deque([node])
+    seen: set = set()
+    while q and len(seen) < MAX_ITEMS * 4:
+        cur = q.popleft()
+        cur_key = _obj_key(cur)
+        if cur_key and cur_key in seen:
+            continue
+        if cur_key:
+            seen.add(cur_key)
+        if not isinstance(cur, pikepdf.Dictionary):
+            continue
+        try:
+            nums = cur.get("/Nums")
+            if isinstance(nums, pikepdf.Array):
+                for idx in range(0, len(nums) - 1, 2):
+                    try:
+                        if int(nums[idx]) == target and isinstance(nums[idx + 1], pikepdf.Array):
+                            return nums[idx + 1]
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        try:
+            kids = cur.get("/Kids")
+            if isinstance(kids, pikepdf.Array):
+                for kid in kids:
+                    if isinstance(kid, pikepdf.Dictionary):
+                        q.append(kid)
+        except Exception:
+            pass
+    return None
+
+
 def _ensure_page_parent_tree_array(
     pdf: pikepdf.Pdf,
     struct_root: pikepdf.Dictionary,
@@ -6171,6 +6209,170 @@ def _set_page_parent_tree_mcid(arr: pikepdf.Array, mcid: int, value) -> bool:
         changed = True
     return changed
 
+
+
+def _is_parent_repair_struct_elem(elem) -> bool:
+    if not isinstance(elem, pikepdf.Dictionary):
+        return False
+    try:
+        typ = elem.get("/Type")
+        if typ in (pikepdf.Name("/MCR"), pikepdf.Name("/OBJR")):
+            return False
+        if typ == pikepdf.Name("/StructElem"):
+            return True
+        if typ is not None:
+            return False
+        return elem.get("/S") is not None
+    except Exception:
+        return False
+
+
+def _parent_repair_direct_children(elem) -> list:
+    out = []
+    if not isinstance(elem, pikepdf.Dictionary):
+        return out
+    try:
+        k = elem.get("/K")
+    except Exception:
+        return out
+    kids = list(k) if isinstance(k, pikepdf.Array) else [k]
+    for child in kids:
+        if not isinstance(child, pikepdf.Dictionary):
+            continue
+        try:
+            typ = child.get("/Type")
+            if typ in (pikepdf.Name("/MCR"), pikepdf.Name("/OBJR")):
+                continue
+        except Exception:
+            pass
+        if _is_parent_repair_struct_elem(child):
+            out.append(child)
+    return out
+
+
+def _repair_struct_elem_parent_links(pdf: pikepdf.Pdf) -> bool:
+    """Set missing or stale /P links from the actual structure tree containment."""
+    changed = False
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(sr, pikepdf.Dictionary):
+        return False
+    q = deque()
+    try:
+        root_k = sr.get("/K")
+        root_children = list(root_k) if isinstance(root_k, pikepdf.Array) else [root_k]
+        for child in root_children:
+            if _is_parent_repair_struct_elem(child):
+                q.append((child, sr))
+    except Exception:
+        return False
+    seen = set()
+    while q and len(seen) < MAX_ITEMS * 4:
+        elem, parent = q.popleft()
+        if not isinstance(elem, pikepdf.Dictionary) or not isinstance(parent, pikepdf.Dictionary):
+            continue
+        key = _struct_elem_visit_key(elem)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            current_parent = elem.get("/P")
+            if _obj_key(current_parent) != _obj_key(parent):
+                elem["/P"] = parent
+                changed = True
+        except Exception:
+            pass
+        for child in _parent_repair_direct_children(elem):
+            q.append((child, elem))
+    return changed
+
+
+def _repair_parent_tree_mcid_owners(pdf: pikepdf.Pdf) -> bool:
+    """Align ParentTree MCID slots with the StructElem that directly owns the MCID."""
+    changed = False
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(sr, pikepdf.Dictionary):
+        return False
+    page_by_ref = {}
+    try:
+        for page in pdf.pages:
+            key = _obj_key(page.obj)
+            if key:
+                page_by_ref[key] = page.obj
+    except Exception:
+        return False
+    for elem, ref in list(_iter_struct_content_refs(pdf)):
+        try:
+            if ref.get("type") != "mcid":
+                continue
+            page_obj = page_by_ref.get(ref.get("pageRef"))
+            if not isinstance(page_obj, pikepdf.Dictionary):
+                continue
+            arr, _key, arr_changed = _ensure_page_parent_tree_array(pdf, sr, page_obj)
+            if arr_changed:
+                changed = True
+            if isinstance(arr, pikepdf.Array) and _set_page_parent_tree_mcid(arr, int(ref.get("mcid")), elem):
+                changed = True
+        except Exception:
+            continue
+    return changed
+
+def _repair_existing_parent_tree_mcid_owners(pdf: pikepdf.Pdf) -> bool:
+    """Align existing ParentTree MCID arrays without adding top-level /Nums entries."""
+    changed = False
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+    except Exception:
+        return False
+    if not isinstance(sr, pikepdf.Dictionary):
+        return False
+    try:
+        parent_tree = sr.get("/ParentTree")
+    except Exception:
+        return False
+    if not isinstance(parent_tree, pikepdf.Dictionary):
+        return False
+    page_key_by_ref = {}
+    try:
+        for page in pdf.pages:
+            key = _obj_key(page.obj)
+            struct_parent = page.obj.get("/StructParents")
+            if key and isinstance(struct_parent, int):
+                page_key_by_ref[key] = int(struct_parent)
+    except Exception:
+        return False
+    for elem, ref in list(_iter_struct_content_refs(pdf)):
+        try:
+            if ref.get("type") != "mcid":
+                continue
+            page_key = page_key_by_ref.get(ref.get("pageRef"))
+            if page_key is None:
+                continue
+            arr = _find_parent_tree_array_for_key(parent_tree, page_key)
+            if not isinstance(arr, pikepdf.Array):
+                continue
+            mcid = int(ref.get("mcid"))
+            while len(arr) <= mcid:
+                arr.append(None)
+                changed = True
+            try:
+                prev = arr[mcid]
+            except Exception:
+                prev = None
+            prev_key = _obj_key(prev)
+            elem_key = _obj_key(elem)
+            same_owner = prev_key == elem_key if (prev_key is not None or elem_key is not None) else prev == elem
+            if not same_owner:
+                arr[mcid] = elem
+                changed = True
+        except Exception:
+            continue
+    return changed
 
 def _ensure_document_struct_elem(pdf: pikepdf.Pdf, struct_root: pikepdf.Dictionary):
     kids = struct_root.get("/K")
@@ -8452,8 +8654,11 @@ def _op_retag_as_figure(pdf: pikepdf.Pdf, params: dict) -> bool:
         return False
     if not get_alt(elem):
         try:
-            page_map = build_page_map(pdf)
-            elem["/Alt"] = _pdf_text_string(_missing_figure_alt_for_elem(elem, page_map), 500)
+            alt_text = safe_str(params.get("altText", "")).strip()
+            if not alt_text:
+                page_map = build_page_map(pdf)
+                alt_text = _missing_figure_alt_for_elem(elem, page_map)
+            elem["/Alt"] = _pdf_text_string(alt_text, 500)
             changed = True
         except Exception:
             pass
@@ -8544,6 +8749,23 @@ def _op_set_document_language(pdf: pikepdf.Pdf, params: dict) -> bool:
             changed = True
     except Exception:
         pass
+    lang_re = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
+    try:
+        for elem in _iter_struct_elems(pdf):
+            try:
+                raw = elem.get("/Lang")
+                if raw is None:
+                    continue
+                raw_text = safe_str(raw).strip()
+                clean_text = raw_text.replace("\x00", "").strip()
+                if raw_text != clean_text or not lang_re.match(clean_text):
+                    elem["/Lang"] = _pdf_text_string(lang, 64)
+                    changed = True
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     try:
         with pdf.open_metadata(set_pikepdf_as_editor=False) as meta:
             pl = str(meta.get("dc:language") or "").strip()
@@ -8716,6 +8938,166 @@ def _wrap_direct_table_cells_into_rows(parent_elem, pdf: pikepdf.Pdf, column_cou
     return changed
 
 
+def _tr_direct_cell_items(tr_elem) -> list | None:
+    """Return direct TH/TD children only when the row contains no other direct structural kids."""
+    if not isinstance(tr_elem, pikepdf.Dictionary):
+        return None
+    try:
+        k = tr_elem.get("/K")
+    except Exception:
+        return None
+    if k is None:
+        return None
+    items = list(k) if isinstance(k, pikepdf.Array) else [k]
+    cells: list = []
+    for item in items:
+        if not isinstance(item, pikepdf.Dictionary):
+            return None
+        tag = (get_name(item) or "").lstrip("/").upper()
+        if tag not in ("TH", "TD"):
+            return None
+        cells.append(item)
+    return cells
+
+
+def _overlong_row_chunks(cells: list, dominant: int) -> list[list] | None:
+    if dominant < 2 or len(cells) < dominant * 2 - 1:
+        return None
+    chunks = [cells[start:start + dominant] for start in range(0, len(cells), dominant)]
+    if len(chunks) < 2:
+        return None
+    last_len = len(chunks[-1])
+    # Avoid turning a one-cell variance such as 17/18 into a synthetic-heavy extra row.
+    if 0 < last_len < max(2, dominant - 1):
+        return None
+    if any(len(chunk) == 0 for chunk in chunks):
+        return None
+    return chunks
+
+
+def _split_overlong_table_rows(table_elem, pdf: pikepdf.Pdf, dominant: int, params: dict) -> bool:
+    """
+    Split undersegmented TR rows that contain roughly two dominant rows of cells.
+
+    This complements the existing short-row padding path. It is intentionally limited
+    to span-free, already-rowed tables where direct TH/TD ownership stays on the same
+    cells and only row grouping changes.
+    """
+    if dominant < 2:
+        return False
+    try:
+        max_split_rows = max(1, min(64, int(params.get("maxSplitRows") or 16)))
+    except Exception:
+        max_split_rows = 16
+    split_rows = 0
+    changed = False
+
+    def split_section(section) -> bool:
+        nonlocal split_rows
+        try:
+            k = section.get("/K")
+        except Exception:
+            return False
+        if k is None:
+            return False
+        if isinstance(k, pikepdf.Dictionary):
+            tag = (get_name(k) or "").lstrip("/").upper()
+            if tag in ("THEAD", "TBODY", "TFOOT"):
+                return split_section(k)
+            if tag != "TR" or split_rows >= max_split_rows:
+                return False
+            rs, cs = _tr_cell_span_max(k)
+            if rs > 1 or cs > 1:
+                return False
+            cells = _tr_direct_cell_items(k)
+            if cells is None:
+                return False
+            chunks = _overlong_row_chunks(cells, dominant)
+            if chunks is None:
+                return False
+            try:
+                k["/K"] = pikepdf.Array(chunks[0])
+                k["/P"] = section
+                for cell in chunks[0]:
+                    cell["/P"] = k
+                new_rows = pikepdf.Array([k])
+                for chunk in chunks[1:]:
+                    tr = pdf.make_indirect(
+                        pikepdf.Dictionary(
+                            Type=pikepdf.Name("/StructElem"),
+                            S=pikepdf.Name("/TR"),
+                            P=section,
+                            K=pikepdf.Array(chunk),
+                        )
+                    )
+                    for cell in chunk:
+                        cell["/P"] = tr
+                    new_rows.append(tr)
+                section["/K"] = new_rows
+                split_rows += 1
+                return True
+            except Exception:
+                return False
+        if not isinstance(k, pikepdf.Array) or len(k) == 0:
+            return False
+
+        new_k = pikepdf.Array()
+        changed_local = False
+        for child in list(k):
+            if not isinstance(child, pikepdf.Dictionary):
+                new_k.append(child)
+                continue
+            tag = (get_name(child) or "").lstrip("/").upper()
+            if tag in ("THEAD", "TBODY", "TFOOT"):
+                if split_section(child):
+                    changed_local = True
+                new_k.append(child)
+                continue
+            if tag != "TR" or split_rows >= max_split_rows:
+                new_k.append(child)
+                continue
+            rs, cs = _tr_cell_span_max(child)
+            if rs > 1 or cs > 1:
+                new_k.append(child)
+                continue
+            cells = _tr_direct_cell_items(child)
+            if cells is None:
+                new_k.append(child)
+                continue
+            chunks = _overlong_row_chunks(cells, dominant)
+            if chunks is None:
+                new_k.append(child)
+                continue
+            try:
+                child["/K"] = pikepdf.Array(chunks[0])
+                child["/P"] = section
+                for cell in chunks[0]:
+                    cell["/P"] = child
+                new_k.append(child)
+                for chunk in chunks[1:]:
+                    tr = pdf.make_indirect(
+                        pikepdf.Dictionary(
+                            Type=pikepdf.Name("/StructElem"),
+                            S=pikepdf.Name("/TR"),
+                            P=section,
+                            K=pikepdf.Array(chunk),
+                        )
+                    )
+                    for cell in chunk:
+                        cell["/P"] = tr
+                    new_k.append(tr)
+                split_rows += 1
+                changed_local = True
+            except Exception:
+                new_k.append(child)
+        if changed_local:
+            section["/K"] = new_k
+        return changed_local
+
+    changed = split_section(table_elem)
+    return changed
+
+
 def _normalize_strongly_irregular_table_rows(table_elem, pdf: pikepdf.Pdf, params: dict) -> bool:
     """
     Pad short TR rows with empty structural TD cells when a dominant column count is clear.
@@ -8739,8 +9121,17 @@ def _normalize_strongly_irregular_table_rows(table_elem, pdf: pikepdf.Pdf, param
         max_synthetic = max(1, min(max_synthetic_cap, int(params.get("maxSyntheticCells") or 48)))
     except Exception:
         max_synthetic = 48
-    synthetic_count = 0
     changed = False
+    if int(audit.get("maxRowSpan") or 1) <= 1 and int(audit.get("maxColSpan") or 1) <= 1:
+        if _split_overlong_table_rows(table_elem, pdf, dominant, params):
+            changed = True
+            audit = _audit_table_structure(table_elem)
+            row_counts = list(audit.get("rowCellCounts") or [])
+            dominant = int(params.get("dominantColumnCount") or audit.get("dominantColumnCount") or 0)
+            if dominant < 2 or len(row_counts) < 2:
+                return changed
+
+    synthetic_count = 0
 
     def scan_section(section) -> None:
         nonlocal synthetic_count, changed
@@ -9295,46 +9686,49 @@ def _wrap_list_shell_children_into_li(list_elem, pdf: pikepdf.Pdf) -> int:
     if k is None:
         return 0
     children = list(k) if isinstance(k, pikepdf.Array) else [k]
-    struct_children = [child for child in children if isinstance(child, pikepdf.Dictionary)]
-    if not struct_children:
-        return 0
-    tags = [(get_name(child) or "").lstrip("/").upper() for child in struct_children]
-    if any(tag == "LI" for tag in tags):
-        return 0
-    if any(tag not in ("LBL", "LBODY", "L") for tag in tags):
+    if not children:
         return 0
 
+    direct_struct_children = [child for child in children if _is_struct_elem_dict(child)]
+    direct_tags = [(get_name(child) or "").lstrip("/").upper() for child in direct_struct_children]
+    if any(tag == "LI" for tag in direct_tags):
+        return 0
+
+    list_page = _page_obj_for_struct_elem(list_elem)
     new_children = pikepdf.Array()
     repairs = 0
     i = 0
     while i < len(children):
         child = children[i]
-        if not isinstance(child, pikepdf.Dictionary):
-            new_children.append(child)
-            i += 1
-            continue
-        tag = (get_name(child) or "").lstrip("/").upper()
-        if tag not in ("LBL", "LBODY", "L"):
-            new_children.append(child)
-            i += 1
-            continue
         li_k = pikepdf.Array([child])
-        if i + 1 < len(children):
-            sib = children[i + 1]
-            if isinstance(sib, pikepdf.Dictionary):
-                sib_tag = (get_name(sib) or "").lstrip("/").upper()
-                if (tag == "LBL" and sib_tag == "LBODY") or (tag == "LBODY" and sib_tag == "LBL"):
-                    li_k.append(sib)
-                    i += 1
-        li = pdf.make_indirect(
-            pikepdf.Dictionary(
-                Type=pikepdf.Name("/StructElem"),
-                S=pikepdf.Name("/LI"),
-                P=list_elem,
-                K=li_k,
-            )
+        li_page = list_page
+        if _is_struct_elem_dict(child):
+            child_page = _page_obj_for_struct_elem(child)
+            if isinstance(child_page, pikepdf.Dictionary):
+                li_page = child_page
+            tag = (get_name(child) or "").lstrip("/").upper()
+            if tag in ("LBL", "LBODY") and i + 1 < len(children):
+                sib = children[i + 1]
+                if _is_struct_elem_dict(sib):
+                    sib_page = _page_obj_for_struct_elem(sib)
+                    if isinstance(sib_page, pikepdf.Dictionary):
+                        li_page = sib_page
+                    sib_tag = (get_name(sib) or "").lstrip("/").upper()
+                    if (tag == "LBL" and sib_tag == "LBODY") or (tag == "LBODY" and sib_tag == "LBL"):
+                        li_k.append(sib)
+                        i += 1
+        li_dict = pikepdf.Dictionary(
+            Type=pikepdf.Name("/StructElem"),
+            S=pikepdf.Name("/LI"),
+            P=list_elem,
+            K=li_k,
         )
+        if isinstance(li_page, pikepdf.Dictionary):
+            li_dict["/Pg"] = li_page
+        li = pdf.make_indirect(li_dict)
         for wrapped in list(li_k):
+            if not _is_struct_elem_dict(wrapped):
+                continue
             try:
                 wrapped["/P"] = li
             except Exception:
@@ -9348,11 +9742,11 @@ def _wrap_list_shell_children_into_li(list_elem, pdf: pikepdf.Pdf) -> int:
 
 
 def _op_repair_list_li_wrong_parent(pdf: pikepdf.Pdf, _params: dict) -> bool:
-    """Wrap misplaced /LI (parent is not /L) in a new /L StructElem (bounded)."""
+    """Repair list structure by wrapping misplaced /LI and /L shells without direct /LI (bounded)."""
     try:
-        cap = int(os.environ.get("PDFAF_MAX_LIST_LI_REPAIR_PER_CALL", "32"))
+        cap = int(os.environ.get("PDFAF_MAX_LIST_LI_REPAIR_PER_CALL", "256"))
     except ValueError:
-        cap = 32
+        cap = 256
     cap = max(1, min(cap, 256))
 
     try:
@@ -9401,6 +9795,13 @@ def _op_repair_list_li_wrong_parent(pdf: pikepdf.Pdf, _params: dict) -> bool:
 
         try:
             _enqueue_children(q, elem.get("/K"))
+        except Exception:
+            pass
+
+    if changed:
+        try:
+            if _repair_existing_parent_tree_mcid_owners(pdf):
+                changed = True
         except Exception:
             pass
 
@@ -9645,6 +10046,13 @@ def _op_repair_structure_conformance(pdf: pikepdf.Pdf, _params: dict) -> bool:
                 changed = True
         except Exception:
             pass
+        try:
+            if _repair_struct_elem_parent_links(pdf):
+                changed = True
+            if _repair_parent_tree_mcid_owners(pdf):
+                changed = True
+        except Exception:
+            pass
         if _mut_tag_unowned_annotations(pdf):
             changed = True
         if _mut_repair_native_link_structure(pdf):
@@ -9847,6 +10255,273 @@ def _custom_struct_elem_heading_level(elem) -> int | None:
     return None
 
 
+def _normalizable_struct_elem_heading_level(struct_root, elem) -> tuple[int | None, bool]:
+    """Return heading level plus whether /S should be standardized to H1-H6.
+
+    The analyzer resolves /RoleMap heading aliases, so the normalizer must do the
+    same; otherwise a custom role mapped to /H2 can score as a heading while being
+    invisible to hierarchy repair.
+    """
+    level = _struct_elem_heading_level(elem)
+    if level is not None:
+        return level, False
+    level = _custom_struct_elem_heading_level(elem)
+    if level is not None:
+        return level, True
+    try:
+        if isinstance(struct_root, pikepdf.Dictionary):
+            resolved = _resolved_struct_role(struct_root, elem)
+            if resolved:
+                level = normalize_heading_level(str(resolved).lstrip("/"))
+                if level is not None:
+                    return level, True
+    except Exception:
+        pass
+    return None, False
+
+
+def _single_page_heading_candidate_score(text: str) -> int:
+    """Score a short paragraph-like string for fallback H1 promotion."""
+    clean = re.sub(r"\s+", " ", safe_str(text).replace("\x00", " ")).strip()
+    if not clean:
+        return -1
+    alnum_count = sum(1 for ch in clean if ch.isalnum())
+    if alnum_count < 8:
+        return -1
+    score = alnum_count
+    lower = clean.lower()
+    if re.search(r"\bfact\s+sheet\b", lower):
+        score += 140
+    elif re.search(r"\bannual\s+report\b", lower):
+        score += 110
+    elif re.search(r"\b(?:summary|report|overview)\b", lower):
+        score += 80
+    if re.match(r"^[\u2022\u25cf\u25e6\-*]", clean):
+        score -= 30
+    if len(clean) <= 90:
+        score += 20
+    if len(clean) > 160:
+        score -= 60
+    return score
+
+
+def _single_page_heading_text_for_elem(pdf: pikepdf.Pdf, elem, page_map: dict | None = None, mcid_lookup: dict | None = None) -> str:
+    try:
+        if page_map is None:
+            page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    try:
+        if mcid_lookup is None:
+            mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    try:
+        page = get_page_number(elem, page_map or {})
+        return _extract_text_from_elem(elem) or _text_from_mcid_for_elem(elem, page, mcid_lookup or {})
+    except Exception:
+        return _extract_text_from_elem(elem) or ""
+
+
+def _normalized_heading_text(text: str) -> str:
+    return re.sub(r"\s+", " ", safe_str(text).replace("\x00", " ")).strip()
+
+
+def _heading_mcid_text_for_elem(elem, page_map: dict | None = None, mcid_lookup: dict | None = None) -> str:
+    try:
+        page = get_page_number(elem, page_map or {})
+        return _normalized_heading_text(_text_from_mcid_for_elem(elem, page, mcid_lookup or {}))
+    except Exception:
+        return ""
+
+
+def _heading_metadata_text_for_elem(elem) -> str:
+    try:
+        return _normalized_heading_text(_extract_text_from_elem(elem))
+    except Exception:
+        return ""
+
+
+def _is_document_title_placeholder_text(text: str) -> bool:
+    norm = _normalized_heading_text(text).lower()
+    return norm in {"document title", "untitled document", "untitled"}
+
+
+def _heading_has_exportable_text(elem, page_map: dict | None = None, mcid_lookup: dict | None = None) -> bool:
+    mcid_text = _heading_mcid_text_for_elem(elem, page_map, mcid_lookup)
+    if mcid_text:
+        return True
+    metadata_text = _heading_metadata_text_for_elem(elem)
+    return bool(metadata_text and not _is_document_title_placeholder_text(metadata_text))
+
+
+def _heading_parent_tree_hit_count(pdf: pikepdf.Pdf, elem) -> int:
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        pt = sr.get("/ParentTree") if isinstance(sr, pikepdf.Dictionary) else None
+        nums = pt.get("/Nums") if isinstance(pt, pikepdf.Dictionary) else None
+        page_obj = _page_obj_for_struct_elem(elem)
+        if not isinstance(nums, pikepdf.Array) or not isinstance(page_obj, pikepdf.Dictionary):
+            return 0
+        key_obj = page_obj.get("/StructParents")
+        if not isinstance(key_obj, (int, pikepdf.Integer)):
+            return 0
+        arr = _get_parent_tree_entry(nums, int(key_obj))
+        if not isinstance(arr, pikepdf.Array):
+            return 0
+        hits = 0
+        elem_key = _struct_elem_visit_key(elem)
+        for mcid in _collect_subtree_mcids(elem):
+            try:
+                owner = arr[int(mcid)] if 0 <= int(mcid) < len(arr) else None
+                if isinstance(owner, pikepdf.Dictionary) and _struct_elem_visit_key(owner) == elem_key:
+                    hits += 1
+            except Exception:
+                pass
+        return hits
+    except Exception:
+        return 0
+
+
+def _heading_has_checker_exportable_text(pdf: pikepdf.Pdf, elem, page_map: dict | None = None, mcid_lookup: dict | None = None) -> bool:
+    mcid_text = _heading_mcid_text_for_elem(elem, page_map, mcid_lookup)
+    if mcid_text:
+        return _heading_parent_tree_hit_count(pdf, elem) > 0
+    metadata_text = _heading_metadata_text_for_elem(elem)
+    return bool(metadata_text and not _is_document_title_placeholder_text(metadata_text))
+
+
+def _is_toc_scoped_h1(elem) -> bool:
+    if _struct_elem_heading_level(elem) != 1:
+        return False
+    try:
+        for part in _struct_parent_chain(elem):
+            role = part.split("@", 1)[0].upper()
+            if "TOC" in role:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_checker_invisible_h1(elem, pdf: pikepdf.Pdf, page_map: dict | None = None, mcid_lookup: dict | None = None) -> bool:
+    if _struct_elem_heading_level(elem) != 1:
+        return False
+    return not _heading_has_checker_exportable_text(pdf, elem, page_map, mcid_lookup)
+
+
+def _is_hidden_document_title_h1(elem, page_map: dict | None = None, mcid_lookup: dict | None = None) -> bool:
+    if _struct_elem_heading_level(elem) != 1:
+        return False
+    if _heading_mcid_text_for_elem(elem, page_map, mcid_lookup):
+        return False
+    return _is_document_title_placeholder_text(_heading_metadata_text_for_elem(elem))
+
+
+def _select_single_page_heading_paragraph(pdf: pikepdf.Pdf, struct_root, excluded_keys: set | None = None):
+    try:
+        if len(pdf.pages) != 1:
+            return None, -1, ""
+    except Exception:
+        return None, -1, ""
+    try:
+        page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    best_elem = None
+    best_score = -1
+    best_text = ""
+    excluded_keys = excluded_keys or set()
+    for elem in _iter_root_reachable_struct_elems(struct_root):
+        if not isinstance(elem, pikepdf.Dictionary):
+            continue
+        if _struct_elem_visit_key(elem) in excluded_keys:
+            continue
+        role = safe_str(elem.get("/S")).lstrip("/").upper()
+        if role not in ("P", "SPAN", "DIV", "NORMAL"):
+            continue
+        if not _elem_has_direct_mcid_content(elem):
+            continue
+        text = _single_page_heading_text_for_elem(pdf, elem, page_map, mcid_lookup)
+        score = _single_page_heading_candidate_score(text)
+        if score > best_score:
+            best_elem = elem
+            best_score = score
+            best_text = text
+    return best_elem, best_score, best_text
+
+
+def _promote_single_page_paragraph_heading(pdf: pikepdf.Pdf, struct_root) -> bool:
+    """For single-page tagged PDFs with no headings, promote the best paragraph-like title to /H1."""
+    best_elem, best_score, best_text = _select_single_page_heading_paragraph(pdf, struct_root)
+    if best_elem is None or best_score < 0:
+        _set_last_mutation_note("single_page_no_heading_candidate")
+        return False
+    try:
+        best_elem["/S"] = pikepdf.Name("/H1")
+        _set_last_mutation_note("single_page_paragraph_promoted_to_h1")
+        _set_last_mutation_debug({
+            "promotedText": re.sub(r"\s+", " ", safe_str(best_text)).strip()[:160],
+            "score": best_score,
+            "structRef": object_ref_str(best_elem),
+        })
+        return True
+    except Exception:
+        return False
+
+
+def _replace_single_page_junk_heading(pdf: pikepdf.Pdf, struct_root, heading_elems: list[tuple]) -> bool:
+    """Replace a single-page control-text heading with a meaningful paragraph H1."""
+    try:
+        if len(pdf.pages) != 1:
+            return False
+    except Exception:
+        return False
+    if not heading_elems:
+        return False
+    try:
+        page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    heading_keys: set = set()
+    for elem, _level, _custom_role in heading_elems:
+        if not isinstance(elem, pikepdf.Dictionary):
+            continue
+        heading_keys.add(_struct_elem_visit_key(elem))
+        text = _single_page_heading_text_for_elem(pdf, elem, page_map, mcid_lookup)
+        if _single_page_heading_candidate_score(text) >= 0:
+            return False
+    best_elem, best_score, best_text = _select_single_page_heading_paragraph(pdf, struct_root, heading_keys)
+    if best_elem is None or best_score < 0:
+        _set_last_mutation_note("single_page_no_replacement_heading_candidate")
+        return False
+    try:
+        demoted = 0
+        for elem, _level, _custom_role in heading_elems:
+            if isinstance(elem, pikepdf.Dictionary):
+                elem["/S"] = pikepdf.Name("/P")
+                demoted += 1
+        best_elem["/S"] = pikepdf.Name("/H1")
+        _set_last_mutation_note("single_page_junk_heading_replaced")
+        _set_last_mutation_debug({
+            "promotedText": re.sub(r"\s+", " ", safe_str(best_text)).strip()[:160],
+            "score": best_score,
+            "structRef": object_ref_str(best_elem),
+            "demotedHeadingCount": demoted,
+        })
+        return True
+    except Exception:
+        return False
+
+
 def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
     """
     Fix skipped heading levels in the structure tree so Acrobat's "Headings — Appropriate
@@ -9889,11 +10564,7 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
             if oid in visited:
                 continue
             visited.add(oid)
-            level = _struct_elem_heading_level(elem)
-            custom_role = False
-            if level is None:
-                level = _custom_struct_elem_heading_level(elem)
-                custom_role = level is not None
+            level, custom_role = _normalizable_struct_elem_heading_level(sr, elem)
             if level is not None:
                 heading_elems.append((elem, level, custom_role))
             try:
@@ -9904,34 +10575,139 @@ def _op_normalize_heading_hierarchy(pdf: pikepdf.Pdf, _params: dict) -> bool:
             pass
 
     if not heading_elems:
+        # Some legacy PDFs expose custom heading roles (for example /Heading 2)
+        # through indirect StructTreeRoot kids that the BFS queue can miss. Fall
+        # back to the full object scan used by other repair routines so a single
+        # non-H1 custom heading can still be normalized to /H1.
+        for elem in _iter_struct_elems(pdf):
+            level, custom_role = _normalizable_struct_elem_heading_level(sr, elem)
+            if level is not None:
+                heading_elems.append((elem, level, custom_role))
+
+    if not heading_elems:
+        if _promote_single_page_paragraph_heading(pdf, sr):
+            return True
         return False
+
+    if _replace_single_page_junk_heading(pdf, sr, heading_elems):
+        return True
+
+    try:
+        page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+
+    hidden_placeholder_h1 = False
+    checker_invisible_h1 = False
+    toc_scoped_h1 = False
+    preexisting_h1 = False
+    try:
+        h1_candidates = [
+            elem for elem in _iter_struct_elems(pdf)
+            if _struct_elem_heading_level(elem) == 1
+        ]
+        preexisting_h1 = len(h1_candidates) > 0
+        hidden_placeholder_h1 = any(
+            _is_hidden_document_title_h1(elem, page_map, mcid_lookup)
+            for elem in h1_candidates
+        )
+        checker_invisible_h1 = any(
+            _is_checker_invisible_h1(elem, pdf, page_map, mcid_lookup)
+            for elem in h1_candidates
+        )
+        toc_scoped_h1 = any(
+            _is_toc_scoped_h1(elem)
+            for elem in h1_candidates
+        )
+    except Exception:
+        hidden_placeholder_h1 = False
+        checker_invisible_h1 = False
+        toc_scoped_h1 = False
+        preexisting_h1 = False
+
+    readability_promote_first_heading_shell = bool(
+        (_params or {}).get("promoteFirstHeadingShell") or (_params or {}).get("readabilityFallbackPromoteFirstHeading")
+    )
+    if readability_promote_first_heading_shell and not preexisting_h1 and len(heading_elems) == 1:
+        elem, level, custom_role = heading_elems[0]
+        try:
+            elem["/S"] = pikepdf.Name("/H1")
+            _global_heading_cleanup(pdf)
+            _set_last_mutation_note("readability_single_heading_promoted_to_h1")
+            _set_last_mutation_debug({
+                "structRef": object_ref_str(elem),
+                "originalLevel": level,
+                "customRole": custom_role,
+                "headingCount": len(heading_elems),
+            })
+            return True
+        except Exception:
+            pass
 
     changed = False
     prev_level = 0
     h1_seen = False
+    promoted_exportable_h1 = False
+    skipped_leading_empty_heading = False
     for elem, level, custom_role in heading_elems:
         new_level = level
-        # Phase 1 + single-H1 enforcement combined: if this is a second H1,
-        # treat it as H2 before gap-normalization so the rest of the tree
-        # stays consistent.
+        has_exportable_text = _heading_has_checker_exportable_text(pdf, elem, page_map, mcid_lookup)
+        if new_level > prev_level + 1:
+            if prev_level == 0 and not has_exportable_text:
+                # Leading empty heading shells should not claim the document H1.
+                new_level = min(new_level, 2)
+                skipped_leading_empty_heading = True
+            else:
+                # Skipped levels: normalise down to prev+1. If this creates the
+                # first H1 from an initial H2/H3, count it before duplicate-H1
+                # cleanup sees later placeholder headings.
+                new_level = prev_level + 1
+
+        if new_level == 1 and not has_exportable_text and not h1_seen:
+            if level == 1 and not _is_hidden_document_title_h1(elem, page_map, mcid_lookup) and not _is_toc_scoped_h1(elem):
+                # Preserve one existing H1 rather than leaving the document with none.
+                pass
+            else:
+                new_level = 2
+                skipped_leading_empty_heading = True
+
         if new_level == 1 and h1_seen:
             new_level = 2
         elif new_level == 1:
             h1_seen = True
-
-        if new_level > prev_level + 1:
-            # Skipped levels — normalise down to prev+1
-            new_level = prev_level + 1
+            if level != 1 and has_exportable_text:
+                promoted_exportable_h1 = True
         if custom_role or new_level != level:
             try:
                 elem["/S"] = pikepdf.Name("/H1" if new_level == 1 else f"/H{new_level}")
                 changed = True
             except Exception:
                 pass
-        prev_level = new_level
+        if h1_seen or has_exportable_text:
+            prev_level = new_level
 
     if _global_heading_cleanup(pdf):
         changed = True
+    if changed and preexisting_h1 and promoted_exportable_h1 and (hidden_placeholder_h1 or checker_invisible_h1 or toc_scoped_h1):
+        if hidden_placeholder_h1:
+            note = "hidden_placeholder_h1_replaced"
+        elif checker_invisible_h1:
+            note = "checker_invisible_h1_replaced"
+        else:
+            note = "toc_h1_replaced"
+        _set_last_mutation_note(note)
+        _set_last_mutation_debug({
+            "hiddenPlaceholderH1": hidden_placeholder_h1,
+            "checkerInvisibleH1": checker_invisible_h1,
+            "tocScopedH1": toc_scoped_h1,
+            "preexistingH1": preexisting_h1,
+            "promotedExportableH1": True,
+            "skippedLeadingEmptyHeading": skipped_leading_empty_heading,
+        })
     return changed
 
 
@@ -12528,6 +13304,29 @@ def _global_h1_count_resolved(pdf: pikepdf.Pdf) -> int:
     return count
 
 
+def _root_reachable_meaningful_heading_count(pdf: pikepdf.Pdf) -> int:
+    sr = pdf.Root.get("/StructTreeRoot")
+    if not isinstance(sr, pikepdf.Dictionary):
+        return 0
+    try:
+        page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    count = 0
+    for elem in _iter_root_reachable_struct_elems(sr):
+        resolved = (_resolved_struct_role(sr, elem) or "").lstrip("/").upper()
+        if resolved not in {"H", "H1", "H2", "H3", "H4", "H5", "H6"}:
+            continue
+        text = _single_page_heading_text_for_elem(pdf, elem, page_map, mcid_lookup)
+        if _single_page_heading_candidate_score(text) >= 0:
+            count += 1
+    return count
+
+
 def _annotation_invariant_stats(pdf: pikepdf.Pdf) -> dict:
     stats = collect_annotation_accessibility_stats(pdf)
     return {
@@ -12857,11 +13656,18 @@ def _stage35_heading_snapshot(pdf: pikepdf.Pdf, params: dict) -> dict:
     target_ref = params.get("targetRef") or params.get("structRef")
     common = _common_target_invariants(pdf, target_ref if isinstance(target_ref, str) else None)
     sr = pdf.Root.get("/StructTreeRoot")
+    syntax_audit = collect_structure_syntax_audit(pdf)
+    parent_link_debt = (
+        int(syntax_audit.get("missingParentCount") or 0) +
+        int(syntax_audit.get("wrongParentCount") or 0)
+    )
     snapshot = {
         **common,
         "rootReachableHeadingCount": _root_reachable_resolved_role_count(pdf, "H", "H1", "H2", "H3", "H4", "H5", "H6"),
         "rootReachableDepth": _root_reachable_depth(sr),
         "globalH1Count": _global_h1_count_resolved(pdf),
+        "meaningfulRootHeadingCount": _root_reachable_meaningful_heading_count(pdf),
+        "structureParentLinkDebt": parent_link_debt,
     }
     snapshot["headingCandidateReachable"] = common.get("targetReachable")
     return snapshot
@@ -12965,11 +13771,19 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
         "rootReachableDepthAfter": after.get("rootReachableDepth", 0),
         "globalH1CountBefore": before.get("globalH1Count", 0),
         "globalH1CountAfter": after.get("globalH1Count", 0),
+        "meaningfulRootHeadingCountBefore": before.get("meaningfulRootHeadingCount", 0),
+        "meaningfulRootHeadingCountAfter": after.get("meaningfulRootHeadingCount", 0),
         "headingCandidateReachable": after.get("headingCandidateReachable"),
     }
     if not mutated:
         return "no_effect", note or "no_structural_change", invariants
     if note == 'synthesized_from_page0_mcid':
+        return 'applied', note, invariants
+    if note == 'hidden_placeholder_h1_replaced':
+        return 'applied', note, invariants
+    if note == 'checker_invisible_h1_replaced':
+        return 'applied', note, invariants
+    if note == 'toc_h1_replaced':
         return 'applied', note, invariants
     if invariants["targetResolved"] is False:
         return "no_effect", "target_not_found", invariants
@@ -12985,10 +13799,28 @@ def _stage35_validate_heading(op: str, before: dict, after: dict, mutated: bool,
         and after_h1_count < before_h1_count
         and after_heading_count >= before_heading_count
     )
+    before_parent_debt = before.get("structureParentLinkDebt", 0) or 0
+    after_parent_debt = after.get("structureParentLinkDebt", 0) or 0
+    first_h1_created = (
+        before_h1_count == 0
+        and after_h1_count == 1
+        and after_heading_count >= before_heading_count
+    )
+    parent_links_repaired = (
+        op == "repair_structure_conformance"
+        and after_parent_debt < before_parent_debt
+    )
+    meaningful_heading_improved = (
+        (after.get("meaningfulRootHeadingCount", 0) or 0)
+        > (before.get("meaningfulRootHeadingCount", 0) or 0)
+    )
     improved = (
         (after_heading_count > before_heading_count)
         or (after.get("rootReachableDepth", 0) > before.get("rootReachableDepth", 0) and after_heading_count > 0)
         or duplicate_h1_normalized
+        or first_h1_created
+        or meaningful_heading_improved
+        or parent_links_repaired
     )
     if improved:
         if (
@@ -13531,21 +14363,55 @@ def _qpdf_json_struct_depth(pdf_path: str) -> int:
 
 
 def _global_heading_cleanup(pdf: pikepdf.Pdf) -> bool:
-    changed = False
-    h1_seen = False
+    h1_elems = []
     for elem in _iter_struct_elems(pdf):
         level = _struct_elem_heading_level(elem)
-        if level is None:
-            continue
         if level == 1:
-            if h1_seen:
-                try:
-                    elem["/S"] = pikepdf.Name("/H2")
-                    changed = True
-                except Exception:
-                    pass
-            else:
-                h1_seen = True
+            h1_elems.append(elem)
+    if len(h1_elems) <= 1:
+        return False
+
+    try:
+        page_map = build_page_map(pdf)
+    except Exception:
+        page_map = {}
+    try:
+        mcid_lookup = _build_mcid_resolved_lookup(pdf)
+    except Exception:
+        mcid_lookup = {}
+    try:
+        sr = pdf.Root.get("/StructTreeRoot")
+        root_order = {
+            _struct_elem_visit_key(elem): idx
+            for idx, elem in enumerate(_iter_root_reachable_struct_elems(sr))
+        }
+    except Exception:
+        root_order = {}
+
+    def h1_rank(elem) -> tuple[int, int]:
+        mcid_text = _heading_mcid_text_for_elem(elem, page_map, mcid_lookup)
+        metadata_text = _heading_metadata_text_for_elem(elem)
+        parent_tree_hits = _heading_parent_tree_hit_count(pdf, elem)
+        if mcid_text and parent_tree_hits > 0:
+            visibility_rank = 0
+        elif metadata_text and not _is_document_title_placeholder_text(metadata_text):
+            visibility_rank = 1
+        elif mcid_text:
+            visibility_rank = 2
+        else:
+            visibility_rank = 3
+        return (visibility_rank, int(root_order.get(_struct_elem_visit_key(elem), MAX_ITEMS * 100)))
+
+    keep_key = _struct_elem_visit_key(min(h1_elems, key=h1_rank))
+    changed = False
+    for elem in h1_elems:
+        if _struct_elem_visit_key(elem) == keep_key:
+            continue
+        try:
+            elem["/S"] = pikepdf.Name("/H2")
+            changed = True
+        except Exception:
+            pass
     return changed
 
 
@@ -13639,6 +14505,10 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         (_params or {}).get("allowExistingMarkedContentText")
         or (_params or {}).get("allowExistingBdcText")
     )
+    reuse_existing_marked_content_text = bool(
+        (_params or {}).get("reuseExistingMarkedContentText")
+        or (_params or {}).get("reuseExistingBdcText")
+    )
 
     for page_idx, page in enumerate(pdf.pages):
         if page_idx >= max_pages:
@@ -13660,7 +14530,10 @@ def _op_synthesize_basic_structure_from_layout(pdf: pikepdf.Pdf, _params: dict) 
         if page_pt_changed:
             changed = True
 
-        groups = _unowned_bt_et_text_groups(insts) if allow_existing_marked_content_text else _bt_et_text_groups(insts)
+        if reuse_existing_marked_content_text:
+            groups = _bt_et_text_groups(insts)
+        else:
+            groups = _unowned_bt_et_text_groups(insts) if allow_existing_marked_content_text else _bt_et_text_groups(insts)
         segments = [(start, end + 1, text) for start, end, text in groups if text or (end + 1) > start]
         if not segments:
             paint_segments = _outside_paint_segments(insts)

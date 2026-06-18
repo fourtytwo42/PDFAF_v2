@@ -537,4 +537,22 @@ describe('Stage 127 visible heading anchor recovery', () => {
       .toBe('no_safe_candidate');
     expect(shouldTryPartialHeadingReachabilityRecovery(partialHeadingAnalysisFor(garbled), garbled)).toBe(false);
   });
+  it('filters out PDF operator stream noise from heading bootstrap candidates', () => {
+    const snap = snapshot({
+      textByPage: ['Civil Rights Discrimination Complaint Form'],
+      paragraphStructElems: [{
+        tag: 'P',
+        page: 0,
+        structRef: '4660_0',
+        text: '- 3(.)1(g)2.6(o)4.3(v)]TJ EMC ET /Span <</MCID 16 >>BDC BT /CS0 cs 0 scn -0.013 Tc 0.02',
+        reachable: true,
+        directContent: true,
+        parentPath: ['Document'],
+      }],
+    });
+
+    expect(buildEligibleHeadingBootstrapCandidates(snap)).toHaveLength(0);
+    expect(buildEligibleHeadingBootstrapCandidates(snap).some(c => c.text.includes('MCID 16'))).toBe(false);
+  });
+
 });

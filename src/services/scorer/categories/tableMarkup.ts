@@ -3,7 +3,7 @@ import { CATEGORY_BASE_WEIGHTS } from '../../../config.js';
 import { normalizedTableSignals } from '../tableRegularityHeuristics.js';
 
 export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
-  const scoredTables = snap.tables.filter(table => !isTinyRowlessTable(table));
+  const scoredTables = snap.tables.filter(table => !isNonScoredRowlessTable(table));
 
   if (scoredTables.length === 0) {
     return {
@@ -106,11 +106,32 @@ export function scoreTableMarkup(snap: DocumentSnapshot): ScoredCategory {
   };
 }
 
+export function isNonScoredRowlessTable(table: DocumentSnapshot['tables'][number]): boolean {
+  return isTinyRowlessTable(table) || isHeaderOnlyChartLabelTable(table);
+}
+
 function isTinyRowlessTable(table: DocumentSnapshot['tables'][number]): boolean {
   return (
     (table.rowCount ?? 0) <= 1 &&
     (table.totalCells ?? 0) <= 2 &&
     (table.cellsMisplacedCount ?? 0) === 0
+  );
+}
+
+function isHeaderOnlyChartLabelTable(table: DocumentSnapshot['tables'][number]): boolean {
+  const totalCells = table.totalCells ?? 0;
+  const headerCount = table.headerCount ?? 0;
+  return (
+    (table.rowCount ?? 0) <= 1 &&
+    totalCells >= 3 &&
+    totalCells <= 4 &&
+    table.hasHeaders === true &&
+    headerCount >= totalCells &&
+    (table.cellsMisplacedCount ?? 0) === 0 &&
+    (table.irregularRows ?? 0) === 0 &&
+    (table.maxRowSpan ?? 1) <= 1 &&
+    (table.maxColSpan ?? 1) <= 1 &&
+    table.directContent !== true
   );
 }
 

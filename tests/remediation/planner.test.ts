@@ -10,11 +10,14 @@ import {
   deriveFailureDisposition,
   isToolAllowedByRouteContract,
   maxFigureAltTargetsForRun,
+  maxRetagAsFigureTargetsForRun,
   planForRemediation,
   routeContractFor,
   shouldAllowStage146FigureAltContinuation,
   shouldAllowStage146RoleMapRetagContinuation,
   shouldAllowStage178ProtectedFigureAltContinuation,
+  shouldExemptNativeTextTaggingForOcrFallback,
+  STAGE146_FIGURE_ALT_TARGETS_PER_RUN,
 } from '../../src/services/remediation/planner.js';
 import { buildEligibleHeadingBootstrapCandidates } from '../../src/services/headingBootstrapCandidates.js';
 import { classifyZeroHeadingRecovery } from '../../src/services/remediation/headingRecovery.js';
@@ -291,6 +294,22 @@ describe('planForRemediation', () => {
     expect(names).toContain('set_document_title');
     expect(names).toContain('set_document_language');
     expect(names).not.toContain('set_pdfua_identification');
+  });
+
+
+  it('keeps descriptive metadata title when title_language fails because language is missing', () => {
+    const base = bareSnapshot();
+    const snap: DocumentSnapshot = {
+      ...base,
+      metadata: { ...base.metadata, title: 'Appendix H: Data tables section', language: '' },
+      lang: null,
+      structTitle: 'Appendix H: Data tables section',
+    };
+    const analysis = withCategoryScores(score(snap, META), { title_language: 50 });
+    const plan = planForRemediation(analysis, snap, []);
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).not.toContain('set_document_title');
+    expect(names).toContain('set_document_language');
   });
 
   it('plans PAC catalog settings normalization when only POC-exposed catalog evidence fails', () => {
@@ -786,6 +805,40 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('filters repeated-name and escaped-glyph noise before selecting report statistics headings', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 8,
+      textByPage: ['Cover', 'Copyright', 'Juvenile Court Statistics 2023', 'Body'],
+      textCharCount: 1200,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfUaVersion: '1',
+      structureTree: { type: 'Document', children: [] },
+      paragraphStructElems: [
+        { tag: 'P', text: 'Eliana Beigel Eliana Beigel Eliana Beigel Eliana Beigel', page: 4, structRef: 'bad_repeat' },
+        { tag: 'P', text: 'Nebraska \\227Nebraska Commission on Nevada', page: 5, structRef: 'bad_glyph' },
+        { tag: 'P', text: 'December 2025', page: 2, structRef: 'bad_date' },
+        { tag: 'P', text: 'Juvenile Court Statistics 2023', page: 2, structRef: 'title_2023' },
+        { tag: 'P', text: 'Chapter 2: National Estimates of Delinquency Cases', page: 6, structRef: 'chapter_2' },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 0,
+      reading_order: 55,
+    });
+
+    const candidates = buildEligibleHeadingBootstrapCandidates(snap);
+
+    expect(candidates.map(candidate => candidate.structRef)).toEqual(['title_2023', 'chapter_2']);
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap)).toEqual({
+      targetRef: 'title_2023',
+      level: 1,
+      text: 'Juvenile Court Statistics 2023',
+    });
+  });
+
   it('classifies zero-heading recovery buckets without filename or family rules', () => {
     const recoverableSnap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -1189,6 +1242,128 @@ describe('planForRemediation', () => {
     ]);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).toContain('tag_native_text_blocks');
+  });
+
+  it('does not reliability-filter native text tagging for OCR fallback zero-heading shells', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const pdfClass of ['native_untagged', 'native_tagged'] as const) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName: 'tag_native_text_blocks',
+          pdfClass,
+          outcome: 'no_effect',
+          scoreBefore: 44,
+          scoreAfter: 44,
+        });
+      }
+    }
+
+    const untaggedSnap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 16,
+      textByPage: Array.from({ length: 16 }, () => ''),
+      textCharCount: 0,
+      pdfClass: 'native_untagged',
+    };
+    const untaggedAnalysis = {
+      ...withCategoryScores(score(untaggedSnap, META), {
+        heading_structure: 0,
+        reading_order: 0,
+        pdf_ua_compliance: 0,
+        text_extractability: 10,
+      }),
+      score: 10,
+    };
+    expect(shouldExemptNativeTextTaggingForOcrFallback(untaggedAnalysis, untaggedSnap, [], [
+      { toolName: 'ocr_scanned_pdf', params: {}, rationale: 'same-pass OCR fallback', route: 'font_ocr_repair' },
+    ])).toBe(true);
+    const untaggedPlan = planForRemediation(untaggedAnalysis, untaggedSnap, [], store);
+    const untaggedNames = untaggedPlan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(untaggedNames).toContain('ocr_scanned_pdf');
+    expect(untaggedNames).toContain('tag_native_text_blocks');
+
+    const taggedSnap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 16,
+      textByPage: Array.from({ length: 16 }, (_, index) => `page ${index + 1} body text`),
+      textCharCount: 4096,
+      pdfClass: 'native_tagged',
+      isTagged: true,
+      markInfo: { Marked: true },
+      structureTree: { type: 'Document', children: [] },
+      metadata: { title: 'Recovered shell', language: 'en-US', author: '', subject: '' },
+      lang: 'en-US',
+      pdfUaVersion: '1',
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 1,
+          degenerateStructureTree: true,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 16,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 1,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 0,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0, 1],
+        confidence: 'medium',
+      },
+    };
+    const taggedAnalysis = {
+      ...withCategoryScores(score(taggedSnap, META), {
+        heading_structure: 0,
+        reading_order: 0,
+        pdf_ua_compliance: 100,
+        text_extractability: 96,
+      }),
+      score: 44,
+    };
+    const applied: AppliedRemediationTool[] = [
+      { toolName: 'ocr_scanned_pdf', stage: 1, round: 1, scoreBefore: 44, scoreAfter: 44, delta: 0, outcome: 'failed' },
+    ];
+
+    expect(shouldExemptNativeTextTaggingForOcrFallback(taggedAnalysis, taggedSnap, applied)).toBe(true);
+    const taggedPlan = planForRemediation(taggedAnalysis, taggedSnap, applied, store);
+    const taggedNames = taggedPlan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    expect(taggedNames).toContain('tag_native_text_blocks');
   });
 
   it('does not include tag_native_text_blocks for non-degenerate native_tagged structure', () => {
@@ -2740,6 +2915,36 @@ describe('planForRemediation', () => {
     expect(plan.stages).toHaveLength(0);
   });
 
+
+  it('plans focused readability tools even when score already meets the normal target', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 1,
+      isTagged: true,
+      structureTree: { type: 'Document', children: [] },
+      metadata: { title: 'Doc', language: '', author: '', subject: '' },
+      markInfo: { Marked: true, Suspects: false },
+      viewerPreferences: { displayDocTitle: true },
+      lang: null,
+      pdfUaVersion: '1',
+      pdfClass: 'native_tagged',
+    };
+    const analysis = score(snap, META);
+    const high = {
+      ...analysis,
+      score: 96,
+      categories: analysis.categories.map(c => ({ ...c, score: c.applicable ? 96 : c.score })),
+    };
+    const plan = planForRemediation(high, snap, [], undefined, false, {
+      focusedToolNames: ['set_document_language'],
+      preferredRoutes: ['metadata_foundation'],
+      focusedOnly: true,
+      focusedRationale: 'readability language repair',
+    });
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toEqual(['set_document_language']);
+  });
+
   it('does not return an empty plan at target score when external-readiness debt remains', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -2976,9 +3181,7 @@ describe('planForRemediation', () => {
       structRef: '3_0',
       altText: 'Illustration (page 1)',
     });
-    expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({
-      structRef: '3_0',
-    });
+    expect(buildDefaultParams('mark_figure_decorative', analysis, snap)).toEqual({});
   });
 
   it('progresses to a distinct figure alt target after a prior target attempt', () => {
@@ -3102,7 +3305,7 @@ describe('planForRemediation', () => {
     }));
 
     expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(true);
-    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(5);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(STAGE146_FIGURE_ALT_TARGETS_PER_RUN);
     expect(buildDefaultParams('set_figure_alt_text', analysis, snap, applied)).toEqual({
       structRef: '4_0',
       altText: 'Illustration (page 4)',
@@ -3521,7 +3724,7 @@ describe('planForRemediation', () => {
     }));
 
     expect(shouldAllowStage146FigureAltContinuation(analysis, snap, applied)).toBe(true);
-    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(5);
+    expect(maxFigureAltTargetsForRun(analysis, snap, applied)).toBe(STAGE146_FIGURE_ALT_TARGETS_PER_RUN);
   });
 
   it('keeps Stage 146 figure alt continuation at the default cap when heading remains a severe blocker', () => {
@@ -3616,7 +3819,7 @@ describe('planForRemediation', () => {
     expect(maxFigureAltTargetsForRun(analysis, snap, applied, {
       protectedBaselineActive: true,
       protectedBaseline: { score: 59, categories: { alt_text: 12 } },
-    })).toBe(5);
+    })).toBe(STAGE146_FIGURE_ALT_TARGETS_PER_RUN);
   });
 
   it('keeps Stage 178 protected continuation off high-alt and mixed-blocked protected rows', () => {
@@ -3751,6 +3954,149 @@ describe('planForRemediation', () => {
     expect(names).toContain('retag_as_figure');
   });
 
+  it('uses page-local chart captions for role-mapped chart retag alt text', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1000,
+      textByPage: [
+        'Figure 1. Case filings and terminations FY2016-FY2020 • Filings decreased during the period.',
+      ],
+      layoutAudit: reportLayoutAudit({
+        captionCandidateCount: 1,
+        captionCandidates: [{
+          text: 'Figure 1. Case filings and terminations FY2016-FY2020',
+          page: 0,
+          bbox: [72, 500, 420, 520],
+        }],
+      }),
+      figures: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        structRef: '10_0',
+        role: 'Figure',
+        rawRole: 'Chart',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 12,
+      }],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 100,
+      reading_order: 100,
+      table_markup: 79,
+    });
+
+    expect(maxRetagAsFigureTargetsForRun(analysis, snap, [])).toBeGreaterThan(3);
+    expect(buildDefaultParams('retag_as_figure', analysis, snap)).toEqual({
+      structRef: '10_0',
+      altText: 'Chart: Figure 1. Case filings and terminations FY2016-FY2020',
+    });
+  });
+
+  it('maps multiple same-page chart captions by stable struct order across retag attempts', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1000,
+      textByPage: [
+        'Figure 12. Revenue generated by court level FY2020 Figure 13. Distribution of revenue by level of government FY2020',
+      ],
+      figures: [
+        {
+          hasAlt: true,
+          altText: 'Chart: Figure 12. Revenue generated by court level FY2020',
+          isArtifact: false,
+          page: 0,
+          structRef: '958_0',
+          role: 'Figure',
+          rawRole: 'Figure',
+          reachable: true,
+          directContent: true,
+          subtreeMcidCount: 10,
+        },
+        {
+          hasAlt: false,
+          isArtifact: false,
+          page: 0,
+          structRef: '967_0',
+          role: 'Figure',
+          rawRole: 'Chart',
+          reachable: true,
+          directContent: true,
+          subtreeMcidCount: 8,
+        },
+      ],
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 100,
+      reading_order: 100,
+      table_markup: 79,
+    });
+    const applied: AppliedRemediationTool[] = [{
+      toolName: 'retag_as_figure',
+      stage: 6,
+      round: 1,
+      scoreBefore: 81,
+      scoreAfter: 81,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: '958_0' } }),
+    }];
+
+    expect(buildDefaultParams('retag_as_figure', analysis, snap, applied)).toEqual({
+      structRef: '967_0',
+      altText: 'Chart: Figure 13. Distribution of revenue by level of government FY2020',
+    });
+  });
+
+  it('does not exceed the normal role-map retag budget without caption-backed charts', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      textCharCount: 1000,
+      figures: [1, 2, 3, 4].map(index => ({
+        hasAlt: false,
+        isArtifact: false,
+        page: index - 1,
+        structRef: `${index}_0`,
+        role: 'Figure',
+        rawRole: 'InlineShape',
+        reachable: true,
+        directContent: true,
+        subtreeMcidCount: 1,
+      })),
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      alt_text: 20,
+      heading_structure: 100,
+      reading_order: 100,
+      table_markup: 100,
+    });
+    const applied: AppliedRemediationTool[] = [1, 2, 3].map(index => ({
+      toolName: 'retag_as_figure',
+      stage: 6,
+      round: 1,
+      scoreBefore: 81,
+      scoreAfter: 81,
+      delta: 0,
+      outcome: 'applied',
+      details: JSON.stringify({ invariants: { targetRef: `${index}_0` } }),
+    }));
+
+    expect(maxRetagAsFigureTargetsForRun(analysis, snap, applied)).toBe(3);
+    expect(buildDefaultParams('retag_as_figure', analysis, snap, applied)).toEqual({});
+  });
+
   it('does not schedule canonicalize_figure_alt_ownership without checker-visible ownership debt', () => {
     const snap: DocumentSnapshot = {
       ...bareSnapshot(),
@@ -3872,6 +4218,113 @@ describe('planForRemediation', () => {
     const plan = planForRemediation(analysis, snap, []);
     const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
     expect(names).not.toContain('repair_alt_text_structure');
+  });
+
+
+  it('schedules repair_alt_text_structure in readability mode for Acrobat alt ownership debt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 141,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+        sampleOwnershipModes: ['other_elements_alt_pattern'],
+      },
+      detectionProfile: {
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 2,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: {
+          extractedHeadingCount: 0,
+          treeHeadingCount: 0,
+          headingTreeDepth: 0,
+          extractedHeadingsMissingFromTree: false,
+        },
+        figureSignals: {
+          extractedFigureCount: 0,
+          treeFigureCount: 0,
+          nonFigureRoleCount: 141,
+          treeFigureMissingForExtractedFigures: false,
+        },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: {
+          pagesMissingTabsS: 0,
+          pagesAnnotationOrderDiffers: 0,
+          linkAnnotationsMissingStructure: 0,
+          nonLinkAnnotationsMissingStructure: 0,
+          linkAnnotationsMissingStructParent: 0,
+          nonLinkAnnotationsMissingStructParent: 0,
+        },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 0,
+          stronglyIrregularTableCount: 0,
+          directCellUnderTableCount: 0,
+        },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 50 });
+    const plan = planForRemediation(analysis, snap, [], undefined, false, {
+      focusedToolNames: ['repair_alt_text_structure'],
+      preferredRoutes: ['figure_semantics'],
+      focusedOnly: true,
+      mode: 'readability',
+      focusedRationale: 'readability alt ownership repair',
+    });
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('repair_alt_text_structure');
+  });
+
+
+  it('schedules repair_alt_text_structure in readability mode for reachable figures missing alt', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      figures: [{ hasAlt: false, isArtifact: false, page: 0, structRef: '1_0', role: 'Figure', reachable: true }],
+      checkerFigureTargets: [{
+        hasAlt: false,
+        isArtifact: false,
+        page: 0,
+        structRef: '1_0',
+        role: 'Figure',
+        resolvedRole: 'Figure',
+        reachable: true,
+        directContent: true,
+      }],
+      acrobatStyleAltRisks: {
+        nonFigureWithAltCount: 0,
+        nestedFigureAltCount: 0,
+        orphanedAltEmptyElementCount: 0,
+        sampleOwnershipModes: [],
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), { alt_text: 0 });
+    const plan = planForRemediation(analysis, snap, [], undefined, false, {
+      focusedToolNames: ['repair_alt_text_structure'],
+      preferredRoutes: ['figure_semantics'],
+      focusedOnly: true,
+      mode: 'readability',
+      focusedRationale: 'readability missing alt fallback',
+    });
+    const names = plan.stages.flatMap(s => s.tools.map(t => t.toolName));
+    expect(names).toContain('repair_alt_text_structure');
   });
 
   it('routes Stage 3 survivors into structure and annotation families instead of broad semantic tools', () => {
@@ -4208,8 +4661,140 @@ describe('planForRemediation', () => {
     }, withCategoryScores(score(base, META), { table_markup: 35 }))).toBe('strongly_irregular_rows');
     expect(classifyStage43TableFailure({
       ...base,
+      tables: [{
+        hasHeaders: true,
+        headerCount: 7,
+        totalCells: 12,
+        page: 0,
+        rowCount: 7,
+        cellsMisplacedCount: 0,
+        irregularRows: 5,
+        dominantColumnCount: 2,
+        rowCellCounts: [1, 1, 2, 2, 2, 2, 2],
+        structRef: '2_0',
+      }],
+    }, withCategoryScores(score(base, META), { table_markup: 72 }))).toBe('single_column_variance_template');
+    expect(classifyStage43TableFailure({
+      ...base,
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 2,
+          totalCells: 20,
+          page: 0,
+          rowCount: 5,
+          cellsMisplacedCount: 0,
+          irregularRows: 3,
+          dominantColumnCount: 4,
+          rowCellCounts: [2, 4, 4, 4, 4],
+          structRef: '1_0',
+        },
+        {
+          hasHeaders: true,
+          headerCount: 7,
+          totalCells: 12,
+          page: 0,
+          rowCount: 7,
+          cellsMisplacedCount: 0,
+          irregularRows: 5,
+          dominantColumnCount: 2,
+          rowCellCounts: [1, 1, 2, 2, 2, 2, 2],
+          structRef: '2_0',
+        },
+      ],
+    }, withCategoryScores(score(base, META), { table_markup: 35 }))).toBe('strongly_irregular_rows');
+    expect(classifyStage43TableFailure({
+      ...base,
       tables: [{ hasHeaders: true, headerCount: 1, totalCells: 8, page: 0, rowCount: 2, cellsMisplacedCount: 0, structRef: '1_0' }],
     })).toBe('not_stage43_table_target');
+  });
+
+  it('does not reliability-filter high-confidence strongly irregular table repairs', () => {
+    let db: Database;
+    try {
+      db = new Database(':memory:');
+    } catch (error) {
+      expect(String(error)).toMatch(/NODE_MODULE_VERSION|compiled against a different Node\.js version/i);
+      return;
+    }
+    initSchema(db);
+    const store = createToolOutcomeStore(db);
+    for (const toolName of ['normalize_table_structure', 'repair_native_table_headers']) {
+      for (let i = 0; i < 10; i++) {
+        store.record({
+          toolName,
+          pdfClass: 'native_tagged',
+          outcome: 'no_effect',
+          scoreBefore: 66,
+          scoreAfter: 66,
+        });
+      }
+    }
+
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      markInfo: { Marked: true },
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [{
+        hasHeaders: true,
+        headerCount: 2,
+        totalCells: 20,
+        page: 0,
+        rowCount: 5,
+        cellsMisplacedCount: 0,
+        irregularRows: 3,
+        dominantColumnCount: 4,
+        rowCellCounts: [2, 4, 4, 4, 4],
+        structRef: '1_0',
+        reachable: true,
+      }],
+      detectionProfile: {
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 1,
+          stronglyIrregularTableCount: 1,
+          directCellUnderTableCount: 0,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 1, treeHeadingCount: 1, headingTreeDepth: 2, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { pagesMissingTabsS: 0, pagesAnnotationOrderDiffers: 0, linkAnnotationsMissingStructure: 0, nonLinkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0, nonLinkAnnotationsMissingStructParent: 0 },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+    };
+    const analysis = withRoutingContext(
+      withCategoryScores(score(snap, META), { table_markup: 16 }),
+      { detectionProfile: snap.detectionProfile },
+    );
+
+    expect(classifyStage43TableFailure(snap, analysis)).toBe('strongly_irregular_rows');
+
+    const plan = planForRemediation(analysis, snap, [], store);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+
+    expect(names).toContain('normalize_table_structure');
+    expect(names).toContain('repair_native_table_headers');
+    expect(names).toContain('set_table_header_cells');
+    expect(plan.planningSummary.skippedTools).not.toContainEqual({
+      toolName: 'normalize_table_structure',
+      reason: 'reliability_filtered',
+    });
   });
 
   it('does not reliability-filter the 4438 stage-3 table and link repairs when missing headers are the live debt', async () => {
@@ -4244,6 +4829,85 @@ describe('planForRemediation', () => {
     expect(names).toContain('repair_native_table_headers');
     expect(names).toContain('repair_native_link_structure');
     expect(names).toContain('set_table_header_cells');
+  });
+
+  it('keeps table normalization eligible after two successes when strong irregular table debt remains', () => {
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      tables: [
+        {
+          hasHeaders: true,
+          headerCount: 1,
+          totalCells: 6,
+          page: 0,
+          rowCount: 4,
+          cellsMisplacedCount: 0,
+          irregularRows: 2,
+          rowCellCounts: [1, 2, 1, 2],
+          dominantColumnCount: 1,
+          structRef: '2245_0',
+          reachable: true,
+        },
+      ],
+      detectionProfile: {
+        tableSignals: {
+          tablesWithMisplacedCells: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 1,
+          stronglyIrregularTableCount: 1,
+          directCellUnderTableCount: 0,
+        },
+        readingOrderSignals: {
+          missingStructureTree: false,
+          structureTreeDepth: 3,
+          degenerateStructureTree: false,
+          annotationOrderRiskCount: 0,
+          annotationStructParentRiskCount: 0,
+          headerFooterPollutionRisk: false,
+          sampledStructurePageOrderDriftCount: 0,
+          multiColumnOrderRiskPages: 0,
+          suspiciousPageCount: 0,
+        },
+        headingSignals: { extractedHeadingCount: 1, treeHeadingCount: 1, headingTreeDepth: 2, extractedHeadingsMissingFromTree: false },
+        figureSignals: { extractedFigureCount: 0, treeFigureCount: 0, nonFigureRoleCount: 0, treeFigureMissingForExtractedFigures: false },
+        pdfUaSignals: { orphanMcidCount: 0, suspectedPathPaintOutsideMc: 0, taggedAnnotationRiskCount: 0 },
+        annotationSignals: { pagesMissingTabsS: 0, pagesAnnotationOrderDiffers: 0, linkAnnotationsMissingStructure: 0, nonLinkAnnotationsMissingStructure: 0, linkAnnotationsMissingStructParent: 0, nonLinkAnnotationsMissingStructParent: 0 },
+        listSignals: { listItemMisplacedCount: 0, lblBodyMisplacedCount: 0, listsWithoutItems: 0 },
+        sampledPages: [0],
+        confidence: 'high',
+      },
+      tableHeaderAudit: {
+        tablesChecked: 1,
+        headerAssociationMissingCount: 0,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 0,
+      },
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      table_markup: 72,
+      heading_structure: 96,
+      alt_text: 100,
+      reading_order: 100,
+    });
+    const applied = ['600_0', '1580_0'].map((targetRef): AppliedRemediationTool => ({
+      toolName: 'normalize_table_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 70,
+      scoreAfter: 82,
+      delta: 12,
+      outcome: 'applied',
+      details: JSON.stringify({ outcome: 'applied', invariants: { targetRef } }),
+    }));
+
+    const plan = planForRemediation(analysis, snap, applied);
+    const names = plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName));
+    const tableTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'normalize_table_structure');
+    expect(names).toContain('normalize_table_structure');
+    expect(tableTool?.params).toMatchObject({ tableFailureClass: 'single_column_variance_template', dominantColumnCount: 2 });
   });
 
   it('keeps native table repair active for structurally broken tables even when headers already exist', () => {
@@ -4845,6 +5509,64 @@ describe('planForRemediation', () => {
     });
   });
 
+  it('uses a larger bounded table batch for medium-scale undersegmented report tables', () => {
+    const tables = Array.from({ length: 5 }, (_, index) => ({
+      hasHeaders: true,
+      headerCount: 4,
+      totalCells: 80,
+      page: index,
+      structRef: `${200 + index}_0`,
+      rawRole: 'Table',
+      resolvedRole: 'Table',
+      reachable: true,
+      rowCount: 12,
+      cellsMisplacedCount: 0,
+      irregularRows: 4,
+      dominantColumnCount: 8,
+      rowCellCounts: [8, 8, 16, 16],
+    }));
+    const snap: DocumentSnapshot = {
+      ...bareSnapshot(),
+      pageCount: 47,
+      isTagged: true,
+      pdfClass: 'native_tagged',
+      structureTree: { type: 'Document', children: [] },
+      detectionProfile: {
+        readingOrderSignals: {},
+        tableSignals: {
+          directCellUnderTableCount: 0,
+          misplacedCellCount: 0,
+          irregularTableCount: 9,
+          stronglyIrregularTableCount: 5,
+        },
+      },
+      tableHeaderAudit: {
+        tablesChecked: 26,
+        headerAssociationMissingCount: 9,
+        orphanHeaderCellCount: 0,
+        dataCellsWithoutHeaderCount: 94,
+        headerCellsWithScopeCount: 0,
+        headerCellsWithIdCount: 0,
+        dataCellsWithHeadersCount: 0,
+      },
+      tables,
+    };
+    const analysis = withCategoryScores(score(snap, META), {
+      table_markup: 0,
+      heading_structure: 100,
+      alt_text: 100,
+      reading_order: 100,
+    });
+
+    expect(buildDefaultParams('normalize_table_structure', analysis, snap)).toEqual({
+      dominantColumnCount: 0,
+      maxTablesPerRun: 24,
+      maxSyntheticCells: 480,
+      tableFailureClass: 'strongly_irregular_rows',
+      largeObjectBackedTableBatch: true,
+    });
+  });
+
   it('allows synthesize_basic_structure_from_layout for native_tagged when structureTreeDepth <= 1 and reading_order is failing', () => {
     // Simulates a native_tagged PDF whose existing structure tree is too shallow for ICJIA.
     // After the indirect-object fix, our scorer caps reading_order to 30 for these files,
@@ -5247,6 +5969,31 @@ describe('planForRemediation', () => {
     });
     expect(headingTool?.rationale).toContain('Report-scale layout heading recovery');
     expect(plan.planningSummary?.triggeringSignals).toContain(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
+  });
+
+  it('promotes the first readable heading to H1 when the tree has headings but no H1', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      headings: [{ level: 2, text: 'Executive Summary', page: 0, structRef: '10_0' }],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    expect(buildDefaultParams('create_heading_from_candidate', analysis, snap)).toMatchObject({
+      targetRef: '10_0',
+      level: 1,
+      text: 'Executive Summary',
+    });
+
+    const plan = planForRemediation(analysis, snap, [], undefined, false, { mode: 'readability' });
+    const headingTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_candidate');
+    expect(headingTool?.params).toMatchObject({
+      targetRef: '10_0',
+      level: 1,
+      text: 'Executive Summary',
+    });
   });
 
   it('falls back to text-only layout heading synthesis when paragraph matches are absent', () => {
@@ -5734,4 +6481,32 @@ describe('planForRemediation', () => {
     );
     expect(plan.stages.flatMap(stage => stage.tools.map(tool => tool.toolName))).not.toContain('set_figure_alt_text');
   });
+
+  it('schedules report-layout heading creation for native_untagged rows with no structure tree and MCID-only evidence', () => {
+    const snap = reportLayoutPlanningSnapshot({
+      pdfClass: 'native_untagged',
+      structureTree: null,
+      paragraphStructElems: [],
+      mcidTextSpans: [
+        { page: 0, mcid: 10, snippet: '/P << /MCID 10 >>', resolvedText: 'Executive Summary' },
+        { page: 1, mcid: 11, snippet: '/P << /MCID 11 >>', resolvedText: 'Key Findings' },
+      ],
+    });
+    const analysis = withCategoryScores(score(snap, META), {
+      heading_structure: 74,
+      reading_order: 79,
+      text_extractability: 100,
+    });
+
+    const plan = planForRemediation(analysis, snap, []);
+    const headingTool = plan.stages.flatMap(stage => stage.tools).find(tool => tool.toolName === 'create_heading_from_candidate');
+
+    expect(headingTool).toBeDefined();
+    expect(headingTool?.params).toMatchObject({
+      text: 'Executive Summary',
+      admission: REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL,
+    });
+    expect(headingTool?.params).toHaveProperty('preferPage0TitleSynthesis');
+  });
+
 });

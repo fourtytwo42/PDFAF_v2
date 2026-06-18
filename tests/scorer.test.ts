@@ -351,6 +351,28 @@ describe('Stage 40 legal_pdf_strict_v2 policy', () => {
     expect(result.scoreProfile.majorBlockers).toContain('poor_table_markup');
   });
 
+  it('does not cap header-only one-row chart label fragments as poor table markup', () => {
+    const result = score(makeSnap({
+      tables: [
+        { hasHeaders: true, headerCount: 4, totalCells: 4, rowCount: 1, cellsMisplacedCount: 0, irregularRows: 0, maxRowSpan: 1, maxColSpan: 1, page: 0 },
+        { hasHeaders: true, headerCount: 3, totalCells: 3, rowCount: 1, cellsMisplacedCount: 0, irregularRows: 0, maxRowSpan: 1, maxColSpan: 1, page: 0 },
+      ],
+    }), META);
+    const table = result.categories.find(c => c.key === 'table_markup')!;
+    expect(table.applicable).toBe(false);
+    expect(result.scoreProfile.majorBlockers).not.toContain('poor_table_markup');
+  });
+
+  it('still caps one-row table fragments that contain data cells', () => {
+    const result = score(makeSnap({
+      tables: [{ hasHeaders: true, headerCount: 3, totalCells: 4, rowCount: 1, cellsMisplacedCount: 0, irregularRows: 0, maxRowSpan: 1, maxColSpan: 1, page: 0 }],
+    }), META);
+    const table = result.categories.find(c => c.key === 'table_markup')!;
+    expect(table.applicable).toBe(true);
+    expect(table.score).toBeLessThanOrEqual(35);
+    expect(result.scoreProfile.majorBlockers).toContain('poor_table_markup');
+  });
+
   it('does not cap mild advisory table regularity below 70', () => {
     const result = score(makeSnap({
       tables: [{

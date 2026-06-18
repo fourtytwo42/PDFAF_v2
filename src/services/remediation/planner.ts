@@ -146,6 +146,13 @@ function shouldTryTaggedHeadingAdmissionFromFirstPageAnchor(
     candidate.score >= HEADING_BOOTSTRAP_MIN_SCORE;
 }
 
+function hasReusableMetadataTitle(snapshot: DocumentSnapshot): boolean {
+  const title = snapshot.metadata.title?.trim() ?? '';
+  if (title.length < 4) return false;
+  if ((title.match(/[A-Za-z]/g) ?? []).length < 4) return false;
+  return !isFilenameLikeTitle(title);
+}
+
 const STAGE162_LARGE_ANNOTATION_OWNERSHIP_DEBT = 50;
 
 const ROUTE_TOOL_MAP: Record<RemediationRoute, readonly string[]> = {
@@ -412,11 +419,168 @@ function isFigureRole(role: string | undefined): boolean {
   return (role ?? '').replace(/^\//, '').toLowerCase() === 'figure';
 }
 
+function normalizedRoleName(role: string | undefined | null): string {
+  return (role ?? '').replace(/^\//, '').trim().toLowerCase();
+}
+
+function isChartRole(role: string | undefined | null): boolean {
+  return normalizedRoleName(role) === 'chart';
+}
+
 function deterministicFigureAltPlaceholder(target: { page?: number | null }): string {
   const page = typeof target.page === 'number' && Number.isFinite(target.page)
     ? Math.max(1, Math.floor(target.page) + 1)
     : 1;
   return `Illustration (page ${page})`;
+}
+
+function normalizeFigureCaptionText(value: string): string {
+  return value
+    .replace(/\bF\s+igure\b/gi, 'Figure')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,:;])/g, '$1')
+    .replace(/\bFY\s*(\d)\s*(\d{3})\b/gi, 'FY$1$2')
+    .replace(/\b(20)\s+(\d{2})\b/g, '$1$2')
+    .replace(/\s*-\s*/g, '-')
+    .trim();
+}
+
+function extractFigureCaptionsFromText(value: string): string[] {
+  const text = normalizeFigureCaptionText(value);
+  if (!text) return [];
+  const starts: number[] = [];
+  const re = /\bFigure\s+\d+[A-Za-z]?\s*[.:]?/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    starts.push(match.index);
+  }
+  const captions: string[] = [];
+  for (let i = 0; i < starts.length; i += 1) {
+    const start = starts[i]!;
+    const nextStart = starts[i + 1] ?? text.length;
+    const rawSegment = text.slice(start, nextStart);
+    const bulletAt = rawSegment.search(/[•\u2022]/);
+    const segment = normalizeFigureCaptionText(
+      rawSegment.slice(0, bulletAt >= 0 ? bulletAt : rawSegment.length),
+    );
+    const words = segment.split(/\s+/).filter(Boolean);
+    if (words.length < 4) continue;
+    if (!/[A-Za-z]{4,}/.test(segment.replace(/^Figure\s+\d+[A-Za-z]?\s*[.:]?\s*/i, ''))) continue;
+    captions.push(words.slice(0, 24).join(' ').slice(0, 180));
+  }
+  return captions;
+}
+
+function figureCaptionsForPage(snapshot: DocumentSnapshot, page: number): string[] {
+  const seen = new Set<string>();
+  const captions: string[] = [];
+  const add = (caption: string): void => {
+    const normalized = normalizeFigureCaptionText(caption);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    captions.push(normalized);
+  };
+  for (const row of snapshot.layoutAudit?.captionCandidates ?? []) {
+    if (row.page !== page) continue;
+    for (const caption of extractFigureCaptionsFromText(row.text)) add(caption);
+  }
+  for (const caption of extractFigureCaptionsFromText(snapshot.textByPage[page] ?? '')) add(caption);
+  return captions;
+}
+
+function roleMappedChartPageOrderTargets(
+  snapshot: DocumentSnapshot,
+  target: DocumentSnapshot['figures'][number],
+  attemptedRetagRefs: Set<string>,
+): DocumentSnapshot['figures'] {
+  return sortFigureTargets(
+    snapshot.figures.filter(figure =>
+      figure.page === target.page &&
+      typeof figure.structRef === 'string' &&
+      figure.structRef.length > 0 &&
+      !figure.isArtifact &&
+      figure.reachable === true &&
+      isFigureRole(figure.role) &&
+      (isChartRole(figure.rawRole) || attemptedRetagRefs.has(figure.structRef)) &&
+      (figure.directContent === true || (figure.subtreeMcidCount ?? 0) > 0)
+    ),
+  );
+}
+
+function chartCaptionAltForTarget(
+  snapshot: DocumentSnapshot,
+  target: DocumentSnapshot['figures'][number],
+  alreadyApplied: AppliedRemediationTool[] = [],
+): string | null {
+  if (!isChartRole(target.rawRole)) return null;
+  if (!target.structRef) return null;
+  const attemptedRetagRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  const pageTargets = roleMappedChartPageOrderTargets(snapshot, target, attemptedRetagRefs);
+  const index = pageTargets.findIndex(row => row.structRef === target.structRef);
+  if (index < 0) return null;
+  const caption = figureCaptionsForPage(snapshot, target.page)[index];
+  if (!caption) return null;
+  return `Chart: ${caption}`.slice(0, 200);
+}
+
+function deterministicFigureAltText(
+  snapshot: DocumentSnapshot,
+  target: { page?: number | null; rawRole?: string; structRef?: string },
+  alreadyApplied: AppliedRemediationTool[] = [],
+): string {
+  const figure = target.structRef
+    ? snapshot.figures.find(row => row.structRef === target.structRef)
+    : undefined;
+  const chartAlt = figure
+    ? chartCaptionAltForTarget(snapshot, figure, alreadyApplied)
+    : null;
+  return chartAlt ?? deterministicFigureAltPlaceholder(target);
+}
+
+function bboxArea(bbox?: [number, number, number, number]): number | null {
+  if (!bbox) return null;
+  const [x0, y0, x1, y1] = bbox;
+  const width = Math.abs(x1 - x0);
+  const height = Math.abs(y1 - y0);
+  return Number.isFinite(width) && Number.isFinite(height) ? width * height : null;
+}
+
+function hasDecorativeFigureEvidence(snapshot: DocumentSnapshot): boolean {
+  const pathPaint = snapshot.taggedContentAudit?.suspectedPathPaintOutsideMc
+    ?? snapshot.detectionProfile?.pdfUaSignals.suspectedPathPaintOutsideMc
+    ?? 0;
+  return pathPaint > 0;
+}
+
+function safeDecorativeFigureTargets(
+  snapshot: DocumentSnapshot,
+): Array<{ structRef?: string; page: number; directContent?: boolean; subtreeMcidCount?: number; subtreeMcids?: number[]; bbox?: [number, number, number, number] }> {
+  if (!hasDecorativeFigureEvidence(snapshot)) return [];
+  const checkerTargets = (snapshot.checkerFigureTargets ?? []).filter(target =>
+    target.reachable
+    && !target.isArtifact
+    && !target.hasAlt
+    && typeof target.structRef === 'string'
+    && target.structRef.length > 0
+    && isFigureRole(target.resolvedRole ?? target.role)
+    && !target.directContent
+    && (target.subtreeMcids?.length ?? 0) === 0
+  );
+  if (checkerTargets.length > 0) return sortFigureTargets(checkerTargets);
+  return sortFigureTargets(
+    snapshot.figures.filter(figure => {
+      const area = bboxArea(figure.bbox);
+      return !figure.isArtifact
+        && !figure.hasAlt
+        && typeof figure.structRef === 'string'
+        && figure.structRef.length > 0
+        && isFigureRole(figure.role)
+        && !figure.directContent
+        && (figure.subtreeMcidCount ?? 0) <= 0
+        && (area === null || area <= 400);
+    }),
+  );
 }
 
 function checkerVisibleFigureMissingAlt(snapshot: DocumentSnapshot): boolean {
@@ -627,11 +791,31 @@ export function shouldAllowStage146RoleMapRetagContinuation(
   return safeRoleMapRetagTargets(snapshot, attemptedRefs).length > 0;
 }
 
-function maxRetagAsFigureTargetsForRun(
+function shouldAllowCaptionedChartRetagContinuation(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: AppliedRemediationTool[] = [],
+): boolean {
+  if (analysis.score >= 90) return false;
+  if ((analysis.categories.find(cat => cat.key === 'alt_text')?.score ?? 100) >= REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) < 55) return false;
+  if ((categoryScore(analysis, 'reading_order') ?? 100) < REMEDIATION_CATEGORY_THRESHOLD) return false;
+  if ((categoryScore(analysis, 'table_markup') ?? 100) < 79) return false;
+  if (analysis.pdfClass === 'scanned' || snapshot.textCharCount <= 0) return false;
+  const attemptedRefs = attemptedMutationRefs(alreadyApplied, 'retag_as_figure');
+  return safeRoleMapRetagTargets(snapshot, attemptedRefs).some(target =>
+    chartCaptionAltForTarget(snapshot, target, alreadyApplied) !== null
+  );
+}
+
+export function maxRetagAsFigureTargetsForRun(
   analysis?: AnalysisResult,
   snapshot?: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[] = [],
 ): number {
+  if (analysis && snapshot && shouldAllowCaptionedChartRetagContinuation(analysis, snapshot, alreadyApplied)) {
+    return STAGE194_CHART_RETAG_TARGETS_PER_RUN;
+  }
   if (analysis && snapshot && shouldAllowStage146RoleMapRetagContinuation(analysis, snapshot, alreadyApplied)) {
     return STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
   }
@@ -741,13 +925,25 @@ export type Stage43TableFailureClass =
   | 'rowless_dense_table'
   | 'direct_cells_under_table'
   | 'strongly_irregular_rows'
+  | 'single_column_variance_template'
   | 'missing_headers_only'
   | 'layout_table_candidate'
   | 'not_stage43_table_target';
 
+function isSingleColumnVarianceTable(table: DocumentSnapshot['tables'][number]): boolean {
+  const rowCounts = (table.rowCellCounts ?? []).filter(value => Number.isFinite(value) && value > 0);
+  if (!table.hasHeaders || (table.cellsMisplacedCount ?? 0) > 0) return false;
+  if (rowCounts.length < 3 || rowCounts.length > 20) return false;
+  if ((table.maxRowSpan ?? 1) > 1 || (table.maxColSpan ?? 1) > 1) return false;
+  const max = Math.max(...rowCounts);
+  const min = Math.min(...rowCounts);
+  return max === 2 && min === 1 && rowCounts.filter(value => value === 2).length >= 2 && rowCounts.filter(value => value === 1).length >= 2;
+}
+
 export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis?: AnalysisResult): Stage43TableFailureClass {
   const tableCategory = analysis?.categories.find(category => category.key === 'table_markup');
   const tableFailing = Boolean(tableCategory?.applicable && tableCategory.score < 70);
+  const strongTableResidual = Boolean(tableCategory?.applicable && tableCategory.score < 90);
   const directSignal = snapshot.detectionProfile?.tableSignals.directCellUnderTableCount ?? 0;
   const misplacedSignal = snapshot.detectionProfile?.tableSignals.misplacedCellCount ?? 0;
   const scoredTables = snapshot.tables.filter(table =>
@@ -760,17 +956,23 @@ export function classifyStage43TableFailure(snapshot: DocumentSnapshot, analysis
   if (scoredTables.some(table => (table.rowCount ?? 0) <= 1 && (table.totalCells ?? 0) >= 4)) {
     return 'rowless_dense_table';
   }
-  if (
-    tableFailing &&
-    scoredTables.some(table =>
+  if (strongTableResidual) {
+    const stronglyIrregularTables = scoredTables.filter(table =>
       table.hasHeaders &&
       (table.cellsMisplacedCount ?? 0) === 0 &&
       (table.rowCount ?? 0) > 1 &&
       (table.irregularRows ?? 0) >= 2 &&
       (table.dominantColumnCount ?? 0) >= 2,
-    )
-  ) {
-    return 'strongly_irregular_rows';
+    );
+    if (stronglyIrregularTables.length > 0) {
+      const allStrongTablesAreSingleColumnVariance = stronglyIrregularTables.every(isSingleColumnVarianceTable);
+      return allStrongTablesAreSingleColumnVariance
+        ? 'single_column_variance_template'
+        : 'strongly_irregular_rows';
+    }
+    if (scoredTables.some(isSingleColumnVarianceTable)) {
+      return 'single_column_variance_template';
+    }
   }
   if (scoredTables.some(table => !table.hasHeaders && table.totalCells >= 4)) {
     return 'missing_headers_only';
@@ -1129,9 +1331,12 @@ function sortFigureTargets<T extends { page: number; structRef?: string }>(targe
 }
 
 const DEFAULT_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 3);
-export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 5);
+// Stage 146 only opens after the default pass succeeds and the remaining targets are checker-visible,
+// reachable figures in an otherwise stable native/tagged document. Long annual reports need this fanout.
+export const STAGE146_FIGURE_ALT_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 40);
 const DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN = 2;
 const STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN = 3;
+const STAGE194_CHART_RETAG_TARGETS_PER_RUN = Math.min(REMEDIATION_MAX_FIGURE_ALT_MUTATIONS_PER_RUN, 16);
 
 function normalizeFallbackTitleCandidate(value: string | null | undefined): string | null {
   const raw = (value ?? '').replace(/\s+/g, ' ').trim();
@@ -1184,7 +1389,11 @@ export function deriveFallbackDocumentTitle(snapshot: DocumentSnapshot, filename
   return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').slice(0, 500);
 }
 
-function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: DocumentSnapshot): Record<string, unknown> {
+function boundedNativeLayoutSynthesisParams(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  readabilityFocusedPlan = false,
+): Record<string, unknown> {
   if (
     analysis.pdfClass === 'native_untagged' &&
     snapshot.structureTree === null &&
@@ -1203,6 +1412,33 @@ function boundedNativeLayoutSynthesisParams(analysis: AnalysisResult, snapshot: 
     (snapshot.contentTaggingAudit?.textOutsideMarkedContentOrArtifact ?? 0) > 0
   ) {
     return { allowExistingMarkedContentText: true };
+  }
+  const headingScore = categoryScore(analysis, 'heading_structure');
+  const readingOrderScore = categoryScore(analysis, 'reading_order');
+  const layoutHeadingCandidateCount = snapshot.detectionProfile?.headingSignals?.layoutHeadingCandidateCount ?? 0;
+  const shallowNativeTaggedShell =
+    analysis.pdfClass === 'native_tagged' &&
+    snapshot.structureTree !== null &&
+    snapshot.headings.length === 0 &&
+    (snapshot.detectionProfile?.headingSignals.treeHeadingCount ?? 0) === 0 &&
+    snapshot.textCharCount > 0 &&
+    (
+      snapshot.detectionProfile?.readingOrderSignals?.degenerateStructureTree === true ||
+      (snapshot.detectionProfile?.readingOrderSignals?.structureTreeDepth ?? 99) <= FORCE_SYNTHESIS_QPDF_DEPTH_THRESHOLD ||
+      (readingOrderScore !== null && readingOrderScore < REMEDIATION_CATEGORY_THRESHOLD)
+    );
+  if (
+    readabilityFocusedPlan &&
+    shallowNativeTaggedShell &&
+    headingScore !== null &&
+    headingScore < REMEDIATION_CATEGORY_THRESHOLD &&
+    layoutHeadingCandidateCount >= 12
+  ) {
+    return {
+      allowExistingMarkedContentText: true,
+      reuseExistingMarkedContentText: true,
+      maxPages: Math.min(Math.max(snapshot.pageCount, 1), 80),
+    };
   }
   return {};
 }
@@ -1226,8 +1462,19 @@ function shouldSkipAfterSuccessfulApply(
       : DEFAULT_RETAG_AS_FIGURE_TARGETS_PER_RUN;
     return successfulApplyCount(applied, toolName) >= cap;
   }
-  // Stage 43 table tools target one table per call and stay bounded to two table targets.
-  if (toolName === 'normalize_table_structure' || toolName === 'set_table_header_cells') {
+  if (toolName === 'normalize_table_structure') {
+    const tableScore = analysis ? categoryScore(analysis, 'table_markup') : null;
+    const remainingStrongTables = snapshot?.detectionProfile?.tableSignals?.stronglyIrregularTableCount ??
+      snapshot?.tables.filter(table =>
+        (table.irregularRows ?? 0) >= 2 &&
+        (table.cellsMisplacedCount ?? 0) === 0
+      ).length ?? 0;
+    const cap = tableScore != null && tableScore < 90 && remainingStrongTables > 0
+      ? 4
+      : 2;
+    return successfulApplyCount(applied, toolName) >= cap;
+  }
+  if (toolName === 'set_table_header_cells') {
     return successfulApplyCount(applied, toolName) >= 2;
   }
   // Python fixes up to 64 orphans per pass; repeat until converged (matches pikepdf mutator rounds).
@@ -1260,7 +1507,12 @@ function toolApplicableToPdfClass(
   }
   if (toolName === 'create_heading_from_candidate') {
     if (pdfClass === 'scanned') return false;
-    return snapshot.structureTree !== null && (snapshot.paragraphStructElems?.length ?? 0) > 0;
+    if (snapshot.textCharCount <= 0) return false;
+    if ((snapshot.paragraphStructElems?.length ?? 0) > 0) return true;
+    if ((snapshot.layoutAudit?.layoutHeadingCandidateCount ?? 0) > 0) return true;
+    if ((snapshot.mcidTextSpans?.length ?? 0) > 0) return true;
+    if ((snapshot.nativeTitleBtCandidates?.length ?? 0) > 0) return true;
+    return false;
   }
   if (toolName === 'create_heading_from_visible_text_anchor') {
     if (pdfClass === 'scanned') return false;
@@ -1380,9 +1632,14 @@ function toolApplicableToPdfClass(
     return pdfClass === 'native_tagged' || pdfClass === 'native_untagged' || pdfClass === 'mixed';
   }
   if (toolName === 'normalize_heading_hierarchy') {
+    const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount
+      ?? snapshot.headings.length;
+    const hasH1 = snapshot.headings.some(heading => heading.level === 1);
     // Zero-heading convergence can create a new heading earlier in the same stage.
     return snapshot.structureTree !== null && (
-      snapshot.headings.length >= 2 || (snapshot.paragraphStructElems?.length ?? 0) > 0
+      snapshot.headings.length >= 2
+      || (snapshot.paragraphStructElems?.length ?? 0) > 0
+      || (!hasH1 && treeHeadingCount === 1)
     );
   }
   if (toolName === 'tag_ocr_text_blocks') {
@@ -1489,6 +1746,34 @@ export function isProtectedZeroHeadingConvergence(
     || recovery.kind === 'minimal_or_degenerate_tree';
 }
 
+export function shouldExemptNativeTextTaggingForOcrFallback(
+  analysis: AnalysisResult,
+  snapshot: DocumentSnapshot,
+  alreadyApplied: readonly AppliedRemediationTool[],
+  plannedTools: readonly PlannedRemediationTool[] = [],
+): boolean {
+  if (analysis.pdfClass === 'scanned') return false;
+  if (analysis.score >= REMEDIATION_TARGET_SCORE) return false;
+  if ((categoryScore(analysis, 'heading_structure') ?? 100) > 20) return false;
+  if ((snapshot.pageCount ?? analysis.pageCount ?? 0) < 4) return false;
+
+  const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount ?? snapshot.headings.length;
+  const extractedHeadingCount = snapshot.detectionProfile?.headingSignals?.extractedHeadingCount ?? snapshot.headings.length;
+  if (snapshot.headings.length > 0 || treeHeadingCount > 0 || extractedHeadingCount > 0) return false;
+  if (alreadyApplied.some(row => row.toolName === 'tag_native_text_blocks')) return false;
+
+  return alreadyApplied.some(row => row.toolName === 'ocr_scanned_pdf' && row.outcome === 'failed') ||
+    plannedTools.some(tool => tool.toolName === 'ocr_scanned_pdf');
+}
+
+export interface FocusedRemediationPlanOptions {
+  focusedToolNames?: readonly string[];
+  preferredRoutes?: readonly RemediationRoute[];
+  focusedOnly?: boolean;
+  focusedRationale?: string;
+  mode?: 'readability';
+}
+
 /**
  * Pure planner: failing categories + snapshot/pdfClass → staged tools.
  * No corpus ids, filenames, or customer-specific rules.
@@ -1499,10 +1784,14 @@ export function planForRemediation(
   alreadyApplied: AppliedRemediationTool[] = [],
   toolOutcomeStore?: ToolOutcomeStore,
   includeOptionalRemediation = false,
+  focusedOptions?: FocusedRemediationPlanOptions,
 ): RemediationPlan {
+  const focusedToolNames = new Set<string>(focusedOptions?.focusedToolNames ?? []);
+  const focusedPlanRequested = focusedToolNames.size > 0;
+  const readabilityFocusedPlan = focusedOptions?.mode === 'readability';
   const stage5PacCatalogCandidate = shouldTryStage5PacCatalogSettings(analysis, snapshot)
     && !alreadyApplied.some(row => row.toolName === 'normalize_pdfua_catalog_settings' && row.outcome === 'applied');
-  if (analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot) && !stage5PacCatalogCandidate) {
+  if (!focusedPlanRequested && analysis.score >= REMEDIATION_TARGET_SCORE && !hasExternalReadinessDebt(analysis, snapshot) && !stage5PacCatalogCandidate) {
     return {
       stages: [],
       planningSummary: buildPlanningSummary({
@@ -1608,6 +1897,15 @@ export function planForRemediation(
   const headingCreateRecoveryActive =
     zeroHeadingRecovery.kind === 'recoverable_paragraph_tree' ||
     zeroHeadingRecovery.kind === 'minimal_or_degenerate_tree';
+  const headingH1PromotionNeeded =
+    headingNeedsRepair
+    && snapshot.headings.length > 0
+    && !snapshot.headings.some(heading => heading.level === 1)
+    && (
+      (snapshot.detectionProfile?.headingSignals.rootReachableHeadingCount ?? 0) > 0
+      || (snapshot.detectionProfile?.headingSignals?.layoutHeadingCandidateCount ?? 0) > 0
+      || (snapshot.paragraphStructElems?.length ?? 0) > 0
+    );
   const protectedZeroHeadingConvergence = isProtectedZeroHeadingConvergence(analysis, snapshot);
   const protectedZeroHeadingTimedOut = alreadyApplied.some(
     tool => tool.toolName === 'repair_structure_conformance' && /timeout\s+\d+ms/i.test(tool.details ?? ''),
@@ -1664,6 +1962,9 @@ export function planForRemediation(
       && !(toolName === 'repair_alt_text_structure' && hasOfficeFigureRoleMapAltDebt(snapshot))
     ) {
       return { allowed: false, reason: 'semantic_deferred' };
+    }
+    if (toolName === 'set_document_title' && hasReusableMetadataTitle(snapshot)) {
+      return { allowed: false, reason: 'missing_precondition' };
     }
     if (toolName === 'repair_annotation_alt_text' && !hasAnnotationSignals) {
       return { allowed: false, reason: 'missing_precondition' };
@@ -1878,10 +2179,17 @@ export function planForRemediation(
     }
     if (
       (toolName === 'normalize_table_structure' || toolName === 'repair_native_table_headers' || toolName === 'set_table_header_cells')
-      && !(snapshot.tables.length > 0 && categoryFailing('table_markup') && (structureConfidenceHigh || categoryFailing('table_markup')))
+      && !(
+        snapshot.tables.length > 0 &&
+        (
+          categoryFailing('table_markup') ||
+          (toolName === 'normalize_table_structure' && hasTableSignals && (categoryScore(analysis, 'table_markup') ?? 100) < 90)
+        ) &&
+        (structureConfidenceHigh || categoryFailing('table_markup') || toolName === 'normalize_table_structure')
+      )
     ) {
-      // Stage 43 is intentionally narrow: table tools run only when table_markup is
-      // already failing, avoiding protected-file spillover from advisory table signals.
+      // Stage 43 stays narrow: header tools require failing table markup, while
+      // structure normalization may continue on residual strong irregular evidence.
       return { allowed: false, reason: 'missing_precondition' };
     }
     if (toolName === 'normalize_table_structure' && classifyStage43TableFailure(snapshot, analysis) === 'not_stage43_table_target') {
@@ -1897,7 +2205,13 @@ export function planForRemediation(
       if (toolName === 'retag_as_figure' && !hasRoleMappedFigureCandidate(snapshot)) {
         return { allowed: false, reason: 'missing_precondition' };
       }
-      if (toolName === 'repair_alt_text_structure' && hasOfficeFigureRoleMapAltDebt(snapshot)) {
+      if (
+        toolName === 'repair_alt_text_structure'
+        && (
+          hasOfficeFigureRoleMapAltDebt(snapshot)
+          || (readabilityFocusedPlan && categoryFailing('alt_text'))
+        )
+      ) {
         return { allowed: true };
       }
       if (toolName === 'repair_annotation_alt_text' || DETERMINISTIC_FIGURE_TOOLS.has(toolName)) {
@@ -1942,7 +2256,8 @@ export function planForRemediation(
         categoryFailing('alt_text')
         && (
           classifyStage44FigureFailure(snapshot, analysis) === 'alt_cleanup_risk' ||
-          hasOfficeFigureRoleMapAltDebt(snapshot)
+          hasOfficeFigureRoleMapAltDebt(snapshot) ||
+          (readabilityFocusedPlan && categoryFailing('alt_text'))
         )
       )
     ) {
@@ -1977,6 +2292,99 @@ export function planForRemediation(
     return { allowed: true };
   };
 
+  const routeForFocusedTool = (toolName: string): RemediationRoute | null => {
+    const routes: RemediationRoute[] = [
+      ...(focusedOptions?.preferredRoutes ?? []),
+      ...(Object.keys(ROUTE_TOOL_MAP) as RemediationRoute[]),
+    ];
+    for (const route of routes) {
+      if (!(ROUTE_TOOL_MAP[route] ?? []).includes(toolName)) continue;
+      if (!isToolAllowedByRouteContract(route, toolName)) continue;
+      return route;
+    }
+    return null;
+  };
+
+  const headingReadabilityFallbackTools = new Set<string>([
+    'create_structure_from_degenerate_native_anchor',
+    'create_heading_from_visible_text_anchor',
+    'create_heading_from_tagged_visible_anchor',
+    'bridge_native_title_text_owner',
+    'create_heading_from_candidate',
+    'create_heading_from_ocr_page_shell_anchor',
+    'create_heading_from_ocr_collection_title_anchor',
+    'recover_ocr_text_ownership',
+    'synthesize_basic_structure_from_layout',
+    'normalize_heading_hierarchy',
+  ]);
+
+  const canBypassHeadingRouteGateInReadabilityMode = (toolName: string): boolean => (
+    readabilityFocusedPlan
+    && headingReadabilityFallbackTools.has(toolName)
+    && (
+      headingCreateRecoveryActive
+      || visibleHeadingAnchorRecoveryActive
+      || ocrPageShellHeadingRecoveryActive
+      || ocrCollectionCoverHeadingRecoveryActive
+      || ocrTextOwnershipRecoveryActive
+      || nativeTaggedNoHeadingSynthesisCandidate
+      || nativeTaggedMcidBackedNoHeadingSynthesisCandidate
+      || shouldDeferTitleUntilZeroHeadingBootstrap()
+      || headingH1PromotionNeeded
+      || (
+        categoryFailing('heading_structure')
+        && snapshot.headings.length === 0
+        && (
+          toolName === 'create_heading_from_candidate'
+          || toolName === 'create_heading_from_visible_text_anchor'
+          || toolName === 'create_heading_from_tagged_visible_anchor'
+          || toolName === 'bridge_native_title_text_owner'
+        )
+      )
+    )
+  );
+
+
+  const addFocusedTool = (toolName: string): void => {
+    if (toolSet.has(toolName)) return;
+    const route = routeForFocusedTool(toolName);
+    if (!route) {
+      addSkipped(toolName, 'route_not_active');
+      return;
+    }
+    const routeGate = toolIsRouteRelevant(toolName);
+    if (!routeGate.allowed && !canBypassHeadingRouteGateInReadabilityMode(toolName)) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_no_fresh_candidate' : (routeGate.reason ?? 'missing_precondition'));
+      return;
+    }
+    if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) {
+      addSkipped(toolName, 'not_applicable');
+      return;
+    }
+    if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_no_fresh_candidate' : 'already_succeeded');
+      return;
+    }
+    const noEffectLimit = toolName === 'create_heading_from_candidate'
+      ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
+      : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
+    if (!readabilityFocusedPlan && noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_no_fresh_candidate' : 'missing_precondition');
+      return;
+    }
+    const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
+    if (!readabilityFocusedPlan && hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
+      addSkipped(toolName, readabilityFocusedPlan ? 'readability_prior_no_effect_reused' : 'missing_precondition');
+      return;
+    }
+    toolSet.set(toolName, {
+      toolName,
+      params,
+      rationale: focusedOptions?.focusedRationale ?? `Run readability-focused repair tool ${toolName}.`,
+      route,
+    });
+  };
+
   for (const route of activeRoutes) {
     const tools = ROUTE_TOOL_MAP[route] ?? [];
     for (const toolName of tools) {
@@ -1992,7 +2400,7 @@ export function planForRemediation(
         continue;
       }
       const routeGate = toolIsRouteRelevant(toolName);
-      if (!routeGate.allowed) {
+      if (!routeGate.allowed && !canBypassHeadingRouteGateInReadabilityMode(toolName)) {
         addSkipped(toolName, routeGate.reason ?? 'missing_precondition');
         continue;
       }
@@ -2019,13 +2427,13 @@ export function planForRemediation(
       const noEffectLimit = toolName === 'create_heading_from_candidate'
         ? Math.max(REMEDIATION_MAX_NO_EFFECT_PER_TOOL, eligibleHeadingCandidates.length)
         : REMEDIATION_MAX_NO_EFFECT_PER_TOOL;
-      if (noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
+      if (!readabilityFocusedPlan && noEffectCountForTool(alreadyApplied, toolName) >= noEffectLimit && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
       if (toolSet.has(toolName)) continue;
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
-      if (hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
+      if (!readabilityFocusedPlan && hasPriorNoEffectSignature(alreadyApplied, toolName, params) && !annotationDebtRetry && !annotationTabOrderRetry && !structureConformanceRetry && !artifactFurnitureRetry) {
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
@@ -2051,7 +2459,7 @@ export function planForRemediation(
   ) {
     toolSet.set('repair_top_level_parent_links', {
       toolName: 'repair_top_level_parent_links',
-      params: buildDefaultParams('repair_top_level_parent_links', analysis, snapshot, alreadyApplied),
+      params: buildDefaultParams('repair_top_level_parent_links', analysis, snapshot, alreadyApplied, readabilityFocusedPlan),
       rationale: 'Repair strict PAC top-level structure parent-link debt on an otherwise high-quality tagged document.',
       route: 'safe_cleanup',
     });
@@ -2070,14 +2478,14 @@ export function planForRemediation(
   ) {
     toolSet.set('repair_parent_tree_mcid_references', {
       toolName: 'repair_parent_tree_mcid_references',
-      params: buildDefaultParams('repair_parent_tree_mcid_references', analysis, snapshot, alreadyApplied),
+      params: buildDefaultParams('repair_parent_tree_mcid_references', analysis, snapshot, alreadyApplied, readabilityFocusedPlan),
       rationale: 'Repair direct PAC ParentTree MCID reference mismatch debt on an otherwise high-quality tagged document.',
       route: 'safe_cleanup',
     });
   }
 
   if (stage5PacCatalogCandidate && !toolSet.has('normalize_pdfua_catalog_settings')) {
-    const params = buildDefaultParams('normalize_pdfua_catalog_settings', analysis, snapshot, alreadyApplied);
+    const params = buildDefaultParams('normalize_pdfua_catalog_settings', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
     if (!hasPriorNoEffectSignature(alreadyApplied, 'normalize_pdfua_catalog_settings', params)) {
       toolSet.set('normalize_pdfua_catalog_settings', {
         toolName: 'normalize_pdfua_catalog_settings',
@@ -2099,7 +2507,7 @@ export function planForRemediation(
     && !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied)
     && noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
   ) {
-    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied);
+    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
     if (
       typeof fallbackParams['targetRef'] === 'string'
       && fallbackParams['targetRef'].length > 0
@@ -2182,6 +2590,34 @@ export function planForRemediation(
     }
   }
 
+  if (
+    readabilityFocusedPlan
+    && headingH1PromotionNeeded
+    && !toolSet.has('create_heading_from_candidate')
+    && !shouldSkipAfterSuccessfulApply('create_heading_from_candidate', alreadyApplied, analysis, snapshot)
+    && noEffectCountForTool(alreadyApplied, 'create_heading_from_candidate') < Math.max(
+      REMEDIATION_MAX_NO_EFFECT_PER_TOOL,
+      Math.max(snapshot.detectionProfile?.headingSignals?.layoutHeadingCandidateCount ?? 0, 1),
+    )
+  ) {
+    const fallbackParams = buildDefaultParams('create_heading_from_candidate', analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
+    if (
+      (
+        (typeof fallbackParams['targetRef'] === 'string' && fallbackParams['targetRef'].length > 0)
+        || (typeof fallbackParams['text'] === 'string' && fallbackParams['text'].length > 0)
+      )
+      && !hasPriorNoEffectSignature(alreadyApplied, 'create_heading_from_candidate', fallbackParams)
+      && toolApplicableToPdfClass('create_heading_from_candidate', analysis.pdfClass, snapshot)
+    ) {
+      toolSet.set('create_heading_from_candidate', {
+        toolName: 'create_heading_from_candidate',
+        params: fallbackParams,
+        rationale: 'Readability H1 promotion for an existing heading tree without an H1.',
+        route: 'post_bootstrap_heading_convergence',
+      });
+    }
+  }
+
   {
     const toolName = 'create_structure_from_degenerate_native_anchor';
     if (
@@ -2191,7 +2627,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2216,7 +2652,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
         toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
@@ -2240,7 +2676,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2272,7 +2708,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2307,7 +2743,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2334,7 +2770,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
         toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
@@ -2358,7 +2794,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         !hasPriorNoEffectSignature(alreadyApplied, toolName, params) &&
         toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)
@@ -2382,7 +2818,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2409,7 +2845,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(toolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, toolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (
         typeof params['text'] === 'string' &&
         params['text'].length > 0 &&
@@ -2445,7 +2881,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, synToolName, params)) {
         addSkipped(synToolName, 'missing_precondition');
       } else {
@@ -2463,7 +2899,7 @@ export function planForRemediation(
       !shouldSkipAfterSuccessfulApply(synToolName, alreadyApplied) &&
       noEffectCountForTool(alreadyApplied, synToolName) < REMEDIATION_MAX_NO_EFFECT_PER_TOOL
     ) {
-      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(synToolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, synToolName, params)) {
         addSkipped(synToolName, 'missing_precondition');
       } else {
@@ -2511,7 +2947,7 @@ export function planForRemediation(
         addSkipped(toolName, 'missing_precondition');
         continue;
       }
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) {
         addSkipped(toolName, 'missing_precondition');
         continue;
@@ -2535,7 +2971,7 @@ export function planForRemediation(
       if (toolSet.has(toolName)) continue;
       if (!toolApplicableToPdfClass(toolName, analysis.pdfClass, snapshot)) continue;
       if (shouldSkipAfterSuccessfulApply(toolName, alreadyApplied, analysis, snapshot)) continue;
-      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied);
+      const params = buildDefaultParams(toolName, analysis, snapshot, alreadyApplied, readabilityFocusedPlan);
       if (hasPriorNoEffectSignature(alreadyApplied, toolName, params)) continue;
       toolSet.set(toolName, {
         toolName,
@@ -2546,6 +2982,8 @@ export function planForRemediation(
     }
   }
 
+  for (const toolName of focusedToolNames) addFocusedTool(toolName);
+
   for (const route of routing.deferredRoutes) {
     for (const toolName of ROUTE_TOOL_MAP[route] ?? []) {
       if (route === 'figure_semantics' && DETERMINISTIC_FIGURE_TOOLS.has(toolName)) continue;
@@ -2555,7 +2993,9 @@ export function planForRemediation(
     }
   }
 
-  const plannedRaw = Array.from(toolSet.values()).sort((a, b) => {
+  const plannedRaw = Array.from(toolSet.values())
+    .filter(tool => !focusedOptions?.focusedOnly || focusedToolNames.has(tool.toolName))
+    .sort((a, b) => {
     const sa = REMEDIATION_TOOL_STAGE_ORDER[a.toolName] ?? 99;
     const sb = REMEDIATION_TOOL_STAGE_ORDER[b.toolName] ?? 99;
     if (sa !== sb) return sa - sb;
@@ -2577,7 +3017,10 @@ export function planForRemediation(
   } else if (failureDisposition.headingMalformedExistingTree) {
     reliabilityExemptTools.add('normalize_heading_hierarchy');
   }
-  if (stage43TableFailure === 'missing_headers_only') {
+  const reliabilityExemptStage43TableDebt =
+    stage43TableFailure === 'missing_headers_only' ||
+    stage43TableFailure === 'strongly_irregular_rows';
+  if (reliabilityExemptStage43TableDebt) {
     ['normalize_table_structure', 'repair_native_table_headers', 'set_table_header_cells'].forEach(toolName => reliabilityExemptTools.add(toolName));
   }
   if (
@@ -2591,6 +3034,15 @@ export function planForRemediation(
   }
   if (shouldRetryStructureConformanceAfterDebtAppears(analysis, snapshot)) {
     ['repair_structure_conformance', 'artifact_repeating_page_furniture'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
+  if (shouldExemptNativeTextTaggingForOcrFallback(analysis, snapshot, alreadyApplied, plannedMandatoryRaw)) {
+    reliabilityExemptTools.add('tag_native_text_blocks');
+  }
+  if (categoryFailing('text_extractability')) {
+    ['substitute_legacy_fonts_in_place', 'finalize_substituted_font_conformance', 'ocr_scanned_pdf', 'tag_ocr_text_blocks', 'recover_ocr_text_ownership'].forEach(toolName => reliabilityExemptTools.add(toolName));
+  }
+  if (readabilityFocusedPlan) {
+    for (const toolName of focusedToolNames) reliabilityExemptTools.add(toolName);
   }
   const planned = filterPlannedToolsByReliability(
     plannedMandatoryRaw,
@@ -2648,6 +3100,7 @@ export function buildDefaultParams(
   analysis: AnalysisResult,
   snapshot: DocumentSnapshot,
   alreadyApplied: AppliedRemediationTool[] = [],
+  readabilityFocusedPlan = false,
 ): Record<string, unknown> {
   const meta = snapshot.metadata;
   switch (toolName) {
@@ -2663,7 +3116,7 @@ export function buildDefaultParams(
         language: (meta.language?.trim() || snapshot.lang?.trim() || 'en-US').slice(0, 32),
       };
     case 'synthesize_basic_structure_from_layout':
-      return boundedNativeLayoutSynthesisParams(analysis, snapshot);
+      return boundedNativeLayoutSynthesisParams(analysis, snapshot, readabilityFocusedPlan);
     case 'normalize_pdfua_catalog_settings':
       return {};
     case 'ocr_scanned_pdf':
@@ -2698,7 +3151,7 @@ export function buildDefaultParams(
           snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && !attemptedRefs.has(f.structRef) && isFigureRole(f.role)),
         );
       const target = checkerCandidates[0] ?? fallbackCandidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltText(snapshot, target, alreadyApplied) } : {};
     }
     case 'create_heading_from_candidate': {
       const candidate = stage24ZeroHeadingBootstrapEnabled()
@@ -2708,27 +3161,49 @@ export function buildDefaultParams(
         )
         : null;
       if (!candidate) {
-        const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename);
+        const visibleTitle = extractFirstPageVisibleHeadingText(snapshot, analysis.filename)
+          ?? snapshot.textByPage[0]?.split(/\r?\n+/).map(line => line.trim()).find(Boolean)
+          ?? null;
         if (!visibleTitle) return {};
         const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
         const zeroExportedHeadings = snapshot.headings.length === 0;
         return {
-          level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+          level: !hasExistingH1 ? 1 : 2,
           text: visibleTitle.slice(0, 200),
           preferPage0TitleSynthesis: true,
+          ...(readabilityFocusedPlan ? { readabilityFallback: true } : {}),
         };
       }
       const hasExistingH1 = snapshot.headings.some(heading => heading.level === 1);
       const zeroExportedHeadings = snapshot.headings.length === 0;
       return {
         targetRef: candidate.structRef,
-        level: !hasExistingH1 && zeroExportedHeadings ? 1 : 2,
+        level: !hasExistingH1 ? 1 : 2,
         text: candidate.text.slice(0, 200),
       };
     }
+    case 'normalize_heading_hierarchy': {
+      const treeHeadingCount = snapshot.detectionProfile?.headingSignals?.treeHeadingCount
+        ?? snapshot.headings.length;
+      const hasH1 = snapshot.headings.some(heading => heading.level === 1);
+      return readabilityFocusedPlan && !hasH1 && treeHeadingCount === 1
+        ? { promoteFirstHeadingShell: true }
+        : {};
+    }
+
     case 'create_heading_from_visible_text_anchor': {
       const candidate = selectVisibleHeadingAnchorCandidate(analysis, snapshot);
-      if (!candidate) return {};
+      if (!candidate) {
+        const visibleTitle = snapshot.textByPage[0]?.split(/\r?\n+/).map(line => line.trim()).find(Boolean) ?? null;
+        if (!visibleTitle || !readabilityFocusedPlan) return {};
+        return {
+          page: 0,
+          level: 1,
+          text: visibleTitle.slice(0, 200),
+          source: 'readability_first_page_text_fallback',
+          confidenceScore: 1,
+        };
+      }
       return {
         page: candidate.page,
         ...(typeof candidate.mcid === 'number' ? { mcid: candidate.mcid } : {}),
@@ -2846,19 +3321,7 @@ export function buildDefaultParams(
     case 'finalize_substituted_font_conformance':
       return { maxWidthDrift: 0.35 };
     case 'mark_figure_decorative': {
-      const checkerCandidates = sortFigureTargets(
-        (snapshot.checkerFigureTargets ?? []).filter(f =>
-          !f.isArtifact
-          && !f.hasAlt
-          && f.structRef
-          && isFigureRole(f.resolvedRole ?? f.role)
-          && f.reachable,
-        ),
-      ).sort((a, b) => Number(b.directContent) - Number(a.directContent) || a.page - b.page || (a.structRef ?? '').localeCompare(b.structRef ?? ''));
-      const fallbackCandidates = sortFigureTargets(
-        snapshot.figures.filter(f => !f.isArtifact && !f.hasAlt && f.structRef && (f.role ?? '').toLowerCase() === 'figure'),
-      );
-      const target = checkerCandidates[0] ?? fallbackCandidates[0];
+      const target = safeDecorativeFigureTargets(snapshot)[0];
       return target?.structRef ? { structRef: target.structRef } : {};
     }
     case 'retag_as_figure': {
@@ -2882,13 +3345,17 @@ export function buildDefaultParams(
           && (f.directContent === true || (f.subtreeMcidCount ?? 0) > 0)
         ),
       ).sort((a, b) =>
-        Number(b.directContent) - Number(a.directContent)
+        Number(chartCaptionAltForTarget(snapshot, b, alreadyApplied) !== null) - Number(chartCaptionAltForTarget(snapshot, a, alreadyApplied) !== null)
+        || Number(b.directContent) - Number(a.directContent)
         || (b.subtreeMcidCount ?? 0) - (a.subtreeMcidCount ?? 0)
         || a.page - b.page
         || (a.structRef ?? '').localeCompare(b.structRef ?? '')
       );
-      const target = candidates[0];
-      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltPlaceholder(target) } : {};
+      const normalRetagBudgetSpent = successfulApplyCount(alreadyApplied, 'retag_as_figure') >= STAGE146_RETAG_AS_FIGURE_TARGETS_PER_RUN;
+      const target = candidates.find(candidate =>
+        !normalRetagBudgetSpent || chartCaptionAltForTarget(snapshot, candidate, alreadyApplied) !== null
+      );
+      return target?.structRef ? { structRef: target.structRef, altText: deterministicFigureAltText(snapshot, target, alreadyApplied) } : {};
     }
     case 'canonicalize_figure_alt_ownership':
     case 'normalize_nested_figure_containers': {
@@ -2941,6 +3408,7 @@ export function buildDefaultParams(
               && (table.irregularRows ?? 0) >= 2
               && (table.dominantColumnCount ?? 0) >= 2;
           }
+          if (tableClass === 'single_column_variance_template') return isSingleColumnVarianceTable(table);
           if (tableClass === 'missing_headers_only') return !table.hasHeaders && table.totalCells >= 4;
           if (tableClass === 'layout_table_candidate') return table.totalCells <= 2 && !table.hasHeaders;
           return false;
@@ -2952,7 +3420,7 @@ export function buildDefaultParams(
           || a.page - b.page
           || (a.structRef ?? '').localeCompare(b.structRef ?? '')
         )[0];
-      if (tableClass === 'strongly_irregular_rows') {
+      if (tableClass === 'strongly_irregular_rows' || tableClass === 'single_column_variance_template') {
         const strongTableCount = snapshot.tables
           .filter(isRealRootReachableTableTarget)
           .filter(table =>
@@ -2963,21 +3431,46 @@ export function buildDefaultParams(
             (table.dominantColumnCount ?? 0) >= 2
           ).length;
         const nativeStrongSignalCount = snapshot.detectionProfile?.tableSignals?.stronglyIrregularTableCount ?? 0;
+        const tableHeaderAudit = snapshot.tableHeaderAudit;
+        const dataCellsWithoutHeader = tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0;
+        const headerAssociationMissing = tableHeaderAudit?.headerAssociationMissingCount ?? 0;
+        const mediumScaleUndersegmentedRows =
+          (categoryScore(analysis, 'table_markup') ?? 100) < 40 &&
+          (categoryScore(analysis, 'heading_structure') ?? 0) >= 90 &&
+          (categoryScore(analysis, 'alt_text') ?? 0) >= 90 &&
+          (categoryScore(analysis, 'reading_order') ?? 0) >= 95 &&
+          (snapshot.pageCount ?? 0) >= 20 &&
+          (tableHeaderAudit?.tablesChecked ?? 0) <= 60 &&
+          strongTableCount >= 4 &&
+          nativeStrongSignalCount >= 4 &&
+          dataCellsWithoutHeader >= 80 &&
+          headerAssociationMissing >= 4;
         const largeObjectBackedTableBatch =
+          mediumScaleUndersegmentedRows ||
           (
             strongTableCount >= 12 &&
-            ((snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 500 ||
-              (snapshot.tableHeaderAudit?.headerAssociationMissingCount ?? 0) >= 12)
+            (dataCellsWithoutHeader >= 500 ||
+              headerAssociationMissing >= 12)
           ) ||
           (
             strongTableCount >= 4 &&
-            (snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 3000
+            dataCellsWithoutHeader >= 3000
           ) ||
           (
             strongTableCount > 0 &&
             nativeStrongSignalCount >= 12 &&
-            (snapshot.tableHeaderAudit?.dataCellsWithoutHeaderCount ?? 0) >= 3000
+            dataCellsWithoutHeader >= 3000
           );
+        if (tableClass === 'single_column_variance_template') {
+          return target?.structRef
+            ? {
+              structRef: target.structRef,
+              dominantColumnCount: 2,
+              maxSyntheticCells: 32,
+              tableFailureClass: tableClass,
+            }
+            : {};
+        }
         return {
           dominantColumnCount: 0,
           maxTablesPerRun: largeObjectBackedTableBatch ? 24 : 4,

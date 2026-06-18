@@ -56,6 +56,7 @@ services:
       TMPDIR: /data/tmp
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC: '1'
       PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS: '1'
+      REQUEST_TIMEOUT_REMEDIATE_MS: '600000'
       PDFAF_RUN_LOCAL_LLM: '1'
       LLAMA_SERVER_BIN: /opt/llama/llama-server
       PDFAF_LLAMA_WORKDIR: /app/data/llama-work

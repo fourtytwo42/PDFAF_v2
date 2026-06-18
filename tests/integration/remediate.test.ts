@@ -111,6 +111,46 @@ describe('POST /v1/remediate', () => {
     expect(res.body.semantic.gate.reason).toBe('no_llm_config');
   }, 120_000);
 
+  it('includes readabilityReview summary when requested without LLM base URL', async () => {
+    if (process.env['OPENAI_COMPAT_BASE_URL']) {
+      console.log('[integration] OPENAI_COMPAT_BASE_URL set ? skipping readability no_llm_config assertion');
+      return;
+    }
+    const pdf = await barePdfBuffer();
+    const res = await request(app)
+      .post('/v1/remediate')
+      .field('options', JSON.stringify({ readabilityReview: true, maxRounds: 1 }))
+      .attach('file', pdf, { filename: 'readability-no-llm.pdf', contentType: 'application/pdf' });
+    if (res.status === 429) return;
+    expect(res.status).toBe(200);
+    expect(res.body.readabilityReview).toBeDefined();
+    expect(res.body.readabilityReview.status).toBe('passed');
+    expect(res.body.readabilityReview.skippedReason).toBe('no_llm_config');
+    expect(res.body.readabilityReview.score).toBeGreaterThanOrEqual(90);
+    expect(res.body.readabilityReview.proxy.pageCount).toBeGreaterThan(0);
+  }, 120_000);
+
+
+  it('skips readability auto-repair when the AI review is skipped', async () => {
+    if (process.env['OPENAI_COMPAT_BASE_URL']) {
+      console.log('[integration] OPENAI_COMPAT_BASE_URL set - skipping readability auto-repair no_llm_config assertion');
+      return;
+    }
+    const pdf = await barePdfBuffer();
+    const res = await request(app)
+      .post('/v1/remediate')
+      .field('options', JSON.stringify({ readabilityReview: true, readabilityAutoRepair: true, maxRounds: 1 }))
+      .attach('file', pdf, { filename: 'readability-auto-repair-no-llm.pdf', contentType: 'application/pdf' });
+    if (res.status === 429) return;
+    expect(res.status).toBe(200);
+    expect(res.body.readabilityReview.status).toBe('passed');
+    expect(res.body.readabilityAutoRepair).toBeDefined();
+    expect(res.body.readabilityAutoRepair.attempted).toBe(false);
+    expect(res.body.readabilityAutoRepair.applied).toBe(false);
+    expect(res.body.readabilityAutoRepair.reason).toBe('readability_passed');
+    expect(res.body.readabilityReviewAttempts).toHaveLength(1);
+  }, 120_000);
+
   it('uses semantic defaults and skips cleanly when no LLM base URL is set', async () => {
     if (process.env['OPENAI_COMPAT_BASE_URL']) {
       console.log('[integration] OPENAI_COMPAT_BASE_URL set — skipping default no_llm_config assertion');

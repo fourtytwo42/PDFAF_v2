@@ -41,10 +41,11 @@ export interface ReportLayoutHeadingRecoveryDisposition {
   matches: ReportLayoutHeadingTargetMatch[];
 }
 
-const MIN_LAYOUT_HEADING_CANDIDATES = 60;
+const MIN_LAYOUT_HEADING_CANDIDATES = 12;
 const MIN_REPEATED_HEADER_FOOTER_PAGES = 2;
-const MIN_LAYOUT_HEADING_DENSITY = 2.0;
+const MIN_LAYOUT_HEADING_DENSITY = 1.5;
 const MIN_EXISTING_TARGET_MATCHES = 2;
+const MIN_SAMPLED_PAGE_COUNT = 7;
 
 const CAPTION_RE = /^(figure|fig\.|chart|graph|table)\s*[\dA-ZIVX]+[\s:.\-]/i;
 
@@ -201,6 +202,9 @@ export function classifyReportLayoutHeadingRecovery(
   const paragraphCandidates = stageCandidateParagraphs(snapshot);
   const matches = layout ? buildMatches(snapshot, layout, paragraphCandidates) : [];
   const paragraphMatches = matches.filter(match => match.type === 'paragraph_struct_elem');
+  const hasNonParagraphTextMatch = matches.some(
+    match => (match.type === 'layout_text' || match.type === 'native_title_bt') && tokenCount(match.text) >= 3,
+  );
   const mcidTargetMatchCount = matches.filter(match => match.type === 'mcid_text_span').length;
   const nativeTitleTargetMatchCount = matches.filter(match => match.type === 'native_title_bt').length;
   const paragraphCandidatesWithLayoutMatch = paragraphMatches
@@ -210,6 +214,7 @@ export function classifyReportLayoutHeadingRecovery(
   if (analysis.pdfClass === 'scanned') reasons.push('scanned_pdf');
   if (snapshot.structureTree === null) reasons.push('missing_structure_tree');
   if (!layout) reasons.push('missing_layout_audit');
+  if (sampledPageCount < MIN_SAMPLED_PAGE_COUNT) reasons.push('sampled_pages_below_' + MIN_SAMPLED_PAGE_COUNT + ':' + sampledPageCount);
   if (sampledPageCount <= 0) reasons.push('no_sampled_pages');
   if (!((readingOrderScore ?? 100) <= 80 || (headingStructureScore ?? 100) <= 80)) {
     reasons.push('reading_and_heading_scores_above_report_layout_threshold');
@@ -226,20 +231,24 @@ export function classifyReportLayoutHeadingRecovery(
   if (matches.length < MIN_EXISTING_TARGET_MATCHES) {
     reasons.push(`existing_target_matches_below_${MIN_EXISTING_TARGET_MATCHES}:${matches.length}`);
   }
-  if (paragraphCandidatesWithLayoutMatch.length < 1) {
+  const paragraphBackedCandidateAvailable = paragraphCandidatesWithLayoutMatch.length > 0 || snapshot.structureTree === null;
+  const hasTextOrTitleCandidateEvidence = hasNonParagraphTextMatch || paragraphBackedCandidateAvailable;
+
+  if (snapshot.structureTree !== null && paragraphCandidatesWithLayoutMatch.length < 1 && !hasNonParagraphTextMatch) {
     reasons.push('no_paragraph_backed_heading_candidate');
   }
 
   const canRecover =
     analysis.pdfClass !== 'scanned' &&
-    snapshot.structureTree !== null &&
+    (snapshot.structureTree !== null || analysis.pdfClass === 'native_untagged') &&
     layout !== undefined &&
-    sampledPageCount > 0 &&
+    sampledPageCount >= MIN_SAMPLED_PAGE_COUNT &&
     ((readingOrderScore ?? 100) <= 80 || (headingStructureScore ?? 100) <= 80) &&
     layoutHeadingCandidateCount >= MIN_LAYOUT_HEADING_CANDIDATES &&
     repeatedHeaderFooterPageCount >= MIN_REPEATED_HEADER_FOOTER_PAGES &&
     layoutHeadingDensity >= MIN_LAYOUT_HEADING_DENSITY &&
-    matches.length >= MIN_EXISTING_TARGET_MATCHES;
+    matches.length >= MIN_EXISTING_TARGET_MATCHES &&
+    hasTextOrTitleCandidateEvidence;
 
   return {
     kind: canRecover ? REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL : 'no_report_layout_heading_recovery',

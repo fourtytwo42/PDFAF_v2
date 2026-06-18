@@ -111,7 +111,7 @@ describe('classifyReportLayoutHeadingRecovery', () => {
       heading_structure: 55,
     }), snapshot);
     expect(result.kind).toBe('no_report_layout_heading_recovery');
-    expect(result.reasons).toContain('layout_heading_candidates_below_60:24');
+    expect(result.reasons).toContain('sampled_pages_below_7:5');
   });
 
   it('rejects an ADAM-like table/noise control without repeated report furniture', () => {
@@ -135,7 +135,7 @@ describe('classifyReportLayoutHeadingRecovery', () => {
       heading_structure: 0,
     }), snapshot);
     expect(result.kind).toBe('no_report_layout_heading_recovery');
-    expect(result.reasons).toContain('repeated_header_footer_pages_below_20:0');
+    expect(result.reasons).toContain('repeated_header_footer_pages_below_2:0');
   });
 
   it('rejects an accessible fixture with no current reading or heading debt', () => {
@@ -176,4 +176,28 @@ describe('classifyReportLayoutHeadingRecovery', () => {
     expect(result.paragraphTargetMatchCount).toBe(0);
     expect(result.reasons).toContain('no_paragraph_backed_heading_candidate');
   });
+  it('accepts MCID-backed layout evidence for native_untagged without structure tree', () => {
+    const snapshot: DocumentSnapshot = {
+      ...baseSnapshot(),
+      pdfClass: 'native_untagged',
+      structureTree: null,
+      layoutAudit: layoutAudit(),
+      paragraphStructElems: [],
+      mcidTextSpans: [
+        { page: 0, mcid: 10, snippet: '/P << /MCID 10 >>', resolvedText: 'Executive Summary' },
+        { page: 1, mcid: 11, snippet: '/P << /MCID 11 >>', resolvedText: 'Key Findings' },
+      ],
+    };
+    const result = classifyReportLayoutHeadingRecovery(analysisFor(snapshot, {
+      reading_order: 30,
+      heading_structure: 0,
+    }), snapshot);
+    expect(result.kind).toBe(REPORT_LAYOUT_HEADING_RECOVERY_SIGNAL);
+    expect(result.existingTargetMatchCount).toBe(2);
+    expect(result.mcidTargetMatchCount).toBe(2);
+    expect(result.paragraphTargetMatchCount).toBe(0);
+    expect(result.reasons).not.toContain('no_paragraph_backed_heading_candidate');
+    expect(result.paragraphCandidates).toEqual([]);
+  });
+
 });

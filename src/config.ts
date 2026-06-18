@@ -245,7 +245,7 @@ export const REMEDIATION_ANALYSIS_TIMEOUT_MS = parseInt(
 export const REMEDIATION_PDF_TIMEOUT_MS = parseInt(
   process.env['PDFAF_REMEDIATION_PDF_TIMEOUT_MS']
     ?? process.env['REQUEST_TIMEOUT_REMEDIATE_MS']
-    ?? String(5 * 60 * 1000),
+    ?? String(10 * 60 * 1000),
   10,
 );
 
@@ -484,7 +484,7 @@ export const REMEDIATION_TOOL_STAGE_ORDER: Record<string, number> = {
   create_heading_from_ocr_page_shell_anchor: 8,
   create_heading_from_ocr_collection_title_anchor: 8,
   recover_ocr_text_ownership:        8,
-  create_heading_from_candidate:       4,
+  create_heading_from_candidate:       2,
   normalize_heading_hierarchy:         4,
   replace_bookmarks_from_headings:     4,
   add_page_outline_bookmarks:          5,
@@ -644,6 +644,53 @@ export const SEMANTIC_REQUEST_TIMEOUT_MS = parseInt(
   process.env['SEMANTIC_REQUEST_TIMEOUT_MS'] ?? '120000',
   10,
 );
+
+/** Per post-remediation AI readability review request (ms). */
+export const READABILITY_REVIEW_TIMEOUT_MS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_TIMEOUT_MS'] ?? '45000',
+  10,
+);
+
+/** Max extracted page text characters sent to the AI readability reviewer. */
+export const READABILITY_REVIEW_MAX_TEXT_CHARS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_MAX_TEXT_CHARS'] ?? '12000',
+  10,
+);
+
+/** Max repeated structure items included in the readability review proxy. */
+export const READABILITY_REVIEW_MAX_ITEMS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_MAX_ITEMS'] ?? '24',
+  10,
+);
+
+/** Max AI readability findings returned to clients/reports. */
+export const READABILITY_REVIEW_MAX_FINDINGS = parseInt(
+  process.env['PDFAF_READABILITY_REVIEW_MAX_FINDINGS'] ?? '10',
+  10,
+);
+
+const _readabilityAutoRepairMaxAttempts = parseInt(
+  process.env['PDFAF_READABILITY_AUTO_REPAIR_MAX_ATTEMPTS'] ?? '1',
+  10,
+);
+export const READABILITY_AUTO_REPAIR_MAX_ATTEMPTS = Number.isFinite(_readabilityAutoRepairMaxAttempts)
+  ? Math.max(0, Math.min(_readabilityAutoRepairMaxAttempts, 10))
+  : 10;
+
+const _readabilityAutoRepairTargetScore = Number(
+  process.env['PDFAF_READABILITY_AUTO_REPAIR_TARGET_SCORE'] ?? '100',
+);
+export const READABILITY_AUTO_REPAIR_TARGET_SCORE = Number.isFinite(_readabilityAutoRepairTargetScore)
+  ? Math.max(0, Math.min(Math.round(_readabilityAutoRepairTargetScore), 100))
+  : 100;
+
+const _readabilityAutoRepairTimeoutMs = parseInt(
+  process.env['PDFAF_READABILITY_AUTO_REPAIR_TIMEOUT_MS'] ?? '600000',
+  10,
+);
+export const READABILITY_AUTO_REPAIR_TIMEOUT_MS = Number.isFinite(_readabilityAutoRepairTimeoutMs)
+  ? Math.max(0, Math.min(_readabilityAutoRepairTimeoutMs, 600_000))
+  : 180_000;
 
 /** Max parallel LLM requests for figure batches. */
 export const SEMANTIC_REQUEST_CONCURRENCY = parseInt(process.env['SEMANTIC_REQUEST_CONCURRENCY'] ?? '2', 10);
@@ -809,6 +856,20 @@ export function getDefaultRemediateSemanticOptions(): {
     semanticHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_HEADINGS'] !== '0',
     semanticPromoteHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_PROMOTE'] === '1',
     semanticUntaggedHeadings: process.env['PDFAF_REMEDIATE_DEFAULT_SEMANTIC_UNTAGGED'] === '1',
+  };
+}
+
+export function getDefaultRemediateReadabilityOptions(): {
+  readabilityReview?: boolean;
+  readabilityAutoRepair?: boolean;
+  readabilityAutoRepairTimeoutMs?: number;
+} {
+  const readabilityAutoRepair = process.env['PDFAF_REMEDIATE_DEFAULT_READABILITY_AUTO_REPAIR'] === '1';
+  const readabilityReview =
+    readabilityAutoRepair || process.env['PDFAF_REMEDIATE_DEFAULT_READABILITY_REVIEW'] === '1';
+  return {
+    ...(readabilityReview ? { readabilityReview: true } : {}),
+    ...(readabilityAutoRepair ? { readabilityAutoRepair: true, readabilityAutoRepairTimeoutMs: READABILITY_AUTO_REPAIR_TIMEOUT_MS } : {}),
   };
 }
 

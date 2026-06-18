@@ -514,6 +514,57 @@ describe('pacRuleAcceptanceGate', () => {
     })).toEqual({ recover: false, reason: null });
   });
 
+  it('allows non-table heading/annotation recovery when only table header association counts increase', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: tableHeaderDebtSnapshot(38),
+      afterSnapshot: tableHeaderDebtSnapshot(42),
+      toolNames: ['normalize_annotation_tab_order', 'normalize_heading_hierarchy'],
+      beforeScore: 69,
+      afterScore: 90,
+      beforeHeadingScore: 60,
+      afterHeadingScore: 100,
+      beforeReadingOrderScore: 25,
+      afterReadingOrderScore: 83,
+      beforeTableMarkupScore: 72,
+      afterTableMarkupScore: 72,
+    })).toMatchObject({
+      recover: true,
+      reason: 'pac_table_header_side_effect_recovery(non_table_heading_annotation_repair)',
+    });
+  });
+
+  it('does not recover table header association regressions from table repair tools', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: tableHeaderDebtSnapshot(38),
+      afterSnapshot: tableHeaderDebtSnapshot(42),
+      toolNames: ['normalize_table_structure'],
+      beforeScore: 69,
+      afterScore: 90,
+      beforeHeadingScore: 60,
+      afterHeadingScore: 100,
+      beforeReadingOrderScore: 25,
+      afterReadingOrderScore: 83,
+      beforeTableMarkupScore: 72,
+      afterTableMarkupScore: 72,
+    })).toEqual({ recover: false, reason: null });
+  });
+
+  it('does not recover non-table table-header side effects when table score drops', () => {
+    expect(pacRuleUsefulRepairRecovery({
+      beforeSnapshot: tableHeaderDebtSnapshot(38),
+      afterSnapshot: tableHeaderDebtSnapshot(42),
+      toolNames: ['normalize_annotation_tab_order', 'normalize_heading_hierarchy'],
+      beforeScore: 69,
+      afterScore: 90,
+      beforeHeadingScore: 60,
+      afterHeadingScore: 100,
+      beforeReadingOrderScore: 25,
+      afterReadingOrderScore: 83,
+      beforeTableMarkupScore: 72,
+      afterTableMarkupScore: 71,
+    })).toEqual({ recover: false, reason: null });
+  });
+
   it('allows native text tagging recovery only with score, heading, and reading-order movement', () => {
     expect(pacRuleUsefulRepairRecovery({
       beforeSnapshot: orphanMcidDebtSnapshot(1),
@@ -715,6 +766,25 @@ describe('pacRuleAcceptanceGate', () => {
       intermediateHeadingScore: 75,
       finalHeadingScore: 75,
       targetScore: 79,
+    })).toMatchObject({
+      recover: true,
+      reason: 'structure_annotation_sequence_recovered',
+    });
+  });
+
+  it('allows heading annotation cleanup as incremental mixed-debt recovery when caller lowers the target', () => {
+    expect(pacRuleStructureAnnotationSequenceRecovery({
+      beforeSnapshot: annotationDebtSnapshot(0, 0),
+      intermediateSnapshot: annotationDebtSnapshot(28, 64),
+      finalSnapshot: annotationDebtSnapshot(0, 64),
+      toolNames: ['create_heading_from_candidate', 'tag_unowned_annotations'],
+      beforeScore: 34,
+      intermediateScore: 50,
+      finalScore: 50,
+      beforeHeadingScore: 0,
+      intermediateHeadingScore: 94,
+      finalHeadingScore: 94,
+      targetScore: 35,
     })).toMatchObject({
       recover: true,
       reason: 'structure_annotation_sequence_recovered',

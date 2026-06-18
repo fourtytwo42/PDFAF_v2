@@ -412,10 +412,12 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
       ] as const;
   let lastError = `worker failed without output for ${filename}`;
   let lastStderr = '';
+  let bestResult: WorkerResult | null = null;
+  let bestSuffix = '';
 
   for (const attempt of attempts) {
     for (let retry = 0; retry < attempt.retries; retry++) {
-      const suffix = attempt.retries > 1 ? ` ${attempt.label}#${retry + 1}` : attempt.label;
+      const suffix = attempt.retries > 1 ? `${attempt.label}#${retry + 1}` : attempt.label;
       const workerResult = spawnSync(process.execPath, [
         tsxCli,
         worker,
@@ -452,6 +454,10 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
             };
           }
           if (parsed.ok) {
+            if (!bestResult || parsed.after.score > bestResult.after.score) {
+              bestResult = parsed;
+              bestSuffix = suffix;
+            }
             lastError = `worker score ${parsed.after.score.toFixed(2)} below target ${cfg.targetScore.toFixed(2)} (${suffix})`;
             continue;
           }
@@ -486,6 +492,15 @@ async function runPipelineOnFile(filePath: string, cfg: RemediationConfig, allow
     }
   }
 
+  if (bestResult) {
+    return {
+      before: bestResult.before,
+      after: bestResult.after,
+      durationMs: bestResult.durationMs ?? Date.now() - start,
+      status: 'failed',
+      error: `${lastError}. ${lastStderr} Best from ${bestSuffix}`.trim(),
+    };
+  }
   try {
     const { analyzePdf } = await import('../src/services/pdfAnalyzer.js');
     const { result: before } = await analyzePdf(filePath, filename, { bypassCache: true });

@@ -43,6 +43,9 @@ import {
   shouldSkipLateTabOrderReanalysisGuard,
   shouldSkipFigure4702SequencePostPassGuard,
   shouldSkipScoreMovingPdfUaTopupOrphanDrainPostPassGuard,
+  shouldSkipPlaybookForStrongTableUndersegmentation,
+  shouldSkipPlaybookForSevereHeadingDebt,
+  shouldSkipPlaybookForZeroHeadingFigureAltDebt,
   shouldConfirmLowScoreMetadataOnlyHeadingVolatility,
   shouldConfirmMetadataOnlyStructuralVolatility,
   shouldTryAllInputHeadingAnnotationSequence,
@@ -60,7 +63,7 @@ import {
   verifiedTimeoutCheckpointEligibility,
   withHeadingTargetRef,
 } from '../../src/services/remediation/orchestrator.js';
-import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnapshot, PlanningSummary, RemediationStagePlan } from '../../src/types.js';
+import type { AnalysisResult, AppliedRemediationTool, CategoryKey, DocumentSnapshot, PlanningSummary, Playbook, RemediationStagePlan } from '../../src/types.js';
 
 function makeAnalysis(input: {
   score: number;
@@ -136,6 +139,167 @@ function makeApplied(toolName = 'bootstrap_struct_tree'): AppliedRemediationTool
     delta: 0,
     outcome: 'applied',
   }];
+}
+
+function makePlaybook(toolNames: string[]): Playbook {
+  return {
+    id: 'playbook-1',
+    failureSignature: 'signature',
+    pdfClass: 'native_tagged',
+    toolSequence: toolNames.map((toolName, index) => ({
+      stage: index + 1,
+      toolName,
+      params: {},
+    })),
+    successCount: 3,
+    attemptCount: 3,
+    avgScoreImprovement: 20,
+    status: 'active',
+    createdAt: '2026-06-06T00:00:00.000Z',
+    lastUsedAt: null,
+  };
+}
+
+function makeStrongTableUndersegmentationAnalysis(): AnalysisResult {
+  return {
+    ...makeAnalysis({
+      score: 69,
+      categories: {
+        table_markup: 0,
+        heading_structure: 100,
+        alt_text: 100,
+        reading_order: 100,
+      },
+    }),
+    pageCount: 47,
+  };
+}
+
+function makeStrongTableUndersegmentationSnapshot(): DocumentSnapshot {
+  return {
+    pageCount: 47,
+    tableHeaderAudit: {
+      tablesChecked: 26,
+      headerAssociationMissingCount: 9,
+      orphanHeaderCellCount: 0,
+      dataCellsWithoutHeaderCount: 94,
+      headerCellsWithScopeCount: 0,
+      headerCellsWithIdCount: 0,
+      dataCellsWithHeadersCount: 0,
+    },
+    detectionProfile: {
+      tableSignals: {
+        directCellUnderTableCount: 0,
+        misplacedCellCount: 0,
+        irregularTableCount: 9,
+        stronglyIrregularTableCount: 5,
+      },
+    },
+    tables: Array.from({ length: 5 }, (_, index) => ({
+      page: index,
+      structRef: `${200 + index}_0`,
+      irregularRows: 4,
+      rowCellCounts: [8, 8, 16, 16],
+      dominantColumnCount: 8,
+    })),
+  } as DocumentSnapshot;
+}
+
+function makeZeroHeadingFigureAltDebtAnalysis(input: {
+  headingScore?: number;
+  altScore?: number;
+} = {}): AnalysisResult {
+  return {
+    ...makeAnalysis({
+      score: 56,
+      categories: {
+        heading_structure: input.headingScore ?? 0,
+        alt_text: input.altScore ?? 20,
+        reading_order: 96,
+        table_markup: 100,
+      },
+    }),
+    pageCount: 12,
+  };
+}
+
+function makeZeroHeadingFigureAltDebtSnapshot(input: {
+  figures?: number;
+  figuresWithAlt?: number;
+  treeHeadingCount?: number;
+  textCharCount?: number;
+} = {}): DocumentSnapshot {
+  const figureCount = input.figures ?? 8;
+  const figuresWithAlt = input.figuresWithAlt ?? 1;
+  const snapshot = makeFigureSnapshot({ figures: figureCount, figuresWithAlt });
+  snapshot.pageCount = 12;
+  snapshot.textCharCount = input.textCharCount ?? 8000;
+  snapshot.headings = [];
+  snapshot.detectionProfile!.headingSignals = {
+    extractedHeadingCount: 0,
+    treeHeadingCount: input.treeHeadingCount ?? 0,
+    headingTreeDepth: 2,
+    extractedHeadingsMissingFromTree: true,
+  };
+  return snapshot;
+}
+
+function makeSevereHeadingDebtAnalysis(input: {
+  headingScore?: number;
+  pageCount?: number;
+} = {}): AnalysisResult {
+  return {
+    ...makeAnalysis({
+      score: 59,
+      categories: {
+        heading_structure: input.headingScore ?? 0,
+        alt_text: 100,
+        reading_order: 94,
+        table_markup: 100,
+      },
+    }),
+    pageCount: input.pageCount ?? 16,
+    pdfClass: 'native_untagged',
+  } as AnalysisResult;
+}
+
+function makeSevereHeadingDebtSnapshot(input: {
+  pageCount?: number;
+  textCharCount?: number;
+  treeHeadingCount?: number;
+  extractedHeadingCount?: number;
+  extractedHeadingsMissingFromTree?: boolean;
+} = {}): DocumentSnapshot {
+  return {
+    pageCount: input.pageCount ?? 16,
+    textByPage: Array(input.pageCount ?? 16).fill('Readable report text'),
+    textCharCount: input.textCharCount ?? 8000,
+    imageOnlyPageCount: 0,
+    metadata: { title: 'Report', language: 'en-US' },
+    links: [],
+    formFieldsFromPdfjs: [],
+    isTagged: false,
+    markInfo: null,
+    lang: 'en-US',
+    pdfUaVersion: null,
+    headings: [],
+    figures: [],
+    tables: [],
+    fonts: [],
+    bookmarks: [],
+    formFields: [],
+    structureTree: null,
+    pdfClass: 'native_untagged',
+    imageToTextRatio: 0,
+    detectionProfile: {
+      headingSignals: {
+        extractedHeadingCount: input.extractedHeadingCount ?? 0,
+        treeHeadingCount: input.treeHeadingCount ?? 0,
+        headingTreeDepth: 1,
+        extractedHeadingsMissingFromTree: input.extractedHeadingsMissingFromTree ?? true,
+      },
+    },
+  } as DocumentSnapshot;
 }
 
 function makePostPassTool(input: Partial<AppliedRemediationTool> & { toolName: string }): AppliedRemediationTool {
@@ -245,6 +409,109 @@ function makeFigureSnapshot(input: { figures: number; figuresWithAlt: number }):
   };
   return snap;
 }
+
+describe('playbook table-undersegmentation guard', () => {
+  it('skips non-table playbooks for strong table undersegmentation', () => {
+    expect(shouldSkipPlaybookForStrongTableUndersegmentation({
+      analysis: makeStrongTableUndersegmentationAnalysis(),
+      snapshot: makeStrongTableUndersegmentationSnapshot(),
+      playbook: makePlaybook(['remap_orphan_mcids_as_artifacts']),
+    })).toBe(true);
+  });
+
+  it('allows table-normalization playbooks for strong table undersegmentation', () => {
+    expect(shouldSkipPlaybookForStrongTableUndersegmentation({
+      analysis: makeStrongTableUndersegmentationAnalysis(),
+      snapshot: makeStrongTableUndersegmentationSnapshot(),
+      playbook: makePlaybook(['normalize_table_structure', 'remap_orphan_mcids_as_artifacts']),
+    })).toBe(false);
+  });
+});
+
+describe('playbook zero-heading figure-alt guard', () => {
+  it('skips playbooks that cannot address figure-alt debt on zero-heading native documents', () => {
+    expect(shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: makeZeroHeadingFigureAltDebtAnalysis(),
+      snapshot: makeZeroHeadingFigureAltDebtSnapshot(),
+      playbook: makePlaybook(['repair_structure_conformance', 'mark_untagged_content_as_artifact']),
+    })).toBe(true);
+  });
+
+  it('skips playbooks with figure-alt repair but no heading creation route for the same evidence shape', () => {
+    expect(shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: makeZeroHeadingFigureAltDebtAnalysis(),
+      snapshot: makeZeroHeadingFigureAltDebtSnapshot(),
+      playbook: makePlaybook(['repair_structure_conformance', 'retag_as_figure', 'set_figure_alt_text']),
+    })).toBe(true);
+  });
+
+  it('allows playbooks with both figure-alt repair and heading creation routes', () => {
+    expect(shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: makeZeroHeadingFigureAltDebtAnalysis(),
+      snapshot: makeZeroHeadingFigureAltDebtSnapshot(),
+      playbook: makePlaybook(['create_heading_from_candidate', 'retag_as_figure', 'set_figure_alt_text']),
+    })).toBe(false);
+  });
+
+  it('does not skip when heading or alt debt is already above the severe replay threshold', () => {
+    expect(shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: makeZeroHeadingFigureAltDebtAnalysis({ headingScore: 60 }),
+      snapshot: makeZeroHeadingFigureAltDebtSnapshot(),
+      playbook: makePlaybook(['repair_structure_conformance']),
+    })).toBe(false);
+    expect(shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: makeZeroHeadingFigureAltDebtAnalysis({ altScore: 80 }),
+      snapshot: makeZeroHeadingFigureAltDebtSnapshot(),
+      playbook: makePlaybook(['repair_structure_conformance']),
+    })).toBe(false);
+  });
+
+  it('requires multiple unresolved visible figure targets before skipping replay', () => {
+    expect(shouldSkipPlaybookForZeroHeadingFigureAltDebt({
+      analysis: makeZeroHeadingFigureAltDebtAnalysis(),
+      snapshot: makeZeroHeadingFigureAltDebtSnapshot({ figures: 2, figuresWithAlt: 0 }),
+      playbook: makePlaybook(['repair_structure_conformance']),
+    })).toBe(false);
+  });
+});
+
+describe('playbook severe heading debt guard', () => {
+  it('skips playbook replay for long zero-heading native documents', () => {
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis(),
+      snapshot: makeSevereHeadingDebtSnapshot(),
+      playbook: makePlaybook([
+        'set_document_title',
+        'bootstrap_struct_tree',
+        'repair_structure_conformance',
+        'mark_untagged_content_as_artifact',
+      ]),
+    })).toBe(true);
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis(),
+      snapshot: makeSevereHeadingDebtSnapshot({ textCharCount: 0 }),
+      playbook: makePlaybook(['bootstrap_struct_tree', 'repair_structure_conformance']),
+    })).toBe(true);
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis(),
+      snapshot: makeSevereHeadingDebtSnapshot(),
+      playbook: makePlaybook(['tag_native_text_blocks', 'create_structure_from_degenerate_native_anchor']),
+    })).toBe(true);
+  });
+
+  it('does not skip for non-severe heading debt or small documents', () => {
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis({ headingScore: 60 }),
+      snapshot: makeSevereHeadingDebtSnapshot(),
+      playbook: makePlaybook(['bootstrap_struct_tree']),
+    })).toBe(false);
+    expect(shouldSkipPlaybookForSevereHeadingDebt({
+      analysis: makeSevereHeadingDebtAnalysis({ pageCount: 2 }),
+      snapshot: makeSevereHeadingDebtSnapshot({ pageCount: 2 }),
+      playbook: makePlaybook(['bootstrap_struct_tree']),
+    })).toBe(false);
+  });
+});
 
 describe('replay state instrumentation', () => {
   it('enriches JSON mutation details without losing invariants or benefits', () => {
@@ -820,6 +1087,46 @@ describe('all-input table structure/header sequence trigger', () => {
         scoreAfter: 88,
       })],
       rejectionDecision: { reject: true, reason: 'pac_rule_regressed(pdfua.table.header_association_present)' },
+    })).toBe(true);
+  });
+
+  it('triggers non-rejected low-score table debt recovery when header debt decreases', () => {
+    const beforeSnapshot = tableSnapshot({ tableHeaderDebt: 900, stronglyIrregular: 2 });
+    const intermediateSnapshot = tableSnapshot({ tableHeaderDebt: 600, stronglyIrregular: 2 });
+
+    expect(shouldTryAllInputTableStructureHeaderSequence({
+      filename: 'low-score-recovery.pdf',
+      before: makeAnalysis({ score: 68, categories: { table_markup: 12 } }),
+      intermediate: makeAnalysis({ score: 70, categories: { table_markup: 44 } }),
+      beforeSnapshot,
+      intermediateSnapshot,
+      stageApplied: [runtimeToolRow({
+        toolName: 'normalize_table_structure',
+        outcome: 'applied',
+        scoreBefore: 68,
+        scoreAfter: 70,
+      })],
+      rejectionDecision: { reject: false, reason: null },
+    })).toBe(true);
+  });
+
+  it('triggers when header debt decreases even without table_markup gain', () => {
+    const beforeSnapshot = tableSnapshot({ tableHeaderDebt: 900, stronglyIrregular: 2 });
+    const intermediateSnapshot = tableSnapshot({ tableHeaderDebt: 600, stronglyIrregular: 2 });
+
+    expect(shouldTryAllInputTableStructureHeaderSequence({
+      filename: 'zero-table-shape-noise.pdf',
+      before: makeAnalysis({ score: 68, categories: { table_markup: 12 } }),
+      intermediate: makeAnalysis({ score: 68, categories: { table_markup: 12 } }),
+      beforeSnapshot,
+      intermediateSnapshot,
+      stageApplied: [runtimeToolRow({
+        toolName: 'normalize_table_structure',
+        outcome: 'applied',
+        scoreBefore: 68,
+        scoreAfter: 68,
+      })],
+      rejectionDecision: { reject: false, reason: null },
     })).toBe(true);
   });
 
@@ -2651,6 +2958,48 @@ describe('shouldRejectStageResult', () => {
     expect(result).toEqual({
       reject: false,
       reason: null,
+    });
+  });
+
+  it('rejects cleanup stages that collapse core readability categories despite score gain', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 88, categories: { heading_structure: 100, reading_order: 96 } }),
+      after: makeAnalysis({ score: 92, categories: { heading_structure: 0, reading_order: 96 } }),
+      stage: makeStage('mark_untagged_content_as_artifact'),
+      stageApplied: makeApplied('mark_untagged_content_as_artifact'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_cleanup_regressed_readability_core(heading_structure:100->0)',
+    });
+  });
+
+  it('rejects no-gain orphan remaps when low alt text receives no core readability improvement', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, categories: { alt_text: 20, heading_structure: 100, reading_order: 80 } }),
+      after: makeAnalysis({ score: 59, categories: { alt_text: 20, heading_structure: 100, reading_order: 80 } }),
+      stage: makeStage('remap_orphan_mcids_as_artifacts'),
+      stageApplied: makeApplied('remap_orphan_mcids_as_artifacts'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_no_gain_orphan_artifact_mutation',
+    });
+  });
+
+  it('rejects no-gain pre-alt cleanup while alt text is still failing', () => {
+    const result = shouldRejectStageResult({
+      before: makeAnalysis({ score: 59, categories: { alt_text: 60, reading_order: 79 } }),
+      after: makeAnalysis({ score: 59, categories: { alt_text: 60, reading_order: 79 } }),
+      stage: makeStage('artifact_repeating_page_furniture'),
+      stageApplied: makeApplied('artifact_repeating_page_furniture'),
+    });
+
+    expect(result).toEqual({
+      reject: true,
+      reason: 'stage_low_alt_no_gain_pre_alt_cleanup_mutation',
     });
   });
 

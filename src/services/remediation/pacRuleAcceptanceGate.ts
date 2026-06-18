@@ -53,6 +53,19 @@ const PAC_STRUCTURAL_TOOL_NAMES = new Set<string>([
   'tag_unowned_annotations',
 ]);
 
+const PAC_TABLE_REPAIR_TOOL_NAMES = new Set<string>([
+  'normalize_table_structure',
+  'repair_native_table_headers',
+  'set_table_header_cells',
+]);
+
+const PAC_NON_TABLE_HEADING_ANNOTATION_RECOVERY_TOOLS = new Set<string>([
+  'create_heading_from_candidate',
+  'create_heading_from_tagged_visible_anchor',
+  'normalize_annotation_tab_order',
+  'normalize_heading_hierarchy',
+]);
+
 export interface PacRuleAcceptanceRegressionDetail {
   ruleId: string;
   category: PacRuleEvidence['category'];
@@ -131,6 +144,31 @@ export function pacAcceptanceGateAppliesToTools(toolNames: readonly string[]): b
   return toolNames.some(toolName => PAC_STRUCTURAL_TOOL_NAMES.has(toolName));
 }
 
+function finiteScore(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function tableSignal(snapshot: DocumentSnapshot, key: 'directCellUnderTableCount' | 'misplacedCellCount' | 'irregularTableCount' | 'stronglyIrregularTableCount'): number {
+  const value = snapshot.detectionProfile?.tableSignals?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function nonHeaderTableShapePreserved(before: DocumentSnapshot, after: DocumentSnapshot): boolean {
+  const keys: Array<'directCellUnderTableCount' | 'misplacedCellCount' | 'irregularTableCount' | 'stronglyIrregularTableCount'> = [
+    'directCellUnderTableCount',
+    'misplacedCellCount',
+    'irregularTableCount',
+    'stronglyIrregularTableCount',
+  ];
+  return keys.every(key => tableSignal(after, key) <= tableSignal(before, key));
+}
+
+function nonTableHeadingAnnotationRepairOnly(toolNames: readonly string[]): boolean {
+  if (toolNames.length === 0) return false;
+  if (toolNames.some(toolName => PAC_TABLE_REPAIR_TOOL_NAMES.has(toolName))) return false;
+  return toolNames.every(toolName => PAC_NON_TABLE_HEADING_ANNOTATION_RECOVERY_TOOLS.has(toolName));
+}
+
 export function pacRuleAcceptanceGate(input: {
   beforeSnapshot: DocumentSnapshot;
   afterSnapshot: DocumentSnapshot;
@@ -169,6 +207,8 @@ export function pacRuleUsefulRepairRecovery(input: {
   afterReadingOrderScore?: number | null;
   beforePdfUaScore?: number | null;
   afterPdfUaScore?: number | null;
+  beforeTableMarkupScore?: number | null;
+  afterTableMarkupScore?: number | null;
 }): { recover: boolean; reason: string | null; details?: string } {
   const isHeadingCandidateRepair = input.toolNames.includes('create_heading_from_candidate');
   const isHeadingHierarchyRepair = input.toolNames.includes('normalize_heading_hierarchy');
@@ -196,18 +236,63 @@ export function pacRuleUsefulRepairRecovery(input: {
   if (regressions.length === 0) {
     return { recover: false, reason: null };
   }
-  if (regressions.some(row => row.ruleId !== 'pdfua.content.orphan_mcids_absent')) {
-    return { recover: false, reason: null };
-  }
   const scoreImproved = input.afterScore > input.beforeScore;
-  if (!pageTextTagEvidencePreserved(input.beforeSnapshot, input.afterSnapshot)) {
-    return { recover: false, reason: null };
-  }
   const headingImproved = (
     input.beforeHeadingScore != null &&
     input.afterHeadingScore != null &&
     input.afterHeadingScore > input.beforeHeadingScore
   );
+  const linkQualityImproved = (
+    input.beforeLinkQualityScore != null &&
+    input.afterLinkQualityScore != null &&
+    input.afterLinkQualityScore > input.beforeLinkQualityScore
+  );
+  const readingOrderImproved = (
+    input.beforeReadingOrderScore != null &&
+    input.afterReadingOrderScore != null &&
+    input.afterReadingOrderScore > input.beforeReadingOrderScore
+  );
+  const beforeTableScore = finiteScore(input.beforeTableMarkupScore);
+  const afterTableScore = finiteScore(input.afterTableMarkupScore);
+  const tableMarkupPreserved = beforeTableScore != null && afterTableScore != null && afterTableScore >= beforeTableScore;
+
+  if (regressions.every(row => row.ruleId === 'pdfua.table.header_association_present')) {
+    if (
+      nonTableHeadingAnnotationRepairOnly(input.toolNames) &&
+      scoreImproved &&
+      (headingImproved || readingOrderImproved) &&
+      tableMarkupPreserved &&
+      pageTextTagEvidencePreserved(input.beforeSnapshot, input.afterSnapshot) &&
+      nonHeaderTableShapePreserved(input.beforeSnapshot, input.afterSnapshot)
+    ) {
+      const reason = 'pac_table_header_side_effect_recovery(non_table_heading_annotation_repair)';
+      return {
+        recover: true,
+        reason,
+        details: JSON.stringify({
+          outcome: 'accepted',
+          note: reason,
+          pacRuleRegressions: regressions,
+          beforeScore: input.beforeScore,
+          afterScore: input.afterScore,
+          beforeHeadingScore: input.beforeHeadingScore ?? null,
+          afterHeadingScore: input.afterHeadingScore ?? null,
+          beforeReadingOrderScore: input.beforeReadingOrderScore ?? null,
+          afterReadingOrderScore: input.afterReadingOrderScore ?? null,
+          beforeTableMarkupScore: input.beforeTableMarkupScore ?? null,
+          afterTableMarkupScore: input.afterTableMarkupScore ?? null,
+        }),
+      };
+    }
+    return { recover: false, reason: null };
+  }
+
+  if (regressions.some(row => row.ruleId !== 'pdfua.content.orphan_mcids_absent')) {
+    return { recover: false, reason: null };
+  }
+  if (!pageTextTagEvidencePreserved(input.beforeSnapshot, input.afterSnapshot)) {
+    return { recover: false, reason: null };
+  }
   if ((isHeadingCandidateRepair || isHeadingHierarchyRepair) && scoreImproved && headingImproved) {
     const toolName = isHeadingCandidateRepair ? 'create_heading_from_candidate' : 'normalize_heading_hierarchy';
     const reason = `pac_orphan_mcid_recovery(${toolName})`;
@@ -225,16 +310,6 @@ export function pacRuleUsefulRepairRecovery(input: {
       }),
     };
   }
-  const linkQualityImproved = (
-    input.beforeLinkQualityScore != null &&
-    input.afterLinkQualityScore != null &&
-    input.afterLinkQualityScore > input.beforeLinkQualityScore
-  );
-  const readingOrderImproved = (
-    input.beforeReadingOrderScore != null &&
-    input.afterReadingOrderScore != null &&
-    input.afterReadingOrderScore > input.beforeReadingOrderScore
-  );
   if (isNativeTextTaggingRepair) {
     if (!scoreImproved || !headingImproved || !readingOrderImproved) {
       return { recover: false, reason: null };

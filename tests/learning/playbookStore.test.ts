@@ -74,6 +74,20 @@ function appliedNativeReadingOrder(): AppliedRemediationTool[] {
   ];
 }
 
+function appliedNormalizeTableStructure(): AppliedRemediationTool[] {
+  return [
+    {
+      toolName: 'normalize_table_structure',
+      stage: 3,
+      round: 1,
+      scoreBefore: 69,
+      scoreAfter: 95,
+      delta: 26,
+      outcome: 'applied',
+    },
+  ];
+}
+
 
 function appliedStructureFollowup(): AppliedRemediationTool[] {
   return [
@@ -1751,6 +1765,17 @@ describe('playbookStore', () => {
     const row = store.listAll().find(p => p.failureSignature === sig);
     expect(row).toBeDefined();
     expect(row!.toolSequence.map(step => step.toolName)).toEqual(['repair_native_reading_order']);
+  });
+
+  it('learnFromSuccess persists normalize_table_structure sequences', () => {
+    const store = createPlaybookStore(db);
+    const analysis = minimalAnalysis();
+    const snap = minimalSnapshot();
+    store.learnFromSuccess(analysis, snap, appliedNormalizeTableStructure(), 26);
+    const sig = buildFailureSignature(analysis, snap);
+    const row = store.listAll().find(p => p.failureSignature === sig);
+    expect(row).toBeDefined();
+    expect(row!.toolSequence.map(step => step.toolName)).toEqual(['normalize_table_structure']);
   });
 
   it('learnFromSuccess persists repeatable heading and parent-link follow-up tools', () => {

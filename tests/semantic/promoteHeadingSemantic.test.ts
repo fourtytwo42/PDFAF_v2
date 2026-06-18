@@ -192,6 +192,7 @@ describe('applySemanticPromoteHeadingRepairs', () => {
     const snap = snapWithParagraphs([{ tag: 'LBody', text: 'Section', page: 0, structRef: '5_0' }], {
       pageCount: 12,
       textByPage: Array(12).fill('x'),
+      headings: [{ level: 2, text: 'Section', page: 0, structRef: '4_0' }],
     });
     const analysis = score(snap, META);
     const buf = Buffer.from('%PDF-1.4\n');
@@ -216,6 +217,7 @@ describe('applySemanticPromoteHeadingRepairs', () => {
         pdfClass: 'native_untagged',
         isTagged: false,
         textCharCount: 200,
+        headings: [],
       },
     );
     const analysis = score(snap, META);
@@ -257,8 +259,8 @@ describe('applySemanticPromoteHeadingRepairs', () => {
 
   it('reverts on score regression after promote apply', async () => {
     const snap = snapWithParagraphs(
-      [{ tag: 'P', text: 'Methods', page: 2, structRef: '40_0' }],
-      { pageCount: 12, textByPage: Array(12).fill('body') },
+      [{ tag: 'P', text: 'Research Methods', page: 2, structRef: '40_0' }],
+      { pageCount: 12, textByPage: Array(12).fill('body'), headings: [] },
     );
     const analysis = score(snap, META);
     vi.mocked(chatCompletionToolCall).mockResolvedValue({
@@ -291,8 +293,8 @@ describe('applySemanticPromoteHeadingRepairs', () => {
 
   it('returns llm_timeout when LLM batch fails with timeout', async () => {
     const snap = snapWithParagraphs(
-      [{ tag: 'P', text: 'Methods', page: 2, structRef: '40_0' }],
-      { pageCount: 12, textByPage: Array(12).fill('body') },
+      [{ tag: 'P', text: 'Research Methods', page: 2, structRef: '40_0' }],
+      { pageCount: 12, textByPage: Array(12).fill('body'), headings: [] },
     );
     const analysis = score(snap, META);
     vi.mocked(chatCompletionToolCall).mockRejectedValue(new Error('AbortError'));
